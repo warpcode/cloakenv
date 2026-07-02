@@ -1,0 +1,11 @@
+cache:
+  default_ttl: "10m"
+
+keyring:
+  prefix: "cloakenv_test"
+
+providers:
+  json_hosts_repo:
+    provider: "json"
+    database_path: "./testdata/test_hosts.json"
+    entries_key: "hosts"

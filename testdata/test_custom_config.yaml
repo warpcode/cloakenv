@@ -1,0 +1,15 @@
+cache:
+  default_ttl: "10m"
+
+keyring:
+  prefix: "cloakenv_test"
+
+providers:
+  hosts_repo:
+    provider: "yaml"
+    database_path: "./testdata/test_hosts.yaml"
+    entries_key: "hosts"
+  root_repo:
+    provider: "yaml"
+    database_path: "./testdata/test_root.yaml"
+    entries_key: "."

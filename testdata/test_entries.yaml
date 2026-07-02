@@ -1,0 +1,24 @@
+entries:
+  ssh_key_prod:
+    tags:
+      - auth:ssh
+      - env:prod
+    title: "Production SSH Key"
+    username: env://USER
+    password: keyring://ssh/prod_pass
+    hostname: "bastion.prod.example.com"
+    bit_strength: 4096
+    public_keys:
+      - "ssh-ed25519 AAAAC3NzaC1l..."
+      - "ssh-rsa AAAAB3NzaC1yc..."
+
+  ssh_key_staging:
+    tags:
+      - auth:ssh
+      - env:staging
+      - deprecated
+    title: "Staging SSH Key"
+    username: "stage_user"
+    password: "stage_password"
+    hostname: "bastion.staging.example.com"
+    bit_strength: 2048

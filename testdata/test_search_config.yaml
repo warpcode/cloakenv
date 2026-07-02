@@ -1,0 +1,13 @@
+cache:
+  default_ttl: "10m"
+
+keyring:
+  prefix: "cloakenv_test"
+
+providers:
+  testdb:
+    provider: "keepass"
+    database_path: "./testdata/testDB.kdbx"
+  my_yaml:
+    provider: "yaml"
+    database_path: "./testdata/test_entries.yaml"

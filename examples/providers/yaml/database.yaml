@@ -1,0 +1,23 @@
+# Static YAML Secret Database Example
+# This database lists secret entries. Attributes can contain static strings
+# or nested URI references to other secret providers (e.g. keyring:// or env://).
+entries:
+  web_server:
+    title: "Production Web Server"
+    tags:
+      - web
+      - production
+    username: "admin"
+    # Example of a nested schema reference pointing to the OS Keyring
+    password: "keyring://web_server/prod_password"
+    port: 22
+
+  db_server:
+    title: "Staging Database Server"
+    tags:
+      - db
+      - staging
+    # Example of a nested schema reference resolving from environment variables
+    username: "env://DB_USER"
+    password: "staging-password-456"
+    port: 5432

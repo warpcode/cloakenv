@@ -1,0 +1,5 @@
+ssh_root:
+  tags:
+    - auth:root
+  title: "Root SSH Key"
+  hostname: "root.host"

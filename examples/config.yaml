@@ -1,0 +1,55 @@
+# cloakenv example configuration
+# Place this file at: ~/.config/cloakenv/config.yaml
+
+# Cache configurations
+cache:
+  # Default expiration TTL for cache:// sets if --ttl CLI flag is omitted
+  default_ttl: "10m"
+
+# Keyring configurations
+keyring:
+  # The service prefix used in the OS keyring for master passwords & tokens
+  prefix: "cloakenv"
+
+# Custom provider definitions. Each mapping key becomes a custom URI scheme.
+# Supported provider types: keepass, json, yaml
+providers:
+  # Defines the work:// URI scheme (KeePass provider)
+  work:
+    provider: "keepass"
+    database_path: "~/secrets/work_vault.kdbx"
+
+  # Defines the home:// URI scheme (KeePass provider)
+  home:
+    provider: "keepass"
+    database_path: "~/secrets/personal_vault.kdbx"
+
+  # Defines the json_dev:// URI scheme (JSON static file provider)
+  json_dev:
+    provider: "json"
+    database_path: "./examples/providers/json/database.json"
+    # entries_key defaults to "entries". Use "." to map directly to the root of the file.
+    entries_key: "entries"
+
+  # Defines the yaml_dev:// URI scheme (YAML static file provider)
+  yaml_dev:
+    provider: "yaml"
+    database_path: "./examples/providers/yaml/database.yaml"
+    # entries_key defaults to "entries". Use "." to map directly to the root of the file.
+    entries_key: "entries"
+
+# Note on Built-in Providers:
+# The following schemes are built-in and do not need to be registered in the 'providers' block:
+# - env://      (Resolves secret values from local environment variables, e.g. env://USER)
+# - keyring://  (Resolves secret values from the OS keyring/keychain using the service prefix, e.g. keyring://ssh/prod_pass)
+# - cache://    (Resolves secret values from the secure in-memory cache daemon)
+#
+# Note on KeePass Authentication:
+# Master passwords are NOT stored in the configuration file.
+# You must authenticate and save them securely in the keyring before use:
+#   cloakenv auth login work
+#   cloakenv auth login home
+#
+# To forget/clear stored credentials:
+#   cloakenv auth forget work
+#   cloakenv auth forget home

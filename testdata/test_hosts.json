@@ -1,0 +1,9 @@
+{
+  "hosts": {
+    "ssh_host": {
+      "tags": ["auth:ssh"],
+      "title": "JSON Host SSH Key",
+      "hostname": "json.custom.host"
+    }
+  }
+}
