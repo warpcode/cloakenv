@@ -27,10 +27,7 @@ jobs:
           cache: true
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
-          args: --go=1.24
+        run: go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 run
 
   test:
     name: Run Tests
