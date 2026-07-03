@@ -33,7 +33,8 @@ func (p *slowProvider) Validate(settings map[string]string) error               
 func BenchmarkBuildEnv(b *testing.B) {
 	ctx := context.Background()
 
-	// Create Orchestrator with empty config to avoid validation errors
+	// Create Orchestrator with empty config to avoid validation errors.
+	// Empty providers map: NewOrchestrator requires a non-nil map but no providers are needed for this benchmark.
 	cfg := &config.Config{
 		Providers: make(map[string]config.ProviderConfig),
 	}
@@ -43,11 +44,14 @@ func BenchmarkBuildEnv(b *testing.B) {
 		b.Fatalf("failed to create orchestrator: %v", err)
 	}
 
-	// Inject slow provider
+	// Inject slow provider. Direct field access to builtins and initializedBuiltins
+	// is intentional as this is a same-package test.
 	sp := &slowProvider{delay: 1 * time.Millisecond}
 	o.builtins["slow"] = sp
 	o.initializedBuiltins["slow"] = true
 
+	// 10 keys with 1ms delay simulates a moderate KeePass workload.
+	// Adjust N and delay to match real-world usage.
 	fileEnv := make(map[string]string)
 	for i := 0; i < 10; i++ {
 		fileEnv[fmt.Sprintf("KEY_%d", i)] = fmt.Sprintf("slow://loc_%d", i)
