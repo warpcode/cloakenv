@@ -3,13 +3,20 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
 func TestLoad(t *testing.T) {
+	tempDir := t.TempDir()
+	mockHome := filepath.Join(tempDir, "home")
+	if err := os.Mkdir(mockHome, 0755); err != nil {
+		t.Fatalf("failed to create mock home: %v", err)
+	}
+	t.Setenv("HOME", mockHome)
+
 	// 1. Test non-existent file
-	cfg, err := Load("non-existent-file.yaml")
+	nonExistentPath := filepath.Join(tempDir, "non-existent-file.yaml")
+	cfg, err := Load(nonExistentPath)
 	if err != nil {
 		t.Fatalf("Load failed for non-existent file: %v", err)
 	}
@@ -21,12 +28,6 @@ func TestLoad(t *testing.T) {
 	}
 
 	// 2. Test valid YAML file
-	tempDir, err := os.MkdirTemp("", "cloakenv-test-config")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
 	yamlContent := `
 cache:
   default_ttl: 1h
@@ -63,8 +64,7 @@ providers:
 	}
 
 	// Verify expandHome was called on database_path
-	home, _ := os.UserHomeDir()
-	expectedPath := filepath.Join(home, "secrets.kdbx")
+	expectedPath := filepath.Join(mockHome, "secrets.kdbx")
 	if prov.DatabasePath != expectedPath {
 		t.Errorf("expected expanded path %q, got %q", expectedPath, prov.DatabasePath)
 	}
@@ -81,26 +81,28 @@ providers:
 }
 
 func TestDefaultConfigPath(t *testing.T) {
+	mockHome := "/custom/home"
+	t.Setenv("HOME", mockHome)
+
 	path, err := DefaultConfigPath()
 	if err != nil {
 		t.Fatalf("DefaultConfigPath failed: %v", err)
 	}
-	if !strings.HasSuffix(path, filepath.Join(".config", "cloakenv", "config.yaml")) {
-		t.Errorf("unexpected default config path: %q", path)
+	expected := filepath.Join(mockHome, ".config", "cloakenv", "config.yaml")
+	if path != expected {
+		t.Errorf("expected %q, got %q", expected, path)
 	}
 }
 
 func TestExpandHome(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("skipping TestExpandHome: could not determine home directory")
-	}
+	mockHome := "/custom/home"
+	t.Setenv("HOME", mockHome)
 
 	tests := []struct {
 		input    string
 		expected string
 	}{
-		{"~/test.txt", filepath.Join(home, "test.txt")},
+		{"~/test.txt", filepath.Join(mockHome, "test.txt")},
 		{"/abs/path/test.txt", "/abs/path/test.txt"},
 		{"rel/path/test.txt", "rel/path/test.txt"},
 		{"~", "~"}, // only ~/ is expanded according to implementation
