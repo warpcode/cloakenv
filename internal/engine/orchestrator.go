@@ -259,10 +259,7 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 	}
 }
 
-// Search queries entries across searchable repositories using an expression.
-func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoScopes []string) ([]provider.SearchResult, error) {
-	var allResults []provider.SearchResult
-
+func (o *Orchestrator) getSearchableProviders(ctx context.Context, repoScopes []string) (map[string]provider.SearchableProvider, error) {
 	providersToSearch := make(map[string]provider.SearchableProvider)
 
 	if len(repoScopes) > 0 {
@@ -292,31 +289,25 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 		}
 	}
 
-	for name, searchable := range providersToSearch {
-		results, err := searchable.Search(ctx, provider.SearchQuery{})
-		if err != nil {
-			return nil, fmt.Errorf("failed to retrieve entries from repo %q: %w", name, err)
-		}
+	return providersToSearch, nil
+}
 
-		for _, r := range results {
-			r.Repository = name
-
-			// Recursively resolve attributes
-			resolvedAttrs := make(map[string]any)
-			for k, v := range r.Entry.Attributes {
-				res, err := o.resolveAttrRecursive(ctx, v, 0)
-				if err == nil {
-					resolvedAttrs[k] = res
-				} else {
-					resolvedAttrs[k] = v
-				}
-			}
-			r.Entry.Attributes = resolvedAttrs
-
-			allResults = append(allResults, r)
+func (o *Orchestrator) resolveSearchResultAttributes(ctx context.Context, r provider.SearchResult) provider.SearchResult {
+	// Recursively resolve attributes
+	resolvedAttrs := make(map[string]any)
+	for k, v := range r.Entry.Attributes {
+		res, err := o.resolveAttrRecursive(ctx, v, 0)
+		if err == nil {
+			resolvedAttrs[k] = res
+		} else {
+			resolvedAttrs[k] = v
 		}
 	}
+	r.Entry.Attributes = resolvedAttrs
+	return r
+}
 
+func (o *Orchestrator) filterResultsByExpression(expressionStr string, allResults []provider.SearchResult) ([]provider.SearchResult, error) {
 	if expressionStr == "" {
 		return allResults, nil
 	}
@@ -370,6 +361,29 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 	return matchedResults, nil
 }
 
+// Search queries entries across searchable repositories using an expression.
+func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoScopes []string) ([]provider.SearchResult, error) {
+	providersToSearch, err := o.getSearchableProviders(ctx, repoScopes)
+	if err != nil {
+		return nil, err
+	}
+
+	var allResults []provider.SearchResult
+	for name, searchable := range providersToSearch {
+		results, err := searchable.Search(ctx, provider.SearchQuery{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve entries from repo %q: %w", name, err)
+		}
+
+		for _, r := range results {
+			r.Repository = name
+			allResults = append(allResults, o.resolveSearchResultAttributes(ctx, r))
+		}
+	}
+
+	return o.filterResultsByExpression(expressionStr, allResults)
+}
+
 func parseSearchURI(location string) (string, string, error) {
 	lastSlash := strings.LastIndex(location, "/")
 	var queryPart, attr string
@@ -416,7 +430,6 @@ func parseSearchURI(location string) (string, string, error) {
 
 	return strings.Join(conditions, " and "), attr, nil
 }
-
 
 // BuildEnv constructs the full environment block.
 func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, fileEnv map[string]string, whitelist []string, forwardParent bool) ([]string, error) {
