@@ -19,8 +19,7 @@ func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	// Set up environment variable for testing env:// resolution
-	os.Setenv("ORCH_TEST_USER", "env_user")
-	defer os.Unsetenv("ORCH_TEST_USER")
+	t.Setenv("ORCH_TEST_USER", "env_user")
 
 	// Create entries.yaml
 	// Here password maps to env://ORCH_TEST_USER, demonstrating recursive resolution!
@@ -70,79 +69,92 @@ entries:
 
 	ctx := context.Background()
 
-	// 1. Test recursive resolution
-	// my_repo://entries.ssh_prod.username should resolve to env://ORCH_TEST_USER which resolves to "env_user"
-	val, err := orch.Resolve(ctx, "my_repo://entries.ssh_prod.username")
-	if err != nil {
-		t.Fatalf("failed to resolve: %v", err)
-	}
-	if val != "env_user" {
-		t.Errorf("expected 'env_user', got %q", val)
-	}
+	t.Run("RecursiveResolution", func(t *testing.T) {
+		// 1. Test recursive resolution
+		// my_repo://entries.ssh_prod.username should resolve to env://ORCH_TEST_USER which resolves to "env_user"
+		val, err := orch.Resolve(ctx, "my_repo://entries.ssh_prod.username")
+		if err != nil {
+			t.Fatalf("failed to resolve: %v", err)
+		}
+		if val != "env_user" {
+			t.Errorf("expected 'env_user', got %q", val)
+		}
+	})
 
-	// 2. Test GetEntry with recursive resolution inside attributes
-	entry, err := orch.GetEntry(ctx, "my_repo://ssh_prod")
-	if err != nil {
-		t.Fatalf("failed to GetEntry: %v", err)
-	}
-	if entry.Attributes["username"] != "env_user" {
-		t.Errorf("expected resolved username 'env_user', got %v", entry.Attributes["username"])
-	}
+	t.Run("GetEntry", func(t *testing.T) {
+		// 2. Test GetEntry with recursive resolution inside attributes
+		entry, err := orch.GetEntry(ctx, "my_repo://ssh_prod")
+		if err != nil {
+			t.Fatalf("failed to GetEntry: %v", err)
+		}
+		if entry.Attributes["username"] != "env_user" {
+			t.Errorf("expected resolved username 'env_user', got %v", entry.Attributes["username"])
+		}
+	})
 
-	// 3. Test Search matching using expr
-	// Match both tag "auth:ssh" and not tag "deprecated"
-	results, err := orch.Search(ctx, `"auth:ssh" in tags and not ("deprecated" in tags)`, nil)
-	if err != nil {
-		t.Fatalf("Search failed: %v", err)
-	}
-	if len(results) != 2 {
-		t.Errorf("expected 2 matches (ssh_prod, ssh_minimal), got %d", len(results))
-	}
+	t.Run("SearchExprByTag", func(t *testing.T) {
+		// 3. Test Search matching using expr
+		// Match both tag "auth:ssh" and not tag "deprecated"
+		results, err := orch.Search(ctx, `"auth:ssh" in tags and not ("deprecated" in tags)`, nil)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 matches (ssh_prod, ssh_minimal), got %d", len(results))
+		}
+	})
 
-	// Match query on attributes
-	results, err = orch.Search(ctx, `bit_strength == 2048`, nil)
-	if err != nil {
-		t.Fatalf("Search failed: %v", err)
-	}
-	if len(results) != 1 {
-		t.Errorf("expected 1 match (ssh_staging), got %d", len(results))
-	} else if results[0].Path != "ssh_staging" {
-		t.Errorf("expected 'ssh_staging', got %q", results[0].Path)
-	}
+	t.Run("SearchExprByAttribute", func(t *testing.T) {
+		// Match query on attributes
+		results, err := orch.Search(ctx, `bit_strength == 2048`, nil)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 match (ssh_staging), got %d", len(results))
+		} else if results[0].Path != "ssh_staging" {
+			t.Errorf("expected 'ssh_staging', got %q", results[0].Path)
+		}
+	})
 
-	// 4. Test search:// URI scheme in Resolve
-	// Resolves Hostname or Password dynamically
-	val, err = orch.Resolve(ctx, `search://tags=auth:ssh,env:prod/password`)
-	if err != nil {
-		t.Fatalf("failed to resolve search:// URI: %v", err)
-	}
-	if val != "my_raw_password" {
-		t.Errorf("expected 'my_raw_password', got %q", val)
-	}
+	t.Run("SearchURI", func(t *testing.T) {
+		// 4. Test search:// URI scheme in Resolve
+		// Resolves Hostname or Password dynamically
+		val, err := orch.Resolve(ctx, `search://tags=auth:ssh,env:prod/password`)
+		if err != nil {
+			t.Fatalf("failed to resolve search:// URI: %v", err)
+		}
+		if val != "my_raw_password" {
+			t.Errorf("expected 'my_raw_password', got %q", val)
+		}
+	})
+	t.Run("MissingFields", func(t *testing.T) {
+		// 5. Test missing fields gracefulness: ssh_minimal does not have bit_strength,
+		// so evaluating bit_strength > 3000 should fail evaluation on it but pass
+		// overall and return ssh_prod.
+		results, err := orch.Search(ctx, `bit_strength > 3000`, nil)
+		if err != nil {
+			t.Fatalf("Search with missing fields query failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 match, got %d", len(results))
+		} else if results[0].Path != "ssh_prod" {
+			t.Errorf("expected 'ssh_prod', got %q", results[0].Path)
+		}
+	})
 
-	// 5. Test missing fields gracefulness: ssh_minimal does not have bit_strength,
-	// so evaluating bit_strength > 3000 should fail evaluation on it but pass
-	// overall and return ssh_prod.
-	results, err = orch.Search(ctx, `bit_strength > 3000`, nil)
-	if err != nil {
-		t.Fatalf("Search with missing fields query failed: %v", err)
-	}
-	if len(results) != 1 {
-		t.Errorf("expected 1 match, got %d", len(results))
-	} else if results[0].Path != "ssh_prod" {
-		t.Errorf("expected 'ssh_prod', got %q", results[0].Path)
-	}
+	t.Run("SecurityValidation", func(t *testing.T) {
+		// 6. Test security validation: disallow function calls and method calls
+		_, err := orch.Search(ctx, `print(tags)`, nil)
+		if err == nil || !strings.Contains(err.Error(), "function calls are not allowed") {
+			t.Errorf("expected error about function calls, got: %v", err)
+		}
 
-	// 6. Test security validation: disallow function calls and method calls
-	_, err = orch.Search(ctx, `print(tags)`, nil)
-	if err == nil || !strings.Contains(err.Error(), "function calls are not allowed") {
-		t.Errorf("expected error about function calls, got: %v", err)
-	}
-
-	_, err = orch.Search(ctx, `title.ToUpper() == "TEST"`, nil)
-	if err == nil || !strings.Contains(err.Error(), "method calls are not allowed") {
-		t.Errorf("expected error about method calls, got: %v", err)
-	}
+		_, err = orch.Search(ctx, `title.ToUpper() == "TEST"`, nil)
+		if err == nil || !strings.Contains(err.Error(), "method calls are not allowed") {
+			t.Errorf("expected error about method calls, got: %v", err)
+		}
+	})
 }
 
 func TestSearchURIEncoding(t *testing.T) {

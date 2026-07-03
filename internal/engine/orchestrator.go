@@ -31,8 +31,11 @@ type Orchestrator struct {
 	initializedBuiltins map[string]bool
 	remoteCache         map[string]provider.SecretProvider
 	keyring             *provider.OSKeyringProvider
+	concurrencySem      chan struct{}
 	mu                  sync.Mutex
 }
+
+const maxConcurrency = 16
 
 // NewOrchestrator creates a new orchestrator with the given config,
 // registers built-in providers, and validates all remote configurations.
@@ -51,6 +54,7 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 		initializedBuiltins: make(map[string]bool),
 		remoteCache:         make(map[string]provider.SecretProvider),
 		keyring:             kr,
+		concurrencySem:      make(chan struct{}, maxConcurrency),
 	}
 
 	// Validate remote configurations
@@ -234,26 +238,134 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 		return typedVal, nil
 	case []string:
 		resolvedSlice := make([]string, len(typedVal))
+		var wg sync.WaitGroup
+		var firstErr error
+		var mu sync.Mutex
+
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+	LoopStr:
 		for i, v := range typedVal {
-			res, err := o.resolveAttrRecursive(ctx, v, depth)
-			if err != nil {
-				return nil, err
+			select {
+			case o.concurrencySem <- struct{}{}:
+				wg.Add(1)
+				go func(i int, v string) {
+					defer wg.Done()
+					defer func() { <-o.concurrencySem }()
+
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					res, err := o.resolveAttrRecursive(ctx, v, depth)
+					if err != nil {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = err
+							cancel()
+						}
+						mu.Unlock()
+						return
+					}
+					if str, ok := res.(string); ok {
+						resolvedSlice[i] = str
+					} else {
+						resolvedSlice[i] = fmt.Sprintf("%v", res)
+					}
+				}(i, v)
+			default:
+				// Fallback to sequential if concurrency limit is reached
+				if ctx.Err() != nil {
+					break LoopStr
+				}
+				res, err := o.resolveAttrRecursive(ctx, v, depth)
+				if err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+						cancel()
+					}
+					mu.Unlock()
+					break LoopStr
+				}
+				if str, ok := res.(string); ok {
+					resolvedSlice[i] = str
+				} else {
+					resolvedSlice[i] = fmt.Sprintf("%v", res)
+				}
 			}
-			if str, ok := res.(string); ok {
-				resolvedSlice[i] = str
-			} else {
-				resolvedSlice[i] = fmt.Sprintf("%v", res)
-			}
+		}
+		wg.Wait()
+		if firstErr != nil {
+			return nil, firstErr
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		return resolvedSlice, nil
 	case []any:
 		resolvedSlice := make([]any, len(typedVal))
+		var wg sync.WaitGroup
+		var firstErr error
+		var mu sync.Mutex
+
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+	LoopAny:
 		for i, v := range typedVal {
-			res, err := o.resolveAttrRecursive(ctx, v, depth)
-			if err != nil {
-				return nil, err
+			select {
+			case o.concurrencySem <- struct{}{}:
+				wg.Add(1)
+				go func(i int, v any) {
+					defer wg.Done()
+					defer func() { <-o.concurrencySem }()
+
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					res, err := o.resolveAttrRecursive(ctx, v, depth)
+					if err != nil {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = err
+							cancel()
+						}
+						mu.Unlock()
+						return
+					}
+					resolvedSlice[i] = res
+				}(i, v)
+			default:
+				// Fallback to sequential if concurrency limit is reached
+				if ctx.Err() != nil {
+					break LoopAny
+				}
+				res, err := o.resolveAttrRecursive(ctx, v, depth)
+				if err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+						cancel()
+					}
+					mu.Unlock()
+					break LoopAny
+				}
+				resolvedSlice[i] = res
 			}
-			resolvedSlice[i] = res
+		}
+		wg.Wait()
+		if firstErr != nil {
+			return nil, firstErr
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		return resolvedSlice, nil
 	default:
@@ -261,10 +373,7 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 	}
 }
 
-// Search queries entries across searchable repositories using an expression.
-func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoScopes []string) ([]provider.SearchResult, error) {
-	var allResults []provider.SearchResult
-
+func (o *Orchestrator) getSearchableProviders(ctx context.Context, repoScopes []string) (map[string]provider.SearchableProvider, error) {
 	providersToSearch := make(map[string]provider.SearchableProvider)
 
 	if len(repoScopes) > 0 {
@@ -294,31 +403,25 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 		}
 	}
 
-	for name, searchable := range providersToSearch {
-		results, err := searchable.Search(ctx, provider.SearchQuery{})
-		if err != nil {
-			return nil, fmt.Errorf("failed to retrieve entries from repo %q: %w", name, err)
-		}
+	return providersToSearch, nil
+}
 
-		for _, r := range results {
-			r.Repository = name
-
-			// Recursively resolve attributes
-			resolvedAttrs := make(map[string]any)
-			for k, v := range r.Entry.Attributes {
-				res, err := o.resolveAttrRecursive(ctx, v, 0)
-				if err == nil {
-					resolvedAttrs[k] = res
-				} else {
-					resolvedAttrs[k] = v
-				}
-			}
-			r.Entry.Attributes = resolvedAttrs
-
-			allResults = append(allResults, r)
+func (o *Orchestrator) resolveSearchResultAttributes(ctx context.Context, r provider.SearchResult) provider.SearchResult {
+	// Recursively resolve attributes
+	resolvedAttrs := make(map[string]any)
+	for k, v := range r.Entry.Attributes {
+		res, err := o.resolveAttrRecursive(ctx, v, 0)
+		if err == nil {
+			resolvedAttrs[k] = res
+		} else {
+			resolvedAttrs[k] = v
 		}
 	}
+	r.Entry.Attributes = resolvedAttrs
+	return r
+}
 
+func (o *Orchestrator) filterResultsByExpression(expressionStr string, allResults []provider.SearchResult) ([]provider.SearchResult, error) {
 	if expressionStr == "" {
 		return allResults, nil
 	}
@@ -327,20 +430,10 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 		return nil, err
 	}
 
-	// Union all attribute keys for compilation type checking
-	unionAttrs := make(map[string]any)
-	for _, r := range allResults {
-		for k, v := range r.Entry.Attributes {
-			unionAttrs[k] = v
-		}
-	}
 	sampleEnv := map[string]any{
 		"title": "",
 		"tags":  []string{},
 		"path":  "",
-	}
-	for k, v := range unionAttrs {
-		sampleEnv[k] = v
 	}
 
 	program, err := expr.Compile(expressionStr, expr.Env(sampleEnv), expr.AllowUndefinedVariables())
@@ -348,13 +441,13 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 		return nil, fmt.Errorf("invalid query expression: %w", err)
 	}
 
-	matchedResults := make([]provider.SearchResult, 0, len(allResults))
-	env := make(map[string]any)
+	var matchedResults []provider.SearchResult
 	for _, r := range allResults {
-		clear(env)
-		env["title"] = r.Entry.Title
-		env["tags"] = r.Entry.Tags
-		env["path"] = r.Path
+		env := map[string]any{
+			"title": r.Entry.Title,
+			"tags":  r.Entry.Tags,
+			"path":  r.Path,
+		}
 		for k, v := range r.Entry.Attributes {
 			env[k] = v
 		}
@@ -374,6 +467,29 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 	}
 
 	return matchedResults, nil
+}
+
+// Search queries entries across searchable repositories using an expression.
+func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoScopes []string) ([]provider.SearchResult, error) {
+	providersToSearch, err := o.getSearchableProviders(ctx, repoScopes)
+	if err != nil {
+		return nil, err
+	}
+
+	var allResults []provider.SearchResult
+	for name, searchable := range providersToSearch {
+		results, err := searchable.Search(ctx, provider.SearchQuery{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to retrieve entries from repo %q: %w", name, err)
+		}
+
+		for _, r := range results {
+			r.Repository = name
+			allResults = append(allResults, o.resolveSearchResultAttributes(ctx, r))
+		}
+	}
+
+	return o.filterResultsByExpression(expressionStr, allResults)
 }
 
 func validateExpression(expressionStr string) error {
@@ -405,7 +521,6 @@ func (v *visitor) Visit(node *ast.Node) {
 		}
 	}
 }
-
 func parseSearchURI(location string) (string, string, error) {
 	lastSlash := strings.LastIndex(location, "/")
 	var queryPart, attr string
@@ -566,6 +681,7 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 
 	return result, nil
 }
+
 
 // Keyring returns the built-in keyring provider for direct access
 // (used by the config subcommands).

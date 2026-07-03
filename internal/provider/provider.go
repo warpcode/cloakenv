@@ -67,11 +67,8 @@ type SearchableProvider interface {
 	GetEntry(ctx context.Context, location string) (Entry, error)
 }
 
-
-// ContextKey is a custom type for context keys to avoid collisions.
+// ContextKey represents a custom type for context values to avoid collisions.
 type ContextKey string
 
-const (
-	// TTLKey is the context key for secret Time-To-Live.
-	TTLKey ContextKey = "ttl"
-)
+// ContextKeyTTL is the context key for specifying cache TTL duration.
+const ContextKeyTTL ContextKey = "ttl"
