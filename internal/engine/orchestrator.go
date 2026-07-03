@@ -17,6 +17,8 @@ import (
 	"cloakenv/internal/provider"
 
 	"github.com/expr-lang/expr"
+	"github.com/expr-lang/expr/ast"
+	"github.com/expr-lang/expr/parser"
 )
 
 // Orchestrator resolves secret URIs by dispatching to the appropriate
@@ -312,6 +314,10 @@ func (o *Orchestrator) filterResultsByExpression(expressionStr string, allResult
 		return allResults, nil
 	}
 
+	if err := validateExpression(expressionStr); err != nil {
+		return nil, err
+	}
+
 	// Union all attribute keys for compilation type checking
 	unionAttrs := make(map[string]any)
 	for _, r := range allResults {
@@ -333,13 +339,13 @@ func (o *Orchestrator) filterResultsByExpression(expressionStr string, allResult
 		return nil, fmt.Errorf("invalid query expression: %w", err)
 	}
 
-	var matchedResults []provider.SearchResult
+	matchedResults := make([]provider.SearchResult, 0, len(allResults))
+	env := make(map[string]any)
 	for _, r := range allResults {
-		env := map[string]any{
-			"title": r.Entry.Title,
-			"tags":  r.Entry.Tags,
-			"path":  r.Path,
-		}
+		clear(env)
+		env["title"] = r.Entry.Title
+		env["tags"] = r.Entry.Tags
+		env["path"] = r.Path
 		for k, v := range r.Entry.Attributes {
 			env[k] = v
 		}
@@ -382,6 +388,36 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 	}
 
 	return o.filterResultsByExpression(expressionStr, allResults)
+}
+
+func validateExpression(expressionStr string) error {
+	tree, err := parser.Parse(expressionStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse expression: %w", err)
+	}
+
+	var validationErr error
+	ast.Walk(&tree.Node, &visitor{err: &validationErr})
+	return validationErr
+}
+
+type visitor struct {
+	err *error
+}
+
+func (v *visitor) Visit(node *ast.Node) {
+	if *v.err != nil {
+		return
+	}
+
+	switch n := (*node).(type) {
+	case *ast.CallNode:
+		*v.err = fmt.Errorf("function calls are not allowed in search expressions")
+	case *ast.MemberNode:
+		if n.Method {
+			*v.err = fmt.Errorf("method calls are not allowed in search expressions")
+		}
+	}
 }
 
 func parseSearchURI(location string) (string, string, error) {
@@ -462,15 +498,35 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 
 	// - B. File env (-f next)
 	// We only include keys from fileEnv. If whitelist is specified, we filter fileEnv by whitelist.
-	for k, uri := range fileEnv {
-		if hasWhitelist && !whitelistSet[k] {
-			continue
+	{
+		var wg sync.WaitGroup
+		var errOnce sync.Once
+		var firstErr error
+		var mu sync.Mutex
+
+		for k, uri := range fileEnv {
+			if hasWhitelist && !whitelistSet[k] {
+				continue
+			}
+			wg.Add(1)
+			go func(k, uri string) {
+				defer wg.Done()
+				val, err := o.Resolve(ctx, uri)
+				if err != nil {
+					errOnce.Do(func() {
+						firstErr = fmt.Errorf("failed to resolve file env %s=%s: %w", k, uri, err)
+					})
+					return
+				}
+				mu.Lock()
+				finalEnv[k] = val
+				mu.Unlock()
+			}(k, uri)
 		}
-		val, err := o.Resolve(ctx, uri)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve file env %s=%s: %w", k, uri, err)
+		wg.Wait()
+		if firstErr != nil {
+			return nil, firstErr
 		}
-		finalEnv[k] = val
 	}
 
 	// - C. Whitelist filters parent env if forwardParent is NOT set
@@ -488,12 +544,32 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 
 	// - D. Explicit mappings (-e highest priority)
 	// These are never filtered by whitelist and overwrite everything.
-	for k, uri := range explicit {
-		val, err := o.Resolve(ctx, uri)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)
+	{
+		var wg sync.WaitGroup
+		var errOnce sync.Once
+		var firstErr error
+		var mu sync.Mutex
+
+		for k, uri := range explicit {
+			wg.Add(1)
+			go func(k, uri string) {
+				defer wg.Done()
+				val, err := o.Resolve(ctx, uri)
+				if err != nil {
+					errOnce.Do(func() {
+						firstErr = fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)
+					})
+					return
+				}
+				mu.Lock()
+				finalEnv[k] = val
+				mu.Unlock()
+			}(k, uri)
 		}
-		finalEnv[k] = val
+		wg.Wait()
+		if firstErr != nil {
+			return nil, firstErr
+		}
 	}
 
 	// Convert finalEnv map to []string slice in "KEY=VALUE" format

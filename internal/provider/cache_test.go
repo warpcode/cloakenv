@@ -75,7 +75,7 @@ func TestCacheProvider(t *testing.T) {
 	}
 
 	// Set secret with immediate TTL
-	ttlCtx := context.WithValue(ctx, "ttl", time.Nanosecond) // Will expire immediately
+	ttlCtx := context.WithValue(ctx, ContextKeyTTL, time.Nanosecond) // Will expire immediately
 	if err := cp.SetSecret(ttlCtx, "expire_key", "expire_val"); err != nil {
 		t.Fatalf("SetSecret with TTL failed: %v", err)
 	}

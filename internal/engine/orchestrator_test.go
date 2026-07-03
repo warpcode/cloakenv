@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"cloakenv/internal/config"
@@ -130,6 +131,17 @@ entries:
 		t.Errorf("expected 1 match, got %d", len(results))
 	} else if results[0].Path != "ssh_prod" {
 		t.Errorf("expected 'ssh_prod', got %q", results[0].Path)
+	}
+
+	// 6. Test security validation: disallow function calls and method calls
+	_, err = orch.Search(ctx, `print(tags)`, nil)
+	if err == nil || !strings.Contains(err.Error(), "function calls are not allowed") {
+		t.Errorf("expected error about function calls, got: %v", err)
+	}
+
+	_, err = orch.Search(ctx, `title.ToUpper() == "TEST"`, nil)
+	if err == nil || !strings.Contains(err.Error(), "method calls are not allowed") {
+		t.Errorf("expected error about method calls, got: %v", err)
 	}
 }
 
