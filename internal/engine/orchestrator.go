@@ -342,13 +342,13 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 		return nil, fmt.Errorf("invalid query expression: %w", err)
 	}
 
-	var matchedResults []provider.SearchResult
+	matchedResults := make([]provider.SearchResult, 0, len(allResults))
+	env := make(map[string]any)
 	for _, r := range allResults {
-		env := map[string]any{
-			"title": r.Entry.Title,
-			"tags":  r.Entry.Tags,
-			"path":  r.Path,
-		}
+		clear(env)
+		env["title"] = r.Entry.Title
+		env["tags"] = r.Entry.Tags
+		env["path"] = r.Path
 		for k, v := range r.Entry.Attributes {
 			env[k] = v
 		}
