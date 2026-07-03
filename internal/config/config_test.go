@@ -122,6 +122,9 @@ func TestExpandHome(t *testing.T) {
 		{"/abs/path/test.txt", "/abs/path/test.txt"},
 		{"rel/path/test.txt", "rel/path/test.txt"},
 		{"~", "~"}, // only ~/ is expanded according to implementation
+		{"~config", "~config"},
+		{"~/", mockHome},
+		{"~/.config/test.yaml", filepath.Join(mockHome, ".config", "test.yaml")},
 	}
 
 	for _, tt := range tests {
