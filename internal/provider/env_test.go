@@ -2,8 +2,10 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEnvProvider_Scheme(t *testing.T) {
@@ -48,7 +50,8 @@ func TestEnvProvider_GetSecret(t *testing.T) {
 	})
 
 	t.Run("NotSet", func(t *testing.T) {
-		_, err := p.GetSecret(ctx, "NON_EXISTENT_KEY_PROBABLY_NOT_SET")
+		key := fmt.Sprintf("CLOAKENV_TEST_NOT_SET_%d", time.Now().UnixNano())
+		_, err := p.GetSecret(ctx, key)
 		if err == nil {
 			t.Error("expected error for non-existent key, got nil")
 		}
