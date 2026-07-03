@@ -12,10 +12,13 @@ func TestLoad(t *testing.T) {
 	if err := os.Mkdir(mockHome, 0755); err != nil {
 		t.Fatalf("failed to create mock home: %v", err)
 	}
-	t.Setenv("HOME", mockHome)
-	t.Setenv("USERPROFILE", mockHome)
-	t.Setenv("HOMEDRIVE", filepath.VolumeName(mockHome))
-	t.Setenv("HOMEPATH", mockHome[len(filepath.VolumeName(mockHome)):])
+
+	// Mock userHomeDir for hermetic testing
+	oldUserHomeDir := userHomeDir
+	userHomeDir = func() (string, error) {
+		return mockHome, nil
+	}
+	defer func() { userHomeDir = oldUserHomeDir }()
 
 	// 1. Test non-existent file
 	nonExistentPath := filepath.Join(tempDir, "non-existent-file.yaml")
@@ -85,10 +88,12 @@ providers:
 
 func TestDefaultConfigPath(t *testing.T) {
 	mockHome := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", mockHome)
-	t.Setenv("USERPROFILE", mockHome)
-	t.Setenv("HOMEDRIVE", filepath.VolumeName(mockHome))
-	t.Setenv("HOMEPATH", mockHome[len(filepath.VolumeName(mockHome)):])
+
+	oldUserHomeDir := userHomeDir
+	userHomeDir = func() (string, error) {
+		return mockHome, nil
+	}
+	defer func() { userHomeDir = oldUserHomeDir }()
 
 	path, err := DefaultConfigPath()
 	if err != nil {
@@ -102,10 +107,12 @@ func TestDefaultConfigPath(t *testing.T) {
 
 func TestExpandHome(t *testing.T) {
 	mockHome := filepath.Join(t.TempDir(), "home")
-	t.Setenv("HOME", mockHome)
-	t.Setenv("USERPROFILE", mockHome)
-	t.Setenv("HOMEDRIVE", filepath.VolumeName(mockHome))
-	t.Setenv("HOMEPATH", mockHome[len(filepath.VolumeName(mockHome)):])
+
+	oldUserHomeDir := userHomeDir
+	userHomeDir = func() (string, error) {
+		return mockHome, nil
+	}
+	defer func() { userHomeDir = oldUserHomeDir }()
 
 	tests := []struct {
 		input    string

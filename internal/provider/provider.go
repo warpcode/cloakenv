@@ -58,14 +58,18 @@ type SearchResult struct {
 	Entry      Entry  `json:"entry" yaml:"entry"`
 }
 
-// ContextKey is a dedicated type for context keys to avoid collisions.
-type ContextKey string
+// contextKey is a private type for context keys to avoid collisions.
+type contextKey struct {
+	name string
+}
 
-const (
+func (k *contextKey) String() string {
+	return "cloakenv context value " + k.name
+}
+
+var (
 	// TTLKey is the context key for passing custom TTL values to providers.
-	TTLKey ContextKey = "ttl"
-	// ContextKeyTTL is the context key for specifying cache TTL duration.
-	ContextKeyTTL ContextKey = "ttl"
+	TTLKey = &contextKey{name: "ttl"}
 )
 
 // SearchableProvider is implemented by providers that support searching and entry retrieval.
@@ -76,5 +80,4 @@ type SearchableProvider interface {
 	// GetEntry retrieves a complete structured entry by location.
 	GetEntry(ctx context.Context, location string) (Entry, error)
 }
-
 

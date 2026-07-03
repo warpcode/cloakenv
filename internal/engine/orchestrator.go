@@ -417,6 +417,7 @@ func parseSearchURI(location string) (string, string, error) {
 	return strings.Join(conditions, " and "), attr, nil
 }
 
+
 // BuildEnv constructs the full environment block.
 func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, fileEnv map[string]string, whitelist []string, forwardParent bool) ([]string, error) {
 	// 1. Get parent environment
@@ -448,35 +449,15 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 
 	// - B. File env (-f next)
 	// We only include keys from fileEnv. If whitelist is specified, we filter fileEnv by whitelist.
-	{
-		var wg sync.WaitGroup
-		var errOnce sync.Once
-		var firstErr error
-		var mu sync.Mutex
-
-		for k, uri := range fileEnv {
-			if hasWhitelist && !whitelistSet[k] {
-				continue
-			}
-			wg.Add(1)
-			go func(k, uri string) {
-				defer wg.Done()
-				val, err := o.Resolve(ctx, uri)
-				if err != nil {
-					errOnce.Do(func() {
-						firstErr = fmt.Errorf("failed to resolve file env %s=%s: %w", k, uri, err)
-					})
-					return
-				}
-				mu.Lock()
-				finalEnv[k] = val
-				mu.Unlock()
-			}(k, uri)
+	for k, uri := range fileEnv {
+		if hasWhitelist && !whitelistSet[k] {
+			continue
 		}
-		wg.Wait()
-		if firstErr != nil {
-			return nil, firstErr
+		val, err := o.Resolve(ctx, uri)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve file env %s=%s: %w", k, uri, err)
 		}
+		finalEnv[k] = val
 	}
 
 	// - C. Whitelist filters parent env if forwardParent is NOT set
@@ -494,32 +475,12 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 
 	// - D. Explicit mappings (-e highest priority)
 	// These are never filtered by whitelist and overwrite everything.
-	{
-		var wg sync.WaitGroup
-		var errOnce sync.Once
-		var firstErr error
-		var mu sync.Mutex
-
-		for k, uri := range explicit {
-			wg.Add(1)
-			go func(k, uri string) {
-				defer wg.Done()
-				val, err := o.Resolve(ctx, uri)
-				if err != nil {
-					errOnce.Do(func() {
-						firstErr = fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)
-					})
-					return
-				}
-				mu.Lock()
-				finalEnv[k] = val
-				mu.Unlock()
-			}(k, uri)
+	for k, uri := range explicit {
+		val, err := o.Resolve(ctx, uri)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)
 		}
-		wg.Wait()
-		if firstErr != nil {
-			return nil, firstErr
-		}
+		finalEnv[k] = val
 	}
 
 	// Convert finalEnv map to []string slice in "KEY=VALUE" format
