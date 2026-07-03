@@ -430,18 +430,19 @@ func (o *Orchestrator) filterResultsByExpression(expressionStr string, allResult
 		return allResults, nil
 	}
 
-	if err := validateExpression(expressionStr); err != nil {
-		return nil, err
-	}
-
 	var program *vm.Program
+	var ok bool
 	var err error
 
 	o.cacheMu.RLock()
-	program, ok := o.programCache[expressionStr]
+	program, ok = o.programCache[expressionStr]
 	o.cacheMu.RUnlock()
 
 	if !ok {
+		if err = validateExpression(expressionStr); err != nil {
+			return nil, err
+		}
+
 		// Union all attribute keys for compilation type checking
 		unionAttrs := make(map[string]any)
 		for _, r := range allResults {
