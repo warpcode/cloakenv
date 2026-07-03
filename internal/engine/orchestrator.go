@@ -31,8 +31,11 @@ type Orchestrator struct {
 	initializedBuiltins map[string]bool
 	remoteCache         map[string]provider.SecretProvider
 	keyring             *provider.OSKeyringProvider
+	concurrencySem      chan struct{}
 	mu                  sync.Mutex
 }
+
+const maxConcurrency = 16
 
 // NewOrchestrator creates a new orchestrator with the given config,
 // registers built-in providers, and validates all remote configurations.
@@ -51,6 +54,7 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 		initializedBuiltins: make(map[string]bool),
 		remoteCache:         make(map[string]provider.SecretProvider),
 		keyring:             kr,
+		concurrencySem:      make(chan struct{}, maxConcurrency),
 	}
 
 	// Validate remote configurations
@@ -234,26 +238,134 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 		return typedVal, nil
 	case []string:
 		resolvedSlice := make([]string, len(typedVal))
+		var wg sync.WaitGroup
+		var firstErr error
+		var mu sync.Mutex
+
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+	LoopStr:
 		for i, v := range typedVal {
-			res, err := o.resolveAttrRecursive(ctx, v, depth)
-			if err != nil {
-				return nil, err
+			select {
+			case o.concurrencySem <- struct{}{}:
+				wg.Add(1)
+				go func(i int, v string) {
+					defer wg.Done()
+					defer func() { <-o.concurrencySem }()
+
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					res, err := o.resolveAttrRecursive(ctx, v, depth)
+					if err != nil {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = err
+							cancel()
+						}
+						mu.Unlock()
+						return
+					}
+					if str, ok := res.(string); ok {
+						resolvedSlice[i] = str
+					} else {
+						resolvedSlice[i] = fmt.Sprintf("%v", res)
+					}
+				}(i, v)
+			default:
+				// Fallback to sequential if concurrency limit is reached
+				if ctx.Err() != nil {
+					break LoopStr
+				}
+				res, err := o.resolveAttrRecursive(ctx, v, depth)
+				if err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+						cancel()
+					}
+					mu.Unlock()
+					break LoopStr
+				}
+				if str, ok := res.(string); ok {
+					resolvedSlice[i] = str
+				} else {
+					resolvedSlice[i] = fmt.Sprintf("%v", res)
+				}
 			}
-			if str, ok := res.(string); ok {
-				resolvedSlice[i] = str
-			} else {
-				resolvedSlice[i] = fmt.Sprintf("%v", res)
-			}
+		}
+		wg.Wait()
+		if firstErr != nil {
+			return nil, firstErr
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		return resolvedSlice, nil
 	case []any:
 		resolvedSlice := make([]any, len(typedVal))
+		var wg sync.WaitGroup
+		var firstErr error
+		var mu sync.Mutex
+
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+	LoopAny:
 		for i, v := range typedVal {
-			res, err := o.resolveAttrRecursive(ctx, v, depth)
-			if err != nil {
-				return nil, err
+			select {
+			case o.concurrencySem <- struct{}{}:
+				wg.Add(1)
+				go func(i int, v any) {
+					defer wg.Done()
+					defer func() { <-o.concurrencySem }()
+
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					res, err := o.resolveAttrRecursive(ctx, v, depth)
+					if err != nil {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = err
+							cancel()
+						}
+						mu.Unlock()
+						return
+					}
+					resolvedSlice[i] = res
+				}(i, v)
+			default:
+				// Fallback to sequential if concurrency limit is reached
+				if ctx.Err() != nil {
+					break LoopAny
+				}
+				res, err := o.resolveAttrRecursive(ctx, v, depth)
+				if err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+						cancel()
+					}
+					mu.Unlock()
+					break LoopAny
+				}
+				resolvedSlice[i] = res
 			}
-			resolvedSlice[i] = res
+		}
+		wg.Wait()
+		if firstErr != nil {
+			return nil, firstErr
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		return resolvedSlice, nil
 	default:
@@ -317,6 +429,7 @@ func (o *Orchestrator) filterResultsByExpression(expressionStr string, allResult
 	if err := validateExpression(expressionStr); err != nil {
 		return nil, err
 	}
+
 	sampleEnv := map[string]any{
 		"title": "",
 		"tags":  []string{},
@@ -328,13 +441,13 @@ func (o *Orchestrator) filterResultsByExpression(expressionStr string, allResult
 		return nil, fmt.Errorf("invalid query expression: %w", err)
 	}
 
-	matchedResults := make([]provider.SearchResult, 0, len(allResults))
-	env := make(map[string]any)
+	var matchedResults []provider.SearchResult
 	for _, r := range allResults {
-		clear(env)
-		env["title"] = r.Entry.Title
-		env["tags"] = r.Entry.Tags
-		env["path"] = r.Path
+		env := map[string]any{
+			"title": r.Entry.Title,
+			"tags":  r.Entry.Tags,
+			"path":  r.Path,
+		}
 		for k, v := range r.Entry.Attributes {
 			env[k] = v
 		}
@@ -408,7 +521,6 @@ func (v *visitor) Visit(node *ast.Node) {
 		}
 	}
 }
-
 func parseSearchURI(location string) (string, string, error) {
 	lastSlash := strings.LastIndex(location, "/")
 	var queryPart, attr string
@@ -569,6 +681,7 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 
 	return result, nil
 }
+
 
 // Keyring returns the built-in keyring provider for direct access
 // (used by the config subcommands).
