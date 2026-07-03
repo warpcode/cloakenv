@@ -69,6 +69,13 @@ func TestEnvProvider_GetSecret(t *testing.T) {
 			t.Errorf("expected error to contain 'set but empty', got %q", err.Error())
 		}
 	})
+
+	t.Run("LocationEmpty", func(t *testing.T) {
+		_, err := p.GetSecret(ctx, "")
+		if err == nil {
+			t.Error("expected error for empty location, got nil")
+		}
+	})
 }
 
 func TestEnvProvider_SetSecret(t *testing.T) {

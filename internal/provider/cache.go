@@ -154,7 +154,7 @@ func (c *CacheProvider) SetSecret(ctx context.Context, location string, value st
 	}
 
 	var ttl time.Duration
-	if v := ctx.Value(ContextKeyTTL); v != nil {
+	if v := ctx.Value(TTLKey); v != nil {
 		if d, ok := v.(time.Duration); ok {
 			ttl = d
 		}
