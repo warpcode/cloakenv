@@ -17,6 +17,8 @@ import (
 	"cloakenv/internal/provider"
 
 	"github.com/expr-lang/expr"
+	"github.com/expr-lang/expr/ast"
+	"github.com/expr-lang/expr/parser"
 )
 
 // Orchestrator resolves secret URIs by dispatching to the appropriate
@@ -321,6 +323,10 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 		return allResults, nil
 	}
 
+	if err := validateExpression(expressionStr); err != nil {
+		return nil, err
+	}
+
 	// Union all attribute keys for compilation type checking
 	unionAttrs := make(map[string]any)
 	for _, r := range allResults {
@@ -342,13 +348,13 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 		return nil, fmt.Errorf("invalid query expression: %w", err)
 	}
 
-	var matchedResults []provider.SearchResult
+	matchedResults := make([]provider.SearchResult, 0, len(allResults))
+	env := make(map[string]any)
 	for _, r := range allResults {
-		env := map[string]any{
-			"title": r.Entry.Title,
-			"tags":  r.Entry.Tags,
-			"path":  r.Path,
-		}
+		clear(env)
+		env["title"] = r.Entry.Title
+		env["tags"] = r.Entry.Tags
+		env["path"] = r.Path
 		for k, v := range r.Entry.Attributes {
 			env[k] = v
 		}
@@ -368,6 +374,36 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 	}
 
 	return matchedResults, nil
+}
+
+func validateExpression(expressionStr string) error {
+	tree, err := parser.Parse(expressionStr)
+	if err != nil {
+		return fmt.Errorf("failed to parse expression: %w", err)
+	}
+
+	var validationErr error
+	ast.Walk(&tree.Node, &visitor{err: &validationErr})
+	return validationErr
+}
+
+type visitor struct {
+	err *error
+}
+
+func (v *visitor) Visit(node *ast.Node) {
+	if *v.err != nil {
+		return
+	}
+
+	switch n := (*node).(type) {
+	case *ast.CallNode:
+		*v.err = fmt.Errorf("function calls are not allowed in search expressions")
+	case *ast.MemberNode:
+		if n.Method {
+			*v.err = fmt.Errorf("method calls are not allowed in search expressions")
+		}
+	}
 }
 
 func parseSearchURI(location string) (string, string, error) {
