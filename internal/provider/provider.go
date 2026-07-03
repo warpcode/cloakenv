@@ -4,6 +4,12 @@ package provider
 
 import "context"
 
+// ContextKey is a custom type for context keys to avoid collisions.
+type ContextKey string
+
+// TTLContextKey is the key used for passing TTL to providers.
+const TTLContextKey ContextKey = "ttl"
+
 // SecretProvider is the core abstraction for all credential backends.
 // Built-in providers (keyring://, env://) and remote-type providers
 // (e.g., keepass) both implement this interface.
@@ -66,4 +72,3 @@ type SearchableProvider interface {
 	// GetEntry retrieves a complete structured entry by location.
 	GetEntry(ctx context.Context, location string) (Entry, error)
 }
-

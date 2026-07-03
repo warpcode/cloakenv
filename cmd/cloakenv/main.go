@@ -12,6 +12,7 @@ import (
 
 	"cloakenv/internal/config"
 	"cloakenv/internal/engine"
+	"cloakenv/internal/provider"
 
 	"gopkg.in/yaml.v3"
 )
@@ -406,7 +407,7 @@ func cmdSet(args []string) int {
 	}
 	ctx := context.Background()
 	if ttl > 0 {
-		ctx = context.WithValue(ctx, "ttl", ttl)
+		ctx = context.WithValue(ctx, provider.TTLContextKey, ttl)
 	}
 
 	if err := orch.Write(ctx, uri, value); err != nil {
@@ -1057,4 +1058,3 @@ Description:
 Arguments:
   <scheme>        The scheme of the remote provider (e.g., op, bw, keepass)`)
 }
-
