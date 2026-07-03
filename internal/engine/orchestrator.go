@@ -326,21 +326,10 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 	if err := validateExpression(expressionStr); err != nil {
 		return nil, err
 	}
-
-	// Union all attribute keys for compilation type checking
-	unionAttrs := make(map[string]any)
-	for _, r := range allResults {
-		for k, v := range r.Entry.Attributes {
-			unionAttrs[k] = v
-		}
-	}
 	sampleEnv := map[string]any{
 		"title": "",
 		"tags":  []string{},
 		"path":  "",
-	}
-	for k, v := range unionAttrs {
-		sampleEnv[k] = v
 	}
 
 	program, err := expr.Compile(expressionStr, expr.Env(sampleEnv), expr.AllowUndefinedVariables())
