@@ -641,31 +641,11 @@ func cmdEntryShow(args []string) int {
 		return 1
 	}
 
-	flatEntry := make(map[string]any)
-	flatEntry["title"] = entry.Title
-	flatEntry["tags"] = entry.Tags
-	for k, v := range entry.Attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
-			continue
-		}
-		flatEntry[k] = v
-	}
+	flatEntry := flattenEntry(entry)
 
-	if outputJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(flatEntry); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to serialize entry to JSON: %v\n", err)
-			return 1
-		}
-	} else {
-		enc := yaml.NewEncoder(os.Stdout)
-		enc.SetIndent(2)
-		if err := enc.Encode(flatEntry); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to serialize entry to YAML: %v\n", err)
-			return 1
-		}
+	if err := renderOutput(flatEntry, outputJSON, "entry"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
 
 	return 0
@@ -677,38 +657,11 @@ func cmdEntrySearch(args []string) int {
 		printEntrySearchHelp()
 		return 0
 	}
-	var (
-		query        string
-		repoScopes   []string
-		selectedKeys []string
-		outputJSON   bool
-	)
 
-	i := 0
-	for i < len(args) {
-		if args[i] == "--json" {
-			outputJSON = true
-			i++
-		} else if args[i] == "--yaml" {
-			outputJSON = false
-			i++
-		} else if args[i] == "--repo" && i+1 < len(args) {
-			repoScopes = append(repoScopes, args[i+1])
-			i += 2
-		} else if args[i] == "-i" && i+1 < len(args) {
-			selectedKeys = append(selectedKeys, args[i+1])
-			i += 2
-		} else if strings.HasPrefix(args[i], "-") {
-			fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", args[i])
-			return 1
-		} else {
-			if query != "" {
-				fmt.Fprintln(os.Stderr, "Usage: cloakenv entry search [query] [--repo <repo> ...] [-i KEY ...] [--json | --yaml]")
-				return 1
-			}
-			query = args[i]
-			i++
-		}
+	query, repoScopes, selectedKeys, outputJSON, err := parseEntrySearchArgs(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
 
 	cfg, err := loadConfig()
@@ -730,6 +683,65 @@ func cmdEntrySearch(args []string) int {
 		return 1
 	}
 
+	flatResults := flattenSearchResults(results, selectedKeys)
+
+	if err := renderOutput(flatResults, outputJSON, "results"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+
+	return 0
+}
+
+func parseEntrySearchArgs(args []string) (query string, repoScopes []string, selectedKeys []string, outputJSON bool, err error) {
+	i := 0
+	for i < len(args) {
+		if args[i] == "--json" {
+			outputJSON = true
+			i++
+		} else if args[i] == "--yaml" {
+			outputJSON = false
+			i++
+		} else if args[i] == "--repo" {
+			if i+1 >= len(args) {
+				return "", nil, nil, false, fmt.Errorf("flag --repo requires an argument")
+			}
+			repoScopes = append(repoScopes, args[i+1])
+			i += 2
+		} else if args[i] == "-i" {
+			if i+1 >= len(args) {
+				return "", nil, nil, false, fmt.Errorf("flag -i requires an argument")
+			}
+			selectedKeys = append(selectedKeys, args[i+1])
+			i += 2
+		} else if strings.HasPrefix(args[i], "-") {
+			return "", nil, nil, false, fmt.Errorf("unknown flag: %s", args[i])
+		} else {
+			if query != "" {
+				return "", nil, nil, false, fmt.Errorf("usage: cloakenv entry search [query] [--repo <repo> ...] [-i KEY ...] [--json | --yaml]")
+			}
+			query = args[i]
+			i++
+		}
+	}
+	return query, repoScopes, selectedKeys, outputJSON, nil
+}
+
+func flattenEntry(entry provider.Entry) map[string]any {
+	flatEntry := make(map[string]any)
+	flatEntry["title"] = entry.Title
+	flatEntry["tags"] = entry.Tags
+	for k, v := range entry.Attributes {
+		kLower := strings.ToLower(k)
+		if kLower == "title" || kLower == "tags" {
+			continue
+		}
+		flatEntry[k] = v
+	}
+	return flatEntry
+}
+
+func flattenSearchResults(results []provider.SearchResult, selectedKeys []string) []map[string]any {
 	flatResults := make([]map[string]any, len(results))
 	for i, r := range results {
 		flatRes := make(map[string]any)
@@ -778,24 +790,24 @@ func cmdEntrySearch(args []string) int {
 		}
 		flatResults[i] = flatRes
 	}
+	return flatResults
+}
 
-	if outputJSON {
+func renderOutput(data any, asJSON bool, errorLabel string) error {
+	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(flatResults); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to serialize results to JSON: %v\n", err)
-			return 1
+		if err := enc.Encode(data); err != nil {
+			return fmt.Errorf("failed to serialize %s to JSON: %w", errorLabel, err)
 		}
 	} else {
 		enc := yaml.NewEncoder(os.Stdout)
 		enc.SetIndent(2)
-		if err := enc.Encode(flatResults); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to serialize results to YAML: %v\n", err)
-			return 1
+		if err := enc.Encode(data); err != nil {
+			return fmt.Errorf("failed to serialize %s to YAML: %w", errorLabel, err)
 		}
 	}
-
-	return 0
+	return nil
 }
 
 func printUsage() {
