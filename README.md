@@ -4,7 +4,7 @@ Pluggable secret orchestrator and dynamic runtime environment injector. It wraps
 
 ## Prerequisites
 
-- [Go](https://go.dev/) 1.26.2 or higher.
+- [Go](https://go.dev/) 1.24 or higher.
 - A native keyring store (macOS Keychain, Linux D-Bus, Windows Credential Manager).
 
 ## Project Structure
