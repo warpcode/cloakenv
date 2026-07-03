@@ -9,17 +9,17 @@ import (
 
 func TestKeePassProvider(t *testing.T) {
 	keyring.MockInit()
-
-	kp := NewKeePassProvider()
 	ctx := context.Background()
 
 	t.Run("Scheme", func(t *testing.T) {
+		kp := NewKeePassProvider()
 		if kp.Scheme() != "keepass" {
 			t.Errorf("expected scheme 'keepass', got %q", kp.Scheme())
 		}
 	})
 
 	t.Run("Validate", func(t *testing.T) {
+		kp := NewKeePassProvider()
 		if err := kp.Validate(map[string]string{"database_path": "a"}); err != nil {
 			t.Errorf("expected validation success, got %v", err)
 		}
@@ -28,8 +28,8 @@ func TestKeePassProvider(t *testing.T) {
 		}
 	})
 
-	t.Run("Initialize", func(t *testing.T) {
-		// Initialize before keyring setup should fail
+	t.Run("Initialize_NoCredentials", func(t *testing.T) {
+		kp := NewKeePassProvider()
 		cfg := ProviderConfig{
 			Settings: map[string]string{
 				"database_path": "../../testdata/testDB.kdbx",
@@ -39,18 +39,26 @@ func TestKeePassProvider(t *testing.T) {
 		if err := kp.Initialize(ctx, cfg); err == nil {
 			t.Errorf("expected Initialize to fail without stored keyring credentials")
 		}
+	})
 
-		// Setup keyring credentials for remote testdb
-		// prefix: cloakenv, account: provider/testdb, password: password123
-		if err := keyring.Set("cloakenv", "provider/testdb", "password123"); err != nil {
-			t.Fatalf("failed to set mock credentials: %v", err)
-		}
+	// Setup keyring credentials and initialize the shared provider for subsequent tests
+	// prefix: cloakenv, account: provider/testdb, password: password123
+	if err := keyring.Set("cloakenv", "provider/testdb", "password123"); err != nil {
+		t.Fatalf("failed to set mock credentials: %v", err)
+	}
 
-		// Initialize should now succeed
-		if err := kp.Initialize(ctx, cfg); err != nil {
-			t.Fatalf("Initialize failed: %v", err)
-		}
+	kp := NewKeePassProvider()
+	cfg := ProviderConfig{
+		Settings: map[string]string{
+			"database_path": "../../testdata/testDB.kdbx",
+			"remote_name":   "testdb",
+		},
+	}
+	if err := kp.Initialize(ctx, cfg); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
 
+	t.Run("Initialize_CredentialsCleared", func(t *testing.T) {
 		// Test credentials deletion in memory
 		if kp.db.Credentials != nil {
 			t.Errorf("expected kp.db.Credentials to be nil after unlock")
