@@ -19,8 +19,7 @@ func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	// Set up environment variable for testing env:// resolution
-	os.Setenv("ORCH_TEST_USER", "env_user")
-	defer os.Unsetenv("ORCH_TEST_USER")
+	t.Setenv("ORCH_TEST_USER", "env_user")
 
 	// Create entries.yaml
 	// Here password maps to env://ORCH_TEST_USER, demonstrating recursive resolution!
@@ -93,7 +92,7 @@ entries:
 		}
 	})
 
-	t.Run("SearchExpr", func(t *testing.T) {
+	t.Run("SearchExprByTag", func(t *testing.T) {
 		// 3. Test Search matching using expr
 		// Match both tag "auth:ssh" and not tag "deprecated"
 		results, err := orch.Search(ctx, `"auth:ssh" in tags and not ("deprecated" in tags)`, nil)
@@ -103,9 +102,11 @@ entries:
 		if len(results) != 2 {
 			t.Errorf("expected 2 matches (ssh_prod, ssh_minimal), got %d", len(results))
 		}
+	})
 
+	t.Run("SearchExprByAttribute", func(t *testing.T) {
 		// Match query on attributes
-		results, err = orch.Search(ctx, `bit_strength == 2048`, nil)
+		results, err := orch.Search(ctx, `bit_strength == 2048`, nil)
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
