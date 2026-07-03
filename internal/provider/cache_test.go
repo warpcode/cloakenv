@@ -11,29 +11,24 @@ import (
 
 func TestCacheProvider(t *testing.T) {
 	keyring.MockInit()
-
-	tempDir, err := os.MkdirTemp("", "cloakenv-cache-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	cp := NewCacheProvider()
 	ctx := context.Background()
 
 	t.Run("Scheme", func(t *testing.T) {
+		cp := NewCacheProvider()
 		if cp.Scheme() != "cache" {
 			t.Errorf("expected scheme 'cache', got %q", cp.Scheme())
 		}
 	})
 
 	t.Run("Validate", func(t *testing.T) {
+		cp := NewCacheProvider()
 		if err := cp.Validate(nil); err != nil {
 			t.Errorf("Validate failed: %v", err)
 		}
 	})
 
 	t.Run("UninitializedBehavior", func(t *testing.T) {
+		cp := NewCacheProvider()
 		// Get before initialization should fail
 		_, err := cp.GetSecret(ctx, "k")
 		if err == nil {
@@ -45,25 +40,32 @@ func TestCacheProvider(t *testing.T) {
 	})
 
 	t.Run("Initialize", func(t *testing.T) {
-		// Initialize with mock prefix settings
+		cp := NewCacheProvider()
 		cfg := ProviderConfig{
 			Settings: map[string]string{
-				"keyring_prefix": "cloakenv_test_prefix",
+				"keyring_prefix": "cloakenv_test_prefix_init",
 			},
 		}
 		if err := cp.Initialize(ctx, cfg); err != nil {
 			t.Fatalf("Initialize failed: %v", err)
 		}
-
-		// Override cacheDir to our tempDir for testing
-		cp.cacheDir = tempDir
+		if cp.cacheDir == "" {
+			t.Error("expected cacheDir to be set after Initialize")
+		}
 	})
 
 	t.Run("SecretLifecycle", func(t *testing.T) {
-		// Ensure initialized (previous t.Run should have done it)
-		if len(cp.aesKey) == 0 {
-			t.Fatal("provider must be initialized for secret lifecycle tests")
+		cp := NewCacheProvider()
+		tempDir := t.TempDir()
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"keyring_prefix": "cloakenv_test_prefix_lifecycle",
+			},
 		}
+		if err := cp.Initialize(ctx, cfg); err != nil {
+			t.Fatalf("Initialize failed: %v", err)
+		}
+		cp.cacheDir = tempDir
 
 		location := "test_key"
 		secretVal := "secret_val"
@@ -121,10 +123,17 @@ func TestCacheProvider(t *testing.T) {
 	})
 
 	t.Run("ClearCache", func(t *testing.T) {
-		// Ensure it was initialized
-		if cp.cacheDir == "" {
-			t.Fatal("cacheDir must be set for ClearCache test")
+		cp := NewCacheProvider()
+		tempDir := t.TempDir()
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"keyring_prefix": "cloakenv_test_prefix_clear",
+			},
 		}
+		if err := cp.Initialize(ctx, cfg); err != nil {
+			t.Fatalf("Initialize failed: %v", err)
+		}
+		cp.cacheDir = tempDir
 
 		// Populate again for ClearCache
 		if err := cp.SetSecret(ctx, "k1", "v1"); err != nil {
