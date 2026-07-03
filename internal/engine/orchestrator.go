@@ -19,6 +19,7 @@ import (
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/parser"
+	"github.com/expr-lang/expr/vm"
 )
 
 // Orchestrator resolves secret URIs by dispatching to the appropriate
@@ -32,6 +33,8 @@ type Orchestrator struct {
 	remoteCache         map[string]provider.SecretProvider
 	keyring             *provider.OSKeyringProvider
 	concurrencySem      chan struct{}
+	programCache        map[string]*vm.Program
+	cacheMu             sync.RWMutex
 	mu                  sync.Mutex
 }
 
@@ -53,6 +56,7 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 		},
 		initializedBuiltins: make(map[string]bool),
 		remoteCache:         make(map[string]provider.SecretProvider),
+		programCache:        make(map[string]*vm.Program),
 		keyring:             kr,
 		concurrencySem:      make(chan struct{}, maxConcurrency),
 	}
@@ -426,19 +430,43 @@ func (o *Orchestrator) filterResultsByExpression(expressionStr string, allResult
 		return allResults, nil
 	}
 
-	if err := validateExpression(expressionStr); err != nil {
-		return nil, err
-	}
+	var program *vm.Program
+	var ok bool
+	var err error
 
-	sampleEnv := map[string]any{
-		"title": "",
-		"tags":  []string{},
-		"path":  "",
-	}
+	o.cacheMu.RLock()
+	program, ok = o.programCache[expressionStr]
+	o.cacheMu.RUnlock()
 
-	program, err := expr.Compile(expressionStr, expr.Env(sampleEnv), expr.AllowUndefinedVariables())
-	if err != nil {
-		return nil, fmt.Errorf("invalid query expression: %w", err)
+	if !ok {
+		if err = validateExpression(expressionStr); err != nil {
+			return nil, err
+		}
+
+		// Union all attribute keys for compilation type checking
+		unionAttrs := make(map[string]any)
+		for _, r := range allResults {
+			for k, v := range r.Entry.Attributes {
+				unionAttrs[k] = v
+			}
+		}
+		sampleEnv := map[string]any{
+			"title": "",
+			"tags":  []string{},
+			"path":  "",
+		}
+		for k, v := range unionAttrs {
+			sampleEnv[k] = v
+		}
+
+		program, err = expr.Compile(expressionStr, expr.Env(sampleEnv), expr.AllowUndefinedVariables())
+		if err != nil {
+			return nil, fmt.Errorf("invalid query expression: %w", err)
+		}
+
+		o.cacheMu.Lock()
+		o.programCache[expressionStr] = program
+		o.cacheMu.Unlock()
 	}
 
 	var matchedResults []provider.SearchResult
