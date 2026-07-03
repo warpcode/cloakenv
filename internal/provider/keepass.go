@@ -420,4 +420,3 @@ func (k *KeePassProvider) Validate(settings map[string]string) error {
 	}
 	return nil
 }
-

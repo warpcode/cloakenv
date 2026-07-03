@@ -66,4 +66,3 @@ type SearchableProvider interface {
 	// GetEntry retrieves a complete structured entry by location.
 	GetEntry(ctx context.Context, location string) (Entry, error)
 }
-
