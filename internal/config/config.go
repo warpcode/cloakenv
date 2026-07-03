@@ -12,6 +12,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var userHomeDir = os.UserHomeDir
+
 // Config is the top-level configuration structure.
 type Config struct {
 	// ConfigPath is the absolute path to the configuration file.
@@ -48,7 +50,7 @@ type ProviderConfig struct {
 // DefaultConfigPath returns the default configuration file path:
 // ~/.config/cloakenv/config.yaml
 func DefaultConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := userHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve home directory: %w", err)
 	}
@@ -101,7 +103,7 @@ func expandHome(path string) string {
 		return path
 	}
 
-	home, err := os.UserHomeDir()
+	home, err := userHomeDir()
 	if err != nil {
 		return path
 	}

@@ -72,5 +72,3 @@ type ContextKey string
 
 // ContextKeyTTL is the context key for specifying cache TTL duration.
 const ContextKeyTTL ContextKey = "ttl"
-
-
