@@ -64,6 +64,8 @@ type ContextKey string
 const (
 	// TTLKey is the context key for passing custom TTL values to providers.
 	TTLKey ContextKey = "ttl"
+	// ContextKeyTTL is the context key for specifying cache TTL duration.
+	ContextKeyTTL ContextKey = "ttl"
 )
 
 // SearchableProvider is implemented by providers that support searching and entry retrieval.
@@ -74,4 +76,5 @@ type SearchableProvider interface {
 	// GetEntry retrieves a complete structured entry by location.
 	GetEntry(ctx context.Context, location string) (Entry, error)
 }
+
 
