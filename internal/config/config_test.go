@@ -14,6 +14,8 @@ func TestLoad(t *testing.T) {
 	}
 	t.Setenv("HOME", mockHome)
 	t.Setenv("USERPROFILE", mockHome)
+	t.Setenv("HOMEDRIVE", filepath.VolumeName(mockHome))
+	t.Setenv("HOMEPATH", mockHome[len(filepath.VolumeName(mockHome)):])
 
 	// 1. Test non-existent file
 	nonExistentPath := filepath.Join(tempDir, "non-existent-file.yaml")
@@ -85,6 +87,8 @@ func TestDefaultConfigPath(t *testing.T) {
 	mockHome := filepath.Join(t.TempDir(), "home")
 	t.Setenv("HOME", mockHome)
 	t.Setenv("USERPROFILE", mockHome)
+	t.Setenv("HOMEDRIVE", filepath.VolumeName(mockHome))
+	t.Setenv("HOMEPATH", mockHome[len(filepath.VolumeName(mockHome)):])
 
 	path, err := DefaultConfigPath()
 	if err != nil {
@@ -100,6 +104,8 @@ func TestExpandHome(t *testing.T) {
 	mockHome := filepath.Join(t.TempDir(), "home")
 	t.Setenv("HOME", mockHome)
 	t.Setenv("USERPROFILE", mockHome)
+	t.Setenv("HOMEDRIVE", filepath.VolumeName(mockHome))
+	t.Setenv("HOMEPATH", mockHome[len(filepath.VolumeName(mockHome)):])
 
 	tests := []struct {
 		input    string

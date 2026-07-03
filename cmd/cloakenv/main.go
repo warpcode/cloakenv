@@ -12,6 +12,7 @@ import (
 
 	"cloakenv/internal/config"
 	"cloakenv/internal/engine"
+	"cloakenv/internal/provider"
 
 	"gopkg.in/yaml.v3"
 )
