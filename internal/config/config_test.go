@@ -13,6 +13,7 @@ func TestLoad(t *testing.T) {
 		t.Fatalf("failed to create mock home: %v", err)
 	}
 	t.Setenv("HOME", mockHome)
+	t.Setenv("USERPROFILE", mockHome)
 
 	// 1. Test non-existent file
 	nonExistentPath := filepath.Join(tempDir, "non-existent-file.yaml")
@@ -81,8 +82,9 @@ providers:
 }
 
 func TestDefaultConfigPath(t *testing.T) {
-	mockHome := "/custom/home"
+	mockHome := filepath.Join(t.TempDir(), "home")
 	t.Setenv("HOME", mockHome)
+	t.Setenv("USERPROFILE", mockHome)
 
 	path, err := DefaultConfigPath()
 	if err != nil {
@@ -95,8 +97,9 @@ func TestDefaultConfigPath(t *testing.T) {
 }
 
 func TestExpandHome(t *testing.T) {
-	mockHome := "/custom/home"
+	mockHome := filepath.Join(t.TempDir(), "home")
 	t.Setenv("HOME", mockHome)
+	t.Setenv("USERPROFILE", mockHome)
 
 	tests := []struct {
 		input    string

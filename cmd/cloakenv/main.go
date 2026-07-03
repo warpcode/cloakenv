@@ -406,7 +406,7 @@ func cmdSet(args []string) int {
 	}
 	ctx := context.Background()
 	if ttl > 0 {
-		ctx = context.WithValue(ctx, "ttl", ttl)
+		ctx = context.WithValue(ctx, provider.TTLKey, ttl)
 	}
 
 	if err := orch.Write(ctx, uri, value); err != nil {

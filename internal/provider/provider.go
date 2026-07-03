@@ -58,6 +58,14 @@ type SearchResult struct {
 	Entry      Entry  `json:"entry" yaml:"entry"`
 }
 
+// ContextKey is a dedicated type for context keys to avoid collisions.
+type ContextKey string
+
+const (
+	// TTLKey is the context key for passing custom TTL values to providers.
+	TTLKey ContextKey = "ttl"
+)
+
 // SearchableProvider is implemented by providers that support searching and entry retrieval.
 type SearchableProvider interface {
 	// Search retrieves all entries matching the query criteria.

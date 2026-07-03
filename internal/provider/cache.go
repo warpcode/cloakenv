@@ -147,14 +147,14 @@ func (c *CacheProvider) GetSecret(ctx context.Context, location string) (string,
 }
 
 // SetSecret encrypts and writes a secret to the local cache file.
-// Supports passing a "ttl" (time.Duration) value via context.Context.
+// Supports passing a custom TTL value via context.Context using TTLKey.
 func (c *CacheProvider) SetSecret(ctx context.Context, location string, value string) error {
 	if len(c.aesKey) == 0 {
 		return errors.New("cache provider: not initialized")
 	}
 
 	var ttl time.Duration
-	if v := ctx.Value("ttl"); v != nil {
+	if v := ctx.Value(TTLKey); v != nil {
 		if d, ok := v.(time.Duration); ok {
 			ttl = d
 		}
