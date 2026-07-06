@@ -7,9 +7,9 @@ keyring:
 providers:
   hosts_repo:
     provider: "yaml"
-    database_path: "./testdata/test_hosts.yaml"
+    vault_path: "./testdata/test_hosts.yaml"
     entries_key: "hosts"
   root_repo:
     provider: "yaml"
-    database_path: "./testdata/test_root.yaml"
+    vault_path: "./testdata/test_root.yaml"
     entries_key: "."

@@ -7,7 +7,7 @@ keyring:
 providers:
   testdb:
     provider: "keepass"
-    database_path: "./testdata/testDB.kdbx"
+    vault_path: "./testdata/testDB.kdbx"
   my_yaml:
     provider: "yaml"
-    database_path: "./testdata/test_entries.yaml"
+    vault_path: "./testdata/test_entries.yaml"

@@ -33,23 +33,23 @@ func (j *JsonProvider) Scheme() string {
 
 // Initialize opens, parses, and loads the entries JSON database file.
 func (j *JsonProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
-	dbPath := cfg.Settings["database_path"]
-	if dbPath == "" {
-		return errors.New("json provider: database_path is required")
+	vaultPath := cfg.Settings["vault_path"]
+	if vaultPath == "" {
+		return errors.New("json provider: vault_path is required")
 	}
-	j.filePath = dbPath
+	j.filePath = vaultPath
 	j.entries = make(map[string]Entry)
-	data, err := os.ReadFile(dbPath)
+	data, err := os.ReadFile(vaultPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("json provider: failed to read file %s: %w", dbPath, err)
+		return fmt.Errorf("json provider: failed to read file %s: %w", vaultPath, err)
 	}
 
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("json provider: failed to parse JSON %s: %w", dbPath, err)
+		return fmt.Errorf("json provider: failed to parse JSON %s: %w", vaultPath, err)
 	}
 
 	if raw == nil {
@@ -109,7 +109,7 @@ func (j *JsonProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 			if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
 				title = vaultName
 			} else {
-				title = filepath.Base(dbPath)
+				title = filepath.Base(vaultPath)
 			}
 		}
 
@@ -236,10 +236,10 @@ func (j *JsonProvider) DeleteSecret(_ context.Context, _ string) error {
 	return errors.New("json provider is read-only")
 }
 
-// Validate checks if the database_path setting is provided.
+// Validate checks if the vault_path setting is provided.
 func (j *JsonProvider) Validate(settings map[string]string) error {
-	if settings["database_path"] == "" {
-		return errors.New("json provider: database_path is required")
+	if settings["vault_path"] == "" {
+		return errors.New("json provider: vault_path is required")
 	}
 	return nil
 }

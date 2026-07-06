@@ -751,8 +751,10 @@ func flattenSearchResults(results []provider.SearchResult, selectedKeys []string
 			for _, field := range selectedKeys {
 				fieldLower := strings.ToLower(field)
 				switch fieldLower {
-				case "repository":
-					flatRes["repository"] = r.Repository
+				case "provider":
+					flatRes["provider"] = r.Provider
+				case "vault":
+					flatRes["vault"] = r.Vault
 				case "path":
 					flatRes["path"] = r.Path
 				case "title":
@@ -778,7 +780,8 @@ func flattenSearchResults(results []provider.SearchResult, selectedKeys []string
 				}
 			}
 		} else {
-			flatRes["repository"] = r.Repository
+			flatRes["provider"] = r.Provider
+			flatRes["vault"] = r.Vault
 			flatRes["path"] = r.Path
 			flatRes["title"] = r.Entry.Title
 			flatRes["tags"] = r.Entry.Tags

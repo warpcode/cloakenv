@@ -40,7 +40,7 @@ func TestJsonProvider(t *testing.T) {
 	ctx := context.Background()
 	cfg := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": jsonPath,
+			"vault_path": jsonPath,
 		},
 	}
 
@@ -125,8 +125,8 @@ func TestJsonProviderCustomEntriesKey(t *testing.T) {
 	ctx := context.Background()
 	cfg1 := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": hostsPath,
-			"entries_key":   "hosts",
+			"vault_path":  hostsPath,
+			"entries_key": "hosts",
 		},
 	}
 	if err := jp1.Initialize(ctx, cfg1); err != nil {
@@ -157,8 +157,8 @@ func TestJsonProviderCustomEntriesKey(t *testing.T) {
 	jp2 := NewJsonProvider()
 	cfg2 := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": rootPath,
-			"entries_key":   ".",
+			"vault_path":  rootPath,
+			"entries_key": ".",
 		},
 	}
 	if err := jp2.Initialize(ctx, cfg2); err != nil {
@@ -177,8 +177,8 @@ func TestJsonProviderCustomEntriesKey(t *testing.T) {
 	jp3 := NewJsonProvider()
 	cfg3 := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": rootPath,
-			"entries_key":   "hosts",
+			"vault_path":  rootPath,
+			"entries_key": "hosts",
 		},
 	}
 	if err := jp3.Initialize(ctx, cfg3); err != nil {
@@ -220,7 +220,7 @@ func TestJsonProviderSingleEntity(t *testing.T) {
 	isTrue := true
 	cfg := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": jsonPath,
+			"vault_path": jsonPath,
 		},
 		SingleEntity:    &isTrue,
 		EntitiesRootKey: ".",

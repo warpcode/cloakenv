@@ -76,23 +76,23 @@ func convertToEntriesMap(val any) (map[string]map[string]any, error) {
 
 // Initialize opens, parses, and loads the entries YAML database file.
 func (y *YamlProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
-	dbPath := cfg.Settings["database_path"]
-	if dbPath == "" {
-		return errors.New("yaml provider: database_path is required")
+	vaultPath := cfg.Settings["vault_path"]
+	if vaultPath == "" {
+		return errors.New("yaml provider: vault_path is required")
 	}
-	y.filePath = dbPath
+	y.filePath = vaultPath
 	y.entries = make(map[string]Entry)
-	data, err := os.ReadFile(dbPath)
+	data, err := os.ReadFile(vaultPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return fmt.Errorf("yaml provider: failed to read file %s: %w", dbPath, err)
+		return fmt.Errorf("yaml provider: failed to read file %s: %w", vaultPath, err)
 	}
 
 	var raw map[string]any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("yaml provider: failed to parse YAML %s: %w", dbPath, err)
+		return fmt.Errorf("yaml provider: failed to parse YAML %s: %w", vaultPath, err)
 	}
 
 	if raw == nil {
@@ -157,7 +157,7 @@ func (y *YamlProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 			if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
 				title = vaultName
 			} else {
-				title = filepath.Base(dbPath)
+				title = filepath.Base(vaultPath)
 			}
 		}
 
@@ -337,10 +337,10 @@ func (y *YamlProvider) DeleteSecret(_ context.Context, _ string) error {
 	return errors.New("yaml provider is read-only")
 }
 
-// Validate checks if the database_path setting is provided.
+// Validate checks if the vault_path setting is provided.
 func (y *YamlProvider) Validate(settings map[string]string) error {
-	if settings["database_path"] == "" {
-		return errors.New("yaml provider: database_path is required")
+	if settings["vault_path"] == "" {
+		return errors.New("yaml provider: vault_path is required")
 	}
 	return nil
 }

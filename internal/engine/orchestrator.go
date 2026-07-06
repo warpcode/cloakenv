@@ -70,7 +70,7 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 			}
 			kp := provider.NewKeePassProvider()
 			settings := map[string]string{
-				"database_path": vault.DatabasePath,
+				"vault_path": vault.VaultPath,
 			}
 			if err := kp.Validate(settings); err != nil {
 				return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
@@ -78,7 +78,7 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 		case "yaml":
 			yp := provider.NewYamlProvider()
 			settings := map[string]string{
-				"database_path": vault.DatabasePath,
+				"vault_path": vault.VaultPath,
 			}
 			if err := yp.Validate(settings); err != nil {
 				return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
@@ -86,7 +86,7 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 		case "json":
 			jp := provider.NewJsonProvider()
 			settings := map[string]string{
-				"database_path": vault.DatabasePath,
+				"vault_path": vault.VaultPath,
 			}
 			if err := jp.Validate(settings); err != nil {
 				return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
@@ -522,7 +522,8 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 		}
 
 		for _, r := range results {
-			r.Repository = name
+			r.Provider = o.config.Vaults[name].Provider
+			r.Vault = name
 			allResults = append(allResults, o.resolveSearchResultAttributes(ctx, r))
 		}
 	}
@@ -868,7 +869,7 @@ func (o *Orchestrator) initKeePass(ctx context.Context, vaultName string, vault 
 	kp := provider.NewKeePassProvider()
 	err := kp.Initialize(ctx, provider.ProviderConfig{
 		Settings: map[string]string{
-			"database_path":  vault.DatabasePath,
+			"vault_path":     vault.VaultPath,
 			"remote_name":    vaultName,
 			"keyring_prefix": o.KeyringPrefix(),
 		},
@@ -890,8 +891,8 @@ func (o *Orchestrator) initYaml(ctx context.Context, vaultName string, vault con
 	yp := provider.NewYamlProvider()
 	err := yp.Initialize(ctx, provider.ProviderConfig{
 		Settings: map[string]string{
-			"database_path": vault.DatabasePath,
-			"vault_name":    vaultName,
+			"vault_path": vault.VaultPath,
+			"vault_name": vaultName,
 		},
 		SingleEntity:    vault.SingleEntity,
 		EntityName:      vault.EntityName,
@@ -911,8 +912,8 @@ func (o *Orchestrator) initJson(ctx context.Context, vaultName string, vault con
 	jp := provider.NewJsonProvider()
 	err := jp.Initialize(ctx, provider.ProviderConfig{
 		Settings: map[string]string{
-			"database_path": vault.DatabasePath,
-			"vault_name":    vaultName,
+			"vault_path": vault.VaultPath,
+			"vault_name": vaultName,
 		},
 		SingleEntity:    vault.SingleEntity,
 		EntityName:      vault.EntityName,
@@ -934,19 +935,14 @@ func (o *Orchestrator) initCustomVault(ctx context.Context, vaultName string, va
 		Settings: map[string]string{
 			"vault_name": vaultName,
 		},
-		SingleEntity:    vault.SingleEntity,
-		EntityName:      vault.EntityName,
-		Searchable:      vault.Searchable == nil || *vault.Searchable,
-		Tags:            vault.Tags,
-		Attributes:      vault.Attributes,
 		Entities:        vault.Entities,
-		EntitiesRootKey: vault.EntitiesRootKey,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return cp, nil
 }
+
 
 // Login triggers authentication setup for a vault/scheme.
 func (o *Orchestrator) Login(ctx context.Context, vaultName string) error {
@@ -962,7 +958,7 @@ func (o *Orchestrator) Login(ctx context.Context, vaultName string) error {
 	kp := provider.NewKeePassProvider()
 	return kp.Initialize(ctx, provider.ProviderConfig{
 		Settings: map[string]string{
-			"database_path":  vault.DatabasePath,
+			"vault_path":     vault.VaultPath,
 			"remote_name":    vaultName,
 			"keyring_prefix": o.KeyringPrefix(),
 			"force_prompt":   "true",

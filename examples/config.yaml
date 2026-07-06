@@ -14,35 +14,40 @@ keyring:
 # Custom vault definitions. Each mapping key becomes a custom URI scheme (ref).
 # Supported provider types: keepass, json, yaml, custom_vault
 vaults:
+  # Defines the keepass_dev:// URI scheme (KeePass provider example using the provided database.kdbx)
+  keepass_dev:
+    provider: "keepass"
+    vault_path: "./examples/providers/keepass/database.kdbx"
+
   # Defines the work:// URI scheme (KeePass provider, multiple-entity by default)
   work:
     provider: "keepass"
-    database_path: "~/secrets/work_vault.kdbx"
+    vault_path: "~/secrets/work_vault.kdbx"
 
   # Defines the home:// URI scheme (KeePass provider, excluded from dynamic searches)
   home:
     provider: "keepass"
-    database_path: "~/secrets/personal_vault.kdbx"
+    vault_path: "~/secrets/personal_vault.kdbx"
     searchable: false
 
   # Defines the json_dev:// URI scheme (JSON static file provider)
   json_dev:
     provider: "json"
-    database_path: "./examples/providers/json/database.json"
+    vault_path: "./examples/providers/json/database.json"
     # entities_root_key defaults to "entities" or "entries". Use "." to map directly to the root of the file.
-    entities_root_key: "entities"
+    entities_root_key: "entries"
 
   # Defines the yaml_dev:// URI scheme (YAML static file provider)
   yaml_dev:
     provider: "yaml"
-    database_path: "./examples/providers/yaml/database.yaml"
-    entities_root_key: "entities"
+    vault_path: "./examples/providers/yaml/database.yaml"
+    entities_root_key: "entries"
 
   # Defines the dotenv_dev:// URI scheme (flat single-entity YAML database example)
   # Defaults to single_entity: true because no entities_root_key is configured
   dotenv_dev:
     provider: "yaml"
-    database_path: "./.env.yaml"
+    vault_path: "./examples/providers/yaml/dotenv.yaml"
     entity_name: "Local Dotenv File"
     tags: [env:dev, local]
 
@@ -54,15 +59,17 @@ vaults:
       custom1:
         username: "custom_user"
         Password: "custom_password"
+        tags: [testing, static]
 
-  # Defines the custom_single:// URI scheme using flat inline config values
+  # Defines the custom_single:// URI scheme using a single named entity
+  # Access: get custom_single://my_static_vault:secret_key
+  #         entry show "custom_single://my_static_vault"
   custom_single:
     provider: "custom_vault"
-    single_entity: true
-    entity_name: "My Static Vault"
-    tags: [static, local]
-    attributes:
-      secret_key: "secret_value"
+    entities:
+      my_static_vault:
+        secret_key: "secret_value"
+        tags: [static, local]
 
 # Note on Built-in Vaults:
 # The following schemes are built-in and do not need to be registered in the 'vaults' block:

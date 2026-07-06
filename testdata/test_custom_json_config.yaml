@@ -7,5 +7,5 @@ keyring:
 providers:
   json_hosts_repo:
     provider: "json"
-    database_path: "./testdata/test_hosts.json"
+    vault_path: "./testdata/test_hosts.json"
     entries_key: "hosts"

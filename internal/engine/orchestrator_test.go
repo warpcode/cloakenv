@@ -56,8 +56,8 @@ entries:
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"my_repo": {
-				Provider:     "yaml",
-				DatabasePath: yamlPath,
+				Provider:  "yaml",
+				VaultPath: yamlPath,
 			},
 		},
 	}
@@ -212,18 +212,18 @@ servers:
 				},
 			},
 			"custom_single": {
-				Provider:     "custom_vault",
-				SingleEntity: &isTrue,
-				EntityName:   "Static Flat Keys",
-				Tags:         []string{"static", "local"},
-				Attributes: map[string]any{
-					"db_user": "postgres",
-					"db_port": 5432,
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"Static_Flat": {
+						"db_user": "postgres",
+						"db_port": 5432,
+						"tags":    []any{"static", "local"},
+					},
 				},
 			},
 			"flat_file": {
-				Provider:     "yaml",
-				DatabasePath: singleDbPath,
+				Provider:  "yaml",
+				VaultPath: singleDbPath,
 				SingleEntity: &isTrue,
 				EntityName:   "Prod Flat File",
 				Tags:         []string{"flat", "prod"},
@@ -274,8 +274,8 @@ servers:
 			t.Errorf("expected 'custom_user', got: %v (err: %v)", val, err)
 		}
 
-		// Custom single flat attributes
-		val, err = orch.Resolve(ctx, "custom_single://db_user")
+		// Custom single — entity named "Static_Flat", access specific attribute
+		val, err = orch.Resolve(ctx, "custom_single://Static_Flat:db_user")
 		if err != nil || val != "postgres" {
 			t.Errorf("expected 'postgres', got: %v (err: %v)", val, err)
 		}
@@ -321,13 +321,13 @@ servers:
 			t.Errorf("expected title 'Prod Flat File', got %q", entry.Title)
 		}
 
-		// Search title substring (matches both flat_file and custom_single)
+		// Search title substring (matches flat_file's "Prod Flat File" and custom_single's "Static_Flat")
 		results, err := orch.Search(ctx, `title contains "Flat"`, nil)
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
 		if len(results) != 2 {
-			t.Errorf("expected 2 results (flat_file, custom_single), got %d", len(results))
+			t.Errorf("expected 2 results (flat_file, custom_single/Static_Flat), got %d", len(results))
 		}
 
 		// Search tag membership
@@ -335,7 +335,7 @@ servers:
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
-		if len(results) != 1 || results[0].Repository != "custom_single" {
+		if len(results) != 1 || results[0].Vault != "custom_single" {
 			t.Errorf("expected 1 result from custom_single, got %v", results)
 		}
 

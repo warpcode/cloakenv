@@ -58,11 +58,12 @@ type SearchQuery struct {
 	Path  string
 }
 
-// SearchResult wraps a found entry with repository and location details.
+// SearchResult wraps a found entry with provider type, vault name, and location details.
 type SearchResult struct {
-	Repository string `json:"repository" yaml:"repository"`
-	Path       string `json:"path" yaml:"path"`
-	Entry      Entry  `json:"entry" yaml:"entry"`
+	Provider string `json:"provider" yaml:"provider"`
+	Vault    string `json:"vault" yaml:"vault"`
+	Path     string `json:"path" yaml:"path"`
+	Entry    Entry  `json:"entry" yaml:"entry"`
 }
 
 // SearchableProvider is implemented by providers that support searching and entry retrieval.

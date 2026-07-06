@@ -98,7 +98,7 @@ A test KeePass database is provided for verification at `testdata/testDB.kdbx`.
    vaults:
      testdb:
        provider: "keepass"
-       database_path: "./testdata/testDB.kdbx"
+       vault_path: "./testdata/testDB.kdbx"
    ```
 
 2. **Authenticate with the test database**:
@@ -271,7 +271,7 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
   vaults:
     my_vault:
       provider: "keepass"
-      database_path: "~/secrets/personal.kdbx"
+      vault_path: "~/secrets/personal.kdbx"
       searchable: true
   ```
 * **Usage**:
@@ -293,7 +293,7 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
 * **Type**: Configured vault, read-only
 * **Description**: Reads static YAML files containing entries. Can be configured as a single-entity or multiple-entity vault.
 * **Configuration Settings**:
-  - `database_path` (required): File path to the YAML registry.
+  - `vault_path` (required): File path to the YAML registry.
   - `single_entity` (optional, defaults to `false`): If `true`, the YAML file is parsed as a flat key-value map representing a single entity.
   - `entity_name` (optional): The title used for search results when `single_entity` is `true`. Defaults to the file name or vault name.
   - `searchable` (optional, defaults to `true`): Excludes the vault from queries when set to `false`.
@@ -304,7 +304,7 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
   vaults:
     yaml_db:
       provider: "yaml"
-      database_path: "./testdata/test_entries.yaml"
+      vault_path: "./testdata/test_entries.yaml"
       entities_root_key: "entries"
   ```
 * **Usage**:
@@ -329,7 +329,7 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
   vaults:
     json_db:
       provider: "json"
-      database_path: "./testdata/test_hosts.json"
+      vault_path: "./testdata/test_hosts.json"
       entities_root_key: "hosts"
   ```
 * **Usage**:

@@ -38,9 +38,9 @@ type VaultConfig struct {
 	// Provider identifies the provider backend type (e.g., "keepass", "custom_vault").
 	Provider string `yaml:"provider"`
 
-	// DatabasePath is the filesystem path to the backend's data store
+	// VaultPath is the filesystem path to the backend's data store
 	// (e.g., the .kdbx file for keepass providers).
-	DatabasePath string `yaml:"database_path"`
+	VaultPath string `yaml:"vault_path"`
 
 	// EntitiesRootKey defines the dictionary key under which entries are listed in the YAML/JSON database.
 	// Optional. Defaults to "entities" or "entries". Use "." to map directly to the root of the database file.
@@ -106,9 +106,9 @@ func Load(path string) (*Config, error) {
 		cfg.Vaults = make(map[string]VaultConfig)
 	}
 
-	// Expand ~ in all vault database paths
+	// Expand ~ in all vault paths
 	for name, vault := range cfg.Vaults {
-		vault.DatabasePath = expandHome(vault.DatabasePath)
+		vault.VaultPath = expandHome(vault.VaultPath)
 		cfg.Vaults[name] = vault
 	}
 

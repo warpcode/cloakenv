@@ -7,4 +7,4 @@ keyring:
 providers:
   testdb:
     provider: "keepass"
-    # database_path is omitted here to trigger a validation error
+    # vault_path is omitted here to trigger a validation error

@@ -42,7 +42,7 @@ keyring:
 vaults:
   keepass:
     provider: keepass
-    database_path: ~/secrets.kdbx
+    vault_path: ~/secrets.kdbx
     entities_root_key: entries
     searchable: false
     single_entity: false
@@ -78,10 +78,10 @@ vaults:
 		t.Errorf("expected provider 'keepass', got %q", vault.Provider)
 	}
 
-	// Verify expandHome was called on database_path
+	// Verify expandHome was called on vault_path
 	expectedPath := filepath.Join(mockHome, "secrets.kdbx")
-	if vault.DatabasePath != expectedPath {
-		t.Errorf("expected expanded path %q, got %q", expectedPath, vault.DatabasePath)
+	if vault.VaultPath != expectedPath {
+		t.Errorf("expected expanded path %q, got %q", expectedPath, vault.VaultPath)
 	}
 
 	if vault.Searchable == nil || *vault.Searchable != false {

@@ -44,7 +44,7 @@ entries:
 	ctx := context.Background()
 	cfg := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": yamlPath,
+			"vault_path": yamlPath,
 		},
 	}
 
@@ -131,8 +131,8 @@ hosts:
 	ctx := context.Background()
 	cfg1 := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": hostsPath,
-			"entries_key":   "hosts",
+			"vault_path":  hostsPath,
+			"entries_key": "hosts",
 		},
 	}
 	if err := yp1.Initialize(ctx, cfg1); err != nil {
@@ -162,8 +162,8 @@ ssh_root:
 	yp2 := NewYamlProvider()
 	cfg2 := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": rootPath,
-			"entries_key":   ".",
+			"vault_path":  rootPath,
+			"entries_key": ".",
 		},
 	}
 	if err := yp2.Initialize(ctx, cfg2); err != nil {
@@ -182,8 +182,8 @@ ssh_root:
 	yp3 := NewYamlProvider()
 	cfg3 := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": rootPath,
-			"entries_key":   "hosts",
+			"vault_path":  rootPath,
+			"entries_key": "hosts",
 		},
 	}
 	if err := yp3.Initialize(ctx, cfg3); err != nil {
@@ -226,7 +226,7 @@ list:
 	isTrue := true
 	cfg := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": yamlPath,
+			"vault_path": yamlPath,
 		},
 		SingleEntity:    &isTrue,
 		EntitiesRootKey: ".",

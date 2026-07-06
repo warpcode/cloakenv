@@ -98,8 +98,8 @@ func BenchmarkSearch(b *testing.B) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"bench": {
-				Provider:     "yaml",
-				DatabasePath: yamlPath,
+				Provider:  "yaml",
+				VaultPath: yamlPath,
 			},
 		},
 	}
