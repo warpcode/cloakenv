@@ -66,6 +66,7 @@ vaults:
   #         entry show "custom_single://my_static_vault"
   custom_single:
     provider: "custom_vault"
+    searchable: true
     entities:
       my_static_vault:
         secret_key: "secret_value"
