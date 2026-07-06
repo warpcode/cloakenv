@@ -10,6 +10,10 @@ import (
 // It reads values directly from the current process environment.
 // Designed for headless servers and CI pipelines where keyring access
 // is unavailable.
+//
+// EnvProvider is intentionally non-searchable: enumerating all environment
+// variables in search results would expose unrelated process state and
+// system internals. It does not implement SearchableProvider.
 type EnvProvider struct{}
 
 // NewEnvProvider returns a new environment variable provider instance.

@@ -75,6 +75,16 @@ type SearchableProvider interface {
 	GetEntry(ctx context.Context, location string) (Entry, error)
 }
 
+// ValueResolvableProvider is implemented by providers that support the
+// resolve_values config flag. When a provider implements this interface,
+// the engine gates URI resolution of attribute values on the flag; when it
+// does not, the engine resolves URI values unconditionally (legacy default).
+type ValueResolvableProvider interface {
+	// SupportsValueResolution returns true, confirming the provider honours
+	// the resolve_values config option.
+	SupportsValueResolution() bool
+}
+
 // ContextKey represents a custom type for context values to avoid collisions.
 type ContextKey string
 

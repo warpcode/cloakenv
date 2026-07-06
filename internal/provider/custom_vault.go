@@ -70,6 +70,12 @@ func (c *CustomVaultProvider) Validate(_ map[string]string) error {
 	return nil
 }
 
+// SupportsValueResolution implements ValueResolvableProvider, opting this
+// provider into gated URI resolution of attribute values via resolve_values.
+func (c *CustomVaultProvider) SupportsValueResolution() bool {
+	return true
+}
+
 // GetEntry retrieves a complete structured entry by location.
 func (c *CustomVaultProvider) GetEntry(_ context.Context, location string) (Entry, error) {
 	entity, ok := c.entities[location]

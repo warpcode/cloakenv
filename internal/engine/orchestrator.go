@@ -63,6 +63,21 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 
 	// Validate vault configurations
 	for vaultName, vault := range cfg.Vaults {
+		if _, isBuiltin := o.builtins[vaultName]; isBuiltin {
+			return nil, fmt.Errorf("invalid config: vault name %q conflicts with built-in scheme", vaultName)
+		}
+
+		// If resolve_values is set, ask the provider whether it supports it.
+		if vault.ResolveValues {
+			p, err := newBareProvider(vault.Provider)
+			if err != nil {
+				return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
+			}
+			if _, ok := p.(provider.ValueResolvableProvider); !ok {
+				return nil, fmt.Errorf("invalid config for vault %q: provider %q does not support resolve_values", vaultName, vault.Provider)
+			}
+		}
+
 		switch vault.Provider {
 		case "keepass":
 			if vault.SingleEntity != nil && *vault.SingleEntity {
@@ -175,9 +190,28 @@ func (o *Orchestrator) resolveRecursive(ctx context.Context, uri string, depth i
 		}
 	}
 
-	// If the value retrieved looks like a URI, recursively resolve it
 	if strings.Contains(val, "://") {
-		return o.resolveRecursive(ctx, val, depth+1)
+		shouldResolve := true
+
+		if _, isBuiltin := o.builtins[scheme]; !isBuiltin {
+			// For vault providers: ask the cached provider whether it gates
+			// value resolution. If it implements ValueResolvableProvider it
+			// expects the engine to honour the resolve_values flag; otherwise
+			// we fall through and resolve unconditionally (legacy behaviour).
+			o.mu.Lock()
+			p, cached := o.vaultCache[scheme]
+			o.mu.Unlock()
+
+			if cached {
+				if _, ok := p.(provider.ValueResolvableProvider); ok {
+					shouldResolve = o.config.Vaults[scheme].ResolveValues
+				}
+			}
+		}
+
+		if shouldResolve {
+			return o.resolveRecursive(ctx, val, depth+1)
+		}
 	}
 
 	return val, nil
@@ -388,11 +422,25 @@ func (o *Orchestrator) getSearchableProviders(ctx context.Context, repoScopes []
 			if repoScope == "" {
 				continue
 			}
-			p, err := o.getVaultProvider(ctx, repoScope)
-			if err != nil {
-				return nil, err
+
+			var p provider.SecretProvider
+			var vaultConfig config.VaultConfig
+			var hasVault bool
+
+			if builtin, ok := o.builtins[repoScope]; ok {
+				if err := o.ensureInitialized(ctx, repoScope, builtin); err != nil {
+					return nil, err
+				}
+				p = builtin
+			} else {
+				var err error
+				p, err = o.getVaultProvider(ctx, repoScope)
+				if err != nil {
+					return nil, err
+				}
+				vaultConfig, hasVault = o.config.Vaults[repoScope]
 			}
-			vaultConfig, hasVault := o.config.Vaults[repoScope]
+
 			if hasVault && vaultConfig.Searchable != nil && !*vaultConfig.Searchable {
 				return nil, fmt.Errorf("vault %q is not searchable", repoScope)
 			}
@@ -1027,4 +1075,22 @@ func parseURI(uri string) (string, string, error) {
 func (o *Orchestrator) CheckAccess(ctx context.Context, vaultName string) error {
 	_, err := o.getVaultProvider(ctx, vaultName)
 	return err
+}
+
+// newBareProvider creates an uninitialized provider instance for capability
+// probing (e.g. interface assertions) without performing any I/O or
+// initialization. It mirrors the type switch in initVaultProvider.
+func newBareProvider(providerType string) (provider.SecretProvider, error) {
+	switch providerType {
+	case "keepass":
+		return provider.NewKeePassProvider(), nil
+	case "yaml":
+		return provider.NewYamlProvider(), nil
+	case "json":
+		return provider.NewJsonProvider(), nil
+	case "custom_vault":
+		return provider.NewCustomVaultProvider(), nil
+	default:
+		return nil, fmt.Errorf("unsupported provider type %q", providerType)
+	}
 }

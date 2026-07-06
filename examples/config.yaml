@@ -51,14 +51,17 @@ vaults:
     entity_name: "Local Dotenv File"
     tags: [env:dev, local]
 
-  # Defines the custom_static:// URI scheme using inline config values
-  # Useful for testing or statically configured fallback lists
+  # Defines the custom_static:// URI scheme using inline config values.
+  # Useful for testing or statically configured fallback lists.
+  # resolve_values: true enables URI resolution for attribute values — whole-value only.
+  # Example: Password below is resolved from custom_single://my_static_vault:secret_key
   custom_static:
     provider: "custom_vault"
+    resolve_values: true
     entities:
       custom1:
         username: "custom_user"
-        Password: "custom_password"
+        Password: "custom_single://my_static_vault:secret_key"
         tags: [testing, static]
 
   # Defines the custom_single:// URI scheme using a single named entity

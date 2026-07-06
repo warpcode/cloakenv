@@ -63,6 +63,13 @@ type VaultConfig struct {
 
 	// Entities holds inline entities for custom_vault (SingleEntity: false).
 	Entities map[string]map[string]any `yaml:"entities"`
+
+	// ResolveValues enables URI resolution for attribute values within this vault.
+	// When true, any attribute value that is a valid URI referencing a registered
+	// scheme is resolved recursively (up to depth 5) before being returned.
+	// Only whole-value replacement is supported; inline interpolation is not.
+	// Defaults to false.
+	ResolveValues bool `yaml:"resolve_values"`
 }
 
 // DefaultConfigPath returns the default configuration file path:

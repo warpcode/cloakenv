@@ -355,3 +355,175 @@ servers:
 		}
 	})
 }
+
+// TestResolveValues verifies that the resolve_values vault config flag
+// gates URI resolution of attribute values.
+func TestResolveValues(t *testing.T) {
+	ctx := context.Background()
+
+	// vault_b holds a plain secret value.
+	// vault_a holds an attribute whose value is a URI pointing into vault_b.
+	boolPtr := func(b bool) *bool { return &b }
+
+	makeConfig := func(resolveValues bool) *config.Config {
+		return &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"vault_a": {
+					Provider:      "custom_vault",
+					ResolveValues: resolveValues,
+					Entities: map[string]map[string]any{
+						"entity1": {
+							"Password": "vault_b://entry1:secret",
+						},
+					},
+				},
+				"vault_b": {
+					Provider:     "custom_vault",
+					Searchable:   boolPtr(true),
+					Entities: map[string]map[string]any{
+						"entry1": {
+							"secret": "resolved_value",
+						},
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("ResolveValues_On", func(t *testing.T) {
+		orch, err := NewOrchestrator(makeConfig(true))
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		val, err := orch.Resolve(ctx, "vault_a://entity1:Password")
+		if err != nil {
+			t.Fatalf("Resolve failed: %v", err)
+		}
+		if val != "resolved_value" {
+			t.Errorf("expected resolved_value, got %q", val)
+		}
+	})
+
+	t.Run("ResolveValues_Off", func(t *testing.T) {
+		orch, err := NewOrchestrator(makeConfig(false))
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		val, err := orch.Resolve(ctx, "vault_a://entity1:Password")
+		if err != nil {
+			t.Fatalf("Resolve failed: %v", err)
+		}
+		// Should return the raw URI string, not the resolved secret.
+		if val != "vault_b://entry1:secret" {
+			t.Errorf("expected raw URI, got %q", val)
+		}
+	})
+
+	t.Run("ResolveValues_CircularReference", func(t *testing.T) {
+		// vault_c.entry references vault_c itself — forms a cycle.
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"vault_c": {
+					Provider:      "custom_vault",
+					ResolveValues: true,
+					Entities: map[string]map[string]any{
+						"entry": {
+							"Password": "vault_c://entry:Password",
+						},
+					},
+				},
+			},
+		}
+
+		orch, err := NewOrchestrator(cfg)
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		_, err = orch.Resolve(ctx, "vault_c://entry:Password")
+		if err == nil {
+			t.Error("expected error due to circular reference, got nil")
+		}
+		if !strings.Contains(err.Error(), "max depth") {
+			t.Errorf("expected max depth error, got: %v", err)
+		}
+	})
+
+	t.Run("ResolveValues_RejectedOnNonCustomVault", func(t *testing.T) {
+		// resolve_values must be rejected at startup for non-custom_vault providers.
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"bad_yaml": {
+					Provider:      "yaml",
+					VaultPath:     "/tmp/irrelevant.yaml",
+					ResolveValues: true,
+				},
+			},
+		}
+
+		_, err := NewOrchestrator(cfg)
+		if err == nil {
+			t.Fatal("expected error for resolve_values on yaml provider, got nil")
+		}
+		if !strings.Contains(err.Error(), "resolve_values") {
+			t.Errorf("expected resolve_values error, got: %v", err)
+		}
+	})
+}
+
+// TestBuiltinsNonSearchable verifies that built-in schemes (env, keyring, cache)
+// are not searchable by default and cannot be registered as vault names.
+func TestBuiltinsNonSearchable(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("CollisionValidation", func(t *testing.T) {
+		// Vault configuration trying to use a built-in name "env"
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"env": {
+					Provider: "custom_vault",
+				},
+			},
+		}
+
+		_, err := NewOrchestrator(cfg)
+		if err == nil {
+			t.Fatal("expected error when vault name conflicts with built-in scheme, got nil")
+		}
+		if !strings.Contains(err.Error(), "conflicts with built-in scheme") {
+			t.Errorf("expected conflict error, got: %v", err)
+		}
+	})
+
+	t.Run("SearchErrorOnBuiltins", func(t *testing.T) {
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{},
+		}
+
+		orch, err := NewOrchestrator(cfg)
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Searching with "env" scope should fail and tell the user it doesn't support searching.
+		_, err = orch.Search(ctx, `title == "test"`, []string{"env"})
+		if err == nil {
+			t.Fatal("expected error searching env, got nil")
+		}
+		if !strings.Contains(err.Error(), "does not support searching") {
+			t.Errorf("expected 'does not support searching' error, got: %v", err)
+		}
+
+		// Searching with "keyring" scope should fail similarly.
+		_, err = orch.Search(ctx, `title == "test"`, []string{"keyring"})
+		if err == nil {
+			t.Fatal("expected error searching keyring, got nil")
+		}
+		if !strings.Contains(err.Error(), "does not support searching") {
+			t.Errorf("expected 'does not support searching' error, got: %v", err)
+		}
+	})
+}
+
