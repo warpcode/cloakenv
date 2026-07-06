@@ -39,6 +39,30 @@ make build
 ```
 This produces a binary executable at `bin/cloakenv`.
 
+### Installing the Binary
+
+To install the binary globally (by default to `/usr/local/bin`):
+```bash
+sudo make install
+```
+
+If you prefer to install it to a user-owned directory without using `sudo` (e.g., `~/.local/bin`):
+```bash
+make install PREFIX=$HOME/.local
+```
+
+### Uninstalling the Binary
+
+To uninstall the binary from the default location:
+```bash
+sudo make uninstall
+```
+
+Or from a custom prefix:
+```bash
+make uninstall PREFIX=$HOME/.local
+```
+
 ### Linting and Formatting
 
 To format the Go files and run static analysis checks:

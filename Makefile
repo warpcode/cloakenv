@@ -1,7 +1,9 @@
-.PHONY: all build run test clean fmt vet
+.PHONY: all build run test clean fmt vet install uninstall
 
 BINARY_NAME=cloakenv
 BUILD_DIR=bin
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
 
 all: build
 
@@ -23,3 +25,11 @@ fmt:
 
 vet:
 	go vet ./...
+
+install: build
+	mkdir -p $(DESTDIR)$(BINDIR)
+	install -m 755 $(BUILD_DIR)/$(BINARY_NAME) $(DESTDIR)$(BINDIR)/$(BINARY_NAME)
+
+uninstall:
+	rm -f $(DESTDIR)$(BINDIR)/$(BINARY_NAME)
+
