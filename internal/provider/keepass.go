@@ -39,6 +39,10 @@ func (k *KeePassProvider) Scheme() string {
 //   - "keyring_prefix": service name prefix for keyring
 //   - "force_prompt": "true" to force prompting for password
 func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
+	if cfg.SingleEntity != nil && *cfg.SingleEntity {
+		return errors.New("keepass provider: cannot be configured as a single-entity vault")
+	}
+
 	dbPath := cfg.Settings["database_path"]
 	if dbPath == "" {
 		return errors.New("keepass provider: database_path is required")

@@ -95,12 +95,12 @@ func main() {
 			os.Exit(1)
 		}
 	case "auth":
-		if hasHelpFlag(os.Args[2:]) && (len(os.Args) < 3 || (os.Args[2] != "login" && os.Args[2] != "forget")) {
+		if hasHelpFlag(os.Args[2:]) && (len(os.Args) < 3 || (os.Args[2] != "login" && os.Args[2] != "forget" && os.Args[2] != "status")) {
 			printAuthHelp()
 			os.Exit(0)
 		}
 		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "Usage: cloakenv auth <login|forget> <scheme>")
+			fmt.Fprintln(os.Stderr, "Usage: cloakenv auth <login|forget|status> [vault]")
 			os.Exit(1)
 		}
 		switch os.Args[2] {
@@ -108,6 +108,8 @@ func main() {
 			os.Exit(cmdAuthLogin(os.Args[3:]))
 		case "forget":
 			os.Exit(cmdAuthForget(os.Args[3:]))
+		case "status":
+			os.Exit(cmdAuthStatus(os.Args[3:]))
 		default:
 			fmt.Fprintf(os.Stderr, "Unknown auth subcommand: %s\n", os.Args[2])
 			os.Exit(1)
@@ -651,7 +653,7 @@ func cmdEntryShow(args []string) int {
 	return 0
 }
 
-// cmdEntrySearch handles "cloakenv entry search [query] [--repo <repo> ...] [-i KEY ...] [--json | --yaml]"
+// cmdEntrySearch handles "cloakenv entry search [query] [--vault <vault> ...] [-i KEY ...] [--json | --yaml]"
 func cmdEntrySearch(args []string) int {
 	if hasHelpFlag(args) {
 		printEntrySearchHelp()
@@ -702,9 +704,9 @@ func parseEntrySearchArgs(args []string) (query string, repoScopes []string, sel
 		} else if args[i] == "--yaml" {
 			outputJSON = false
 			i++
-		} else if args[i] == "--repo" {
+		} else if args[i] == "--vault" {
 			if i+1 >= len(args) {
-				return "", nil, nil, false, fmt.Errorf("flag --repo requires an argument")
+				return "", nil, nil, false, fmt.Errorf("flag --vault requires an argument")
 			}
 			repoScopes = append(repoScopes, args[i+1])
 			i += 2
@@ -718,7 +720,7 @@ func parseEntrySearchArgs(args []string) (query string, repoScopes []string, sel
 			return "", nil, nil, false, fmt.Errorf("unknown flag: %s", args[i])
 		} else {
 			if query != "" {
-				return "", nil, nil, false, fmt.Errorf("usage: cloakenv entry search [query] [--repo <repo> ...] [-i KEY ...] [--json | --yaml]")
+				return "", nil, nil, false, fmt.Errorf("usage: cloakenv entry search [query] [--vault <vault> ...] [-i KEY ...] [--json | --yaml]")
 			}
 			query = args[i]
 			i++
@@ -821,7 +823,7 @@ Usage:
   cloakenv [-c config_path] delete <uri>
   cloakenv [-c config_path] cache clear
   cloakenv [-c config_path] entry <show|search> [args]
-  cloakenv [-c config_path] auth <login|forget> <scheme>
+  cloakenv [-c config_path] auth <login|forget|status> [vault]
 
 Commands:
   run     Wrap a binary with injected environment variables
@@ -831,7 +833,7 @@ Commands:
   delete  Remove a secret from a writable URI (keyring://, cache://)
   cache   Manage local encrypted cache (subcommand: clear)
   entry   Manage structured entries and tags (subcommands: show, search)
-  auth    Manage remote provider credentials (subcommands: login, forget)
+  auth    Manage vault credentials and status (subcommands: login, forget, status)
 
 Flags:
   -c config_path  Custom configuration file path (global flag)
@@ -841,7 +843,7 @@ Flags:
   -i KEY          Filter/whitelist keys/variables (repeatable)
   --json          Output resolved values as JSON (list/entry search only)
   --yaml          Output resolved values as YAML (entry commands only, default)
-  --repo repo     Scope entry search to a specific repository (repeatable)
+  --vault vault   Scope entry search to a specific vault (repeatable)
   --ttl duration  Expiration duration for cache entries (e.g. 5m, 1h, set only)
 
 URI schemes:
@@ -849,7 +851,7 @@ URI schemes:
   env://VARIABLE_NAME          Built-in: read from current process environment (read-only)
   cache://KEY                  Built-in: local file cache (AES-GCM encrypted, key in OS keyring)
   search://query/attribute     Built-in: resolve dynamically matched credentials
-  <remote>://Path/To/Entry     Config-defined: resolved via ~/.config/cloakenv/config.yaml`)
+  <vault>://Path/To/Entry      Config-defined: resolved via ~/.config/cloakenv/config.yaml`)
 }
 
 func printUsageStdout() {
@@ -863,7 +865,7 @@ Usage:
   cloakenv [-c config_path] delete <uri>
   cloakenv [-c config_path] cache clear
   cloakenv [-c config_path] entry <show|search> [args]
-  cloakenv [-c config_path] auth <login|forget> <scheme>
+  cloakenv [-c config_path] auth <login|forget|status> [vault]
 
 Commands:
   run     Wrap a binary with injected environment variables
@@ -873,7 +875,7 @@ Commands:
   delete  Remove a secret from a writable URI (keyring://, cache://)
   cache   Manage local encrypted cache (subcommand: clear)
   entry   Manage structured entries and tags (subcommands: show, search)
-  auth    Manage remote provider credentials (subcommands: login, forget)
+  auth    Manage vault credentials and status (subcommands: login, forget, status)
 
 Flags:
   -c config_path  Custom configuration file path (global flag)
@@ -883,7 +885,7 @@ Flags:
   -i KEY          Filter/whitelist keys/variables (repeatable)
   --json          Output resolved values as JSON (list/entry search only)
   --yaml          Output resolved values as YAML (entry commands only, default)
-  --repo repo     Scope entry search to a specific repository (repeatable)
+  --vault vault   Scope entry search to a specific vault (repeatable)
   --ttl duration  Expiration duration for cache entries (e.g. 5m, 1h, set only)
 
 URI schemes:
@@ -891,7 +893,7 @@ URI schemes:
   env://VARIABLE_NAME          Built-in: read from current process environment (read-only)
   cache://KEY                  Built-in: local file cache (AES-GCM encrypted, key in OS keyring)
   search://query/attribute     Built-in: resolve dynamically matched credentials
-  <remote>://Path/To/Entry     Config-defined: resolved via ~/.config/cloakenv/config.yaml`)
+  <vault>://Path/To/Entry      Config-defined: resolved via ~/.config/cloakenv/config.yaml`)
 }
 
 func hasHelpFlag(args []string) bool {
@@ -1022,7 +1024,7 @@ Flags:
 
 func printEntrySearchHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv entry search [query] [--repo <repo> ...] [-i KEY ...] [--json | --yaml]
+  cloakenv entry search [query] [--vault <vault> ...] [-i KEY ...] [--json | --yaml]
 
 Description:
   Search for structured entries matching the query.
@@ -1031,7 +1033,7 @@ Arguments:
   [query]         Optional query string to filter entries by title, tags, or fields
 
 Flags:
-  --repo repo     Scope entry search to a specific repository (repeatable)
+  --vault vault   Scope entry search to a specific vault (repeatable)
   -i KEY          Select output fields/keys to return (repeatable)
   --json          Output search results as JSON format
   --yaml          Output search results as YAML format (default)`)
@@ -1039,34 +1041,99 @@ Flags:
 
 func printAuthHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv auth <login|forget> <scheme>
+  cloakenv auth <login|forget|status> [vault]
 
 Description:
-  Manage remote provider credentials.
+  Manage vault authentication and status.
 
 Subcommands:
-  login           Authenticate and save credentials for a scheme
-  forget          Clear credentials for a scheme`)
+  login           Authenticate and save credentials for a vault
+  forget          Clear credentials for a vault
+  status          Check if configured vaults are active and accessible`)
 }
 
 func printAuthLoginHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv auth login <scheme>
+  cloakenv auth login <vault>
 
 Description:
-  Authenticate and save credentials for a provider scheme.
+  Authenticate and save credentials for a vault.
 
 Arguments:
-  <scheme>        The scheme of the remote provider (e.g., op, bw, keepass)`)
+  <vault>         The name of the vault (e.g., work, home)`)
 }
 
 func printAuthForgetHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv auth forget <scheme>
+  cloakenv auth forget <vault>
 
 Description:
-  Clear credentials for a provider scheme.
+  Clear credentials for a vault.
 
 Arguments:
-  <scheme>        The scheme of the remote provider (e.g., op, bw, keepass)`)
+  <vault>         The name of the vault (e.g., work, home)`)
+}
+
+func printAuthStatusHelp() {
+	fmt.Fprintln(os.Stdout, `Usage:
+  cloakenv auth status [vault]
+
+Description:
+  Check if configured vaults are active and accessible.
+
+Arguments:
+  [vault]         Optional name of the vault to check`)
+}
+
+// cmdAuthStatus handles "cloakenv auth status [vault]".
+func cmdAuthStatus(args []string) int {
+	if hasHelpFlag(args) {
+		printAuthStatusHelp()
+		return 0
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
+		return 1
+	}
+
+	orch, err := engine.NewOrchestrator(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
+		return 1
+	}
+	ctx := context.Background()
+
+	if len(args) > 0 {
+		vaultName := args[0]
+		err := orch.CheckAccess(ctx, vaultName)
+		if err != nil {
+			fmt.Printf("%s: ERROR: %v\n", vaultName, err)
+			return 1
+		}
+		fmt.Printf("%s: ACTIVE\n", vaultName)
+		return 0
+	}
+
+	if len(cfg.Vaults) == 0 {
+		fmt.Println("No vaults configured.")
+		return 0
+	}
+
+	hasError := false
+	for vaultName := range cfg.Vaults {
+		err := orch.CheckAccess(ctx, vaultName)
+		if err != nil {
+			fmt.Printf("%s: ERROR: %v\n", vaultName, err)
+			hasError = true
+		} else {
+			fmt.Printf("%s: ACTIVE\n", vaultName)
+		}
+	}
+
+	if hasError {
+		return 1
+	}
+	return 0
 }

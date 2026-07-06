@@ -38,7 +38,7 @@ func BenchmarkBuildEnv(b *testing.B) {
 	// Create Orchestrator with empty config to avoid validation errors.
 	// Empty providers map: NewOrchestrator requires a non-nil map but no providers are needed for this benchmark.
 	cfg := &config.Config{
-		Providers: make(map[string]config.ProviderConfig),
+		Vaults: make(map[string]config.VaultConfig),
 	}
 
 	o, err := NewOrchestrator(cfg)
@@ -96,7 +96,7 @@ func BenchmarkSearch(b *testing.B) {
 	}
 
 	cfg := &config.Config{
-		Providers: map[string]config.ProviderConfig{
+		Vaults: map[string]config.VaultConfig{
 			"bench": {
 				Provider:     "yaml",
 				DatabasePath: yamlPath,

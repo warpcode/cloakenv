@@ -11,37 +11,63 @@ keyring:
   # The service prefix used in the OS keyring for master passwords & tokens
   prefix: "cloakenv"
 
-# Custom provider definitions. Each mapping key becomes a custom URI scheme.
-# Supported provider types: keepass, json, yaml
-providers:
-  # Defines the work:// URI scheme (KeePass provider)
+# Custom vault definitions. Each mapping key becomes a custom URI scheme (ref).
+# Supported provider types: keepass, json, yaml, custom_vault
+vaults:
+  # Defines the work:// URI scheme (KeePass provider, multiple-entity by default)
   work:
     provider: "keepass"
     database_path: "~/secrets/work_vault.kdbx"
 
-  # Defines the home:// URI scheme (KeePass provider)
+  # Defines the home:// URI scheme (KeePass provider, excluded from dynamic searches)
   home:
     provider: "keepass"
     database_path: "~/secrets/personal_vault.kdbx"
+    searchable: false
 
   # Defines the json_dev:// URI scheme (JSON static file provider)
   json_dev:
     provider: "json"
     database_path: "./examples/providers/json/database.json"
-    # entries_key defaults to "entries". Use "." to map directly to the root of the file.
-    entries_key: "entries"
+    # entities_root_key defaults to "entities" or "entries". Use "." to map directly to the root of the file.
+    entities_root_key: "entities"
 
   # Defines the yaml_dev:// URI scheme (YAML static file provider)
   yaml_dev:
     provider: "yaml"
     database_path: "./examples/providers/yaml/database.yaml"
-    # entries_key defaults to "entries". Use "." to map directly to the root of the file.
-    entries_key: "entries"
+    entities_root_key: "entities"
 
-# Note on Built-in Providers:
-# The following schemes are built-in and do not need to be registered in the 'providers' block:
+  # Defines the dotenv_dev:// URI scheme (flat single-entity YAML database example)
+  # Defaults to single_entity: true because no entities_root_key is configured
+  dotenv_dev:
+    provider: "yaml"
+    database_path: "./.env.yaml"
+    entity_name: "Local Dotenv File"
+    tags: [env:dev, local]
+
+  # Defines the custom_static:// URI scheme using inline config values
+  # Useful for testing or statically configured fallback lists
+  custom_static:
+    provider: "custom_vault"
+    entities:
+      custom1:
+        username: "custom_user"
+        Password: "custom_password"
+
+  # Defines the custom_single:// URI scheme using flat inline config values
+  custom_single:
+    provider: "custom_vault"
+    single_entity: true
+    entity_name: "My Static Vault"
+    tags: [static, local]
+    attributes:
+      secret_key: "secret_value"
+
+# Note on Built-in Vaults:
+# The following schemes are built-in and do not need to be registered in the 'vaults' block:
 # - env://      (Resolves secret values from local environment variables, e.g. env://USER)
-# - keyring://  (Resolves secret values from the OS keyring/keychain using the service prefix, e.g. keyring://ssh/prod_pass)
+# - keyring://  (Resolves secret values from the OS keyring/keychain, e.g. keyring://ssh/prod_pass)
 # - cache://    (Resolves secret values from the secure in-memory cache daemon)
 #
 # Note on KeePass Authentication:
@@ -49,6 +75,9 @@ providers:
 # You must authenticate and save them securely in the keyring before use:
 #   cloakenv auth login work
 #   cloakenv auth login home
+#
+# To check vault accessibility status:
+#   cloakenv auth status
 #
 # To forget/clear stored credentials:
 #   cloakenv auth forget work

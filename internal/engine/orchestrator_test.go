@@ -54,7 +54,7 @@ entries:
 
 	// Create Orchestrator with mock config
 	cfg := &config.Config{
-		Providers: map[string]config.ProviderConfig{
+		Vaults: map[string]config.VaultConfig{
 			"my_repo": {
 				Provider:     "yaml",
 				DatabasePath: yamlPath,
@@ -170,4 +170,188 @@ func TestSearchURIEncoding(t *testing.T) {
 	if attr != "Password" {
 		t.Errorf("expected attribute 'Password', got %q", attr)
 	}
+}
+
+func TestOrchestratorVaultsAndSearch(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "cloakenv-vaults-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Write single_db.yaml content
+	singleDbContent := `
+title: "My Flat Secrets Database"
+tags: [env:prod, local]
+api_key: "super_secret_api_token"
+port: 8080
+metadata:
+  owner: "devops"
+  cluster: "us-east-1"
+servers:
+  - "bastion.example.com"
+  - "app.example.com"
+`
+	singleDbPath := filepath.Join(tempDir, "single_db.yaml")
+	if err := os.WriteFile(singleDbPath, []byte(singleDbContent), 0644); err != nil {
+		t.Fatalf("failed to write single db file: %v", err)
+	}
+
+	isTrue := true
+	isFalse := false
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"custom_static": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"custom1": {
+						"username": "custom_user",
+						"Password": "custom_password",
+					},
+				},
+			},
+			"custom_single": {
+				Provider:     "custom_vault",
+				SingleEntity: &isTrue,
+				EntityName:   "Static Flat Keys",
+				Tags:         []string{"static", "local"},
+				Attributes: map[string]any{
+					"db_user": "postgres",
+					"db_port": 5432,
+				},
+			},
+			"flat_file": {
+				Provider:     "yaml",
+				DatabasePath: singleDbPath,
+				SingleEntity: &isTrue,
+				EntityName:   "Prod Flat File",
+				Tags:         []string{"flat", "prod"},
+			},
+			"non_searchable": {
+				Provider:   "custom_vault",
+				Searchable: &isFalse,
+				Entities: map[string]map[string]any{
+					"secret_entry": {
+						"Password": "hidden_pass",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// 1. Verify CheckAccess
+	t.Run("CheckAccess", func(t *testing.T) {
+		for _, vaultName := range []string{"custom_static", "custom_single", "flat_file", "non_searchable"} {
+			if err := orch.CheckAccess(ctx, vaultName); err != nil {
+				t.Errorf("expected access to vault %q, got error: %v", vaultName, err)
+			}
+		}
+
+		if err := orch.CheckAccess(ctx, "non_existent"); err == nil {
+			t.Error("expected error for non_existent vault access, got nil")
+		}
+	})
+
+	// 2. Verify Retrievals
+	t.Run("RetrieveSecrets", func(t *testing.T) {
+		// Custom static default Password
+		val, err := orch.Resolve(ctx, "custom_static://custom1")
+		if err != nil || val != "custom_password" {
+			t.Errorf("expected 'custom_password', got: %v (err: %v)", val, err)
+		}
+
+		// Custom static specific key
+		val, err = orch.Resolve(ctx, "custom_static://custom1:username")
+		if err != nil || val != "custom_user" {
+			t.Errorf("expected 'custom_user', got: %v (err: %v)", val, err)
+		}
+
+		// Custom single flat attributes
+		val, err = orch.Resolve(ctx, "custom_single://db_user")
+		if err != nil || val != "postgres" {
+			t.Errorf("expected 'postgres', got: %v (err: %v)", val, err)
+		}
+
+		// Flat file attributes
+		val, err = orch.Resolve(ctx, "flat_file://api_key")
+		if err != nil || val != "super_secret_api_token" {
+			t.Errorf("expected 'super_secret_api_token', got: %v (err: %v)", val, err)
+		}
+	})
+
+	// 3. Verify Serialization of structured values
+	t.Run("ValueSerialization", func(t *testing.T) {
+		// Metadata (should be serialized YAML)
+		val, err := orch.Resolve(ctx, "flat_file://metadata")
+		if err != nil {
+			t.Fatalf("failed to resolve metadata: %v", err)
+		}
+		expectedYAML := "cluster: us-east-1\nowner: devops"
+		if val != expectedYAML {
+			t.Errorf("expected serialized metadata YAML, got %q", val)
+		}
+
+		// Servers (should be serialized YAML array)
+		val, err = orch.Resolve(ctx, "flat_file://servers")
+		if err != nil {
+			t.Fatalf("failed to resolve servers: %v", err)
+		}
+		expectedArrayYAML := "- bastion.example.com\n- app.example.com"
+		if val != expectedArrayYAML {
+			t.Errorf("expected serialized servers YAML, got %q", val)
+		}
+	})
+
+	// 4. Verify Entry Structure and Searches
+	t.Run("EntryShowAndSearch", func(t *testing.T) {
+		// GetEntry for single entity flat file (ignores location, returns single entry)
+		entry, err := orch.GetEntry(ctx, "flat_file://")
+		if err != nil {
+			t.Fatalf("failed to GetEntry: %v", err)
+		}
+		if entry.Title != "Prod Flat File" {
+			t.Errorf("expected title 'Prod Flat File', got %q", entry.Title)
+		}
+
+		// Search title substring (matches both flat_file and custom_single)
+		results, err := orch.Search(ctx, `title contains "Flat"`, nil)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 results (flat_file, custom_single), got %d", len(results))
+		}
+
+		// Search tag membership
+		results, err = orch.Search(ctx, `"local" in tags`, nil)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 || results[0].Repository != "custom_single" {
+			t.Errorf("expected 1 result from custom_single, got %v", results)
+		}
+
+		// Search excluded non-searchable vault
+		results, err = orch.Search(ctx, `Password == "hidden_pass"`, nil)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("expected 0 results, got %d", len(results))
+		}
+
+		// Scoped search on non-searchable vault (should return error)
+		_, err = orch.Search(ctx, `Password == "hidden_pass"`, []string{"non_searchable"})
+		if err == nil || !strings.Contains(err.Error(), "is not searchable") {
+			t.Errorf("expected searchable error, got: %v", err)
+		}
+	})
 }

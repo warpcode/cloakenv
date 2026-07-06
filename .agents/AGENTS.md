@@ -26,7 +26,7 @@ cmd/cloakenv/main.go     # CLI entrypoint — keep thin; wire deps only
 internal/
   config/                # YAML config parser (no business logic)
   engine/                # Orchestrator core — resolves URIs, injects env
-  provider/              # Built-in & remote secret providers
+  provider/              # Built-in & custom secret vaults
 examples/                # Example databases and config.yaml
 testdata/                # Test fixtures (testDB.kdbx, YAML/JSON samples)
 Makefile                 # Build, test, fmt, vet, install targets
@@ -135,7 +135,7 @@ go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 run  # Full l
 Use [Conventional Commits](https://www.conventionalcommits.org/) format:
 
 ```
-feat(provider): add JSON provider with entries_key support
+feat(provider): add JSON provider with entities_root_key support
 fix(engine): handle missing URI scheme gracefully
 test(engine): add benchmark for concurrent URI resolution
 docs: update README with JSON provider usage
@@ -226,9 +226,9 @@ Formal PRs must be created using the `github-pull-requests` skill. Required PR f
 
 When adding a new secret provider, verify each item:
 
-- [ ] Implements `provider.Provider` interface in `internal/provider/<name>.go`
+- [ ] Implements `provider.SecretProvider` interface in `internal/provider/<name>.go`
 - [ ] Has a corresponding test file `internal/provider/<name>_test.go`
-- [ ] Registered in the engine's provider map with its URI scheme
+- [ ] Registered in the engine's vault provider map with its URI scheme
 - [ ] Documented in `README.md` with configuration snippet and usage examples
 - [ ] Added to `examples/config.yaml` with commented-out example block
 - [ ] Cross-platform — no OS-specific syscalls without build tags

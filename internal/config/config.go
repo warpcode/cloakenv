@@ -17,10 +17,10 @@ var userHomeDir = os.UserHomeDir
 // Config is the top-level configuration structure.
 type Config struct {
 	// ConfigPath is the absolute path to the configuration file.
-	ConfigPath string                    `yaml:"-"`
-	Cache      CacheConfig               `yaml:"cache"`
-	Keyring    KeyringConfig             `yaml:"keyring"`
-	Providers  map[string]ProviderConfig `yaml:"providers"`
+	ConfigPath string                 `yaml:"-"`
+	Cache      CacheConfig            `yaml:"cache"`
+	Keyring    KeyringConfig          `yaml:"keyring"`
+	Vaults     map[string]VaultConfig `yaml:"vaults"`
 }
 
 // CacheConfig holds cache-related configuration settings.
@@ -33,18 +33,36 @@ type KeyringConfig struct {
 	Prefix string `yaml:"prefix"`
 }
 
-// ProviderConfig defines a named remote secret provider backend.
-type ProviderConfig struct {
-	// Provider identifies the provider backend type (e.g., "keepass").
+// VaultConfig defines a named secret vault backend and its configuration options.
+type VaultConfig struct {
+	// Provider identifies the provider backend type (e.g., "keepass", "custom_vault").
 	Provider string `yaml:"provider"`
 
 	// DatabasePath is the filesystem path to the backend's data store
 	// (e.g., the .kdbx file for keepass providers).
 	DatabasePath string `yaml:"database_path"`
 
-	// EntriesKey defines the dictionary key under which entries are listed in the YAML/JSON database.
-	// Optional. Defaults to "entries". Use "." to map directly to the root of the database file.
-	EntriesKey string `yaml:"entries_key"`
+	// EntitiesRootKey defines the dictionary key under which entries are listed in the YAML/JSON database.
+	// Optional. Defaults to "entities" or "entries". Use "." to map directly to the root of the database file.
+	EntitiesRootKey string `yaml:"entities_root_key"`
+
+	// SingleEntity defines whether this vault holds a single entity/collection of attributes.
+	SingleEntity *bool `yaml:"single_entity"`
+
+	// EntityName represents the title of the single entity in search results.
+	EntityName string `yaml:"entity_name"`
+
+	// Searchable flags whether this vault is included in search results. Defaults to true.
+	Searchable *bool `yaml:"searchable"`
+
+	// Tags are labels applied to the single entity (if SingleEntity is true).
+	Tags []string `yaml:"tags"`
+
+	// Attributes holds inline key-value attributes for custom_vault (SingleEntity: true).
+	Attributes map[string]any `yaml:"attributes"`
+
+	// Entities holds inline entities for custom_vault (SingleEntity: false).
+	Entities map[string]map[string]any `yaml:"entities"`
 }
 
 // DefaultConfigPath returns the default configuration file path:
@@ -62,7 +80,7 @@ func DefaultConfigPath() (string, error) {
 // Returns an empty Config with initialized maps if the file does not exist.
 func Load(path string) (*Config, error) {
 	cfg := &Config{
-		Providers: make(map[string]ProviderConfig),
+		Vaults: make(map[string]VaultConfig),
 	}
 
 	absPath, err := filepath.Abs(path)
@@ -84,14 +102,14 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", path, err)
 	}
 
-	if cfg.Providers == nil {
-		cfg.Providers = make(map[string]ProviderConfig)
+	if cfg.Vaults == nil {
+		cfg.Vaults = make(map[string]VaultConfig)
 	}
 
-	// Expand ~ in all provider database paths
-	for name, prov := range cfg.Providers {
-		prov.DatabasePath = expandHome(prov.DatabasePath)
-		cfg.Providers[name] = prov
+	// Expand ~ in all vault database paths
+	for name, vault := range cfg.Vaults {
+		vault.DatabasePath = expandHome(vault.DatabasePath)
+		cfg.Vaults[name] = vault
 	}
 
 	return cfg, nil

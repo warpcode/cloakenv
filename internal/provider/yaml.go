@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -12,9 +13,10 @@ import (
 
 // YamlProvider implements SecretProvider and SearchableProvider for static YAML registries.
 type YamlProvider struct {
-	filePath   string
-	entries    map[string]Entry
-	rawContent map[string]any
+	filePath     string
+	entries      map[string]Entry
+	rawContent   map[string]any
+	singleEntity bool
 }
 
 // NewYamlProvider returns a new YamlProvider instance.
@@ -80,7 +82,6 @@ func (y *YamlProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 	}
 	y.filePath = dbPath
 	y.entries = make(map[string]Entry)
-
 	data, err := os.ReadFile(dbPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -99,27 +100,119 @@ func (y *YamlProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 	}
 	y.rawContent = raw
 
-	entriesKey := cfg.Settings["entries_key"]
-	if entriesKey == "" {
-		entriesKey = "entries"
+	// Determine singleEntity status: defaults to true if no entities root key is configured in Settings or config and database has no entries/entities root key.
+	if cfg.SingleEntity != nil {
+		y.singleEntity = *cfg.SingleEntity
+	} else {
+		_, hasEntities := raw["entities"]
+		_, hasEntries := raw["entries"]
+		hasRootKey := hasEntities || hasEntries
+		y.singleEntity = (cfg.EntitiesRootKey == "" && cfg.Settings["entities_root_key"] == "" && cfg.Settings["entries_key"] == "" && !hasRootKey)
 	}
 
+	entitiesRootKey := cfg.EntitiesRootKey
+	if entitiesRootKey == "" {
+		entitiesRootKey = cfg.Settings["entities_root_key"]
+	}
+	if entitiesRootKey == "" {
+		entitiesRootKey = cfg.Settings["entries_key"]
+	}
+	if entitiesRootKey == "" {
+		if y.singleEntity {
+			entitiesRootKey = "."
+		} else {
+			if _, ok := raw["entities"]; ok {
+				entitiesRootKey = "entities"
+			} else if _, ok := raw["entries"]; ok {
+				entitiesRootKey = "entries"
+			} else {
+				entitiesRootKey = "entities"
+			}
+		}
+	}
+
+	if y.singleEntity {
+		var attributesMap map[string]any
+		if entitiesRootKey == "." {
+			attributesMap = raw
+		} else {
+			val, ok := raw[entitiesRootKey]
+			if ok {
+				if m, ok := val.(map[string]any); ok {
+					attributesMap = m
+				} else if m2, ok := val.(map[any]any); ok {
+					attributesMap = make(map[string]any)
+					for k, v := range m2 {
+						attributesMap[fmt.Sprintf("%v", k)] = v
+					}
+				}
+			}
+		}
+		if attributesMap == nil {
+			attributesMap = make(map[string]any)
+		}
+
+		title := cfg.EntityName
+		if title == "" {
+			if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
+				title = vaultName
+			} else {
+				title = filepath.Base(dbPath)
+			}
+		}
+
+		tags := cfg.Tags
+		entry := Entry{
+			Title:      title,
+			Attributes: make(map[string]any),
+		}
+
+		for k, v := range attributesMap {
+			kLower := strings.ToLower(k)
+			if kLower == "tags" {
+				if len(tags) == 0 {
+					if tagSlice, ok := v.([]any); ok {
+						for _, t := range tagSlice {
+							if str, ok := t.(string); ok {
+								tags = append(tags, str)
+							}
+						}
+					} else if tagStr, ok := v.(string); ok {
+						tags = parseTags(tagStr)
+					}
+				}
+			} else if kLower == "title" {
+				if cfg.EntityName == "" {
+					if str, ok := v.(string); ok {
+						entry.Title = str
+					}
+				}
+			} else {
+				entry.Attributes[k] = v
+			}
+		}
+		entry.Tags = tags
+		y.entries[""] = entry
+		return nil
+	}
+
+	// Multiple entities
 	var rawEntries map[string]map[string]any
-	if entriesKey == "." {
+	if entitiesRootKey == "." {
 		var err error
 		rawEntries, err = convertToEntriesMap(raw)
 		if err != nil {
 			return fmt.Errorf("yaml provider: failed to parse root entries: %w", err)
 		}
 	} else {
-		val, ok := raw[entriesKey]
+		val, ok := raw[entitiesRootKey]
 		if !ok {
 			return nil
 		}
 		var err error
 		rawEntries, err = convertToEntriesMap(val)
 		if err != nil {
-			return fmt.Errorf("yaml provider: failed to parse entries under key %q: %w", entriesKey, err)
+			return fmt.Errorf("yaml provider: failed to parse entries under key %q: %w", entitiesRootKey, err)
 		}
 	}
 
@@ -210,6 +303,18 @@ func resolveDotPath(val any, path string) (any, error) {
 
 // GetSecret retrieves an attribute value from the static YAML entry registry using a dot path from the root.
 func (y *YamlProvider) GetSecret(_ context.Context, location string) (string, error) {
+	if y.singleEntity {
+		entry, ok := y.entries[""]
+		if !ok {
+			return "", fmt.Errorf("yaml provider: single entity not found")
+		}
+		val, err := resolveDotPath(entry.Attributes, location)
+		if err != nil {
+			return "", fmt.Errorf("yaml provider: failed to resolve path %q: %w", location, err)
+		}
+		return serializeYamlVal(val)
+	}
+
 	if y.rawContent == nil {
 		return "", fmt.Errorf("yaml provider: not initialized or empty database")
 	}
@@ -219,10 +324,7 @@ func (y *YamlProvider) GetSecret(_ context.Context, location string) (string, er
 		return "", fmt.Errorf("yaml provider: failed to resolve path %q: %w", location, err)
 	}
 
-	if str, ok := val.(string); ok {
-		return str, nil
-	}
-	return fmt.Sprintf("%v", val), nil
+	return serializeYamlVal(val)
 }
 
 // SetSecret returns an error because the YAML provider is read-only.
@@ -245,6 +347,14 @@ func (y *YamlProvider) Validate(settings map[string]string) error {
 
 // GetEntry retrieves a complete structured entry by location.
 func (y *YamlProvider) GetEntry(_ context.Context, location string) (Entry, error) {
+	if y.singleEntity {
+		entry, ok := y.entries[""]
+		if !ok {
+			return Entry{}, fmt.Errorf("yaml provider: single entity not found")
+		}
+		return entry, nil
+	}
+
 	entry, ok := y.entries[location]
 	if !ok {
 		return Entry{}, fmt.Errorf("yaml provider: entry %q not found", location)
@@ -256,6 +366,38 @@ func (y *YamlProvider) GetEntry(_ context.Context, location string) (Entry, erro
 func (y *YamlProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
 	var results []SearchResult
 
+	if y.singleEntity {
+		entry, ok := y.entries[""]
+		if !ok {
+			return nil, fmt.Errorf("yaml provider: single entity not found")
+		}
+
+		if query.Title != "" {
+			if !strings.Contains(strings.ToLower(entry.Title), strings.ToLower(query.Title)) {
+				return results, nil
+			}
+		}
+
+		if len(query.Tags) > 0 {
+			tagMap := make(map[string]bool)
+			for _, t := range entry.Tags {
+				tagMap[strings.ToLower(t)] = true
+			}
+			for _, qt := range query.Tags {
+				if !tagMap[strings.ToLower(qt)] {
+					return results, nil
+				}
+			}
+		}
+
+		results = append(results, SearchResult{
+			Path:  "",
+			Entry: entry,
+		})
+		return results, nil
+	}
+
+	// Multiple entities
 	for name, entry := range y.entries {
 		if query.Title != "" {
 			if !strings.Contains(strings.ToLower(entry.Title), strings.ToLower(query.Title)) {
@@ -294,3 +436,21 @@ func (y *YamlProvider) Search(_ context.Context, query SearchQuery) ([]SearchRes
 
 	return results, nil
 }
+
+// serializeYamlVal converts structured YAML data to string format.
+func serializeYamlVal(val any) (string, error) {
+	switch v := val.(type) {
+	case string:
+		return v, nil
+	case []any, map[string]any, map[any]any:
+		data, err := yaml.Marshal(v)
+		if err != nil {
+			return "", fmt.Errorf("yaml serialization failed: %w", err)
+		}
+		return strings.TrimSuffix(string(data), "\n"), nil
+	default:
+		return fmt.Sprintf("%v", v), nil
+	}
+}
+
+

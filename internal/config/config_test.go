@@ -29,8 +29,8 @@ func TestLoad(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("expected non-nil config for non-existent file")
 	}
-	if len(cfg.Providers) != 0 {
-		t.Errorf("expected 0 providers, got %d", len(cfg.Providers))
+	if len(cfg.Vaults) != 0 {
+		t.Errorf("expected 0 vaults, got %d", len(cfg.Vaults))
 	}
 
 	// 2. Test valid YAML file
@@ -39,11 +39,20 @@ cache:
   default_ttl: 1h
 keyring:
   prefix: test-
-providers:
+vaults:
   keepass:
     provider: keepass
     database_path: ~/secrets.kdbx
-    entries_key: entries
+    entities_root_key: entries
+    searchable: false
+    single_entity: false
+  custom_static:
+    provider: custom_vault
+    single_entity: true
+    entity_name: "Static Vault"
+    tags: [tag1, tag2]
+    attributes:
+      secret_key: secret_val
 `
 	configPath := filepath.Join(tempDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
@@ -61,18 +70,47 @@ providers:
 	if cfg.Keyring.Prefix != "test-" {
 		t.Errorf("expected prefix 'test-', got %q", cfg.Keyring.Prefix)
 	}
-	prov, ok := cfg.Providers["keepass"]
+	vault, ok := cfg.Vaults["keepass"]
 	if !ok {
-		t.Fatal("expected 'keepass' provider to exist")
+		t.Fatal("expected 'keepass' vault to exist")
 	}
-	if prov.Provider != "keepass" {
-		t.Errorf("expected provider 'keepass', got %q", prov.Provider)
+	if vault.Provider != "keepass" {
+		t.Errorf("expected provider 'keepass', got %q", vault.Provider)
 	}
 
 	// Verify expandHome was called on database_path
 	expectedPath := filepath.Join(mockHome, "secrets.kdbx")
-	if prov.DatabasePath != expectedPath {
-		t.Errorf("expected expanded path %q, got %q", expectedPath, prov.DatabasePath)
+	if vault.DatabasePath != expectedPath {
+		t.Errorf("expected expanded path %q, got %q", expectedPath, vault.DatabasePath)
+	}
+
+	if vault.Searchable == nil || *vault.Searchable != false {
+		t.Error("expected searchable to be false")
+	}
+
+	if vault.SingleEntity == nil || *vault.SingleEntity != false {
+		t.Error("expected single_entity to be false")
+	}
+
+	// Verify custom static vault parsing
+	staticVault, ok := cfg.Vaults["custom_static"]
+	if !ok {
+		t.Fatal("expected 'custom_static' vault to exist")
+	}
+	if staticVault.Provider != "custom_vault" {
+		t.Errorf("expected provider 'custom_vault', got %q", staticVault.Provider)
+	}
+	if staticVault.SingleEntity == nil || *staticVault.SingleEntity != true {
+		t.Error("expected custom_static single_entity to be true")
+	}
+	if staticVault.EntityName != "Static Vault" {
+		t.Errorf("expected entity_name 'Static Vault', got %q", staticVault.EntityName)
+	}
+	if len(staticVault.Tags) != 2 || staticVault.Tags[0] != "tag1" || staticVault.Tags[1] != "tag2" {
+		t.Errorf("expected tags [tag1, tag2], got %v", staticVault.Tags)
+	}
+	if val, ok := staticVault.Attributes["secret_key"]; !ok || val != "secret_val" {
+		t.Errorf("expected attributes to contain secret_key=secret_val, got %v", staticVault.Attributes)
 	}
 
 	// 3. Test invalid YAML file
