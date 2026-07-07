@@ -378,39 +378,21 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
 * **Description**: Configured completely inside the `config.yaml` file without any external database dependencies. Excellent for static key lists.
 * **Configuration Settings**:
   - `provider` (required): Must be set to `"custom_vault"`.
-  - `single_entity` (optional, defaults to `false`): If `true`, the vault holds a single flat list of attributes.
-  - `entity_name` (optional): Name of the single entity (if `single_entity` is `true`).
-  - `tags` (optional): List of tag strings applied to the single entity (if `single_entity` is `true`).
-  - `attributes` (optional): Inline map of key-value attributes (if `single_entity` is `true`).
-  - `entities` (optional): Inline map of named entities to their attribute maps (if `single_entity` is `false`).
+  - `entities` (optional): Inline map of named entities to their attribute maps.
   - `resolve_values` (optional, defaults to `false`): Enables recursive URI resolution for values inside this vault.
   - `searchable` (optional, defaults to `true`): If set to `false`, excludes this vault from dynamic searches.
 * **Configuration** (`config.yaml`):
   ```yaml
   vaults:
-    # Multiple entity custom vault:
     custom_multiple:
       provider: "custom_vault"
       entities:
         custom_entry:
           username: "admin"
           Password: "inline_password"
-
-    # Single entity custom vault:
-    custom_single:
-      provider: "custom_vault"
-      single_entity: true
-      entity_name: "Static Flat Keys"
-      tags: [local, static]
-      attributes:
-        db_user: "postgres"
-        db_port: 5432
   ```
 * **Usage**:
   ```bash
   # Retrieve from multiple-entity custom vault
   cloakenv get "custom_multiple://custom_entry"
-
-  # Retrieve from single-entity custom vault
-  cloakenv get "custom_single://db_user"
   ```
