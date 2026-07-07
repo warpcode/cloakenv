@@ -113,10 +113,10 @@ func cmdRun(args []string) int {
 		return 0
 	}
 	var (
-		explicitEnv   = make(map[string]string)
-		merges        []string
-		whitelist     []string
-		cmdArgs       []string
+		explicitEnv = make(map[string]string)
+		merges      []string
+		whitelist   []string
+		cmdArgs     []string
 	)
 
 	// Parse flags manually to support repeated -e, -m, and -i flags + -- separator
@@ -544,7 +544,6 @@ func cmdShow(args []string) int {
 	} else {
 		// Initialize a merged entry.
 		entry = provider.Entry{
-			Title:      "Merged Entry",
 			Tags:       []string{},
 			Attributes: make(map[string]any),
 		}

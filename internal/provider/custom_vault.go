@@ -153,7 +153,8 @@ func toEntry(name string, raw map[string]any) Entry {
 
 	for k, v := range raw {
 		kLower := strings.ToLower(k)
-		if kLower == "tags" {
+		switch kLower {
+		case "tags":
 			if tagSlice, ok := v.([]any); ok {
 				for _, t := range tagSlice {
 					if str, ok := t.(string); ok {
@@ -165,11 +166,11 @@ func toEntry(name string, raw map[string]any) Entry {
 			} else if tagStr, ok := v.(string); ok {
 				entry.Tags = parseTags(tagStr)
 			}
-		} else if kLower == "title" {
+		case "title":
 			if str, ok := v.(string); ok {
 				entry.Title = str
 			}
-		} else {
+		default:
 			entry.Attributes[k] = v
 		}
 	}

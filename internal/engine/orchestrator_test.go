@@ -222,8 +222,8 @@ servers:
 				},
 			},
 			"flat_file": {
-				Provider:  "yaml",
-				VaultPath: singleDbPath,
+				Provider:     "yaml",
+				VaultPath:    singleDbPath,
 				SingleEntity: &isTrue,
 				EntityName:   "Prod Flat File",
 				Tags:         []string{"flat", "prod"},
@@ -378,8 +378,8 @@ func TestResolveValues(t *testing.T) {
 					},
 				},
 				"vault_b": {
-					Provider:     "custom_vault",
-					Searchable:   boolPtr(true),
+					Provider:   "custom_vault",
+					Searchable: boolPtr(true),
 					Entities: map[string]map[string]any{
 						"entry1": {
 							"secret": "resolved_value",
@@ -531,7 +531,7 @@ func TestOrchestratorBuildEnvMerges(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"my_vault": {
-				Provider:  "custom_vault",
+				Provider: "custom_vault",
 				Entities: map[string]map[string]any{
 					"app_one": {
 						"DB_USER": "user1",
@@ -620,4 +620,3 @@ func TestOrchestratorBuildEnvMerges(t *testing.T) {
 		}
 	})
 }
-

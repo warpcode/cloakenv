@@ -15,7 +15,12 @@ run:
 	go run .
 
 test:
-	go test -v ./...
+	go test -v -race ./...
+
+bench:
+	go test -bench=. ./internal/engine/...
+
+test-all: fmt vet test bench
 
 clean:
 	rm -rf $(BUILD_DIR)

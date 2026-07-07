@@ -56,9 +56,9 @@ make uninstall        # Removes the installed binary
 ### Testing
 
 ```bash
-make test             # go test -v ./...
-go test -v -race ./...  # With race detector (mirrors CI)
-go test -bench=. ./internal/engine/...  # Run benchmarks
+make test             # go test -v -race ./...
+make bench            # Run benchmarks (go test -bench=. ./internal/engine/...)
+make test-all         # Run formatting, vetting, unit tests, and benchmarks (runs fmt, vet, test, and bench targets)
 ```
 
 > [!IMPORTANT]

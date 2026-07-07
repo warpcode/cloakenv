@@ -169,7 +169,8 @@ func (y *YamlProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 
 		for k, v := range attributesMap {
 			kLower := strings.ToLower(k)
-			if kLower == "tags" {
+			switch kLower {
+			case "tags":
 				if len(tags) == 0 {
 					if tagSlice, ok := v.([]any); ok {
 						for _, t := range tagSlice {
@@ -181,13 +182,13 @@ func (y *YamlProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 						tags = parseTags(tagStr)
 					}
 				}
-			} else if kLower == "title" {
+			case "title":
 				if cfg.EntityName == "" {
 					if str, ok := v.(string); ok {
 						entry.Title = str
 					}
 				}
-			} else {
+			default:
 				entry.Attributes[k] = v
 			}
 		}
@@ -224,7 +225,8 @@ func (y *YamlProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 
 		for k, v := range rawEntry {
 			kLower := strings.ToLower(k)
-			if kLower == "tags" {
+			switch kLower {
+			case "tags":
 				if tagSlice, ok := v.([]any); ok {
 					for _, t := range tagSlice {
 						if str, ok := t.(string); ok {
@@ -234,11 +236,11 @@ func (y *YamlProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 				} else if tagStr, ok := v.(string); ok {
 					entry.Tags = parseTags(tagStr)
 				}
-			} else if kLower == "title" {
+			case "title":
 				if str, ok := v.(string); ok {
 					entry.Title = str
 				}
-			} else {
+			default:
 				entry.Attributes[k] = v
 			}
 		}
@@ -452,5 +454,3 @@ func serializeYamlVal(val any) (string, error) {
 		return fmt.Sprintf("%v", v), nil
 	}
 }
-
-

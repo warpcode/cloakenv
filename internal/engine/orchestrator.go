@@ -1001,14 +1001,13 @@ func (o *Orchestrator) initCustomVault(ctx context.Context, vaultName string, va
 		Settings: map[string]string{
 			"vault_name": vaultName,
 		},
-		Entities:        vault.Entities,
+		Entities: vault.Entities,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return cp, nil
 }
-
 
 // Login triggers authentication setup for a vault/scheme.
 func (o *Orchestrator) Login(ctx context.Context, vaultName string) error {
