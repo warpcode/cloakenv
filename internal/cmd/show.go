@@ -34,8 +34,8 @@ func Show(args []string, cfg *config.Config) int {
 		case (args[i] == "-o" || args[i] == "--output") && i+1 < len(args):
 			i++
 			format := args[i]
-			if format != "yaml" && format != "json" && format != "env" {
-				fmt.Fprintf(os.Stderr, "Invalid output format %q (expected yaml, json, or env)\n", format)
+			if format != "yaml" && format != "json" && format != "env" && format != "keys" {
+				fmt.Fprintf(os.Stderr, "Invalid output format %q (expected yaml, json, env, or keys)\n", format)
 				return 1
 			}
 			outputFormat = format
@@ -62,8 +62,8 @@ func Show(args []string, cfg *config.Config) int {
 			return 1
 		default:
 			if positionalURI != "" {
-				fmt.Fprintln(os.Stderr, "Usage: cloakenv show <entry-uri> [-o yaml | json | env]")
-				fmt.Fprintln(os.Stderr, "   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env]")
+				fmt.Fprintln(os.Stderr, "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]")
+				fmt.Fprintln(os.Stderr, "   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env | keys]")
 				return 1
 			}
 			positionalURI = args[i]
@@ -77,8 +77,8 @@ func Show(args []string, cfg *config.Config) int {
 		positionalURI = ""
 	}
 	if !hasFlags && positionalURI == "" {
-		fmt.Fprintln(os.Stderr, "Usage: cloakenv show <entry-uri> [-o yaml | json | env]")
-		fmt.Fprintln(os.Stderr, "   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env]")
+		fmt.Fprintln(os.Stderr, "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]")
+		fmt.Fprintln(os.Stderr, "   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env | keys]")
 		return 1
 	}
 
@@ -191,6 +191,11 @@ func Show(args []string, cfg *config.Config) int {
 		}
 	}
 
+	if outputFormat == "keys" {
+		printKeysFormat(entry.Attributes)
+		return 0
+	}
+
 	if outputFormat == "env" {
 		printEnvFormat(entry.Attributes)
 		return 0
@@ -237,5 +242,15 @@ func serializeEntryAttrValue(val any) (string, error) {
 		return strings.TrimSuffix(string(data), "\n"), nil
 	default:
 		return fmt.Sprintf("%v", v), nil
+	}
+}
+
+func printKeysFormat(attributes map[string]any) {
+	for k := range attributes {
+		kLower := strings.ToLower(k)
+		if kLower == "title" || kLower == "tags" {
+			continue
+		}
+		fmt.Println(k)
 	}
 }

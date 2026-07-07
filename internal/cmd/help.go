@@ -167,8 +167,8 @@ Description:
 // PrintShowHelp prints usage help for the show subcommand.
 func PrintShowHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env]
-  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env]
+  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env | keys]
+  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env | keys]
 
 Description:
   Retrieve and display a structured entry, or merge multiple entries/explicit mapping values.
@@ -180,7 +180,7 @@ Flags:
   -m <entry-uri>  Merge entry attributes (can be specified multiple times)
   -e KEY=uri      Explicit environment/key override (can be specified multiple times)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
-  -o, --output    Output format: yaml, json, or env (default: yaml)`)
+  -o, --output    Output format: yaml, json, env, or keys (default: yaml)`)
 }
 
 // PrintSearchHelp prints usage help for the search subcommand.

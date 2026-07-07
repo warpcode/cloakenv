@@ -163,11 +163,11 @@ Unlike simple Key-Value secrets, an entry has:
 
 - **Show an entry**:
   ```bash
-  cloakenv show <entry-uri> [--yaml | --json]
+  cloakenv show <entry-uri> [-o yaml | json | env | keys]
   ```
 - **Search entries using expression querying**:
   ```bash
-  cloakenv search "[query_expression]" [--vault <vault_name>] [--yaml | --json]
+  cloakenv search "[query_expression]" [--vault <vault_name>] [-o yaml | json]
   ```
 
 ---
