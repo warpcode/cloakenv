@@ -421,6 +421,27 @@ func TestResolveValues(t *testing.T) {
 		}
 	})
 
+	t.Run("ResolveValues_Off_GetEntry", func(t *testing.T) {
+		// GetEntry must also honour resolve_values: false — attribute values
+		// that are URIs must be returned raw without being resolved.
+		orch, err := NewOrchestrator(makeConfig(false))
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		entry, err := orch.GetEntry(ctx, "vault_a://entity1")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		raw, ok := entry.Attributes["Password"]
+		if !ok {
+			t.Fatal("expected 'Password' attribute in entry")
+		}
+		if raw != "vault_b://entry1:secret" {
+			t.Errorf("expected raw URI in attribute, got %q", raw)
+		}
+	})
+
 	t.Run("ResolveValues_CircularReference", func(t *testing.T) {
 		// vault_c.entry references vault_c itself — forms a cycle.
 		cfg := &config.Config{

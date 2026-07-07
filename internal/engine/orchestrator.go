@@ -15,6 +15,7 @@ import (
 
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/provider"
+	"github.com/warpcode/cloakenv/internal/utils"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/ast"
@@ -249,9 +250,28 @@ func (o *Orchestrator) GetEntry(ctx context.Context, uri string) (provider.Entry
 		return provider.Entry{}, err
 	}
 
+	// Determine whether attribute-value URIs should be resolved for this vault.
+	// For user-defined vaults that implement ValueResolvableProvider the
+	// resolve_values flag gates resolution; for builtins we always resolve.
+	shouldResolveAttrs := true
+	if _, isBuiltin := o.builtins[scheme]; !isBuiltin {
+		o.mu.Lock()
+		cachedP, cached := o.vaultCache[scheme]
+		o.mu.Unlock()
+		if cached {
+			if _, ok := cachedP.(provider.ValueResolvableProvider); ok {
+				shouldResolveAttrs = o.config.Vaults[scheme].ResolveValues
+			}
+		}
+	}
+
 	// Recursively resolve all attributes that contain secret URIs
 	resolvedAttrs := make(map[string]any)
 	for k, v := range entry.Attributes {
+		if !shouldResolveAttrs {
+			resolvedAttrs[k] = v
+			continue
+		}
 		resolvedVal, err := o.resolveAttrRecursive(ctx, v, 0)
 		if err != nil {
 			return provider.Entry{}, fmt.Errorf("failed to resolve attribute %q: %w", k, err)
@@ -670,7 +690,7 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 	// whitelistSet is a helper to quickly check if a key is whitelisted
 	whitelistSet := make(map[string]bool)
 	for _, k := range whitelist {
-		whitelistSet[k] = true
+		whitelistSet[utils.FormatKey(k)] = true
 	}
 	hasWhitelist := len(whitelist) > 0
 
@@ -700,7 +720,8 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 				if kLower == "title" || kLower == "tags" {
 					continue
 				}
-				if hasWhitelist && !whitelistSet[k] {
+				formattedKey := utils.FormatKey(k)
+				if hasWhitelist && !whitelistSet[formattedKey] {
 					continue
 				}
 				strVal, err := serializeValHelper(v)
@@ -710,7 +731,7 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 					})
 					return
 				}
-				keys[k] = strVal
+				keys[formattedKey] = strVal
 			}
 			loaded[idx] = loadedSource{keys: keys}
 		}(i, m)
@@ -753,7 +774,7 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 					return
 				}
 				mu.Lock()
-				finalEnv[k] = val
+				finalEnv[utils.FormatKey(k)] = val
 				mu.Unlock()
 			}(k, uri)
 		}
