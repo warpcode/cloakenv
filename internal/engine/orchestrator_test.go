@@ -494,6 +494,62 @@ func TestResolveValues(t *testing.T) {
 	})
 }
 
+// TestGetEntry_AttributeSelector verifies that GetEntry returns a synthetic
+// single-key entry when the URI contains an :attr suffix, instead of the full
+// entry from the provider.
+func TestGetEntry_AttributeSelector(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"vault_x": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"myentity": {
+						"Password": "s3cr3t",
+						"UserName": "alice",
+						"Notes":    "some notes",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("single_attr_only", func(t *testing.T) {
+		entry, err := orch.GetEntry(ctx, "vault_x://myentity:Password")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if len(entry.Attributes) != 1 {
+			t.Errorf("expected 1 attribute, got %d: %v", len(entry.Attributes), entry.Attributes)
+		}
+		val, ok := entry.Attributes["Password"]
+		if !ok {
+			t.Fatal("expected 'Password' key in synthetic entry")
+		}
+		if val != "s3cr3t" {
+			t.Errorf("expected s3cr3t, got %q", val)
+		}
+	})
+
+	t.Run("full_entry_without_attr", func(t *testing.T) {
+		entry, err := orch.GetEntry(ctx, "vault_x://myentity")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if len(entry.Attributes) != 3 {
+			t.Errorf("expected 3 attributes, got %d: %v", len(entry.Attributes), entry.Attributes)
+		}
+	})
+}
+
+
+
 // TestBuiltinsNonSearchable verifies that built-in schemes (env, keyring, cache)
 // are not searchable by default and cannot be registered as vault names.
 func TestBuiltinsNonSearchable(t *testing.T) {

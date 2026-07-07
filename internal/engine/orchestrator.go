@@ -220,10 +220,28 @@ func (o *Orchestrator) resolveRecursive(ctx context.Context, uri string, depth i
 }
 
 // GetEntry retrieves a complete structured entry by location.
+// If the URI contains an attribute selector (e.g. "kp://Group/Entry:Password"),
+// a synthetic single-key entry is returned rather than the full entry — this
+// allows -m URIs to inject a single named attribute rather than all fields.
 func (o *Orchestrator) GetEntry(ctx context.Context, uri string) (provider.Entry, error) {
 	scheme, location, err := parseURI(uri)
 	if err != nil {
 		return provider.Entry{}, err
+	}
+
+	// If the location contains an attribute selector, resolve the single value
+	// and return a synthetic entry with that one key.
+	if attrIdx := strings.LastIndex(location, ":"); attrIdx >= 0 {
+		attrName := location[attrIdx+1:]
+		if attrName != "" {
+			val, err := o.Resolve(ctx, uri)
+			if err != nil {
+				return provider.Entry{}, err
+			}
+			return provider.Entry{
+				Attributes: map[string]any{attrName: val},
+			}, nil
+		}
 	}
 
 	var p provider.SecretProvider
