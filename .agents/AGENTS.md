@@ -22,11 +22,14 @@
 ## 📁 Project Structure
 
 ```
-main.go                  # CLI entrypoint — keep thin; wire deps only
+main.go                  # CLI entrypoint — config & router logic only
 internal/
+  cmd/                   # Top-level subcommand implementations
   config/                # YAML config parser (no business logic)
   engine/                # Orchestrator core — resolves URIs, injects env
   provider/              # Built-in & custom secret vaults
+  runner/                # Process execution wrapping logic
+  utils/                 # Shared formatting and flag utilities
 examples/                # Example databases and config.yaml
 testdata/                # Test fixtures (testDB.kdbx, YAML/JSON samples)
 Makefile                 # Build, test, fmt, vet, install targets
