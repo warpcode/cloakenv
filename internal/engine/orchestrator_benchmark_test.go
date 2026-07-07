@@ -52,16 +52,14 @@ func BenchmarkBuildEnv(b *testing.B) {
 	o.builtins["slow"] = sp
 	o.initializedBuiltins["slow"] = true
 
-	// 10 keys with 1ms delay simulates a moderate KeePass workload.
-	// Adjust N and delay to match real-world usage.
-	fileEnv := make(map[string]string)
+	explicit := make(map[string]string)
 	for i := 0; i < 10; i++ {
-		fileEnv[fmt.Sprintf("KEY_%d", i)] = fmt.Sprintf("slow://loc_%d", i)
+		explicit[fmt.Sprintf("KEY_%d", i)] = fmt.Sprintf("slow://loc_%d", i)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := o.BuildEnv(ctx, nil, fileEnv, nil, false)
+		_, err := o.BuildEnv(ctx, explicit, nil, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

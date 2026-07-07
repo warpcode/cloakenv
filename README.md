@@ -144,11 +144,11 @@ Unlike simple Key-Value secrets, an entry has:
 
 - **Show an entry**:
   ```bash
-  cloakenv entry show <entry-uri> [--yaml | --json]
+  cloakenv show <entry-uri> [--yaml | --json]
   ```
 - **Search entries using expression querying**:
   ```bash
-  cloakenv entry search "[query_expression]" [--vault <vault_name>] [--yaml | --json]
+  cloakenv search "[query_expression]" [--vault <vault_name>] [--yaml | --json]
   ```
 
 ---
@@ -161,59 +161,59 @@ All queries are evaluated against a flattened environment containing `title`, `t
 Compare integers (e.g., bit sizes, counts):
 ```bash
 # Exact match
-cloakenv entry search "bit_strength == 4096"
+cloakenv search "bit_strength == 4096"
 
 # Inequalities
-cloakenv entry search "bit_strength > 2048"
+cloakenv search "bit_strength > 2048"
 ```
 
 #### 2. Array Containment (Positive & Negative Checking)
 Query membership within array fields (like `tags` or `public_keys` lists) using `in` and `not`:
 ```bash
 # Positive array check: must have 'auth:ssh' tag
-cloakenv entry search '"auth:ssh" in tags'
+cloakenv search '"auth:ssh" in tags'
 
 # Negative array check: must not have 'deprecated' tag
-cloakenv entry search 'not ("deprecated" in tags)'
+cloakenv search 'not ("deprecated" in tags)'
 
 # Combined array check
-cloakenv entry search '"auth:ssh" in tags and not ("deprecated" in tags)'
+cloakenv search '"auth:ssh" in tags and not ("deprecated" in tags)'
 ```
 
 #### 3. Boolean Operators
 Combine conditions using logical operators (`and`, `or`, `not` / `&&`, `||`, `!`):
 ```bash
 # Scope to vaults and match bit strengths
-cloakenv entry search '"auth:ssh" in tags and (bit_strength == 4096 or bit_strength == 2048)'
+cloakenv search '"auth:ssh" in tags and (bit_strength == 4096 or bit_strength == 2048)'
 ```
 
 #### 4. Positive and Negative Matching
 Check exact equality or inequality of strings, numbers, or boolean attributes:
 ```bash
 # Positive check
-cloakenv entry search 'username == "admin"'
+cloakenv search 'username == "admin"'
 
 # Negative check
-cloakenv entry search 'username != "stage_user"'
+cloakenv search 'username != "stage_user"'
 ```
 
 #### 5. String Partials and Wildcards
 Use built-in string functions (`contains`, `startsWith`, `endsWith`, `matches`):
 ```bash
 # Substring search (case-sensitive)
-cloakenv entry search 'title contains "Production"'
+cloakenv search 'title contains "Production"'
 
 # Case-insensitive substring search (converting to lowercase first)
-cloakenv entry search 'lower(title) contains "ssh"'
+cloakenv search 'lower(title) contains "ssh"'
 
 # Prefix match
-cloakenv entry search 'title startsWith "Staging"'
+cloakenv search 'title startsWith "Staging"'
 
 # Suffix match
-cloakenv entry search 'hostname endsWith ".com"'
+cloakenv search 'hostname endsWith ".com"'
 
 # Regular expression match
-cloakenv entry search 'hostname matches "bastion\\..*\\.example\\.com"'
+cloakenv search 'hostname matches "bastion\\..*\\.example\\.com"'
 ```
 
 #### 6. Graceful Missing Field Handling
@@ -286,7 +286,7 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
   cloakenv get "my_vault://Server/BastionHost:UserName"
 
   # Search for entries in this database matching tag "auth:ssh"
-  cloakenv entry search '"auth:ssh" in tags' --vault my_vault
+  cloakenv search '"auth:ssh" in tags' --vault my_vault
   ```
 
 ### 5. YAML (`yaml`)
@@ -316,7 +316,7 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
   cloakenv get "yaml_db://entries.ssh_key_prod.public_keys.0"
 
   # Search for entries with 4096-bit strength in this database
-  cloakenv entry search 'bit_strength == 4096' --vault yaml_db
+  cloakenv search 'bit_strength == 4096' --vault yaml_db
   ```
 
 ### 6. JSON (`json`)
@@ -338,7 +338,7 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
   cloakenv get "json_db://hosts.ssh_host.hostname"
 
   # Search for entries in this database matching tag "auth:ssh"
-  cloakenv entry search '"auth:ssh" in tags' --vault json_db
+  cloakenv search '"auth:ssh" in tags' --vault json_db
   ```
 
 ### 7. Custom Static Vault (`custom_vault`)

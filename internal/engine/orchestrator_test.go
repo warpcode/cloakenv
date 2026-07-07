@@ -527,3 +527,97 @@ func TestBuiltinsNonSearchable(t *testing.T) {
 	})
 }
 
+func TestOrchestratorBuildEnvMerges(t *testing.T) {
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"my_vault": {
+				Provider:  "custom_vault",
+				Entities: map[string]map[string]any{
+					"app_one": {
+						"DB_USER": "user1",
+						"DB_PASS": "pass1",
+						"PORT":    "3000",
+					},
+					"app_two": {
+						"PORT":    "5000",
+						"DB_USER": "user2",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	ctx := context.Background()
+
+	t.Run("MergeMultipleSourcesAndOverrides", func(t *testing.T) {
+		merges := []string{
+			"my_vault://app_one",
+			"my_vault://app_two",
+		}
+
+		// Result expectations:
+		// app_one attributes: DB_USER=user1, DB_PASS=pass1, PORT=3000
+		// app_two updates: PORT=5000, DB_USER=user2 (overwriting user1 and 3000)
+		// Explicit: DB_PASS=explicit_pass
+		explicit := map[string]string{
+			"DB_PASS": "explicit_pass",
+		}
+
+		res, err := orch.BuildEnv(ctx, explicit, merges, nil)
+		if err != nil {
+			t.Fatalf("failed to build env: %v", err)
+		}
+
+		envMap := make(map[string]string)
+		for _, item := range res {
+			k, v, _ := strings.Cut(item, "=")
+			envMap[k] = v
+		}
+
+		if envMap["DB_USER"] != "user2" {
+			t.Errorf("expected DB_USER=user2, got %q", envMap["DB_USER"])
+		}
+		if envMap["DB_PASS"] != "explicit_pass" {
+			t.Errorf("expected DB_PASS=explicit_pass (explicit override), got %q", envMap["DB_PASS"])
+		}
+		if envMap["PORT"] != "5000" {
+			t.Errorf("expected PORT=5000 (app_two override), got %q", envMap["PORT"])
+		}
+	})
+
+	t.Run("WhitelistFiltersMerges", func(t *testing.T) {
+		merges := []string{
+			"my_vault://app_one",
+		}
+		whitelist := []string{"DB_USER"}
+		explicit := map[string]string{
+			"DB_PASS": "explicit_pass", // Explicit is never filtered
+		}
+
+		res, err := orch.BuildEnv(ctx, explicit, merges, whitelist)
+		if err != nil {
+			t.Fatalf("failed to build env: %v", err)
+		}
+
+		envMap := make(map[string]string)
+		for _, item := range res {
+			k, v, _ := strings.Cut(item, "=")
+			envMap[k] = v
+		}
+
+		if envMap["DB_USER"] != "user1" {
+			t.Errorf("expected DB_USER=user1, got %q", envMap["DB_USER"])
+		}
+		if envMap["DB_PASS"] != "explicit_pass" {
+			t.Errorf("expected DB_PASS=explicit_pass, got %q", envMap["DB_PASS"])
+		}
+		if _, exists := envMap["PORT"]; exists {
+			t.Errorf("expected PORT to be filtered out by whitelist, but it exists")
+		}
+	})
+}
+

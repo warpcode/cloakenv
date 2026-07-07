@@ -20,6 +20,7 @@ import (
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
+	"gopkg.in/yaml.v3"
 )
 
 // Orchestrator resolves secret URIs by dispatching to the appropriate
@@ -656,7 +657,7 @@ func parseSearchURI(location string) (string, string, error) {
 }
 
 // BuildEnv constructs the full environment block.
-func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, fileEnv map[string]string, whitelist []string, forwardParent bool) ([]string, error) {
+func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, merges []string, whitelist []string) ([]string, error) {
 	// 1. Get parent environment
 	parentEnvMap := make(map[string]string)
 	for _, envStr := range os.Environ() {
@@ -673,79 +674,81 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 	}
 	hasWhitelist := len(whitelist) > 0
 
-	// finalEnv maps key -> value
-	finalEnv := make(map[string]string)
+	// We will resolve/load the merge sources in parallel.
+	type loadedSource struct {
+		keys map[string]string
+	}
+	loaded := make([]loadedSource, len(merges))
+	var wg sync.WaitGroup
+	var errOnce sync.Once
+	var firstErr error
 
-	// - A. Parent env is least important (lowest priority)
-	// If forwardParent is true, we copy all parent env first.
-	if forwardParent {
-		for k, v := range parentEnvMap {
+	for i, m := range merges {
+		wg.Add(1)
+		go func(idx int, uri string) {
+			defer wg.Done()
+			keys := make(map[string]string)
+			entry, err := o.GetEntry(ctx, uri)
+			if err != nil {
+				errOnce.Do(func() {
+					firstErr = fmt.Errorf("failed to get entry %s: %w", uri, err)
+				})
+				return
+			}
+			for k, v := range entry.Attributes {
+				kLower := strings.ToLower(k)
+				if kLower == "title" || kLower == "tags" {
+					continue
+				}
+				if hasWhitelist && !whitelistSet[k] {
+					continue
+				}
+				strVal, err := serializeValHelper(v)
+				if err != nil {
+					errOnce.Do(func() {
+						firstErr = fmt.Errorf("failed to serialize attribute %q in entry %s: %w", k, uri, err)
+					})
+					return
+				}
+				keys[k] = strVal
+			}
+			loaded[idx] = loadedSource{keys: keys}
+		}(i, m)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	// finalEnv maps key -> value, initialized with parent environment (always forwarded)
+	finalEnv := make(map[string]string)
+	for k, v := range parentEnvMap {
+		finalEnv[k] = v
+	}
+
+	// Merge sources sequentially: later overrides earlier
+	for _, src := range loaded {
+		for k, v := range src.keys {
 			finalEnv[k] = v
 		}
 	}
 
-	// - B. File env (-f next)
-	// We only include keys from fileEnv. If whitelist is specified, we filter fileEnv by whitelist.
-	{
-		var wg sync.WaitGroup
-		var errOnce sync.Once
-		var firstErr error
-		var mu sync.Mutex
-
-		for k, uri := range fileEnv {
-			if hasWhitelist && !whitelistSet[k] {
-				continue
-			}
-			wg.Add(1)
-			go func(k, uri string) {
-				defer wg.Done()
-				val, err := o.Resolve(ctx, uri)
-				if err != nil {
-					errOnce.Do(func() {
-						firstErr = fmt.Errorf("failed to resolve file env %s=%s: %w", k, uri, err)
-					})
-					return
-				}
-				mu.Lock()
-				finalEnv[k] = val
-				mu.Unlock()
-			}(k, uri)
-		}
-		wg.Wait()
-		if firstErr != nil {
-			return nil, firstErr
-		}
-	}
-
-	// - C. Whitelist filters parent env if forwardParent is NOT set
-	// If forwardParent is false, any key in whitelist that is in parentEnv (and not overwritten by fileEnv) is copied.
-	if !forwardParent && hasWhitelist {
-		for k := range whitelistSet {
-			// If already set by fileEnv, it is already in finalEnv. Otherwise:
-			if _, exists := finalEnv[k]; !exists {
-				if val, existsInParent := parentEnvMap[k]; existsInParent {
-					finalEnv[k] = val
-				}
-			}
-		}
-	}
-
-	// - D. Explicit mappings (-e highest priority)
+	// - Explicit mappings (-e highest priority)
 	// These are never filtered by whitelist and overwrite everything.
-	{
-		var wg sync.WaitGroup
-		var errOnce sync.Once
-		var firstErr error
+	if len(explicit) > 0 {
+		var explicitWg sync.WaitGroup
+		var explicitErrOnce sync.Once
+		var explicitErr error
 		var mu sync.Mutex
 
 		for k, uri := range explicit {
-			wg.Add(1)
+			explicitWg.Add(1)
 			go func(k, uri string) {
-				defer wg.Done()
+				defer explicitWg.Done()
 				val, err := o.Resolve(ctx, uri)
 				if err != nil {
-					errOnce.Do(func() {
-						firstErr = fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)
+					explicitErrOnce.Do(func() {
+						explicitErr = fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)
 					})
 					return
 				}
@@ -754,9 +757,9 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 				mu.Unlock()
 			}(k, uri)
 		}
-		wg.Wait()
-		if firstErr != nil {
-			return nil, firstErr
+		explicitWg.Wait()
+		if explicitErr != nil {
+			return nil, explicitErr
 		}
 	}
 
@@ -767,6 +770,21 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 	}
 
 	return result, nil
+}
+
+func serializeValHelper(val any) (string, error) {
+	switch v := val.(type) {
+	case string:
+		return v, nil
+	case []any, map[string]any, map[any]any, []string:
+		data, err := yaml.Marshal(v)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSuffix(string(data), "\n"), nil
+	default:
+		return fmt.Sprintf("%v", v), nil
+	}
 }
 
 // Keyring returns the built-in keyring provider for direct access

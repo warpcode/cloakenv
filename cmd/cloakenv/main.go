@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -60,8 +61,6 @@ func main() {
 		os.Exit(cmdRun(os.Args[2:]))
 	case "get":
 		os.Exit(cmdGet(os.Args[2:]))
-	case "list":
-		os.Exit(cmdList(os.Args[2:]))
 	case "set":
 		os.Exit(cmdSet(os.Args[2:]))
 	case "delete":
@@ -76,24 +75,10 @@ func main() {
 			os.Exit(1)
 		}
 		os.Exit(cmdCacheClear(os.Args[3:]))
-	case "entry":
-		if hasHelpFlag(os.Args[2:]) && (len(os.Args) < 3 || (os.Args[2] != "show" && os.Args[2] != "search")) {
-			printEntryHelp()
-			os.Exit(0)
-		}
-		if len(os.Args) < 3 {
-			fmt.Fprintln(os.Stderr, "Usage: cloakenv entry <show|search> [args]")
-			os.Exit(1)
-		}
-		switch os.Args[2] {
-		case "show":
-			os.Exit(cmdEntryShow(os.Args[3:]))
-		case "search":
-			os.Exit(cmdEntrySearch(os.Args[3:]))
-		default:
-			fmt.Fprintf(os.Stderr, "Unknown entry subcommand: %s\n", os.Args[2])
-			os.Exit(1)
-		}
+	case "show":
+		os.Exit(cmdShow(os.Args[2:]))
+	case "search":
+		os.Exit(cmdSearch(os.Args[2:]))
 	case "auth":
 		if hasHelpFlag(os.Args[2:]) && (len(os.Args) < 3 || (os.Args[2] != "login" && os.Args[2] != "forget" && os.Args[2] != "status")) {
 			printAuthHelp()
@@ -121,7 +106,7 @@ func main() {
 	}
 }
 
-// cmdRun handles "cloakenv run [-p] [-e KEY=uri ...] [-f envfile] [-i KEY ...] -- <cmd> [args]".
+// cmdRun handles "cloakenv run [-e KEY=uri ...] [-m entry-uri] [-i KEY ...] -- <cmd> [args]".
 func cmdRun(args []string) int {
 	if hasHelpFlag(args) {
 		printRunHelp()
@@ -129,22 +114,18 @@ func cmdRun(args []string) int {
 	}
 	var (
 		explicitEnv   = make(map[string]string)
-		fileEnv       = make(map[string]string)
+		merges        []string
 		whitelist     []string
-		forwardParent bool
 		cmdArgs       []string
 	)
 
-	// Parse flags manually to support repeated -e and -i flags + -- separator
+	// Parse flags manually to support repeated -e, -m, and -i flags + -- separator
 	i := 0
 	for i < len(args) {
 		switch {
 		case args[i] == "--":
 			cmdArgs = args[i+1:]
 			i = len(args) // break out of loop
-		case args[i] == "-p":
-			forwardParent = true
-			i++
 		case args[i] == "-e" && i+1 < len(args):
 			i++
 			key, uri, ok := strings.Cut(args[i], "=")
@@ -154,12 +135,9 @@ func cmdRun(args []string) int {
 			}
 			explicitEnv[key] = uri
 			i++
-		case args[i] == "-f" && i+1 < len(args):
+		case args[i] == "-m" && i+1 < len(args):
 			i++
-			if err := loadEnvFile(args[i], fileEnv); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to load env file: %v\n", err)
-				return 1
-			}
+			merges = append(merges, args[i])
 			i++
 		case args[i] == "-i" && i+1 < len(args):
 			i++
@@ -192,7 +170,7 @@ func cmdRun(args []string) int {
 	ctx := context.Background()
 
 	// Build the environment block (pass-through if no mappings specified)
-	env, err := orch.BuildEnv(ctx, explicitEnv, fileEnv, whitelist, forwardParent)
+	env, err := orch.BuildEnv(ctx, explicitEnv, merges, whitelist)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Secret resolution failed: %v\n", err)
 		return 1
@@ -253,99 +231,6 @@ func cmdGet(args []string) int {
 }
 
 // cmdList handles multiple secret retrieval and outputs as key=value or JSON.
-func cmdList(args []string) int {
-	if hasHelpFlag(args) {
-		printListHelp()
-		return 0
-	}
-	var (
-		explicitEnv   = make(map[string]string)
-		fileEnv       = make(map[string]string)
-		whitelist     []string
-		forwardParent bool
-		outputJSON    bool
-	)
-
-	i := 0
-	for i < len(args) {
-		switch {
-		case args[i] == "-p":
-			forwardParent = true
-			i++
-		case args[i] == "-e" && i+1 < len(args):
-			i++
-			key, uri, ok := strings.Cut(args[i], "=")
-			if !ok || key == "" || uri == "" {
-				fmt.Fprintf(os.Stderr, "Invalid -e format: %q (expected KEY=uri)\n", args[i])
-				return 1
-			}
-			explicitEnv[key] = uri
-			i++
-		case args[i] == "-f" && i+1 < len(args):
-			i++
-			if err := loadEnvFile(args[i], fileEnv); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to load env file: %v\n", err)
-				return 1
-			}
-			i++
-		case args[i] == "-i" && i+1 < len(args):
-			i++
-			whitelist = append(whitelist, args[i])
-			i++
-		case args[i] == "--json":
-			outputJSON = true
-			i++
-		default:
-			fmt.Fprintf(os.Stderr, "Unknown argument/flag: %s\n", args[i])
-			return 1
-		}
-	}
-
-	if len(explicitEnv) == 0 && len(fileEnv) == 0 && !forwardParent && len(whitelist) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: cloakenv list [-p] [-e KEY=uri ...] [-f envfile] [-i KEY ...] [--json]")
-		return 1
-	}
-
-	cfg, err := loadConfig()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
-		return 1
-	}
-
-	orch, err := engine.NewOrchestrator(cfg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
-		return 1
-	}
-	ctx := context.Background()
-
-	resolved, err := orch.BuildEnv(ctx, explicitEnv, fileEnv, whitelist, forwardParent)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Resolution failed: %v\n", err)
-		return 1
-	}
-
-	if outputJSON {
-		jsonMap := make(map[string]string, len(resolved))
-		for _, entry := range resolved {
-			key, val, _ := strings.Cut(entry, "=")
-			jsonMap[key] = val
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(jsonMap); err != nil {
-			fmt.Fprintf(os.Stderr, "JSON encoding failed: %v\n", err)
-			return 1
-		}
-	} else {
-		for _, entry := range resolved {
-			fmt.Println(entry)
-		}
-	}
-
-	return 0
-}
-
 // cmdSet handles "cloakenv set <uri> <value> [--ttl <duration>]".
 func cmdSet(args []string) int {
 	if hasHelpFlag(args) {
@@ -567,60 +452,71 @@ func loadConfig() (*config.Config, error) {
 	return config.Load(path)
 }
 
-// loadEnvFile reads KEY=uri pairs from a file (one per line).
-// Empty lines and lines starting with # are skipped.
-func loadEnvFile(path string, mappings map[string]string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("failed to read env file %s: %w", path, err)
-	}
-
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		key, uri, ok := strings.Cut(line, "=")
-		if !ok || key == "" || uri == "" {
-			return fmt.Errorf("invalid line in env file: %q", line)
-		}
-		mappings[strings.TrimSpace(key)] = strings.TrimSpace(uri)
-	}
-
-	return nil
-}
-
-// cmdEntryShow handles "cloakenv entry show <entry-uri> [--yaml | --json]"
-func cmdEntryShow(args []string) int {
+// cmdShow handles "cloakenv show <entry-uri> [--yaml | --json]"
+func cmdShow(args []string) int {
 	if hasHelpFlag(args) {
-		printEntryShowHelp()
+		printShowHelp()
 		return 0
 	}
 	var (
-		uri        string
-		outputJSON bool
+		merges        []string
+		explicit      = make(map[string]string)
+		whitelist     []string
+		outputFormat  = "yaml" // default
+		positionalURI string
 	)
 
-	for _, arg := range args {
-		if arg == "--json" {
-			outputJSON = true
-		} else if arg == "--yaml" {
-			outputJSON = false
-		} else if strings.HasPrefix(arg, "-") {
-			fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", arg)
-			return 1
-		} else {
-			if uri != "" {
-				fmt.Fprintln(os.Stderr, "Usage: cloakenv entry show <entry-uri> [--yaml | --json]")
+	i := 0
+	for i < len(args) {
+		switch {
+		case (args[i] == "-o" || args[i] == "--output") && i+1 < len(args):
+			i++
+			format := args[i]
+			if format != "yaml" && format != "json" && format != "env" {
+				fmt.Fprintf(os.Stderr, "Invalid output format %q (expected yaml, json, or env)\n", format)
 				return 1
 			}
-			uri = arg
+			outputFormat = format
+			i++
+		case args[i] == "-m" && i+1 < len(args):
+			i++
+			merges = append(merges, args[i])
+			i++
+		case args[i] == "-e" && i+1 < len(args):
+			i++
+			key, uri, ok := strings.Cut(args[i], "=")
+			if !ok || key == "" || uri == "" {
+				fmt.Fprintf(os.Stderr, "Invalid -e format: %q (expected KEY=uri)\n", args[i])
+				return 1
+			}
+			explicit[key] = uri
+			i++
+		case args[i] == "-i" && i+1 < len(args):
+			i++
+			whitelist = append(whitelist, args[i])
+			i++
+		case strings.HasPrefix(args[i], "-"):
+			fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", args[i])
+			return 1
+		default:
+			if positionalURI != "" {
+				fmt.Fprintln(os.Stderr, "Usage: cloakenv show <entry-uri> [-o yaml | json | env]")
+				fmt.Fprintln(os.Stderr, "   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env]")
+				return 1
+			}
+			positionalURI = args[i]
+			i++
 		}
 	}
 
-	if uri == "" {
-		fmt.Fprintln(os.Stderr, "Usage: cloakenv entry show <entry-uri> [--yaml | --json]")
+	hasFlags := len(merges) > 0 || len(explicit) > 0 || len(whitelist) > 0
+	if hasFlags && positionalURI != "" {
+		fmt.Fprintln(os.Stderr, "Error: cannot mix positional entry URI with -m, -e, or -i flags.")
+		return 1
+	}
+	if !hasFlags && positionalURI == "" {
+		fmt.Fprintln(os.Stderr, "Usage: cloakenv show <entry-uri> [-o yaml | json | env]")
+		fmt.Fprintln(os.Stderr, "   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env]")
 		return 1
 	}
 
@@ -637,15 +533,116 @@ func cmdEntryShow(args []string) int {
 	}
 	ctx := context.Background()
 
-	entry, err := orch.GetEntry(ctx, uri)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to retrieve entry: %v\n", err)
-		return 1
+	var entry provider.Entry
+
+	if positionalURI != "" {
+		entry, err = orch.GetEntry(ctx, positionalURI)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to retrieve entry: %v\n", err)
+			return 1
+		}
+	} else {
+		// Initialize a merged entry.
+		entry = provider.Entry{
+			Title:      "Merged Entry",
+			Tags:       []string{},
+			Attributes: make(map[string]any),
+		}
+
+		whitelistSet := make(map[string]bool)
+		for _, k := range whitelist {
+			whitelistSet[k] = true
+		}
+		hasWhitelist := len(whitelist) > 0
+
+		// Resolve the entries concurrently, then merge them in order
+		type loadedEntry struct {
+			entry provider.Entry
+			err   error
+		}
+		loadedMerges := make([]loadedEntry, len(merges))
+		var mWg sync.WaitGroup
+		for idx, mURI := range merges {
+			mWg.Add(1)
+			go func(i int, uri string) {
+				defer mWg.Done()
+				e, err := orch.GetEntry(ctx, uri)
+				loadedMerges[i] = loadedEntry{entry: e, err: err}
+			}(idx, mURI)
+		}
+		mWg.Wait()
+
+		// Check if any merge failed
+		for _, lm := range loadedMerges {
+			if lm.err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to retrieve entry: %v\n", lm.err)
+				return 1
+			}
+		}
+
+		// Merge tags and attributes in order
+		tagSet := make(map[string]bool)
+		for _, lm := range loadedMerges {
+			for _, tag := range lm.entry.Tags {
+				tagSet[tag] = true
+			}
+			for k, v := range lm.entry.Attributes {
+				kLower := strings.ToLower(k)
+				if kLower == "title" || kLower == "tags" {
+					continue
+				}
+				if hasWhitelist && !whitelistSet[k] {
+					continue
+				}
+				entry.Attributes[k] = v
+			}
+		}
+
+		// Build the tags slice from tagSet
+		var uniqueTags []string
+		for tag := range tagSet {
+			uniqueTags = append(uniqueTags, tag)
+		}
+		entry.Tags = uniqueTags
+
+		// Resolve explicit -e mappings (highest priority, not subject to whitelist)
+		if len(explicit) > 0 {
+			type resolvedMapping struct {
+				key string
+				val string
+				err error
+			}
+			resolvedList := make([]resolvedMapping, len(explicit))
+			var eWg sync.WaitGroup
+			idx := 0
+			for k, uri := range explicit {
+				eWg.Add(1)
+				go func(i int, key, u string) {
+					defer eWg.Done()
+					val, err := orch.Resolve(ctx, u)
+					resolvedList[i] = resolvedMapping{key: key, val: val, err: err}
+				}(idx, k, uri)
+				idx++
+			}
+			eWg.Wait()
+
+			for _, rm := range resolvedList {
+				if rm.err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to resolve mapping %s=%s: %v\n", rm.key, explicit[rm.key], rm.err)
+					return 1
+				}
+				entry.Attributes[rm.key] = rm.val
+			}
+		}
 	}
 
-	flatEntry := flattenEntry(entry)
+	if outputFormat == "env" {
+		printEnvFormat(entry.Attributes)
+		return 0
+	}
 
-	if err := renderOutput(flatEntry, outputJSON, "entry"); err != nil {
+	asJSON := (outputFormat == "json")
+	if err := renderOutput(entry.Attributes, asJSON, "entry"); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -653,14 +650,49 @@ func cmdEntryShow(args []string) int {
 	return 0
 }
 
-// cmdEntrySearch handles "cloakenv entry search [query] [--vault <vault> ...] [-i KEY ...] [--json | --yaml]"
-func cmdEntrySearch(args []string) int {
+func printEnvFormat(attributes map[string]any) {
+	for k, v := range attributes {
+		kLower := strings.ToLower(k)
+		if kLower == "title" || kLower == "tags" {
+			continue
+		}
+		strVal, _ := serializeEntryAttrValue(v)
+		if shouldQuoteDotenvValue(strVal) {
+			escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(strVal)
+			fmt.Printf("%s=\"%s\"\n", k, escaped)
+		} else {
+			fmt.Printf("%s=%s\n", k, strVal)
+		}
+	}
+}
+
+func shouldQuoteDotenvValue(s string) bool {
+	return strings.ContainsAny(s, " \n\r#\"")
+}
+
+func serializeEntryAttrValue(val any) (string, error) {
+	switch v := val.(type) {
+	case string:
+		return v, nil
+	case []any, map[string]any, map[any]any, []string:
+		data, err := yaml.Marshal(v)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSuffix(string(data), "\n"), nil
+	default:
+		return fmt.Sprintf("%v", v), nil
+	}
+}
+
+// cmdSearch handles "cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [--json | --yaml]"
+func cmdSearch(args []string) int {
 	if hasHelpFlag(args) {
-		printEntrySearchHelp()
+		printSearchHelp()
 		return 0
 	}
 
-	query, repoScopes, selectedKeys, outputJSON, err := parseEntrySearchArgs(args)
+	query, repoScopes, selectedKeys, outputFormat, err := parseSearchArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -687,7 +719,8 @@ func cmdEntrySearch(args []string) int {
 
 	flatResults := flattenSearchResults(results, selectedKeys)
 
-	if err := renderOutput(flatResults, outputJSON, "results"); err != nil {
+	asJSON := (outputFormat == "json")
+	if err := renderOutput(flatResults, asJSON, "results"); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
@@ -695,38 +728,43 @@ func cmdEntrySearch(args []string) int {
 	return 0
 }
 
-func parseEntrySearchArgs(args []string) (query string, repoScopes []string, selectedKeys []string, outputJSON bool, err error) {
+func parseSearchArgs(args []string) (query string, repoScopes []string, selectedKeys []string, outputFormat string, err error) {
+	outputFormat = "yaml" // default
 	i := 0
 	for i < len(args) {
-		if args[i] == "--json" {
-			outputJSON = true
-			i++
-		} else if args[i] == "--yaml" {
-			outputJSON = false
-			i++
+		if args[i] == "-o" || args[i] == "--output" {
+			if i+1 >= len(args) {
+				return "", nil, nil, "", fmt.Errorf("flag -o/--output requires an argument")
+			}
+			format := args[i+1]
+			if format != "yaml" && format != "json" {
+				return "", nil, nil, "", fmt.Errorf("invalid output format %q (expected yaml or json)", format)
+			}
+			outputFormat = format
+			i += 2
 		} else if args[i] == "--vault" {
 			if i+1 >= len(args) {
-				return "", nil, nil, false, fmt.Errorf("flag --vault requires an argument")
+				return "", nil, nil, "", fmt.Errorf("flag --vault requires an argument")
 			}
 			repoScopes = append(repoScopes, args[i+1])
 			i += 2
 		} else if args[i] == "-i" {
 			if i+1 >= len(args) {
-				return "", nil, nil, false, fmt.Errorf("flag -i requires an argument")
+				return "", nil, nil, "", fmt.Errorf("flag -i requires an argument")
 			}
 			selectedKeys = append(selectedKeys, args[i+1])
 			i += 2
 		} else if strings.HasPrefix(args[i], "-") {
-			return "", nil, nil, false, fmt.Errorf("unknown flag: %s", args[i])
+			return "", nil, nil, "", fmt.Errorf("unknown flag: %s", args[i])
 		} else {
 			if query != "" {
-				return "", nil, nil, false, fmt.Errorf("usage: cloakenv entry search [query] [--vault <vault> ...] [-i KEY ...] [--json | --yaml]")
+				return "", nil, nil, "", fmt.Errorf("usage: cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]")
 			}
 			query = args[i]
 			i++
 		}
 	}
-	return query, repoScopes, selectedKeys, outputJSON, nil
+	return query, repoScopes, selectedKeys, outputFormat, nil
 }
 
 func flattenEntry(entry provider.Entry) map[string]any {
@@ -819,34 +857,32 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, `cloakenv — pluggable secret orchestrator & runtime injector
 
 Usage:
-  cloakenv [-c config_path] run [-p] [-e KEY=uri ...] [-f envfile] [-i KEY ...] -- <command> [args]
+  cloakenv [-c config_path] run [-e KEY=uri ...] [-m entry-uri] [-i KEY ...] -- <command> [args]
   cloakenv [-c config_path] get <uri>
-  cloakenv [-c config_path] list [-p] [-e KEY=uri ...] [-f envfile] [-i KEY ...] [--json]
   cloakenv [-c config_path] set <uri> <value> [--ttl <duration>]
   cloakenv [-c config_path] delete <uri>
   cloakenv [-c config_path] cache clear
-  cloakenv [-c config_path] entry <show|search> [args]
+  cloakenv [-c config_path] show <entry-uri> [args]
+  cloakenv [-c config_path] search [query] [args]
   cloakenv [-c config_path] auth <login|forget|status> [vault]
 
 Commands:
   run     Wrap a binary with injected environment variables
   get     Retrieve and print a single secret value raw to stdout (no trailing newline)
-  list    Retrieve multiple secrets and print as key=value or JSON
   set     Store a secret value at a writable URI (keyring://, cache://)
   delete  Remove a secret from a writable URI (keyring://, cache://)
   cache   Manage local encrypted cache (subcommand: clear)
-  entry   Manage structured entries and tags (subcommands: show, search)
+  show    Retrieve and display a structured entry
+  search  Search for structured entries
   auth    Manage vault credentials and status (subcommands: login, forget, status)
 
 Flags:
   -c config_path  Custom configuration file path (global flag)
-  -p              Forward all parent environment variables (not done automatically)
   -e KEY=uri      Map an environment variable to a secret URI (repeatable)
-  -f envfile      Load KEY=uri mappings from a file (repeatable)
+  -m entry-uri    Merge all attributes from an entry into the environment (repeatable)
   -i KEY          Filter/whitelist keys/variables (repeatable)
-  --json          Output resolved values as JSON (list/entry search only)
-  --yaml          Output resolved values as YAML (entry commands only, default)
-  --vault vault   Scope entry search to a specific vault (repeatable)
+  -o, --output    Output format: plain, json, yaml, env (depends on command)
+  --vault vault   Scope search to a specific vault (repeatable)
   --ttl duration  Expiration duration for cache entries (e.g. 5m, 1h, set only)
 
 URI schemes:
@@ -861,34 +897,32 @@ func printUsageStdout() {
 	fmt.Fprintln(os.Stdout, `cloakenv — pluggable secret orchestrator & runtime injector
 
 Usage:
-  cloakenv [-c config_path] run [-p] [-e KEY=uri ...] [-f envfile] [-i KEY ...] -- <command> [args]
+  cloakenv [-c config_path] run [-e KEY=uri ...] [-m entry-uri] [-i KEY ...] -- <command> [args]
   cloakenv [-c config_path] get <uri>
-  cloakenv [-c config_path] list [-p] [-e KEY=uri ...] [-f envfile] [-i KEY ...] --json
   cloakenv [-c config_path] set <uri> <value> [--ttl <duration>]
   cloakenv [-c config_path] delete <uri>
   cloakenv [-c config_path] cache clear
-  cloakenv [-c config_path] entry <show|search> [args]
+  cloakenv [-c config_path] show <entry-uri> [args]
+  cloakenv [-c config_path] search [query] [args]
   cloakenv [-c config_path] auth <login|forget|status> [vault]
 
 Commands:
   run     Wrap a binary with injected environment variables
   get     Retrieve and print a single secret value raw to stdout (no trailing newline)
-  list    Retrieve multiple secrets and print as key=value or JSON
   set     Store a secret value at a writable URI (keyring://, cache://)
   delete  Remove a secret from a writable URI (keyring://, cache://)
   cache   Manage local encrypted cache (subcommand: clear)
-  entry   Manage structured entries and tags (subcommands: show, search)
+  show    Retrieve and display a structured entry
+  search  Search for structured entries
   auth    Manage vault credentials and status (subcommands: login, forget, status)
 
 Flags:
   -c config_path  Custom configuration file path (global flag)
-  -p              Forward all parent environment variables (not done automatically)
   -e KEY=uri      Map an environment variable to a secret URI (repeatable)
-  -f envfile      Load KEY=uri mappings from a file (repeatable)
+  -m entry-uri    Merge all attributes from an entry into the environment (repeatable)
   -i KEY          Filter/whitelist keys/variables (repeatable)
-  --json          Output resolved values as JSON (list/entry search only)
-  --yaml          Output resolved values as YAML (entry commands only, default)
-  --vault vault   Scope entry search to a specific vault (repeatable)
+  -o, --output    Output format: plain, json, yaml, env (depends on command)
+  --vault vault   Scope search to a specific vault (repeatable)
   --ttl duration  Expiration duration for cache entries (e.g. 5m, 1h, set only)
 
 URI schemes:
@@ -913,17 +947,16 @@ func hasHelpFlag(args []string) bool {
 
 func printRunHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv run [-p] [-e KEY=uri ...] [-f envfile] [-i KEY ...] -- <command> [args]
+  cloakenv run [-e KEY=uri ...] [-m entry-uri] [-i KEY ...] -- <command> [args]
 
 Description:
   Wrap a binary execution, resolving and injecting secret environment variables.
   If no -- separator is used, any remaining arguments are treated as the command.
 
 Flags:
-  -p              Forward all parent environment variables
   -e KEY=uri      Map an environment variable to a secret URI (repeatable)
-  -f envfile      Load KEY=uri mappings from a file (repeatable)
-  -i KEY          Whitelist filter key (filters only -f or parent ENV if -p is not set; repeatable)`)
+  -m entry-uri    Merge all attributes from an entry into the environment (repeatable)
+  -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)`)
 }
 
 func printGetHelp() {
@@ -935,21 +968,6 @@ Description:
 
 Arguments:
   <uri>           The secret URI to retrieve (e.g., keyring://service/account, env://VAR)`)
-}
-
-func printListHelp() {
-	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv list [-p] [-e KEY=uri ...] [-f envfile] [-i KEY ...] [--json]
-
-Description:
-  Retrieve multiple secrets and print as key=value pairs or JSON.
-
-Flags:
-  -p              Forward all parent environment variables
-  -e KEY=uri      Map an environment variable to a secret URI (repeatable)
-  -f envfile      Load KEY=uri mappings from a file (repeatable)
-  -i KEY          Whitelist filter key (filters only -f or parent ENV if -p is not set; repeatable)
-  --json          Output resolved values as JSON format`)
 }
 
 func printSetHelp() {
@@ -998,36 +1016,27 @@ Description:
   Clear all entries in the local encrypted cache.`)
 }
 
-func printEntryHelp() {
+func printShowHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv entry <show|search> [args]
+  cloakenv show <entry-uri> [-o yaml | json | env]
+  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env]
 
 Description:
-  Manage structured entries and tags.
-
-Subcommands:
-  show            Retrieve and display a structured entry
-  search          Search for structured entries`)
-}
-
-func printEntryShowHelp() {
-	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv entry show <entry-uri> [--yaml | --json]
-
-Description:
-  Retrieve and display a structured entry.
+  Retrieve and display a structured entry, or merge multiple entries/explicit mapping values.
 
 Arguments:
   <entry-uri>     The structured entry URI to retrieve
 
 Flags:
-  --json          Output resolved entry as JSON format
-  --yaml          Output resolved entry as YAML format (default)`)
+  -m <entry-uri>  Merge entry attributes (can be specified multiple times)
+  -e KEY=uri      Explicit environment/key override (can be specified multiple times)
+  -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
+  -o, --output    Output format: yaml, json, or env (default: yaml)`)
 }
 
-func printEntrySearchHelp() {
+func printSearchHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv entry search [query] [--vault <vault> ...] [-i KEY ...] [--json | --yaml]
+  cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]
 
 Description:
   Search for structured entries matching the query.
@@ -1036,10 +1045,9 @@ Arguments:
   [query]         Optional query string to filter entries by title, tags, or fields
 
 Flags:
-  --vault vault   Scope entry search to a specific vault (repeatable)
+  --vault vault   Scope search to a specific vault (repeatable)
   -i KEY          Select output fields/keys to return (repeatable)
-  --json          Output search results as JSON format
-  --yaml          Output search results as YAML format (default)`)
+  -o, --output    Output format: yaml or json (default: yaml)`)
 }
 
 func printAuthHelp() {
