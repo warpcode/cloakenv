@@ -22,7 +22,7 @@
 ## 📁 Project Structure
 
 ```
-cmd/cloakenv/main.go     # CLI entrypoint — keep thin; wire deps only
+main.go                  # CLI entrypoint — keep thin; wire deps only
 internal/
   config/                # YAML config parser (no business logic)
   engine/                # Orchestrator core — resolves URIs, injects env
@@ -48,7 +48,7 @@ Makefile                 # Build, test, fmt, vet, install targets
 
 ```bash
 make build            # Compiles to bin/cloakenv
-make run              # go run ./cmd/cloakenv
+make run              # go run .
 make install          # Installs to /usr/local/bin (or PREFIX=$HOME/.local make install)
 make uninstall        # Removes the installed binary
 ```

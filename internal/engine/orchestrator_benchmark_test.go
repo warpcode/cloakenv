@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"cloakenv/internal/config"
-	"cloakenv/internal/provider"
+	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/provider"
 )
 
 type slowProvider struct {

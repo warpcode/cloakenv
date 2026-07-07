@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/config"
 )
 
 func TestOrchestratorRecursiveAndSearch(t *testing.T) {

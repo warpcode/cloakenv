@@ -9,10 +9,10 @@ all: build
 
 build:
 	mkdir -p $(BUILD_DIR)
-	go build -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/cloakenv
+	go build -o $(BUILD_DIR)/$(BINARY_NAME) .
 
 run:
-	go run ./cmd/cloakenv
+	go run .
 
 test:
 	go test -v ./...

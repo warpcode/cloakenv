@@ -10,9 +10,7 @@ Pluggable secret orchestrator and dynamic runtime environment injector. It wraps
 ## Project Structure
 
 ```
-├── cmd/
-│   └── cloakenv/
-│       └── main.go         # CLI Entrypoint
+├── main.go                 # CLI Entrypoint
 ├── examples/
 │   ├── providers/          # Example databases for vaults (JSON, YAML, KeePass)
 │   └── config.yaml         # Fully documented example config file

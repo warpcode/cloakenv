@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"cloakenv/internal/config"
-	"cloakenv/internal/engine"
-	"cloakenv/internal/provider"
+	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/engine"
+	"github.com/warpcode/cloakenv/internal/provider"
 
 	"gopkg.in/yaml.v3"
 )
@@ -765,20 +765,6 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 		}
 	}
 	return query, repoScopes, selectedKeys, outputFormat, nil
-}
-
-func flattenEntry(entry provider.Entry) map[string]any {
-	flatEntry := make(map[string]any)
-	flatEntry["title"] = entry.Title
-	flatEntry["tags"] = entry.Tags
-	for k, v := range entry.Attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
-			continue
-		}
-		flatEntry[k] = v
-	}
-	return flatEntry
 }
 
 func flattenSearchResults(results []provider.SearchResult, selectedKeys []string) []map[string]any {

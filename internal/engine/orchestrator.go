@@ -13,8 +13,8 @@ import (
 	"strings"
 	"sync"
 
-	"cloakenv/internal/config"
-	"cloakenv/internal/provider"
+	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/provider"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/ast"
