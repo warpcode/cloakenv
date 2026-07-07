@@ -110,16 +110,16 @@ func flattenSearchResults(results []provider.SearchResult, selectedKeys []string
 					found := false
 					for k, v := range r.Entry.Attributes {
 						if strings.ToLower(k) == fieldLower {
-							flatRes[k] = v
+							flatRes[utils.FormatKey(k)] = v
 							found = true
 							break
 						}
 					}
 					if !found {
 						if v, ok := r.Entry.Attributes[field]; ok {
-							flatRes[field] = v
+							flatRes[utils.FormatKey(field)] = v
 						} else {
-							flatRes[field] = nil
+							flatRes[utils.FormatKey(field)] = nil
 						}
 					}
 				}
@@ -135,7 +135,7 @@ func flattenSearchResults(results []provider.SearchResult, selectedKeys []string
 				if kLower == "title" || kLower == "tags" {
 					continue
 				}
-				flatRes[k] = v
+				flatRes[utils.FormatKey(k)] = v
 			}
 		}
 		flatResults[i] = flatRes

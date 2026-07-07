@@ -106,7 +106,7 @@ func Show(args []string, cfg *config.Config) int {
 
 		whitelistSet := make(map[string]bool)
 		for _, k := range whitelist {
-			whitelistSet[k] = true
+			whitelistSet[utils.FormatKey(k)] = true
 		}
 		hasWhitelist := len(whitelist) > 0
 
@@ -146,7 +146,8 @@ func Show(args []string, cfg *config.Config) int {
 				if kLower == "title" || kLower == "tags" {
 					continue
 				}
-				if hasWhitelist && !whitelistSet[k] {
+				formattedKey := utils.FormatKey(k)
+				if hasWhitelist && !whitelistSet[formattedKey] {
 					continue
 				}
 				entry.Attributes[k] = v
@@ -190,6 +191,17 @@ func Show(args []string, cfg *config.Config) int {
 			}
 		}
 	}
+
+	// Format all keys in entry.Attributes by default
+	formattedAttributes := make(map[string]any)
+	for k, v := range entry.Attributes {
+		kLower := strings.ToLower(k)
+		if kLower == "title" || kLower == "tags" {
+			continue
+		}
+		formattedAttributes[utils.FormatKey(k)] = v
+	}
+	entry.Attributes = formattedAttributes
 
 	if outputFormat == "keys" {
 		printKeysFormat(entry.Attributes)
