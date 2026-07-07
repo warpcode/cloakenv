@@ -285,6 +285,10 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
 ### 4. KeePass (`keepass`)
 * **Type**: Configured vault, read-only, multiple-entity
 * **Description**: Integrates with KeePass database (`.kdbx`) files. Requires authentication using `cloakenv auth login`.
+* **Configuration Settings**:
+  - `provider` (required): Must be set to `"keepass"`.
+  - `vault_path` (required): File path to the KeePass `.kdbx` file. Supports `~/` expansion.
+  - `searchable` (optional, defaults to `true`): If set to `false`, excludes this vault from dynamic queries.
 * **Configuration** (`config.yaml`):
   ```yaml
   vaults:
@@ -312,11 +316,13 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
 * **Type**: Configured vault, read-only
 * **Description**: Reads static YAML files containing entries. Can be configured as a single-entity or multiple-entity vault.
 * **Configuration Settings**:
-  - `vault_path` (required): File path to the YAML registry.
+  - `provider` (required): Must be set to `"yaml"`.
+  - `vault_path` (required): File path to the YAML database file.
   - `single_entity` (optional, defaults to `false`): If `true`, the YAML file is parsed as a flat key-value map representing a single entity.
-  - `entity_name` (optional): The title used for search results when `single_entity` is `true`. Defaults to the file name or vault name.
-  - `searchable` (optional, defaults to `true`): Excludes the vault from queries when set to `false`.
-  - `entities_root_key` (optional, defaults to `"entities"` or `"entries"`): The dictionary key under which structured entries are defined when `single_entity` is `false`. Set to `"."` to map entries directly to the root of the YAML document. If the specified key is not present, the vault is gracefully ignored during searches rather than throwing an error.
+  - `entity_name` (optional): The title of the entity in search results (if `single_entity` is `true`).
+  - `tags` (optional): List of tag strings applied to the single entity (if `single_entity` is `true`).
+  - `entities_root_key` (optional, defaults to `"entities"` or `"entries"`): Root dictionary key where entities are listed when `single_entity` is `false`. Use `"."` to parse directly from the document root.
+  - `searchable` (optional, defaults to `true`): If set to `false`, excludes this vault from dynamic searches.
   - **JSON/YAML Serialization**: If a resolved value is a structured map/list, it is returned as a formatted YAML string.
 * **Configuration** (`config.yaml`):
   ```yaml
@@ -342,7 +348,14 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
 * **Type**: Configured vault, read-only
 * **Description**: Reads static JSON files containing entries. Can be configured as a single-entity or multiple-entity vault.
 * **Configuration Settings**:
-  - Same options as the YAML provider. Structured values resolved from `GetSecret` are returned as compact JSON strings.
+  - `provider` (required): Must be set to `"json"`.
+  - `vault_path` (required): File path to the JSON database file.
+  - `single_entity` (optional, defaults to `false`): If `true`, the JSON file is parsed as a flat key-value map representing a single entity.
+  - `entity_name` (optional): The title of the entity in search results (if `single_entity` is `true`).
+  - `tags` (optional): List of tag strings applied to the single entity (if `single_entity` is `true`).
+  - `entities_root_key` (optional, defaults to `"entities"` or `"entries"`): Root dictionary key where entities are listed when `single_entity` is `false`. Use `"."` to parse directly from the document root.
+  - `searchable` (optional, defaults to `true`): If set to `false`, excludes this vault from dynamic searches.
+  - **JSON Serialization**: Structured values resolved from `GetSecret` are returned as compact JSON strings.
 * **Configuration** (`config.yaml`):
   ```yaml
   vaults:
@@ -363,6 +376,15 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
 ### 7. Custom Static Vault (`custom_vault`)
 * **Type**: Configured vault, inline, read-only
 * **Description**: Configured completely inside the `config.yaml` file without any external database dependencies. Excellent for static key lists.
+* **Configuration Settings**:
+  - `provider` (required): Must be set to `"custom_vault"`.
+  - `single_entity` (optional, defaults to `false`): If `true`, the vault holds a single flat list of attributes.
+  - `entity_name` (optional): Name of the single entity (if `single_entity` is `true`).
+  - `tags` (optional): List of tag strings applied to the single entity (if `single_entity` is `true`).
+  - `attributes` (optional): Inline map of key-value attributes (if `single_entity` is `true`).
+  - `entities` (optional): Inline map of named entities to their attribute maps (if `single_entity` is `false`).
+  - `resolve_values` (optional, defaults to `false`): Enables recursive URI resolution for values inside this vault.
+  - `searchable` (optional, defaults to `true`): If set to `false`, excludes this vault from dynamic searches.
 * **Configuration** (`config.yaml`):
   ```yaml
   vaults:
