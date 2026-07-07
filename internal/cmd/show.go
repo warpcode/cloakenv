@@ -73,8 +73,8 @@ func Show(args []string, cfg *config.Config) int {
 
 	hasFlags := len(merges) > 0 || len(explicit) > 0 || len(whitelist) > 0
 	if hasFlags && positionalURI != "" {
-		fmt.Fprintln(os.Stderr, "Error: cannot mix positional entry URI with -m, -e, or -i flags.")
-		return 1
+		merges = append([]string{positionalURI}, merges...)
+		positionalURI = ""
 	}
 	if !hasFlags && positionalURI == "" {
 		fmt.Fprintln(os.Stderr, "Usage: cloakenv show <entry-uri> [-o yaml | json | env]")

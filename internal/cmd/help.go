@@ -167,7 +167,7 @@ Description:
 // PrintShowHelp prints usage help for the show subcommand.
 func PrintShowHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv show <entry-uri> [-o yaml | json | env]
+  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env]
   cloakenv show -m <entry-uri> [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env]
 
 Description:
