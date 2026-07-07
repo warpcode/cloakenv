@@ -52,8 +52,8 @@ Makefile                 # Build, test, fmt, vet, install targets
 ```bash
 make build            # Compiles to bin/cloakenv
 make run              # go run .
-make install          # Installs to /usr/local/bin (or PREFIX=$HOME/.local make install)
-make uninstall        # Removes the installed binary
+make install          # Installs using go install (defaults to $GOBIN or $GOPATH/bin)
+make uninstall        # Removes the installed binary using go clean -i
 ```
 
 ### Testing

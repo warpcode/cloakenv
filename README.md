@@ -60,26 +60,26 @@ This produces a binary executable at `bin/cloakenv`.
 
 ### Installing the Binary
 
-To install the binary globally (by default to `/usr/local/bin`):
+To install the binary using the Go toolchain (by default to `$GOBIN` or `$GOPATH/bin`):
 ```bash
-sudo make install
+make install
 ```
 
-If you prefer to install it to a user-owned directory without using `sudo` (e.g., `~/.local/bin`):
+If you prefer to install it to a custom directory, set the `GOBIN` environment variable:
 ```bash
-make install PREFIX=$HOME/.local
+GOBIN=$HOME/.local/bin make install
 ```
 
 ### Uninstalling the Binary
 
-To uninstall the binary from the default location:
+To uninstall/remove the installed binary:
 ```bash
-sudo make uninstall
+make uninstall
 ```
 
-Or from a custom prefix:
+If you installed to a custom directory, specify the same `GOBIN`:
 ```bash
-make uninstall PREFIX=$HOME/.local
+GOBIN=$HOME/.local/bin make uninstall
 ```
 
 ### Linting and Formatting
