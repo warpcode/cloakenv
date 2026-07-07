@@ -5,15 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/engine"
 	"github.com/warpcode/cloakenv/internal/provider"
+	"github.com/warpcode/cloakenv/internal/runner"
 
 	"gopkg.in/yaml.v3"
 )
@@ -177,23 +176,7 @@ func cmdRun(args []string) int {
 	}
 
 	// Execute the wrapped command
-	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-	cmd.Env = env
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-				return status.ExitStatus()
-			}
-		}
-		fmt.Fprintf(os.Stderr, "Execution failed: %v\n", err)
-		return 1
-	}
-
-	return 0
+	return runner.RunCommand(cmdArgs, env)
 }
 
 // cmdGet handles single value secret retrieval (raw to stdout, pipeable).
