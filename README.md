@@ -24,6 +24,27 @@ Pluggable secret orchestrator and dynamic runtime environment injector. It wraps
 ├── go.mod
 ├── README.md
 ```
+## Installation & Execution
+
+You can run `cloakenv` directly or install it using the Go toolchain, or build it locally.
+
+### Direct Execution (go run)
+
+To run the orchestrator directly without manual compilation, use `go run`:
+```bash
+go run github.com/warpcode/cloakenv@latest [args]
+```
+For example, to display the help menu:
+```bash
+go run github.com/warpcode/cloakenv@latest --help
+```
+
+### Installation via Go Toolchain
+
+You can install the binary directly to your `$GOPATH/bin` directory using:
+```bash
+go install github.com/warpcode/cloakenv@latest
+```
 
 ## Development Tasks
 
