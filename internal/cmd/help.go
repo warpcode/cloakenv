@@ -10,7 +10,7 @@ func PrintUsage() {
 	fmt.Fprintln(os.Stderr, `cloakenv — pluggable secret orchestrator & runtime injector
 
 Usage:
-  cloakenv [-c config_path] run [-e KEY=uri ...] [-m entry-uri] [-i KEY ...] -- <command> [args]
+  cloakenv [-c config_path] run [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] -- <command> [args]
   cloakenv [-c config_path] get <uri>
   cloakenv [-c config_path] set <uri> <value> [--ttl <duration>]
   cloakenv [-c config_path] delete <uri>
@@ -32,6 +32,7 @@ Commands:
 Flags:
   -c config_path  Custom configuration file path (global flag)
   -e KEY=uri      Map an environment variable to a secret URI (repeatable)
+  -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -m entry-uri    Merge all attributes from an entry into the environment (repeatable)
   -i KEY          Filter/whitelist keys/variables (repeatable)
   -o, --output    Output format: plain, json, yaml, env (depends on command)
@@ -51,7 +52,7 @@ func PrintUsageStdout() {
 	fmt.Fprintln(os.Stdout, `cloakenv — pluggable secret orchestrator & runtime injector
 
 Usage:
-  cloakenv [-c config_path] run [-e KEY=uri ...] [-m entry-uri] [-i KEY ...] -- <command> [args]
+  cloakenv [-c config_path] run [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] -- <command> [args]
   cloakenv [-c config_path] get <uri>
   cloakenv [-c config_path] set <uri> <value> [--ttl <duration>]
   cloakenv [-c config_path] delete <uri>
@@ -73,6 +74,7 @@ Commands:
 Flags:
   -c config_path  Custom configuration file path (global flag)
   -e KEY=uri      Map an environment variable to a secret URI (repeatable)
+  -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -m entry-uri    Merge all attributes from an entry into the environment (repeatable)
   -i KEY          Filter/whitelist keys/variables (repeatable)
   -o, --output    Output format: plain, json, yaml, env (depends on command)
@@ -90,7 +92,7 @@ URI schemes:
 // PrintRunHelp prints usage help for the run subcommand.
 func PrintRunHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv run [-e KEY=uri ...] [-m entry-uri] [-i KEY ...] -- <command> [args]
+  cloakenv run [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] -- <command> [args]
 
 Description:
   Wrap a binary execution, resolving and injecting secret environment variables.
@@ -98,6 +100,7 @@ Description:
 
 Flags:
   -e KEY=uri      Map an environment variable to a secret URI (repeatable)
+  -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -m entry-uri    Merge all attributes from an entry into the environment (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)`)
 }
@@ -167,8 +170,8 @@ Description:
 // PrintShowHelp prints usage help for the show subcommand.
 func PrintShowHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env | keys]
-  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env | keys]
+  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]
+  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]
 
 Description:
   Retrieve and display a structured entry, or merge multiple entries/explicit mapping values.
@@ -179,6 +182,7 @@ Arguments:
 Flags:
   -m <entry-uri>  Merge entry attributes (can be specified multiple times)
   -e KEY=uri      Explicit environment/key override (can be specified multiple times)
+  -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
   -o, --output    Output format: yaml, json, env, or keys (default: yaml)`)
 }

@@ -548,8 +548,6 @@ func TestGetEntry_AttributeSelector(t *testing.T) {
 	})
 }
 
-
-
 // TestBuiltinsNonSearchable verifies that built-in schemes (env, keyring, cache)
 // are not searchable by default and cannot be registered as vault names.
 func TestBuiltinsNonSearchable(t *testing.T) {
@@ -696,4 +694,35 @@ func TestOrchestratorBuildEnvMerges(t *testing.T) {
 			t.Errorf("expected PORT to be filtered out by whitelist, but it exists")
 		}
 	})
+}
+
+func TestResolveLiteralValues(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.Config{}
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"just_a_string", "just_a_string"},
+		{"12345", "12345"},
+		{"https://example.com/api", "https://example.com/api"},
+		{"some-other-scheme://foo", "some-other-scheme://foo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := orch.Resolve(ctx, tt.input)
+			if err != nil {
+				t.Fatalf("Resolve failed: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Resolve(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
 }

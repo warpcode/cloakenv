@@ -53,6 +53,18 @@ func Show(args []string, cfg *config.Config) int {
 			}
 			explicit[key] = uri
 			i++
+		case args[i] == "-t" && i+1 < len(args):
+			i++
+			templatePath := args[i]
+			envs, err := utils.ParseTemplateFile(templatePath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing template file %s: %v\n", templatePath, err)
+				return 1
+			}
+			for k, v := range envs {
+				explicit[k] = v
+			}
+			i++
 		case args[i] == "-i" && i+1 < len(args):
 			i++
 			whitelist = append(whitelist, args[i])
@@ -63,7 +75,7 @@ func Show(args []string, cfg *config.Config) int {
 		default:
 			if positionalURI != "" {
 				fmt.Fprintln(os.Stderr, "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]")
-				fmt.Fprintln(os.Stderr, "   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env | keys]")
+				fmt.Fprintln(os.Stderr, "   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]")
 				return 1
 			}
 			positionalURI = args[i]
@@ -78,7 +90,7 @@ func Show(args []string, cfg *config.Config) int {
 	}
 	if !hasFlags && positionalURI == "" {
 		fmt.Fprintln(os.Stderr, "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]")
-		fmt.Fprintln(os.Stderr, "   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-i KEY ...] [-o yaml | json | env | keys]")
+		fmt.Fprintln(os.Stderr, "   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]")
 		return 1
 	}
 

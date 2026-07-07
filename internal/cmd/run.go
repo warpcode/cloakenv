@@ -41,6 +41,18 @@ func Run(args []string, cfg *config.Config) int {
 			}
 			explicitEnv[key] = uri
 			i++
+		case args[i] == "-t" && i+1 < len(args):
+			i++
+			templatePath := args[i]
+			envs, err := utils.ParseTemplateFile(templatePath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing template file %s: %v\n", templatePath, err)
+				return 1
+			}
+			for k, v := range envs {
+				explicitEnv[k] = v
+			}
+			i++
 		case args[i] == "-m" && i+1 < len(args):
 			i++
 			merges = append(merges, args[i])
