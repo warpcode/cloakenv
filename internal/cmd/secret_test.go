@@ -87,14 +87,8 @@ func TestCacheRouting(t *testing.T) {
 			wErr.Close()
 
 			var bufOut, bufErr bytes.Buffer
-			_, errOut := io.Copy(&bufOut, rOut)
-			if errOut != nil {
-				t.Fatalf("failed to copy stdout: %v", errOut)
-			}
-			_, errErr := io.Copy(&bufErr, rErr)
-			if errErr != nil {
-				t.Fatalf("failed to copy stderr: %v", errErr)
-			}
+			io.Copy(&bufOut, rOut) //nolint:errcheck
+			io.Copy(&bufErr, rErr) //nolint:errcheck
 
 			if exitCode != tt.expectedCode {
 				t.Errorf("Cache() exit code = %d, want %d", exitCode, tt.expectedCode)
