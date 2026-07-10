@@ -1,0 +1,43 @@
+--- internal/cmd/auth_test.go
++++ internal/cmd/auth_test.go
+@@ -9,7 +9,8 @@
+
+	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/zalando/go-keyring"
++	"sync"
+ )
+
+ func captureOutput(f func()) (string, string) {
+@@ -25,14 +26,27 @@
+	os.Stdout = wOut
+	os.Stderr = wErr
+
++	var wg sync.WaitGroup
++	var bufOut bytes.Buffer
++	var bufErr bytes.Buffer
++
++	wg.Add(2)
++	go func() {
++		defer wg.Done()
++		io.Copy(&bufOut, rOut)
++	}()
++
++	go func() {
++		defer wg.Done()
++		io.Copy(&bufErr, rErr)
++	}()
++
+	f()
+
+	wOut.Close()
+	wErr.Close()
+
+-	var bufOut bytes.Buffer
+-	io.Copy(&bufOut, rOut)
+-
+-	var bufErr bytes.Buffer
+-	io.Copy(&bufErr, rErr)
++	wg.Wait()
+
+	return bufOut.String(), bufErr.String()
+ }
