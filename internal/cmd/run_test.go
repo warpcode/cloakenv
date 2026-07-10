@@ -75,7 +75,9 @@ func TestRun_Errors(t *testing.T) {
 
 			w.Close()
 			var buf bytes.Buffer
-			io.Copy(&buf, r)
+			if _, err := io.Copy(&buf, r); err != nil {
+				t.Fatalf("Failed to read from pipe: %v", err)
+			}
 			os.Stderr = oldStderr
 
 			if exitCode != tc.wantExit {
