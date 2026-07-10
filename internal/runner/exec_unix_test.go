@@ -67,11 +67,15 @@ func TestRunCommand_ExecFailure(t *testing.T) {
 	defer os.Remove(tmpFile.Name())
 
 	// Write some garbage
-	tmpFile.WriteString("not a binary")
+	if _, err := tmpFile.WriteString("not a binary"); err != nil {
+		t.Fatalf("Failed to write to temp file: %v", err)
+	}
 	tmpFile.Close()
 
 	// Make it executable
-	os.Chmod(tmpFile.Name(), 0755)
+	if err := os.Chmod(tmpFile.Name(), 0755); err != nil {
+		t.Fatalf("Failed to chmod temp file: %v", err)
+	}
 
 	var stderr bytes.Buffer
 	oldStderr := os.Stderr
