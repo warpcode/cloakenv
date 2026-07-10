@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -54,31 +55,55 @@ func Get(args []string, cfg *config.Config) int {
 	return 0
 }
 
-// Set handles "cloakenv set <uri> <value> [--ttl <duration>]".
+// Set handles "cloakenv set <uri> [value] [--ttl <duration>]".
 func Set(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
 		PrintSetHelp()
 		return 0
 	}
-	if len(args) != 2 && len(args) != 4 {
-		fmt.Fprintln(os.Stderr, "Usage: cloakenv set <uri> <value> [--ttl <duration>]")
+
+	var posArgs []string
+	var ttl time.Duration
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--ttl" {
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "Error: missing value for --ttl flag")
+				return 1
+			}
+			var err error
+			ttl, err = time.ParseDuration(args[i+1])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Invalid TTL duration format: %v (examples: 5m, 1h)\n", err)
+				return 1
+			}
+			i++
+		} else {
+			posArgs = append(posArgs, args[i])
+		}
+	}
+
+	if len(posArgs) < 1 || len(posArgs) > 2 {
+		fmt.Fprintln(os.Stderr, "Usage: cloakenv set <uri> [value] [--ttl <duration>]")
 		return 1
 	}
 
-	uri := args[0]
-	value := args[1]
-	var ttl time.Duration
+	uri := posArgs[0]
+	var value string
 
-	if len(args) == 4 {
-		if args[2] != "--ttl" {
-			fmt.Fprintf(os.Stderr, "Unknown flag: %s (expected --ttl)\n", args[2])
+	if len(posArgs) == 2 && posArgs[1] != "-" {
+		value = posArgs[1]
+	} else {
+		b, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", err)
 			return 1
 		}
-		var err error
-		ttl, err = time.ParseDuration(args[3])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Invalid TTL duration format: %v (examples: 5m, 1h)\n", err)
-			return 1
+
+		value = string(b)
+		if strings.HasSuffix(value, "\r\n") {
+			value = strings.TrimSuffix(value, "\r\n")
+		} else if strings.HasSuffix(value, "\n") {
+			value = strings.TrimSuffix(value, "\n")
 		}
 	}
 
