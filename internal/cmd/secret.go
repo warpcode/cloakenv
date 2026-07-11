@@ -12,6 +12,8 @@ import (
 	"github.com/warpcode/cloakenv/internal/engine"
 	"github.com/warpcode/cloakenv/internal/provider"
 	"github.com/warpcode/cloakenv/internal/utils"
+
+	"golang.org/x/term"
 )
 
 // Cache handles routing for the "cloakenv cache" subcommands.
@@ -93,7 +95,16 @@ func Set(args []string, cfg *config.Config) int {
 	if len(posArgs) == 2 && posArgs[1] != "-" {
 		value = posArgs[1]
 	} else {
-		b, err := io.ReadAll(os.Stdin)
+		var b []byte
+		var err error
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			fmt.Fprint(os.Stderr, "Enter secret value: ")
+			b, err = term.ReadPassword(int(os.Stdin.Fd()))
+			fmt.Fprintln(os.Stderr)
+		} else {
+			b, err = io.ReadAll(os.Stdin)
+		}
+
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", err)
 			return 1
