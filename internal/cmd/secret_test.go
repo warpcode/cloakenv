@@ -8,9 +8,12 @@ import (
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/zalando/go-keyring"
 )
 
 func TestCacheRouting(t *testing.T) {
+	keyring.MockInit()
+
 	tests := []struct {
 		name           string
 		args           []string
@@ -56,9 +59,8 @@ func TestCacheRouting(t *testing.T) {
 		{
 			name:           "clear subcommand valid empty config",
 			args:           []string{"clear"},
-			expectedCode:   1,
-			expectedStdout: "",
-			// Should fail because of missing config or key ring init
+			expectedCode:   0,
+			expectedStdout: "Cache cleared successfully.",
 			expectedStderr: "",
 		},
 	}
