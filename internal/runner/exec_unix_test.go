@@ -26,6 +26,7 @@ func TestRunCommand_Success(t *testing.T) {
 	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
 	var out bytes.Buffer
 	cmd.Stdout = &out
+	cmd.Stderr = os.Stderr
 	err := cmd.Run()
 	if err != nil {
 		t.Fatalf("Process failed: %v", err)
@@ -39,7 +40,11 @@ func TestRunCommand_NotFound(t *testing.T) {
 	var stderr bytes.Buffer
 
 	oldStderr := os.Stderr
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
+	defer r.Close()
 	os.Stderr = w
 
 	exitCode := RunCommand([]string{"this-command-definitely-does-not-exist"}, os.Environ())
@@ -79,7 +84,11 @@ func TestRunCommand_ExecFailure(t *testing.T) {
 
 	var stderr bytes.Buffer
 	oldStderr := os.Stderr
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
+	defer r.Close()
 	os.Stderr = w
 
 	exitCode := RunCommand([]string{tmpFile.Name()}, os.Environ())
