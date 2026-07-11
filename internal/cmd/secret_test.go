@@ -41,13 +41,17 @@ func captureOutput(t *testing.T, f func() int) (int, string, string) {
 
 	go func() {
 		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, rOut)
+		if _, err := io.Copy(&buf, rOut); err != nil {
+			t.Errorf("failed to read from stdout pipe: %v", err)
+		}
 		outC <- buf.String()
 	}()
 
 	go func() {
 		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, rErr)
+		if _, err := io.Copy(&buf, rErr); err != nil {
+			t.Errorf("failed to read from stderr pipe: %v", err)
+		}
 		errC <- buf.String()
 	}()
 
