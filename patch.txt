@@ -1,0 +1,72 @@
+--- internal/cmd/auth_test.go
++++ internal/cmd/auth_test.go
+@@ -10,7 +10,7 @@
+	"github.com/zalando/go-keyring"
+ )
+
+-func captureOutput(f func()) (string, string) {
++func captureOutput(t *testing.T, f func()) (string, string) {
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	defer func() {
+@@ -18,8 +18,16 @@
+		os.Stderr = oldStderr
+	}()
+
+-	rOut, wOut, _ := os.Pipe()
+-	rErr, wErr, _ := os.Pipe()
++	rOut, wOut, err := os.Pipe()
++	if err != nil {
++		t.Fatalf("failed to create stdout pipe: %v", err)
++	}
++	defer wOut.Close()
++	rErr, wErr, err := os.Pipe()
++	if err != nil {
++		t.Fatalf("failed to create stderr pipe: %v", err)
++	}
++	defer wErr.Close()
+	os.Stdout = wOut
+	os.Stderr = wErr
+
+@@ -37,9 +45,6 @@
+
+	f()
+
+-	wOut.Close()
+-	wErr.Close()
+-
+	wg.Wait()
+
+	return bufOut.String(), bufErr.String()
+@@ -124,7 +129,7 @@
+			}
+
+			var exitCode int
+-			stdout, stderr := captureOutput(func() {
++			stdout, stderr := captureOutput(t, func() {
+				exitCode = Auth(tc.args, cfg)
+			})
+
+@@ -186,7 +191,7 @@
+		t.Run(tc.name, func(t *testing.T) {
+			var exitCode int
+-			_, stderr := captureOutput(func() {
++			_, stderr := captureOutput(t, func() {
+				exitCode = Auth(tc.args, cfg)
+			})
+
+@@ -265,7 +270,7 @@
+		t.Run(tc.name, func(t *testing.T) {
+			var exitCode int
+-			stdout, stderr := captureOutput(func() {
++			stdout, stderr := captureOutput(t, func() {
+				exitCode = Auth(tc.args, cfg)
+			})
+
+@@ -333,7 +338,7 @@
+		t.Run(tc.name, func(t *testing.T) {
+			var exitCode int
+-			stdout, _ := captureOutput(func() {
++			stdout, _ := captureOutput(t, func() {
+				exitCode = Auth(tc.args, cfg)
+			})

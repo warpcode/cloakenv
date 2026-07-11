@@ -12,7 +12,7 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-func captureOutput(f func()) (string, string) {
+func captureOutput(t *testing.T, f func()) (string, string) {
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
 	defer func() {
@@ -20,8 +20,17 @@ func captureOutput(f func()) (string, string) {
 		os.Stderr = oldStderr
 	}()
 
-	rOut, wOut, _ := os.Pipe()
-	rErr, wErr, _ := os.Pipe()
+	rOut, wOut, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stdout pipe: %v", err)
+	}
+
+	rErr, wErr, err := os.Pipe()
+	if err != nil {
+		wOut.Close()
+		t.Fatalf("failed to create stderr pipe: %v", err)
+	}
+
 	os.Stdout = wOut
 	os.Stderr = wErr
 
@@ -121,7 +130,7 @@ func TestAuth_RoutingAndHelp(t *testing.T) {
 			}
 
 			var exitCode int
-			stdout, stderr := captureOutput(func() {
+			stdout, stderr := captureOutput(t, func() {
 				exitCode = Auth(tc.args, cfg)
 			})
 
@@ -185,7 +194,7 @@ func TestAuth_Login(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var exitCode int
-			_, stderr := captureOutput(func() {
+			_, stderr := captureOutput(t, func() {
 				exitCode = Auth(tc.args, cfg)
 			})
 
@@ -262,7 +271,7 @@ func TestAuth_Forget(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var exitCode int
-			stdout, stderr := captureOutput(func() {
+			stdout, stderr := captureOutput(t, func() {
 				exitCode = Auth(tc.args, cfg)
 			})
 
@@ -335,7 +344,7 @@ func TestAuth_Status(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var exitCode int
-			stdout, _ := captureOutput(func() {
+			stdout, _ := captureOutput(t, func() {
 				exitCode = Auth(tc.args, cfg)
 			})
 
