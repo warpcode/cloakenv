@@ -12,7 +12,8 @@ import (
 )
 
 // captureOutput captures stdout and stderr for the given function
-func captureOutput(f func() int) (int, string, string) {
+func captureOutput(t *testing.T, f func() int) (int, string, string) {
+	t.Helper()
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
 	defer func() {
@@ -20,8 +21,17 @@ func captureOutput(f func() int) (int, string, string) {
 		os.Stderr = oldStderr
 	}()
 
-	rOut, wOut, _ := os.Pipe()
-	rErr, wErr, _ := os.Pipe()
+	rOut, wOut, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stdout pipe: %v", err)
+	}
+	defer wOut.Close()
+
+	rErr, wErr, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stderr pipe: %v", err)
+	}
+	defer wErr.Close()
 
 	os.Stdout = wOut
 	os.Stderr = wErr
@@ -43,6 +53,9 @@ func captureOutput(f func() int) (int, string, string) {
 
 	exitCode := f()
 
+	// wOut and wErr will be closed by deferred calls above when captureOutput returns.
+	// We need to close them here to unblock the readers in the goroutines.
+	// The deferred calls will be no-ops if they are already closed.
 	wOut.Close()
 	wErr.Close()
 
@@ -51,7 +64,7 @@ func captureOutput(f func() int) (int, string, string) {
 
 func TestDelete(t *testing.T) {
 	t.Run("HelpFlag", func(t *testing.T) {
-		exitCode, stdout, _ := captureOutput(func() int {
+		exitCode, stdout, _ := captureOutput(t, func() int {
 			return Delete([]string{"--help"}, &config.Config{})
 		})
 
@@ -65,7 +78,7 @@ func TestDelete(t *testing.T) {
 	})
 
 	t.Run("InvalidArgs", func(t *testing.T) {
-		exitCode, _, stderr := captureOutput(func() int {
+		exitCode, _, stderr := captureOutput(t, func() int {
 			return Delete([]string{}, &config.Config{})
 		})
 
@@ -79,7 +92,7 @@ func TestDelete(t *testing.T) {
 	})
 
 	t.Run("InvalidURI", func(t *testing.T) {
-		exitCode, _, stderr := captureOutput(func() int {
+		exitCode, _, stderr := captureOutput(t, func() int {
 			return Delete([]string{"invalid-uri"}, &config.Config{})
 		})
 
@@ -103,13 +116,12 @@ func TestDelete(t *testing.T) {
 		t.Setenv("XDG_CACHE_HOME", cacheDir)
 		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
 
-		// Set secret (we suppress output from Set to not mess up testing, but since it's not captured, it will go to real stdout if not careful,
-		// so we can also capture it or run it independently)
-		captureOutput(func() int {
+		// Set secret
+		captureOutput(t, func() int {
 			return Set([]string{"cache://test", "testvalue"}, cfg)
 		})
 
-		exitCode, stdout, _ := captureOutput(func() int {
+		exitCode, stdout, _ := captureOutput(t, func() int {
 			return Delete([]string{"cache://test"}, cfg)
 		})
 
@@ -123,14 +135,13 @@ func TestDelete(t *testing.T) {
 	})
 
 	t.Run("ConfigError", func(t *testing.T) {
-		// Pass a config that will cause an error (e.g. invalid vault provider)
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"bad": {Provider: "invalid_provider"},
 			},
 		}
 
-		exitCode, _, stderr := captureOutput(func() int {
+		exitCode, _, stderr := captureOutput(t, func() int {
 			return Delete([]string{"cache://test"}, cfg)
 		})
 
@@ -153,7 +164,7 @@ func TestDelete(t *testing.T) {
 		t.Setenv("XDG_CACHE_HOME", cacheDir)
 		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
 
-		exitCode, _, stderr := captureOutput(func() int {
+		exitCode, _, stderr := captureOutput(t, func() int {
 			return Delete([]string{"cache://nonexistent"}, cfg)
 		})
 
