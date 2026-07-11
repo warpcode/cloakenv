@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 // JsonProvider implements SecretProvider and SearchableProvider for static JSON registries.
@@ -124,15 +126,7 @@ func (j *JsonProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 			switch kLower {
 			case "tags":
 				if len(tags) == 0 {
-					if tagSlice, ok := v.([]any); ok {
-						for _, t := range tagSlice {
-							if str, ok := t.(string); ok {
-								tags = append(tags, str)
-							}
-						}
-					} else if tagStr, ok := v.(string); ok {
-						tags = parseTags(tagStr)
-					}
+					tags = utils.ParseTags(v)
 				}
 			case "title":
 				if cfg.EntityName == "" {
@@ -178,15 +172,7 @@ func (j *JsonProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 			kLower := strings.ToLower(k)
 			switch kLower {
 			case "tags":
-				if tagSlice, ok := v.([]any); ok {
-					for _, t := range tagSlice {
-						if str, ok := t.(string); ok {
-							entry.Tags = append(entry.Tags, str)
-						}
-					}
-				} else if tagStr, ok := v.(string); ok {
-					entry.Tags = parseTags(tagStr)
-				}
+				entry.Tags = utils.ParseTags(v)
 			case "title":
 				if str, ok := v.(string); ok {
 					entry.Title = str

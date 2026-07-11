@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/warpcode/cloakenv/internal/utils"
+
 	"github.com/tobischo/gokeepasslib/v3"
 	"github.com/zalando/go-keyring"
 	"golang.org/x/term"
@@ -297,7 +299,7 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 				}
 			}
 
-			entryTags := parseTags(entry.Tags)
+			entryTags := utils.ParseTagString(entry.Tags)
 
 			// Filter by tags if specified
 			if len(query.Tags) > 0 {
@@ -335,7 +337,7 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 // toEntry converts a gokeepasslib.Entry into provider.Entry.
 func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) Entry {
 	title := getEntryTitle(entry)
-	tags := parseTags(entry.Tags)
+	tags := utils.ParseTagString(entry.Tags)
 
 	attrs := make(map[string]any)
 	for _, v := range entry.Values {
@@ -357,22 +359,6 @@ func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) Entry {
 		Tags:       tags,
 		Attributes: attrs,
 	}
-}
-
-// parseTags splits a comma-separated tags string into a slice of strings.
-func parseTags(tagsStr string) []string {
-	if tagsStr == "" {
-		return nil
-	}
-	parts := strings.Split(tagsStr, ",")
-	var tags []string
-	for _, p := range parts {
-		t := strings.TrimSpace(p)
-		if t != "" {
-			tags = append(tags, t)
-		}
-	}
-	return tags
 }
 
 // parseKeePassLocation splits "Path/To/Entry:Attribute" into path and attribute.
