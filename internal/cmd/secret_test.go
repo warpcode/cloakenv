@@ -54,7 +54,10 @@ func TestGet_InvalidArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r, w, _ := os.Pipe()
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("failed to create pipe: %v", err)
+			}
 			defer r.Close()
 			os.Stderr = w
 			defer func() { os.Stderr = oldStderr }()
@@ -113,7 +116,10 @@ func TestGet_ResolutionError(t *testing.T) {
 	oldStderr := os.Stderr
 	defer func() { os.Stderr = oldStderr }()
 
-	r, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
 	defer r.Close()
 	os.Stderr = w
 
