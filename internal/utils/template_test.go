@@ -23,7 +23,7 @@ func TestParseTemplateFile(t *testing.T) {
 			name: "valid entries",
 			content: `# This is a comment
 KEY1=val1
-  KEY2 = val2
+KEY2 = val2  
 KEY3 = "val3"
 KEY4='val4'
 `,
