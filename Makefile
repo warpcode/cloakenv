@@ -34,3 +34,4 @@ install:
 
 uninstall:
 	go clean -i
+
