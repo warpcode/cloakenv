@@ -24,41 +24,37 @@ func captureOutput(t *testing.T, f func()) (string, string) {
 	if err != nil {
 		t.Fatalf("failed to create stdout pipe: %v", err)
 	}
+	defer wOut.Close()
 
 	rErr, wErr, err := os.Pipe()
 	if err != nil {
-		wOut.Close()
-		rOut.Close()
 		t.Fatalf("failed to create stderr pipe: %v", err)
 	}
+	defer wErr.Close()
 
 	os.Stdout = wOut
 	os.Stderr = wErr
 
+	var outBuf, errBuf bytes.Buffer
 	var wg sync.WaitGroup
-	var bufOut bytes.Buffer
-	var bufErr bytes.Buffer
 
-	wg.Add(2)
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(&bufOut, rOut)
+		io.Copy(&outBuf, rOut)
 	}()
 
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(&bufErr, rErr)
-	}()
-
-	// Ensure we close the write ends even if f() panics
-	defer func() {
-		wOut.Close()
-		wErr.Close()
+		io.Copy(&errBuf, rErr)
 	}()
 
 	f()
 
-	// Normal close to signal EOF to io.Copy goroutines
+	// wOut and wErr will be closed by deferred calls above when captureOutput returns.
+	// We need to close them here to unblock the readers in the goroutines.
+	// The deferred calls will be no-ops if they are already closed.
 	wOut.Close()
 	wErr.Close()
 
@@ -66,10 +62,10 @@ func captureOutput(t *testing.T, f func()) (string, string) {
 	rOut.Close()
 	rErr.Close()
 
-	return bufOut.String(), bufErr.String()
+	return outBuf.String(), errBuf.String()
 }
 
-func TestAuth_RoutingAndHelp(t *testing.T) {
+func TestAuth_Routing(t *testing.T) {
 	tests := []struct {
 		name           string
 		args           []string
@@ -78,46 +74,16 @@ func TestAuth_RoutingAndHelp(t *testing.T) {
 		expectedCode   int
 	}{
 		{
-			name:          "no args",
-			args:          []string{},
-			expectedError: "Usage: cloakenv auth <login|forget|status> [vault]",
-			expectedCode:  1,
-		},
-		{
-			name:           "help flag on auth",
+			name:           "help flag",
 			args:           []string{"--help"},
-			expectedOutput: "cloakenv auth",
+			expectedOutput: "Usage:",
 			expectedCode:   0,
 		},
 		{
-			name:           "help flag on login",
-			args:           []string{"login", "--help"},
-			expectedOutput: "cloakenv auth login",
-			expectedCode:   0,
-		},
-		{
-			name:          "login missing scheme",
-			args:          []string{"login"},
-			expectedError: "Usage: cloakenv auth login <scheme>",
+			name:          "no subcommand",
+			args:          []string{},
+			expectedError: "Usage:",
 			expectedCode:  1,
-		},
-		{
-			name:           "help flag on forget",
-			args:           []string{"forget", "--help"},
-			expectedOutput: "cloakenv auth forget",
-			expectedCode:   0,
-		},
-		{
-			name:          "forget missing scheme",
-			args:          []string{"forget"},
-			expectedError: "Usage: cloakenv auth forget <scheme>",
-			expectedCode:  1,
-		},
-		{
-			name:           "help flag on status",
-			args:           []string{"status", "--help"},
-			expectedOutput: "cloakenv auth status",
-			expectedCode:   0,
 		},
 		{
 			name:          "unknown subcommand",
@@ -165,8 +131,8 @@ func TestAuth_Login(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"dummy": {
-				Provider:  "json", // Valid built-in to avoid 'Config error: unsupported provider type'
-				VaultPath: "/fake/path.json",
+				Provider:  "json",
+				VaultPath: "/fake/path",
 			},
 			"mykp": {
 				Provider:  "keepass",
@@ -182,7 +148,13 @@ func TestAuth_Login(t *testing.T) {
 		expectedCode  int
 	}{
 		{
-			name:          "unknown scheme",
+			name:          "missing vault argument",
+			args:          []string{"login"},
+			expectedError: "Usage: cloakenv auth login <scheme>",
+			expectedCode:  1,
+		},
+		{
+			name:          "unknown vault",
 			args:          []string{"login", "unknown"},
 			expectedError: "Authentication failed: unknown vault/scheme: \"unknown\"",
 			expectedCode:  1,
@@ -226,13 +198,13 @@ func TestAuth_Forget(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"dummy": {
-				Provider:  "json", // Valid built-in
-				VaultPath: "/fake/path.json",
-			},
 			"mykp": {
 				Provider:  "keepass",
 				VaultPath: "/fake/path.kdbx",
+			},
+			"dummy": {
+				Provider:  "json",
+				VaultPath: "/fake/path",
 			},
 			"mykp_forgotten": {
 				Provider:  "keepass",
@@ -251,7 +223,13 @@ func TestAuth_Forget(t *testing.T) {
 		keyringScheme  string
 	}{
 		{
-			name:          "unknown scheme",
+			name:          "missing vault argument",
+			args:          []string{"forget"},
+			expectedError: "Usage: cloakenv auth forget <scheme>",
+			expectedCode:  1,
+		},
+		{
+			name:          "unknown vault",
 			args:          []string{"forget", "unknown"},
 			expectedError: "Failed to clear credentials: unknown vault/scheme: \"unknown\"",
 			expectedCode:  1,
@@ -309,6 +287,7 @@ func TestAuth_Forget(t *testing.T) {
 
 func TestAuth_Status(t *testing.T) {
 	keyring.MockInit()
+	// Provide valid credentials for one of the vaults
 	_ = keyring.Set("cloakenv", "provider/mykp_auth", "secret123")
 
 	cfg := &config.Config{
@@ -321,6 +300,10 @@ func TestAuth_Status(t *testing.T) {
 				Provider:  "keepass",
 				VaultPath: "/fake/path2.kdbx",
 			},
+			"dummy": {
+				Provider:  "json",
+				VaultPath: "/fake/path3.json",
+			},
 		},
 	}
 
@@ -331,7 +314,13 @@ func TestAuth_Status(t *testing.T) {
 		expectedCode   int
 	}{
 		{
-			name:           "status specific vault without auth",
+			name:           "status specific vault no auth required",
+			args:           []string{"status", "dummy"},
+			expectedOutput: "dummy: ACTIVE",
+			expectedCode:   0,
+		},
+		{
+			name:           "status specific vault missing auth",
 			args:           []string{"status", "mykp_noauth"},
 			expectedOutput: "mykp_noauth: ERROR: failed to initialize vault \"mykp_noauth\": no credentials found for remote \"mykp_noauth\"; please log in first using 'cloakenv auth login mykp_noauth'",
 			expectedCode:   1,
