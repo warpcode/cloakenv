@@ -13,13 +13,15 @@ import (
 	"strings"
 	"sync"
 
-	"cloakenv/internal/config"
-	"cloakenv/internal/provider"
+	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/provider"
+	"github.com/warpcode/cloakenv/internal/utils"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
+	"gopkg.in/yaml.v3"
 )
 
 // Orchestrator resolves secret URIs by dispatching to the appropriate
@@ -30,7 +32,7 @@ type Orchestrator struct {
 	config              *config.Config
 	builtins            map[string]provider.SecretProvider
 	initializedBuiltins map[string]bool
-	remoteCache         map[string]provider.SecretProvider
+	vaultCache          map[string]provider.SecretProvider
 	keyring             *provider.OSKeyringProvider
 	concurrencySem      chan struct{}
 	programCache        map[string]*vm.Program
@@ -55,43 +57,61 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 			cache.Scheme(): cache,
 		},
 		initializedBuiltins: make(map[string]bool),
-		remoteCache:         make(map[string]provider.SecretProvider),
+		vaultCache:          make(map[string]provider.SecretProvider),
 		programCache:        make(map[string]*vm.Program),
 		keyring:             kr,
 		concurrencySem:      make(chan struct{}, maxConcurrency),
 	}
 
-	// Validate remote configurations
-	for remoteName, remote := range cfg.Providers {
-		switch remote.Provider {
+	// Validate vault configurations
+	for vaultName, vault := range cfg.Vaults {
+		if _, isBuiltin := o.builtins[vaultName]; isBuiltin {
+			return nil, fmt.Errorf("invalid config: vault name %q conflicts with built-in scheme", vaultName)
+		}
+
+		// If resolve_values is set, ask the provider whether it supports it.
+		if vault.ResolveValues {
+			p, err := newBareProvider(vault.Provider)
+			if err != nil {
+				return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
+			}
+			if _, ok := p.(provider.ValueResolvableProvider); !ok {
+				return nil, fmt.Errorf("invalid config for vault %q: provider %q does not support resolve_values", vaultName, vault.Provider)
+			}
+		}
+
+		switch vault.Provider {
 		case "keepass":
+			if vault.SingleEntity != nil && *vault.SingleEntity {
+				return nil, fmt.Errorf("invalid config for vault %q: keepass provider cannot be configured as a single-entity vault", vaultName)
+			}
 			kp := provider.NewKeePassProvider()
 			settings := map[string]string{
-				"database_path": remote.DatabasePath,
+				"vault_path": vault.VaultPath,
 			}
 			if err := kp.Validate(settings); err != nil {
-				return nil, fmt.Errorf("invalid config for remote %q: %w", remoteName, err)
+				return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
 			}
 		case "yaml":
 			yp := provider.NewYamlProvider()
 			settings := map[string]string{
-				"database_path": remote.DatabasePath,
-				"entries_key":   remote.EntriesKey,
+				"vault_path": vault.VaultPath,
 			}
 			if err := yp.Validate(settings); err != nil {
-				return nil, fmt.Errorf("invalid config for remote %q: %w", remoteName, err)
+				return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
 			}
 		case "json":
 			jp := provider.NewJsonProvider()
 			settings := map[string]string{
-				"database_path": remote.DatabasePath,
-				"entries_key":   remote.EntriesKey,
+				"vault_path": vault.VaultPath,
 			}
 			if err := jp.Validate(settings); err != nil {
-				return nil, fmt.Errorf("invalid config for remote %q: %w", remoteName, err)
+				return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
 			}
+		case "custom_vault":
+			// custom_vault is statically defined in config, so it is always valid.
 		default:
-			return nil, fmt.Errorf("unsupported remote type %q for remote %q", remote.Provider, remoteName)
+			return nil, fmt.Errorf("unsupported provider type %q for vault %q", vault.Provider, vaultName)
 		}
 	}
 
@@ -117,10 +137,10 @@ func (o *Orchestrator) resolveRecursive(ctx context.Context, uri string, depth i
 
 	o.mu.Lock()
 	_, isBuiltin := o.builtins[scheme]
-	_, isRemote := o.config.Providers[scheme]
+	_, isVault := o.config.Vaults[scheme]
 	o.mu.Unlock()
 
-	if !isBuiltin && !isRemote && scheme != "search" {
+	if !isBuiltin && !isVault && scheme != "search" {
 		return uri, nil
 	}
 
@@ -164,23 +184,45 @@ func (o *Orchestrator) resolveRecursive(ctx context.Context, uri string, depth i
 			return "", getErr
 		}
 	} else {
-		// Check user-defined remotes
+		// Check user-defined vaults
 		var getErr error
-		val, getErr = o.resolveRemote(ctx, scheme, location)
+		val, getErr = o.resolveVault(ctx, scheme, location)
 		if getErr != nil {
 			return "", getErr
 		}
 	}
 
-	// If the value retrieved looks like a URI, recursively resolve it
 	if strings.Contains(val, "://") {
-		return o.resolveRecursive(ctx, val, depth+1)
+		shouldResolve := true
+
+		if _, isBuiltin := o.builtins[scheme]; !isBuiltin {
+			// For vault providers: ask the cached provider whether it gates
+			// value resolution. If it implements ValueResolvableProvider it
+			// expects the engine to honour the resolve_values flag; otherwise
+			// we fall through and resolve unconditionally (legacy behaviour).
+			o.mu.Lock()
+			p, cached := o.vaultCache[scheme]
+			o.mu.Unlock()
+
+			if cached {
+				if _, ok := p.(provider.ValueResolvableProvider); ok {
+					shouldResolve = o.config.Vaults[scheme].ResolveValues
+				}
+			}
+		}
+
+		if shouldResolve {
+			return o.resolveRecursive(ctx, val, depth+1)
+		}
 	}
 
 	return val, nil
 }
 
 // GetEntry retrieves a complete structured entry by location.
+// If the URI contains an attribute selector (e.g. "kp://Group/Entry:Password"),
+// a synthetic single-key entry is returned rather than the full entry — this
+// allows -m URIs to inject a single named attribute rather than all fields.
 func (o *Orchestrator) GetEntry(ctx context.Context, uri string) (provider.Entry, error) {
 	return o.getEntryRecursive(ctx, uri, 0)
 }
@@ -195,6 +237,21 @@ func (o *Orchestrator) getEntryRecursive(ctx context.Context, uri string, depth 
 		return provider.Entry{}, err
 	}
 
+	// If the location contains an attribute selector, resolve the single value
+	// and return a synthetic entry with that one key.
+	if attrIdx := strings.LastIndex(location, ":"); attrIdx >= 0 {
+		attrName := location[attrIdx+1:]
+		if attrName != "" {
+			val, err := o.Resolve(ctx, uri)
+			if err != nil {
+				return provider.Entry{}, err
+			}
+			return provider.Entry{
+				Attributes: map[string]any{attrName: val},
+			}, nil
+		}
+	}
+
 	var p provider.SecretProvider
 	if builtin, ok := o.builtins[scheme]; ok {
 		if err := o.ensureInitialized(ctx, scheme, builtin); err != nil {
@@ -203,7 +260,7 @@ func (o *Orchestrator) getEntryRecursive(ctx context.Context, uri string, depth 
 		p = builtin
 	} else {
 		var getErr error
-		p, getErr = o.getRemoteProvider(ctx, scheme)
+		p, getErr = o.getVaultProvider(ctx, scheme)
 		if getErr != nil {
 			return provider.Entry{}, getErr
 		}
@@ -219,9 +276,28 @@ func (o *Orchestrator) getEntryRecursive(ctx context.Context, uri string, depth 
 		return provider.Entry{}, err
 	}
 
+	// Determine whether attribute-value URIs should be resolved for this vault.
+	// For user-defined vaults that implement ValueResolvableProvider the
+	// resolve_values flag gates resolution; for builtins we always resolve.
+	shouldResolveAttrs := true
+	if _, isBuiltin := o.builtins[scheme]; !isBuiltin {
+		o.mu.Lock()
+		cachedP, cached := o.vaultCache[scheme]
+		o.mu.Unlock()
+		if cached {
+			if _, ok := cachedP.(provider.ValueResolvableProvider); ok {
+				shouldResolveAttrs = o.config.Vaults[scheme].ResolveValues
+			}
+		}
+	}
+
 	// Recursively resolve all attributes that contain secret URIs
 	resolvedAttrs := make(map[string]any)
 	for k, v := range entry.Attributes {
+		if !shouldResolveAttrs {
+			resolvedAttrs[k] = v
+			continue
+		}
 		resolvedVal, err := o.resolveAttrRecursive(ctx, v, depth+1)
 		if err != nil {
 			return provider.Entry{}, fmt.Errorf("failed to resolve attribute %q: %w", k, err)
@@ -393,24 +469,45 @@ func (o *Orchestrator) getSearchableProviders(ctx context.Context, repoScopes []
 			if repoScope == "" {
 				continue
 			}
-			p, err := o.getRemoteProvider(ctx, repoScope)
-			if err != nil {
-				return nil, err
+
+			var p provider.SecretProvider
+			var vaultConfig config.VaultConfig
+			var hasVault bool
+
+			if builtin, ok := o.builtins[repoScope]; ok {
+				if err := o.ensureInitialized(ctx, repoScope, builtin); err != nil {
+					return nil, err
+				}
+				p = builtin
+			} else {
+				var err error
+				p, err = o.getVaultProvider(ctx, repoScope)
+				if err != nil {
+					return nil, err
+				}
+				vaultConfig, hasVault = o.config.Vaults[repoScope]
+			}
+
+			if hasVault && vaultConfig.Searchable != nil && !*vaultConfig.Searchable {
+				return nil, fmt.Errorf("vault %q is not searchable", repoScope)
 			}
 			if searchable, ok := p.(provider.SearchableProvider); ok {
 				providersToSearch[repoScope] = searchable
 			} else {
-				return nil, fmt.Errorf("repository %q does not support searching", repoScope)
+				return nil, fmt.Errorf("vault %q does not support searching", repoScope)
 			}
 		}
 	} else {
-		for remoteName := range o.config.Providers {
-			p, err := o.getRemoteProvider(ctx, remoteName)
+		for vaultName, vaultConfig := range o.config.Vaults {
+			if vaultConfig.Searchable != nil && !*vaultConfig.Searchable {
+				continue
+			}
+			p, err := o.getVaultProvider(ctx, vaultName)
 			if err != nil {
 				continue
 			}
 			if searchable, ok := p.(provider.SearchableProvider); ok {
-				providersToSearch[remoteName] = searchable
+				providersToSearch[vaultName] = searchable
 			}
 		}
 	}
@@ -524,7 +621,8 @@ func (o *Orchestrator) searchRecursive(ctx context.Context, expressionStr string
 		}
 
 		for _, r := range results {
-			r.Repository = name
+			r.Provider = o.config.Vaults[name].Provider
+			r.Vault = name
 			allResults = append(allResults, o.resolveSearchResultAttributes(ctx, r, depth))
 		}
 	}
@@ -609,7 +707,7 @@ func parseSearchURI(location string) (string, string, error) {
 }
 
 // BuildEnv constructs the full environment block.
-func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, fileEnv map[string]string, whitelist []string, forwardParent bool) ([]string, error) {
+func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, merges []string, whitelist []string) ([]string, error) {
 	// 1. Get parent environment
 	parentEnvMap := make(map[string]string)
 	for _, envStr := range os.Environ() {
@@ -622,94 +720,97 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 	// whitelistSet is a helper to quickly check if a key is whitelisted
 	whitelistSet := make(map[string]bool)
 	for _, k := range whitelist {
-		whitelistSet[k] = true
+		whitelistSet[utils.FormatKey(k)] = true
 	}
 	hasWhitelist := len(whitelist) > 0
 
-	// finalEnv maps key -> value
-	finalEnv := make(map[string]string)
+	// We will resolve/load the merge sources in parallel.
+	type loadedSource struct {
+		keys map[string]string
+	}
+	loaded := make([]loadedSource, len(merges))
+	var wg sync.WaitGroup
+	var errOnce sync.Once
+	var firstErr error
 
-	// - A. Parent env is least important (lowest priority)
-	// If forwardParent is true, we copy all parent env first.
-	if forwardParent {
-		for k, v := range parentEnvMap {
+	for i, m := range merges {
+		wg.Add(1)
+		go func(idx int, uri string) {
+			defer wg.Done()
+			keys := make(map[string]string)
+			entry, err := o.GetEntry(ctx, uri)
+			if err != nil {
+				errOnce.Do(func() {
+					firstErr = fmt.Errorf("failed to get entry %s: %w", uri, err)
+				})
+				return
+			}
+			for k, v := range entry.Attributes {
+				kLower := strings.ToLower(k)
+				if kLower == "title" || kLower == "tags" {
+					continue
+				}
+				formattedKey := utils.FormatKey(k)
+				if hasWhitelist && !whitelistSet[formattedKey] {
+					continue
+				}
+				strVal, err := serializeValHelper(v)
+				if err != nil {
+					errOnce.Do(func() {
+						firstErr = fmt.Errorf("failed to serialize attribute %q in entry %s: %w", k, uri, err)
+					})
+					return
+				}
+				keys[formattedKey] = strVal
+			}
+			loaded[idx] = loadedSource{keys: keys}
+		}(i, m)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	// finalEnv maps key -> value, initialized with parent environment (always forwarded)
+	finalEnv := make(map[string]string)
+	for k, v := range parentEnvMap {
+		finalEnv[k] = v
+	}
+
+	// Merge sources sequentially: later overrides earlier
+	for _, src := range loaded {
+		for k, v := range src.keys {
 			finalEnv[k] = v
 		}
 	}
 
-	// - B. File env (-f next)
-	// We only include keys from fileEnv. If whitelist is specified, we filter fileEnv by whitelist.
-	{
-		var wg sync.WaitGroup
-		var errOnce sync.Once
-		var firstErr error
-		var mu sync.Mutex
-
-		for k, uri := range fileEnv {
-			if hasWhitelist && !whitelistSet[k] {
-				continue
-			}
-			wg.Add(1)
-			go func(k, uri string) {
-				defer wg.Done()
-				val, err := o.Resolve(ctx, uri)
-				if err != nil {
-					errOnce.Do(func() {
-						firstErr = fmt.Errorf("failed to resolve file env %s=%s: %w", k, uri, err)
-					})
-					return
-				}
-				mu.Lock()
-				finalEnv[k] = val
-				mu.Unlock()
-			}(k, uri)
-		}
-		wg.Wait()
-		if firstErr != nil {
-			return nil, firstErr
-		}
-	}
-
-	// - C. Whitelist filters parent env if forwardParent is NOT set
-	// If forwardParent is false, any key in whitelist that is in parentEnv (and not overwritten by fileEnv) is copied.
-	if !forwardParent && hasWhitelist {
-		for k := range whitelistSet {
-			// If already set by fileEnv, it is already in finalEnv. Otherwise:
-			if _, exists := finalEnv[k]; !exists {
-				if val, existsInParent := parentEnvMap[k]; existsInParent {
-					finalEnv[k] = val
-				}
-			}
-		}
-	}
-
-	// - D. Explicit mappings (-e highest priority)
+	// - Explicit mappings (-e highest priority)
 	// These are never filtered by whitelist and overwrite everything.
-	{
-		var wg sync.WaitGroup
-		var errOnce sync.Once
-		var firstErr error
+	if len(explicit) > 0 {
+		var explicitWg sync.WaitGroup
+		var explicitErrOnce sync.Once
+		var explicitErr error
 		var mu sync.Mutex
 
 		for k, uri := range explicit {
-			wg.Add(1)
+			explicitWg.Add(1)
 			go func(k, uri string) {
-				defer wg.Done()
+				defer explicitWg.Done()
 				val, err := o.Resolve(ctx, uri)
 				if err != nil {
-					errOnce.Do(func() {
-						firstErr = fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)
+					explicitErrOnce.Do(func() {
+						explicitErr = fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)
 					})
 					return
 				}
 				mu.Lock()
-				finalEnv[k] = val
+				finalEnv[utils.FormatKey(k)] = val
 				mu.Unlock()
 			}(k, uri)
 		}
-		wg.Wait()
-		if firstErr != nil {
-			return nil, firstErr
+		explicitWg.Wait()
+		if explicitErr != nil {
+			return nil, explicitErr
 		}
 	}
 
@@ -720,6 +821,21 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 	}
 
 	return result, nil
+}
+
+func serializeValHelper(val any) (string, error) {
+	switch v := val.(type) {
+	case string:
+		return v, nil
+	case []any, map[string]any, map[any]any, []string:
+		data, err := yaml.Marshal(v)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSuffix(string(data), "\n"), nil
+	default:
+		return fmt.Sprintf("%v", v), nil
+	}
 }
 
 // Keyring returns the built-in keyring provider for direct access
@@ -744,8 +860,8 @@ func (o *Orchestrator) Write(ctx context.Context, uri string, value string) erro
 		return p.SetSecret(ctx, location, value)
 	}
 
-	// Check user-defined remotes
-	p, err := o.getRemoteProvider(ctx, scheme)
+	// Check user-defined vaults
+	p, err := o.getVaultProvider(ctx, scheme)
 	if err != nil {
 		return err
 	}
@@ -768,8 +884,8 @@ func (o *Orchestrator) Delete(ctx context.Context, uri string) error {
 		return p.DeleteSecret(ctx, location)
 	}
 
-	// Check user-defined remotes
-	p, err := o.getRemoteProvider(ctx, scheme)
+	// Check user-defined vaults
+	p, err := o.getVaultProvider(ctx, scheme)
 	if err != nil {
 		return err
 	}
@@ -812,66 +928,73 @@ func (o *Orchestrator) ensureInitialized(ctx context.Context, scheme string, p p
 	return nil
 }
 
-// resolveRemote handles URIs whose scheme matches a user-defined remote name.
-func (o *Orchestrator) resolveRemote(ctx context.Context, remoteName, location string) (string, error) {
-	p, err := o.getRemoteProvider(ctx, remoteName)
+// resolveVault handles URIs whose scheme matches a user-defined vault name.
+func (o *Orchestrator) resolveVault(ctx context.Context, vaultName, location string) (string, error) {
+	p, err := o.getVaultProvider(ctx, vaultName)
 	if err != nil {
 		return "", err
 	}
 	return p.GetSecret(ctx, location)
 }
 
-// getRemoteProvider retrieves and initializes a remote provider, caching it for subsequent calls.
-func (o *Orchestrator) getRemoteProvider(ctx context.Context, remoteName string) (provider.SecretProvider, error) {
+// getVaultProvider retrieves and initializes a vault provider, caching it for subsequent calls.
+func (o *Orchestrator) getVaultProvider(ctx context.Context, vaultName string) (provider.SecretProvider, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 
 	// Check the cache first
-	if p, ok := o.remoteCache[remoteName]; ok {
+	if p, ok := o.vaultCache[vaultName]; ok {
 		return p, nil
 	}
 
-	// Look up the remote in config
-	remote, ok := o.config.Providers[remoteName]
+	// Look up the vault in config
+	vault, ok := o.config.Vaults[vaultName]
 	if !ok {
-		return nil, fmt.Errorf("unknown scheme or remote: %q (not a built-in and not defined in config)", remoteName)
+		return nil, fmt.Errorf("unknown scheme or vault: %q (not a built-in and not defined in config)", vaultName)
 	}
 
-	// Initialize the provider for this remote type
-	p, err := o.initRemoteProvider(ctx, remoteName, remote)
+	// Initialize the provider for this vault type
+	p, err := o.initVaultProvider(ctx, vaultName, vault)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize remote %q: %w", remoteName, err)
+		return nil, fmt.Errorf("failed to initialize vault %q: %w", vaultName, err)
 	}
 
 	// Cache for subsequent lookups within the same run
-	o.remoteCache[remoteName] = p
+	o.vaultCache[vaultName] = p
 	return p, nil
 }
 
-// initRemoteProvider creates and initializes a provider for a configured remote.
-// Currently supports the "keepass", "yaml" and "json" types.
-func (o *Orchestrator) initRemoteProvider(ctx context.Context, remoteName string, remote config.ProviderConfig) (provider.SecretProvider, error) {
-	switch remote.Provider {
+// initVaultProvider creates and initializes a provider for a configured vault.
+// Currently supports the "keepass", "yaml", "json" and "custom_vault" types.
+func (o *Orchestrator) initVaultProvider(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
+	switch vault.Provider {
 	case "keepass":
-		return o.initKeePass(ctx, remoteName, remote)
+		return o.initKeePass(ctx, vaultName, vault)
 	case "yaml":
-		return o.initYaml(ctx, remoteName, remote)
+		return o.initYaml(ctx, vaultName, vault)
 	case "json":
-		return o.initJson(ctx, remoteName, remote)
+		return o.initJson(ctx, vaultName, vault)
+	case "custom_vault":
+		return o.initCustomVault(ctx, vaultName, vault)
 	default:
-		return nil, fmt.Errorf("unsupported remote type: %q", remote.Provider)
+		return nil, fmt.Errorf("unsupported provider type: %q", vault.Provider)
 	}
 }
 
 // initKeePass bootstraps a KeePass provider using settings.
-func (o *Orchestrator) initKeePass(ctx context.Context, remoteName string, remote config.ProviderConfig) (provider.SecretProvider, error) {
+func (o *Orchestrator) initKeePass(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
 	kp := provider.NewKeePassProvider()
 	err := kp.Initialize(ctx, provider.ProviderConfig{
 		Settings: map[string]string{
-			"database_path":  remote.DatabasePath,
-			"remote_name":    remoteName,
+			"vault_path":     vault.VaultPath,
+			"remote_name":    vaultName,
 			"keyring_prefix": o.KeyringPrefix(),
 		},
+		SingleEntity:    vault.SingleEntity,
+		EntityName:      vault.EntityName,
+		Searchable:      vault.Searchable == nil || *vault.Searchable,
+		Tags:            vault.Tags,
+		EntitiesRootKey: vault.EntitiesRootKey,
 	})
 	if err != nil {
 		return nil, err
@@ -881,13 +1004,18 @@ func (o *Orchestrator) initKeePass(ctx context.Context, remoteName string, remot
 }
 
 // initYaml bootstraps a YAML provider using settings.
-func (o *Orchestrator) initYaml(ctx context.Context, remoteName string, remote config.ProviderConfig) (provider.SecretProvider, error) {
+func (o *Orchestrator) initYaml(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
 	yp := provider.NewYamlProvider()
 	err := yp.Initialize(ctx, provider.ProviderConfig{
 		Settings: map[string]string{
-			"database_path": remote.DatabasePath,
-			"entries_key":   remote.EntriesKey,
+			"vault_path": vault.VaultPath,
+			"vault_name": vaultName,
 		},
+		SingleEntity:    vault.SingleEntity,
+		EntityName:      vault.EntityName,
+		Searchable:      vault.Searchable == nil || *vault.Searchable,
+		Tags:            vault.Tags,
+		EntitiesRootKey: vault.EntitiesRootKey,
 	})
 	if err != nil {
 		return nil, err
@@ -897,13 +1025,18 @@ func (o *Orchestrator) initYaml(ctx context.Context, remoteName string, remote c
 }
 
 // initJson bootstraps a JSON provider using settings.
-func (o *Orchestrator) initJson(ctx context.Context, remoteName string, remote config.ProviderConfig) (provider.SecretProvider, error) {
+func (o *Orchestrator) initJson(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
 	jp := provider.NewJsonProvider()
 	err := jp.Initialize(ctx, provider.ProviderConfig{
 		Settings: map[string]string{
-			"database_path": remote.DatabasePath,
-			"entries_key":   remote.EntriesKey,
+			"vault_path": vault.VaultPath,
+			"vault_name": vaultName,
 		},
+		SingleEntity:    vault.SingleEntity,
+		EntityName:      vault.EntityName,
+		Searchable:      vault.Searchable == nil || *vault.Searchable,
+		Tags:            vault.Tags,
+		EntitiesRootKey: vault.EntitiesRootKey,
 	})
 	if err != nil {
 		return nil, err
@@ -912,41 +1045,61 @@ func (o *Orchestrator) initJson(ctx context.Context, remoteName string, remote c
 	return jp, nil
 }
 
-// Login triggers authentication setup for a remote/scheme.
-func (o *Orchestrator) Login(ctx context.Context, remoteName string) error {
-	remote, ok := o.config.Providers[remoteName]
+// initCustomVault bootstraps a CustomVault provider using config settings.
+func (o *Orchestrator) initCustomVault(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
+	cp := provider.NewCustomVaultProvider()
+	err := cp.Initialize(ctx, provider.ProviderConfig{
+		Settings: map[string]string{
+			"vault_name": vaultName,
+		},
+		Entities: vault.Entities,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cp, nil
+}
+
+// Login triggers authentication setup for a vault/scheme.
+func (o *Orchestrator) Login(ctx context.Context, vaultName string) error {
+	vault, ok := o.config.Vaults[vaultName]
 	if !ok {
-		return fmt.Errorf("unknown remote/scheme: %q", remoteName)
+		return fmt.Errorf("unknown vault/scheme: %q", vaultName)
 	}
 
-	if remote.Provider != "keepass" {
-		return fmt.Errorf("remote/scheme %q of type %q does not support authentication", remoteName, remote.Provider)
+	if vault.Provider != "keepass" {
+		return fmt.Errorf("vault/scheme %q of type %q does not support authentication", vaultName, vault.Provider)
 	}
 
 	kp := provider.NewKeePassProvider()
 	return kp.Initialize(ctx, provider.ProviderConfig{
 		Settings: map[string]string{
-			"database_path":  remote.DatabasePath,
-			"remote_name":    remoteName,
+			"vault_path":     vault.VaultPath,
+			"remote_name":    vaultName,
 			"keyring_prefix": o.KeyringPrefix(),
 			"force_prompt":   "true",
 		},
+		SingleEntity:    vault.SingleEntity,
+		EntityName:      vault.EntityName,
+		Searchable:      vault.Searchable == nil || *vault.Searchable,
+		Tags:            vault.Tags,
+		EntitiesRootKey: vault.EntitiesRootKey,
 	})
 }
 
-// Forget clears stored keyring credentials for a remote/scheme.
-func (o *Orchestrator) Forget(ctx context.Context, remoteName string) error {
-	remote, ok := o.config.Providers[remoteName]
+// Forget clears stored keyring credentials for a vault/scheme.
+func (o *Orchestrator) Forget(ctx context.Context, vaultName string) error {
+	vault, ok := o.config.Vaults[vaultName]
 	if !ok {
-		return fmt.Errorf("unknown remote/scheme: %q", remoteName)
+		return fmt.Errorf("unknown vault/scheme: %q", vaultName)
 	}
 
-	if remote.Provider != "keepass" {
-		return fmt.Errorf("remote/scheme %q of type %q does not support authentication", remoteName, remote.Provider)
+	if vault.Provider != "keepass" {
+		return fmt.Errorf("vault/scheme %q of type %q does not support authentication", vaultName, vault.Provider)
 	}
 
 	prefix := o.KeyringPrefix()
-	account := "provider/" + remoteName
+	account := "provider/" + vaultName
 	return o.keyring.DeleteRawSecret(prefix, account)
 }
 
@@ -980,8 +1133,32 @@ func (o *Orchestrator) KeyringPrefix() string {
 // parseURI splits "scheme://location" into its components.
 func parseURI(uri string) (string, string, error) {
 	parts := strings.SplitN(uri, "://", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	if len(parts) != 2 || parts[0] == "" {
 		return "", "", fmt.Errorf("malformed URI: %q (expected scheme://location)", uri)
 	}
 	return parts[0], parts[1], nil
+}
+
+// CheckAccess checks if a vault is active/accessible (i.e. can be successfully initialized).
+func (o *Orchestrator) CheckAccess(ctx context.Context, vaultName string) error {
+	_, err := o.getVaultProvider(ctx, vaultName)
+	return err
+}
+
+// newBareProvider creates an uninitialized provider instance for capability
+// probing (e.g. interface assertions) without performing any I/O or
+// initialization. It mirrors the type switch in initVaultProvider.
+func newBareProvider(providerType string) (provider.SecretProvider, error) {
+	switch providerType {
+	case "keepass":
+		return provider.NewKeePassProvider(), nil
+	case "yaml":
+		return provider.NewYamlProvider(), nil
+	case "json":
+		return provider.NewJsonProvider(), nil
+	case "custom_vault":
+		return provider.NewCustomVaultProvider(), nil
+	default:
+		return nil, fmt.Errorf("unsupported provider type %q", providerType)
+	}
 }

@@ -55,7 +55,7 @@ jobs:
             CGO_ENABLED=0 GOOS=${goos} GOARCH=${goarch} go build \
               -ldflags="-s -w" \
               -o "dist/cloakenv-${release_name}" \
-              ./cmd/cloakenv
+              .
           done
 
       - name: Generate Checksums

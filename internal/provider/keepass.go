@@ -34,14 +34,18 @@ func (k *KeePassProvider) Scheme() string {
 
 // Initialize opens, decrypts, and unlocks a KeePass database.
 // Settings in ProviderConfig:
-//   - "database_path": filesystem path to the .kdbx file
+//   - "vault_path": filesystem path to the .kdbx file
 //   - "remote_name": name of the remote configuration (e.g. "work")
 //   - "keyring_prefix": service name prefix for keyring
 //   - "force_prompt": "true" to force prompting for password
 func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
-	dbPath := cfg.Settings["database_path"]
-	if dbPath == "" {
-		return errors.New("keepass provider: database_path is required")
+	if cfg.SingleEntity != nil && *cfg.SingleEntity {
+		return errors.New("keepass provider: cannot be configured as a single-entity vault")
+	}
+
+	vaultPath := cfg.Settings["vault_path"]
+	if vaultPath == "" {
+		return errors.New("keepass provider: vault_path is required")
 	}
 
 	remoteName := cfg.Settings["remote_name"]
@@ -98,7 +102,7 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 	}
 
 	// 4. Try to open and decrypt the database
-	unlockErr := k.unlock(dbPath, password)
+	unlockErr := k.unlock(vaultPath, password)
 	if unlockErr != nil {
 		if fromKeyring {
 			// Delete invalid credentials
@@ -118,19 +122,19 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 	return nil
 }
 
-func (k *KeePassProvider) unlock(dbPath string, password string) error {
+func (k *KeePassProvider) unlock(vaultPath string, password string) error {
 	// Expand ~ to home directory
-	if strings.HasPrefix(dbPath, "~/") {
+	if strings.HasPrefix(vaultPath, "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return fmt.Errorf("keepass provider: failed to resolve home directory: %w", err)
 		}
-		dbPath = home + dbPath[1:]
+		vaultPath = home + vaultPath[1:]
 	}
 
-	file, err := os.Open(dbPath)
+	file, err := os.Open(vaultPath)
 	if err != nil {
-		return fmt.Errorf("keepass provider: failed to open database %s: %w", dbPath, err)
+		return fmt.Errorf("keepass provider: failed to open database %s: %w", vaultPath, err)
 	}
 	defer file.Close()
 
@@ -413,10 +417,10 @@ func (k *KeePassProvider) DeleteSecret(_ context.Context, _ string) error {
 	return fmt.Errorf("keepass provider is read-only")
 }
 
-// Validate checks if the KeePass configuration is valid (database_path must be set).
+// Validate checks if the KeePass configuration is valid (vault_path must be set).
 func (k *KeePassProvider) Validate(settings map[string]string) error {
-	if settings["database_path"] == "" {
-		return errors.New("keepass provider: database_path is required")
+	if settings["vault_path"] == "" {
+		return errors.New("keepass provider: vault_path is required")
 	}
 	return nil
 }

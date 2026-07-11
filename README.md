@@ -10,21 +10,40 @@ Pluggable secret orchestrator and dynamic runtime environment injector. It wraps
 ## Project Structure
 
 ```
-├── cmd/
-│   └── cloakenv/
-│       └── main.go         # CLI Entrypoint
+├── main.go                 # CLI Entrypoint
 ├── examples/
-│   ├── providers/          # Example databases for providers (JSON, YAML, KeePass)
+│   ├── providers/          # Example databases for vaults (JSON, YAML, KeePass)
 │   └── config.yaml         # Fully documented example config file
 ├── internal/
 │   ├── config/             # YAML Config parser
 │   ├── engine/             # Orchestrator core
-│   └── provider/           # Built-in & Remote Secret providers
+│   └── provider/           # Built-in & Custom Secret providers
 ├── testdata/
 │   └── testDB.kdbx         # Test KeePass database
 ├── Makefile
 ├── go.mod
-└── README.md
+├── README.md
+```
+## Installation & Execution
+
+You can run `cloakenv` directly or install it using the Go toolchain, or build it locally.
+
+### Direct Execution (go run)
+
+To run the orchestrator directly without manual compilation, use `go run`:
+```bash
+go run github.com/warpcode/cloakenv@latest [args]
+```
+For example, to display the help menu:
+```bash
+go run github.com/warpcode/cloakenv@latest --help
+```
+
+### Installation via Go Toolchain
+
+You can install the binary directly to your `$GOPATH/bin` directory using:
+```bash
+go install github.com/warpcode/cloakenv@latest
 ```
 
 ## Development Tasks
@@ -38,6 +57,30 @@ To compile the application to a local binary in `bin/`:
 make build
 ```
 This produces a binary executable at `bin/cloakenv`.
+
+### Installing the Binary
+
+To install the binary using the Go toolchain (by default to `$GOBIN` or `$GOPATH/bin`):
+```bash
+make install
+```
+
+If you prefer to install it to a custom directory, set the `GOBIN` environment variable:
+```bash
+GOBIN=$HOME/.local/bin make install
+```
+
+### Uninstalling the Binary
+
+To uninstall/remove the installed binary:
+```bash
+make uninstall
+```
+
+If you installed to a custom directory, specify the same `GOBIN`:
+```bash
+GOBIN=$HOME/.local/bin make uninstall
+```
 
 ### Linting and Formatting
 
@@ -71,10 +114,10 @@ A test KeePass database is provided for verification at `testdata/testDB.kdbx`.
    keyring:
      prefix: "cloakenv_test"
 
-   providers:
+   vaults:
      testdb:
        provider: "keepass"
-       database_path: "./testdata/testDB.kdbx"
+       vault_path: "./testdata/testDB.kdbx"
    ```
 
 2. **Authenticate with the test database**:
@@ -94,7 +137,12 @@ A test KeePass database is provided for verification at `testdata/testDB.kdbx`.
    ./bin/cloakenv -c testdata/test_config.yaml get "testdb://website/Test Website:hello.txt"
    ```
 
-4. **Clean up master password from keyring**:
+4. **Verify accessibility status**:
+   ```bash
+   ./bin/cloakenv -c testdata/test_config.yaml auth status
+   ```
+
+5. **Clean up master password from keyring**:
    ```bash
    ./bin/cloakenv -c testdata/test_config.yaml auth forget testdb
    ```
@@ -115,11 +163,11 @@ Unlike simple Key-Value secrets, an entry has:
 
 - **Show an entry**:
   ```bash
-  cloakenv entry show <entry-uri> [--yaml | --json]
+  cloakenv show <entry-uri> [-o yaml | json | env | keys]
   ```
 - **Search entries using expression querying**:
   ```bash
-  cloakenv entry search "[query_expression]" [--repo <repo_name>] [--yaml | --json]
+  cloakenv search "[query_expression]" [--vault <vault_name>] [-o yaml | json]
   ```
 
 ---
@@ -132,70 +180,71 @@ All queries are evaluated against a flattened environment containing `title`, `t
 Compare integers (e.g., bit sizes, counts):
 ```bash
 # Exact match
-cloakenv entry search "bit_strength == 4096"
+cloakenv search "bit_strength == 4096"
 
 # Inequalities
-cloakenv entry search "bit_strength > 2048"
+cloakenv search "bit_strength > 2048"
 ```
 
 #### 2. Array Containment (Positive & Negative Checking)
 Query membership within array fields (like `tags` or `public_keys` lists) using `in` and `not`:
 ```bash
 # Positive array check: must have 'auth:ssh' tag
-cloakenv entry search '"auth:ssh" in tags'
+cloakenv search '"auth:ssh" in tags'
 
 # Negative array check: must not have 'deprecated' tag
-cloakenv entry search 'not ("deprecated" in tags)'
+cloakenv search 'not ("deprecated" in tags)'
 
 # Combined array check
-cloakenv entry search '"auth:ssh" in tags and not ("deprecated" in tags)'
+cloakenv search '"auth:ssh" in tags and not ("deprecated" in tags)'
 ```
 
 #### 3. Boolean Operators
 Combine conditions using logical operators (`and`, `or`, `not` / `&&`, `||`, `!`):
 ```bash
-cloakenv entry search '"auth:ssh" in tags and (bit_strength == 4096 or bit_strength == 2048)'
+# Scope to vaults and match bit strengths
+cloakenv search '"auth:ssh" in tags and (bit_strength == 4096 or bit_strength == 2048)'
 ```
 
 #### 4. Positive and Negative Matching
 Check exact equality or inequality of strings, numbers, or boolean attributes:
 ```bash
 # Positive check
-cloakenv entry search 'username == "admin"'
+cloakenv search 'username == "admin"'
 
 # Negative check
-cloakenv entry search 'username != "stage_user"'
+cloakenv search 'username != "stage_user"'
 ```
 
 #### 5. String Partials and Wildcards
 Use built-in string functions (`contains`, `startsWith`, `endsWith`, `matches`):
 ```bash
 # Substring search (case-sensitive)
-cloakenv entry search 'title contains "Production"'
+cloakenv search 'title contains "Production"'
 
 # Case-insensitive substring search (converting to lowercase first)
-cloakenv entry search 'lower(title) contains "ssh"'
+cloakenv search 'lower(title) contains "ssh"'
 
 # Prefix match
-cloakenv entry search 'title startsWith "Staging"'
+cloakenv search 'title startsWith "Staging"'
 
 # Suffix match
-cloakenv entry search 'hostname endsWith ".com"'
+cloakenv search 'hostname endsWith ".com"'
 
 # Regular expression match
-cloakenv entry search 'hostname matches "bastion\\..*\\.example\\.com"'
+cloakenv search 'hostname matches "bastion\\..*\\.example\\.com"'
 ```
 
 #### 6. Graceful Missing Field Handling
 If you search on a property (like `bit_strength`) that doesn't exist on all entries, the query engine will **gracefully skip** matching entries that lack that property, rather than throwing a runtime error.
 
 
-## Pluggable Providers & URI Schemes
+## Vaults & URI Schemes
 
-`cloakenv` supports pluggable providers. Each provider manages a specific URI scheme:
+`cloakenv` supports configured **Vaults**. Each vault manages a specific URI scheme (acting as its vault reference):
 
 ### 1. OS Keyring (`keyring://`)
-* **Type**: Built-in, read/write
+* **Type**: Built-in, read/write, multiple-entity
 * **Description**: Securely stores/retrieves credential secrets in the operating system's native secure keyring (macOS Keychain, Linux Secret Service via D-Bus, Windows Credential Manager).
 * **Usage**:
   ```bash
@@ -208,7 +257,7 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
   *(Note: Does not support entry structured schemas or search operations.)*
 
 ### 2. Environment (`env://`)
-* **Type**: Built-in, read-only
+* **Type**: Built-in, read-only, single-entity
 * **Description**: Accesses values from the current process's environment variables.
 * **Usage**:
   ```bash
@@ -218,7 +267,7 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
   *(Note: Does not support entry structured schemas or search operations.)*
 
 ### 3. Encrypted Cache (`cache://`)
-* **Type**: Built-in, read/write
+* **Type**: Built-in, read/write, single-entity
 * **Description**: Stores values in a local, AES-GCM encrypted filesystem cache. The encryption key itself is safely stored in the OS keyring. Supports Time-To-Live (TTL) expiration.
 * **Usage**:
   ```bash
@@ -234,14 +283,19 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
   *(Note: Does not support entry structured schemas or search operations.)*
 
 ### 4. KeePass (`keepass`)
-* **Type**: Configured remote, read-only
+* **Type**: Configured vault, read-only, multiple-entity
 * **Description**: Integrates with KeePass database (`.kdbx`) files. Requires authentication using `cloakenv auth login`.
+* **Configuration Settings**:
+  - `provider` (required): Must be set to `"keepass"`.
+  - `vault_path` (required): File path to the KeePass `.kdbx` file. Supports `~/` expansion.
+  - `searchable` (optional, defaults to `true`): If set to `false`, excludes this vault from dynamic queries.
 * **Configuration** (`config.yaml`):
   ```yaml
-  providers:
+  vaults:
     my_vault:
       provider: "keepass"
-      database_path: "~/secrets/personal.kdbx"
+      vault_path: "~/secrets/personal.kdbx"
+      searchable: true
   ```
 * **Usage**:
   ```bash
@@ -255,57 +309,90 @@ If you search on a property (like `bit_strength`) that doesn't exist on all entr
   cloakenv get "my_vault://Server/BastionHost:UserName"
 
   # Search for entries in this database matching tag "auth:ssh"
-  cloakenv entry search '"auth:ssh" in tags' --repo my_vault
+  cloakenv search '"auth:ssh" in tags' --vault my_vault
   ```
 
 ### 5. YAML (`yaml`)
-* **Type**: Configured remote, read-only
-* **Description**: Reads static YAML files containing entries. Supports configuring the schema entry location using `entries_key`.
+* **Type**: Configured vault, read-only
+* **Description**: Reads static YAML files containing entries. Can be configured as a single-entity or multiple-entity vault.
 * **Configuration Settings**:
-  - `database_path` (required): File path to the YAML registry.
-  - `entries_key` (optional, defaults to `"entries"`): The dictionary key under which structured entries are defined. Set to `"."` to map entries directly to the root of the YAML document. If the specified key is not present, the repository is gracefully ignored during searches rather than throwing an error.
-  - **Important**: `entries_key` is only used to locate entries for group commands (`entry search`, `entry show`). Single-value selector lookups (`cloakenv get`) ignore this parameter and always query starting directly from the root of the document using dot-path selectors.
+  - `provider` (required): Must be set to `"yaml"`.
+  - `vault_path` (required): File path to the YAML database file.
+  - `single_entity` (optional, defaults to `false`): If `true`, the YAML file is parsed as a flat key-value map representing a single entity.
+  - `entity_name` (optional): The title of the entity in search results (if `single_entity` is `true`).
+  - `tags` (optional): List of tag strings applied to the single entity (if `single_entity` is `true`).
+  - `entities_root_key` (optional, defaults to `"entities"` or `"entries"`): Root dictionary key where entities are listed when `single_entity` is `false`. Use `"."` to parse directly from the document root.
+  - `searchable` (optional, defaults to `true`): If set to `false`, excludes this vault from dynamic searches.
+  - **JSON/YAML Serialization**: If a resolved value is a structured map/list, it is returned as a formatted YAML string.
 * **Configuration** (`config.yaml`):
   ```yaml
-  providers:
+  vaults:
     yaml_db:
       provider: "yaml"
-      database_path: "./testdata/test_entries.yaml"
-      entries_key: "entries"
+      vault_path: "./testdata/test_entries.yaml"
+      entities_root_key: "entries"
   ```
 * **Usage**:
   ```bash
-  # Single value lookup using dot-separated paths from root (ignores entries_key)
+  # Single value lookup using dot-separated paths from root (ignores entities_root_key)
   cloakenv get "yaml_db://entries.ssh_key_prod.hostname"
 
   # Array index traversal
   cloakenv get "yaml_db://entries.ssh_key_prod.public_keys.0"
 
   # Search for entries with 4096-bit strength in this database
-  cloakenv entry search 'bit_strength == 4096' --repo yaml_db
+  cloakenv search 'bit_strength == 4096' --vault yaml_db
   ```
 
 ### 6. JSON (`json`)
-* **Type**: Configured remote, read-only
-* **Description**: Reads static JSON files containing entries. Supports configuring the schema entry location using `entries_key`.
+* **Type**: Configured vault, read-only
+* **Description**: Reads static JSON files containing entries. Can be configured as a single-entity or multiple-entity vault.
 * **Configuration Settings**:
-  - `database_path` (required): File path to the JSON registry.
-  - `entries_key` (optional, defaults to `"entries"`): The dictionary key under which structured entries are defined. Set to `"."` to map entries directly to the root of the JSON document. If the specified key is not present, the repository is gracefully ignored during searches rather than throwing an error.
-  - **Important**: `entries_key` is only used to locate entries for group commands (`entry search`, `entry show`). Single-value selector lookups (`cloakenv get`) ignore this parameter and always query starting directly from the root of the document using dot-path selectors.
+  - `provider` (required): Must be set to `"json"`.
+  - `vault_path` (required): File path to the JSON database file.
+  - `single_entity` (optional, defaults to `false`): If `true`, the JSON file is parsed as a flat key-value map representing a single entity.
+  - `entity_name` (optional): The title of the entity in search results (if `single_entity` is `true`).
+  - `tags` (optional): List of tag strings applied to the single entity (if `single_entity` is `true`).
+  - `entities_root_key` (optional, defaults to `"entities"` or `"entries"`): Root dictionary key where entities are listed when `single_entity` is `false`. Use `"."` to parse directly from the document root.
+  - `searchable` (optional, defaults to `true`): If set to `false`, excludes this vault from dynamic searches.
+  - **JSON Serialization**: Structured values resolved from `GetSecret` are returned as compact JSON strings.
 * **Configuration** (`config.yaml`):
   ```yaml
-  providers:
+  vaults:
     json_db:
       provider: "json"
-      database_path: "./testdata/test_hosts.json"
-      entries_key: "hosts"
+      vault_path: "./testdata/test_hosts.json"
+      entities_root_key: "hosts"
   ```
 * **Usage**:
   ```bash
-  # Single value lookup using dot-separated paths from root (ignores entries_key)
+  # Single value lookup using dot-separated paths from root (ignores entities_root_key)
   cloakenv get "json_db://hosts.ssh_host.hostname"
 
   # Search for entries in this database matching tag "auth:ssh"
-  cloakenv entry search '"auth:ssh" in tags' --repo json_db
+  cloakenv search '"auth:ssh" in tags' --vault json_db
   ```
 
+### 7. Custom Static Vault (`custom_vault`)
+* **Type**: Configured vault, inline, read-only
+* **Description**: Configured completely inside the `config.yaml` file without any external database dependencies. Excellent for static key lists.
+* **Configuration Settings**:
+  - `provider` (required): Must be set to `"custom_vault"`.
+  - `entities` (optional): Inline map of named entities to their attribute maps.
+  - `resolve_values` (optional, defaults to `false`): Enables recursive URI resolution for values inside this vault.
+  - `searchable` (optional, defaults to `true`): If set to `false`, excludes this vault from dynamic searches.
+* **Configuration** (`config.yaml`):
+  ```yaml
+  vaults:
+    custom_multiple:
+      provider: "custom_vault"
+      entities:
+        custom_entry:
+          username: "admin"
+          Password: "inline_password"
+  ```
+* **Usage**:
+  ```bash
+  # Retrieve from multiple-entity custom vault
+  cloakenv get "custom_multiple://custom_entry"
+  ```

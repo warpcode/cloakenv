@@ -102,3 +102,58 @@ func TestEnvProvider_DeleteSecret(t *testing.T) {
 		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
 	}
 }
+
+func TestEnvProvider_GetEntry(t *testing.T) {
+	p := NewEnvProvider()
+	ctx := context.Background()
+
+	t.Run("SuccessAll", func(t *testing.T) {
+		t.Setenv("CLOAKENV_TEST_VAR", "entry-value")
+		entry, err := p.GetEntry(ctx, "")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entry.Title != "Environment Variables" {
+			t.Errorf("expected title 'Environment Variables', got %q", entry.Title)
+		}
+		if val, exists := entry.Attributes["CLOAKENV_TEST_VAR"]; !exists || val != "entry-value" {
+			t.Errorf("expected CLOAKENV_TEST_VAR to be 'entry-value', got %v", val)
+		}
+	})
+
+	t.Run("SuccessSingle", func(t *testing.T) {
+		t.Setenv("CLOAKENV_TEST_VAR_SINGLE", "single-value")
+		entry, err := p.GetEntry(ctx, "CLOAKENV_TEST_VAR_SINGLE")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entry.Title != "Environment Variables" {
+			t.Errorf("expected title 'Environment Variables', got %q", entry.Title)
+		}
+		if val, exists := entry.Attributes["CLOAKENV_TEST_VAR_SINGLE"]; !exists || val != "single-value" {
+			t.Errorf("expected CLOAKENV_TEST_VAR_SINGLE to be 'single-value', got %v", val)
+		}
+		if len(entry.Attributes) != 1 {
+			t.Errorf("expected attributes length 1, got %d", len(entry.Attributes))
+		}
+	})
+
+	t.Run("SingleNotSet", func(t *testing.T) {
+		_, err := p.GetEntry(ctx, "CLOAKENV_NON_EXISTENT_VAR_123")
+		if err == nil {
+			t.Error("expected error for non-existent env variable, got nil")
+		}
+	})
+}
+
+func TestEnvProvider_Search(t *testing.T) {
+	p := NewEnvProvider()
+	ctx := context.Background()
+	_, err := p.Search(ctx, SearchQuery{})
+	if err == nil {
+		t.Error("expected error for search, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "does not support searching") {
+		t.Errorf("expected error to contain 'does not support searching', got %q", err.Error())
+	}
+}

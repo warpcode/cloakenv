@@ -34,7 +34,14 @@ type SecretProvider interface {
 
 // ProviderConfig carries backend-specific initialization parameters.
 type ProviderConfig struct {
-	Settings map[string]string
+	Settings        map[string]string
+	Attributes      map[string]any
+	Entities        map[string]map[string]any
+	SingleEntity    *bool
+	EntityName      string
+	Searchable      bool
+	Tags            []string
+	EntitiesRootKey string
 }
 
 // Entry represents a multi-secret credential record with metadata.
@@ -51,11 +58,12 @@ type SearchQuery struct {
 	Path  string
 }
 
-// SearchResult wraps a found entry with repository and location details.
+// SearchResult wraps a found entry with provider type, vault name, and location details.
 type SearchResult struct {
-	Repository string `json:"repository" yaml:"repository"`
-	Path       string `json:"path" yaml:"path"`
-	Entry      Entry  `json:"entry" yaml:"entry"`
+	Provider string `json:"provider" yaml:"provider"`
+	Vault    string `json:"vault" yaml:"vault"`
+	Path     string `json:"path" yaml:"path"`
+	Entry    Entry  `json:"entry" yaml:"entry"`
 }
 
 // SearchableProvider is implemented by providers that support searching and entry retrieval.
@@ -65,6 +73,16 @@ type SearchableProvider interface {
 
 	// GetEntry retrieves a complete structured entry by location.
 	GetEntry(ctx context.Context, location string) (Entry, error)
+}
+
+// ValueResolvableProvider is implemented by providers that support the
+// resolve_values config flag. When a provider implements this interface,
+// the engine gates URI resolution of attribute values on the flag; when it
+// does not, the engine resolves URI values unconditionally (legacy default).
+type ValueResolvableProvider interface {
+	// SupportsValueResolution returns true, confirming the provider honours
+	// the resolve_values config option.
+	SupportsValueResolution() bool
 }
 
 // ContextKey represents a custom type for context values to avoid collisions.

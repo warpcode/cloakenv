@@ -1,4 +1,0 @@
-## 2025-05-18 - [Fix Infinite Recursion in Secret Orchestrator]
-**Vulnerability:** A Denial of Service (DoS) vulnerability allowed for an infinite loop during recursive secret URI resolution (particularly the `search://` scheme and structured entries) causing a stack overflow.
-**Learning:** `depth` tracking was being reset to 0 in deep recursive paths (`Search` and `GetEntry`), breaking the recursion tracking limit entirely, because `resolveSearchResultAttributes` and `GetEntry` would continually reset it via `resolveAttrRecursive(..., 0)`.
-**Prevention:** Plumbed the `depth` parameter explicitly throughout recursive parsing functions (`searchRecursive`, `getEntryRecursive`, `resolveSearchResultAttributes`) to ensure nested attributes accurately count towards the total recursive depth. Checked that `depth` limits trigger at > 5.

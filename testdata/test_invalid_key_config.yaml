@@ -7,9 +7,9 @@ keyring:
 providers:
   invalid_repo:
     provider: "yaml"
-    database_path: "./testdata/test_hosts.yaml"
+    vault_path: "./testdata/test_hosts.yaml"
     entries_key: "non_existent_key"
   valid_repo:
     provider: "yaml"
-    database_path: "./testdata/test_hosts.yaml"
+    vault_path: "./testdata/test_hosts.yaml"
     entries_key: "hosts"

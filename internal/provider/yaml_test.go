@@ -44,7 +44,7 @@ entries:
 	ctx := context.Background()
 	cfg := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": yamlPath,
+			"vault_path": yamlPath,
 		},
 	}
 
@@ -131,8 +131,8 @@ hosts:
 	ctx := context.Background()
 	cfg1 := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": hostsPath,
-			"entries_key":   "hosts",
+			"vault_path":  hostsPath,
+			"entries_key": "hosts",
 		},
 	}
 	if err := yp1.Initialize(ctx, cfg1); err != nil {
@@ -162,8 +162,8 @@ ssh_root:
 	yp2 := NewYamlProvider()
 	cfg2 := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": rootPath,
-			"entries_key":   ".",
+			"vault_path":  rootPath,
+			"entries_key": ".",
 		},
 	}
 	if err := yp2.Initialize(ctx, cfg2); err != nil {
@@ -182,8 +182,8 @@ ssh_root:
 	yp3 := NewYamlProvider()
 	cfg3 := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": rootPath,
-			"entries_key":   "hosts",
+			"vault_path":  rootPath,
+			"entries_key": "hosts",
 		},
 	}
 	if err := yp3.Initialize(ctx, cfg3); err != nil {
@@ -196,5 +196,96 @@ ssh_root:
 	}
 	if len(results) != 0 {
 		t.Errorf("expected 0 entries from missing key database, got %d", len(results))
+	}
+}
+
+func TestYamlProviderSingleEntity(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "cloakenv-yaml-single")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	yamlContent := `
+title: "My Single YAML Vault"
+tags: [env:local, dev]
+secret1: "value1"
+secret2:
+  nested_key: "nested_value"
+list:
+  - item1
+  - item2
+`
+	yamlPath := filepath.Join(tempDir, "single.yaml")
+	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write temp yaml file: %v", err)
+	}
+
+	yp := NewYamlProvider()
+	ctx := context.Background()
+	isTrue := true
+	cfg := ProviderConfig{
+		Settings: map[string]string{
+			"vault_path": yamlPath,
+		},
+		SingleEntity:    &isTrue,
+		EntitiesRootKey: ".",
+	}
+
+	if err := yp.Initialize(ctx, cfg); err != nil {
+		t.Fatalf("failed to initialize yaml: %v", err)
+	}
+
+	// 1. GetSecret
+	val, err := yp.GetSecret(ctx, "secret1")
+	if err != nil {
+		t.Fatalf("GetSecret failed: %v", err)
+	}
+	if val != "value1" {
+		t.Errorf("expected 'value1', got %q", val)
+	}
+
+	// Serialization of nested map
+	val, err = yp.GetSecret(ctx, "secret2")
+	if err != nil {
+		t.Fatalf("GetSecret failed: %v", err)
+	}
+	expectedMapYaml := "nested_key: nested_value"
+	if val != expectedMapYaml {
+		t.Errorf("expected serialized map %q, got %q", expectedMapYaml, val)
+	}
+
+	// Serialization of list
+	val, err = yp.GetSecret(ctx, "list")
+	if err != nil {
+		t.Fatalf("GetSecret failed: %v", err)
+	}
+	expectedListYaml := "- item1\n- item2"
+	if val != expectedListYaml {
+		t.Errorf("expected serialized list %q, got %q", expectedListYaml, val)
+	}
+
+	// 2. GetEntry
+	entry, err := yp.GetEntry(ctx, "")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+	if entry.Title != "My Single YAML Vault" {
+		t.Errorf("expected title 'My Single YAML Vault', got %q", entry.Title)
+	}
+	if len(entry.Tags) != 2 || entry.Tags[0] != "env:local" || entry.Tags[1] != "dev" {
+		t.Errorf("unexpected tags: %v", entry.Tags)
+	}
+
+	// 3. Search
+	results, err := yp.Search(ctx, SearchQuery{})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Path != "" {
+		t.Errorf("expected empty path, got %q", results[0].Path)
 	}
 }

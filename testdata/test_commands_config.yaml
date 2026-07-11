@@ -1,0 +1,14 @@
+vaults:
+  # 1. KeePass provider
+  testdb:
+    provider: "keepass"
+    vault_path: "./examples/providers/keepass/database.kdbx"
+
+  # 2. Custom single-entity vault (using custom_vault with a named entity)
+  custom_single:
+    provider: "custom_vault"
+    entities:
+      static_flat:
+        db_user: "postgres"
+        db_port: 5432
+        tags: [static, local]

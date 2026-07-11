@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/config"
 )
 
 func TestOrchestratorRecursiveAndSearch(t *testing.T) {
@@ -54,10 +54,10 @@ entries:
 
 	// Create Orchestrator with mock config
 	cfg := &config.Config{
-		Providers: map[string]config.ProviderConfig{
+		Vaults: map[string]config.VaultConfig{
 			"my_repo": {
-				Provider:     "yaml",
-				DatabasePath: yamlPath,
+				Provider:  "yaml",
+				VaultPath: yamlPath,
 			},
 		},
 	}
@@ -169,5 +169,560 @@ func TestSearchURIEncoding(t *testing.T) {
 	}
 	if attr != "Password" {
 		t.Errorf("expected attribute 'Password', got %q", attr)
+	}
+}
+
+func TestOrchestratorVaultsAndSearch(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "cloakenv-vaults-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Write single_db.yaml content
+	singleDbContent := `
+title: "My Flat Secrets Database"
+tags: [env:prod, local]
+api_key: "super_secret_api_token"
+port: 8080
+metadata:
+  owner: "devops"
+  cluster: "us-east-1"
+servers:
+  - "bastion.example.com"
+  - "app.example.com"
+`
+	singleDbPath := filepath.Join(tempDir, "single_db.yaml")
+	if err := os.WriteFile(singleDbPath, []byte(singleDbContent), 0644); err != nil {
+		t.Fatalf("failed to write single db file: %v", err)
+	}
+
+	isTrue := true
+	isFalse := false
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"custom_static": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"custom1": {
+						"username": "custom_user",
+						"Password": "custom_password",
+					},
+				},
+			},
+			"custom_single": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"Static_Flat": {
+						"db_user": "postgres",
+						"db_port": 5432,
+						"tags":    []any{"static", "local"},
+					},
+				},
+			},
+			"flat_file": {
+				Provider:     "yaml",
+				VaultPath:    singleDbPath,
+				SingleEntity: &isTrue,
+				EntityName:   "Prod Flat File",
+				Tags:         []string{"flat", "prod"},
+			},
+			"non_searchable": {
+				Provider:   "custom_vault",
+				Searchable: &isFalse,
+				Entities: map[string]map[string]any{
+					"secret_entry": {
+						"Password": "hidden_pass",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// 1. Verify CheckAccess
+	t.Run("CheckAccess", func(t *testing.T) {
+		for _, vaultName := range []string{"custom_static", "custom_single", "flat_file", "non_searchable"} {
+			if err := orch.CheckAccess(ctx, vaultName); err != nil {
+				t.Errorf("expected access to vault %q, got error: %v", vaultName, err)
+			}
+		}
+
+		if err := orch.CheckAccess(ctx, "non_existent"); err == nil {
+			t.Error("expected error for non_existent vault access, got nil")
+		}
+	})
+
+	// 2. Verify Retrievals
+	t.Run("RetrieveSecrets", func(t *testing.T) {
+		// Custom static default Password
+		val, err := orch.Resolve(ctx, "custom_static://custom1")
+		if err != nil || val != "custom_password" {
+			t.Errorf("expected 'custom_password', got: %v (err: %v)", val, err)
+		}
+
+		// Custom static specific key
+		val, err = orch.Resolve(ctx, "custom_static://custom1:username")
+		if err != nil || val != "custom_user" {
+			t.Errorf("expected 'custom_user', got: %v (err: %v)", val, err)
+		}
+
+		// Custom single — entity named "Static_Flat", access specific attribute
+		val, err = orch.Resolve(ctx, "custom_single://Static_Flat:db_user")
+		if err != nil || val != "postgres" {
+			t.Errorf("expected 'postgres', got: %v (err: %v)", val, err)
+		}
+
+		// Flat file attributes
+		val, err = orch.Resolve(ctx, "flat_file://api_key")
+		if err != nil || val != "super_secret_api_token" {
+			t.Errorf("expected 'super_secret_api_token', got: %v (err: %v)", val, err)
+		}
+	})
+
+	// 3. Verify Serialization of structured values
+	t.Run("ValueSerialization", func(t *testing.T) {
+		// Metadata (should be serialized YAML)
+		val, err := orch.Resolve(ctx, "flat_file://metadata")
+		if err != nil {
+			t.Fatalf("failed to resolve metadata: %v", err)
+		}
+		expectedYAML := "cluster: us-east-1\nowner: devops"
+		if val != expectedYAML {
+			t.Errorf("expected serialized metadata YAML, got %q", val)
+		}
+
+		// Servers (should be serialized YAML array)
+		val, err = orch.Resolve(ctx, "flat_file://servers")
+		if err != nil {
+			t.Fatalf("failed to resolve servers: %v", err)
+		}
+		expectedArrayYAML := "- bastion.example.com\n- app.example.com"
+		if val != expectedArrayYAML {
+			t.Errorf("expected serialized servers YAML, got %q", val)
+		}
+	})
+
+	// 4. Verify Entry Structure and Searches
+	t.Run("EntryShowAndSearch", func(t *testing.T) {
+		// GetEntry for single entity flat file (ignores location, returns single entry)
+		entry, err := orch.GetEntry(ctx, "flat_file://")
+		if err != nil {
+			t.Fatalf("failed to GetEntry: %v", err)
+		}
+		if entry.Title != "Prod Flat File" {
+			t.Errorf("expected title 'Prod Flat File', got %q", entry.Title)
+		}
+
+		// Search title substring (matches flat_file's "Prod Flat File" and custom_single's "Static_Flat")
+		results, err := orch.Search(ctx, `title contains "Flat"`, nil)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 results (flat_file, custom_single/Static_Flat), got %d", len(results))
+		}
+
+		// Search tag membership
+		results, err = orch.Search(ctx, `"local" in tags`, nil)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 || results[0].Vault != "custom_single" {
+			t.Errorf("expected 1 result from custom_single, got %v", results)
+		}
+
+		// Search excluded non-searchable vault
+		results, err = orch.Search(ctx, `Password == "hidden_pass"`, nil)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("expected 0 results, got %d", len(results))
+		}
+
+		// Scoped search on non-searchable vault (should return error)
+		_, err = orch.Search(ctx, `Password == "hidden_pass"`, []string{"non_searchable"})
+		if err == nil || !strings.Contains(err.Error(), "is not searchable") {
+			t.Errorf("expected searchable error, got: %v", err)
+		}
+	})
+}
+
+// TestResolveValues verifies that the resolve_values vault config flag
+// gates URI resolution of attribute values.
+func TestResolveValues(t *testing.T) {
+	ctx := context.Background()
+
+	// vault_b holds a plain secret value.
+	// vault_a holds an attribute whose value is a URI pointing into vault_b.
+	boolPtr := func(b bool) *bool { return &b }
+
+	makeConfig := func(resolveValues bool) *config.Config {
+		return &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"vault_a": {
+					Provider:      "custom_vault",
+					ResolveValues: resolveValues,
+					Entities: map[string]map[string]any{
+						"entity1": {
+							"Password": "vault_b://entry1:secret",
+						},
+					},
+				},
+				"vault_b": {
+					Provider:   "custom_vault",
+					Searchable: boolPtr(true),
+					Entities: map[string]map[string]any{
+						"entry1": {
+							"secret": "resolved_value",
+						},
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("ResolveValues_On", func(t *testing.T) {
+		orch, err := NewOrchestrator(makeConfig(true))
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		val, err := orch.Resolve(ctx, "vault_a://entity1:Password")
+		if err != nil {
+			t.Fatalf("Resolve failed: %v", err)
+		}
+		if val != "resolved_value" {
+			t.Errorf("expected resolved_value, got %q", val)
+		}
+	})
+
+	t.Run("ResolveValues_Off", func(t *testing.T) {
+		orch, err := NewOrchestrator(makeConfig(false))
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		val, err := orch.Resolve(ctx, "vault_a://entity1:Password")
+		if err != nil {
+			t.Fatalf("Resolve failed: %v", err)
+		}
+		// Should return the raw URI string, not the resolved secret.
+		if val != "vault_b://entry1:secret" {
+			t.Errorf("expected raw URI, got %q", val)
+		}
+	})
+
+	t.Run("ResolveValues_Off_GetEntry", func(t *testing.T) {
+		// GetEntry must also honour resolve_values: false — attribute values
+		// that are URIs must be returned raw without being resolved.
+		orch, err := NewOrchestrator(makeConfig(false))
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		entry, err := orch.GetEntry(ctx, "vault_a://entity1")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		raw, ok := entry.Attributes["Password"]
+		if !ok {
+			t.Fatal("expected 'Password' attribute in entry")
+		}
+		if raw != "vault_b://entry1:secret" {
+			t.Errorf("expected raw URI in attribute, got %q", raw)
+		}
+	})
+
+	t.Run("ResolveValues_CircularReference", func(t *testing.T) {
+		// vault_c.entry references vault_c itself — forms a cycle.
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"vault_c": {
+					Provider:      "custom_vault",
+					ResolveValues: true,
+					Entities: map[string]map[string]any{
+						"entry": {
+							"Password": "vault_c://entry:Password",
+						},
+					},
+				},
+			},
+		}
+
+		orch, err := NewOrchestrator(cfg)
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		_, err = orch.Resolve(ctx, "vault_c://entry:Password")
+		if err == nil {
+			t.Error("expected error due to circular reference, got nil")
+		}
+		if !strings.Contains(err.Error(), "max depth") {
+			t.Errorf("expected max depth error, got: %v", err)
+		}
+	})
+
+	t.Run("ResolveValues_RejectedOnNonCustomVault", func(t *testing.T) {
+		// resolve_values must be rejected at startup for non-custom_vault providers.
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"bad_yaml": {
+					Provider:      "yaml",
+					VaultPath:     "/tmp/irrelevant.yaml",
+					ResolveValues: true,
+				},
+			},
+		}
+
+		_, err := NewOrchestrator(cfg)
+		if err == nil {
+			t.Fatal("expected error for resolve_values on yaml provider, got nil")
+		}
+		if !strings.Contains(err.Error(), "resolve_values") {
+			t.Errorf("expected resolve_values error, got: %v", err)
+		}
+	})
+}
+
+// TestGetEntry_AttributeSelector verifies that GetEntry returns a synthetic
+// single-key entry when the URI contains an :attr suffix, instead of the full
+// entry from the provider.
+func TestGetEntry_AttributeSelector(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"vault_x": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"myentity": {
+						"Password": "s3cr3t",
+						"UserName": "alice",
+						"Notes":    "some notes",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("single_attr_only", func(t *testing.T) {
+		entry, err := orch.GetEntry(ctx, "vault_x://myentity:Password")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if len(entry.Attributes) != 1 {
+			t.Errorf("expected 1 attribute, got %d: %v", len(entry.Attributes), entry.Attributes)
+		}
+		val, ok := entry.Attributes["Password"]
+		if !ok {
+			t.Fatal("expected 'Password' key in synthetic entry")
+		}
+		if val != "s3cr3t" {
+			t.Errorf("expected s3cr3t, got %q", val)
+		}
+	})
+
+	t.Run("full_entry_without_attr", func(t *testing.T) {
+		entry, err := orch.GetEntry(ctx, "vault_x://myentity")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if len(entry.Attributes) != 3 {
+			t.Errorf("expected 3 attributes, got %d: %v", len(entry.Attributes), entry.Attributes)
+		}
+	})
+}
+
+// TestBuiltinsNonSearchable verifies that built-in schemes (env, keyring, cache)
+// are not searchable by default and cannot be registered as vault names.
+func TestBuiltinsNonSearchable(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("CollisionValidation", func(t *testing.T) {
+		// Vault configuration trying to use a built-in name "env"
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"env": {
+					Provider: "custom_vault",
+				},
+			},
+		}
+
+		_, err := NewOrchestrator(cfg)
+		if err == nil {
+			t.Fatal("expected error when vault name conflicts with built-in scheme, got nil")
+		}
+		if !strings.Contains(err.Error(), "conflicts with built-in scheme") {
+			t.Errorf("expected conflict error, got: %v", err)
+		}
+	})
+
+	t.Run("SearchErrorOnBuiltins", func(t *testing.T) {
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{},
+		}
+
+		orch, err := NewOrchestrator(cfg)
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		// Searching with "env" scope should fail and tell the user it doesn't support searching.
+		_, err = orch.Search(ctx, `title == "test"`, []string{"env"})
+		if err == nil {
+			t.Fatal("expected error searching env, got nil")
+		}
+		if !strings.Contains(err.Error(), "does not support searching") {
+			t.Errorf("expected 'does not support searching' error, got: %v", err)
+		}
+
+		// Searching with "keyring" scope should fail similarly.
+		_, err = orch.Search(ctx, `title == "test"`, []string{"keyring"})
+		if err == nil {
+			t.Fatal("expected error searching keyring, got nil")
+		}
+		if !strings.Contains(err.Error(), "does not support searching") {
+			t.Errorf("expected 'does not support searching' error, got: %v", err)
+		}
+	})
+}
+
+func TestOrchestratorBuildEnvMerges(t *testing.T) {
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"my_vault": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"app_one": {
+						"DB_USER": "user1",
+						"DB_PASS": "pass1",
+						"PORT":    "3000",
+					},
+					"app_two": {
+						"PORT":    "5000",
+						"DB_USER": "user2",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	ctx := context.Background()
+
+	t.Run("MergeMultipleSourcesAndOverrides", func(t *testing.T) {
+		merges := []string{
+			"my_vault://app_one",
+			"my_vault://app_two",
+		}
+
+		// Result expectations:
+		// app_one attributes: DB_USER=user1, DB_PASS=pass1, PORT=3000
+		// app_two updates: PORT=5000, DB_USER=user2 (overwriting user1 and 3000)
+		// Explicit: DB_PASS=explicit_pass
+		explicit := map[string]string{
+			"DB_PASS": "explicit_pass",
+		}
+
+		res, err := orch.BuildEnv(ctx, explicit, merges, nil)
+		if err != nil {
+			t.Fatalf("failed to build env: %v", err)
+		}
+
+		envMap := make(map[string]string)
+		for _, item := range res {
+			k, v, _ := strings.Cut(item, "=")
+			envMap[k] = v
+		}
+
+		if envMap["DB_USER"] != "user2" {
+			t.Errorf("expected DB_USER=user2, got %q", envMap["DB_USER"])
+		}
+		if envMap["DB_PASS"] != "explicit_pass" {
+			t.Errorf("expected DB_PASS=explicit_pass (explicit override), got %q", envMap["DB_PASS"])
+		}
+		if envMap["PORT"] != "5000" {
+			t.Errorf("expected PORT=5000 (app_two override), got %q", envMap["PORT"])
+		}
+	})
+
+	t.Run("WhitelistFiltersMerges", func(t *testing.T) {
+		merges := []string{
+			"my_vault://app_one",
+		}
+		whitelist := []string{"DB_USER"}
+		explicit := map[string]string{
+			"DB_PASS": "explicit_pass", // Explicit is never filtered
+		}
+
+		res, err := orch.BuildEnv(ctx, explicit, merges, whitelist)
+		if err != nil {
+			t.Fatalf("failed to build env: %v", err)
+		}
+
+		envMap := make(map[string]string)
+		for _, item := range res {
+			k, v, _ := strings.Cut(item, "=")
+			envMap[k] = v
+		}
+
+		if envMap["DB_USER"] != "user1" {
+			t.Errorf("expected DB_USER=user1, got %q", envMap["DB_USER"])
+		}
+		if envMap["DB_PASS"] != "explicit_pass" {
+			t.Errorf("expected DB_PASS=explicit_pass, got %q", envMap["DB_PASS"])
+		}
+		if _, exists := envMap["PORT"]; exists {
+			t.Errorf("expected PORT to be filtered out by whitelist, but it exists")
+		}
+	})
+}
+
+func TestResolveLiteralValues(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.Config{}
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"just_a_string", "just_a_string"},
+		{"12345", "12345"},
+		{"https://example.com/api", "https://example.com/api"},
+		{"some-other-scheme://foo", "some-other-scheme://foo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := orch.Resolve(ctx, tt.input)
+			if err != nil {
+				t.Fatalf("Resolve failed: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Resolve(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
 	}
 }

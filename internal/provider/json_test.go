@@ -40,7 +40,7 @@ func TestJsonProvider(t *testing.T) {
 	ctx := context.Background()
 	cfg := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": jsonPath,
+			"vault_path": jsonPath,
 		},
 	}
 
@@ -125,8 +125,8 @@ func TestJsonProviderCustomEntriesKey(t *testing.T) {
 	ctx := context.Background()
 	cfg1 := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": hostsPath,
-			"entries_key":   "hosts",
+			"vault_path":  hostsPath,
+			"entries_key": "hosts",
 		},
 	}
 	if err := jp1.Initialize(ctx, cfg1); err != nil {
@@ -157,8 +157,8 @@ func TestJsonProviderCustomEntriesKey(t *testing.T) {
 	jp2 := NewJsonProvider()
 	cfg2 := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": rootPath,
-			"entries_key":   ".",
+			"vault_path":  rootPath,
+			"entries_key": ".",
 		},
 	}
 	if err := jp2.Initialize(ctx, cfg2); err != nil {
@@ -177,8 +177,8 @@ func TestJsonProviderCustomEntriesKey(t *testing.T) {
 	jp3 := NewJsonProvider()
 	cfg3 := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": rootPath,
-			"entries_key":   "hosts",
+			"vault_path":  rootPath,
+			"entries_key": "hosts",
 		},
 	}
 	if err := jp3.Initialize(ctx, cfg3); err != nil {
@@ -191,5 +191,95 @@ func TestJsonProviderCustomEntriesKey(t *testing.T) {
 	}
 	if len(results) != 0 {
 		t.Errorf("expected 0 entries from missing key database, got %d", len(results))
+	}
+}
+
+func TestJsonProviderSingleEntity(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "cloakenv-json-single")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	jsonContent := `{
+		"title": "My Single JSON Vault",
+		"tags": ["env:local", "dev"],
+		"secret1": "value1",
+		"secret2": {
+			"nested_key": "nested_value"
+		},
+		"list": ["item1", "item2"]
+	}`
+	jsonPath := filepath.Join(tempDir, "single.json")
+	if err := os.WriteFile(jsonPath, []byte(jsonContent), 0644); err != nil {
+		t.Fatalf("failed to write temp json file: %v", err)
+	}
+
+	jp := NewJsonProvider()
+	ctx := context.Background()
+	isTrue := true
+	cfg := ProviderConfig{
+		Settings: map[string]string{
+			"vault_path": jsonPath,
+		},
+		SingleEntity:    &isTrue,
+		EntitiesRootKey: ".",
+	}
+
+	if err := jp.Initialize(ctx, cfg); err != nil {
+		t.Fatalf("failed to initialize json: %v", err)
+	}
+
+	// 1. GetSecret
+	val, err := jp.GetSecret(ctx, "secret1")
+	if err != nil {
+		t.Fatalf("GetSecret failed: %v", err)
+	}
+	if val != "value1" {
+		t.Errorf("expected 'value1', got %q", val)
+	}
+
+	// Serialization of nested map
+	val, err = jp.GetSecret(ctx, "secret2")
+	if err != nil {
+		t.Fatalf("GetSecret failed: %v", err)
+	}
+	expectedMapJson := `{"nested_key":"nested_value"}`
+	if val != expectedMapJson {
+		t.Errorf("expected serialized map %q, got %q", expectedMapJson, val)
+	}
+
+	// Serialization of list
+	val, err = jp.GetSecret(ctx, "list")
+	if err != nil {
+		t.Fatalf("GetSecret failed: %v", err)
+	}
+	expectedListJson := `["item1","item2"]`
+	if val != expectedListJson {
+		t.Errorf("expected serialized list %q, got %q", expectedListJson, val)
+	}
+
+	// 2. GetEntry
+	entry, err := jp.GetEntry(ctx, "")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+	if entry.Title != "My Single JSON Vault" {
+		t.Errorf("expected title 'My Single JSON Vault', got %q", entry.Title)
+	}
+	if len(entry.Tags) != 2 || entry.Tags[0] != "env:local" || entry.Tags[1] != "dev" {
+		t.Errorf("unexpected tags: %v", entry.Tags)
+	}
+
+	// 3. Search
+	results, err := jp.Search(ctx, SearchQuery{})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Path != "" {
+		t.Errorf("expected empty path, got %q", results[0].Path)
 	}
 }

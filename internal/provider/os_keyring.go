@@ -14,6 +14,10 @@ import (
 //   - macOS: Keychain Services
 //   - Linux: Secret Service API via D-Bus (GNOME Keyring / KWallet)
 //   - Windows: Credential Manager
+//
+// OSKeyringProvider is intentionally non-searchable: the OS keyring has no
+// enumeration API and exposing all stored credentials in search results would
+// be a security risk. It does not implement SearchableProvider.
 type OSKeyringProvider struct{}
 
 // NewOSKeyringProvider returns a new keyring provider instance.

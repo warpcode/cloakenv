@@ -20,7 +20,7 @@ func TestKeePassProvider(t *testing.T) {
 
 	t.Run("Validate", func(t *testing.T) {
 		kp := NewKeePassProvider()
-		if err := kp.Validate(map[string]string{"database_path": "a"}); err != nil {
+		if err := kp.Validate(map[string]string{"vault_path": "a"}); err != nil {
 			t.Errorf("expected validation success, got %v", err)
 		}
 		if err := kp.Validate(nil); err == nil {
@@ -32,8 +32,8 @@ func TestKeePassProvider(t *testing.T) {
 		kp := NewKeePassProvider()
 		cfg := ProviderConfig{
 			Settings: map[string]string{
-				"database_path": "../../testdata/testDB.kdbx",
-				"remote_name":   "testdb",
+				"vault_path":  "../../testdata/testDB.kdbx",
+				"remote_name": "testdb",
 			},
 		}
 		if err := kp.Initialize(ctx, cfg); err == nil {
@@ -50,8 +50,8 @@ func TestKeePassProvider(t *testing.T) {
 	kp := NewKeePassProvider()
 	cfg := ProviderConfig{
 		Settings: map[string]string{
-			"database_path": "../../testdata/testDB.kdbx",
-			"remote_name":   "testdb",
+			"vault_path":  "../../testdata/testDB.kdbx",
+			"remote_name": "testdb",
 		},
 	}
 	if err := kp.Initialize(ctx, cfg); err != nil {
