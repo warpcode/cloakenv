@@ -204,7 +204,6 @@ func TestAuth_Forget(t *testing.T) {
 	keyring.MockInit()
 	// Set a dummy password to forget
 	_ = keyring.Set("cloakenv", "provider/mykp", "secret123")
-	_ = keyring.Set("cloakenv", "provider/mykp_forgotten", "secret123")
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
@@ -222,9 +221,6 @@ func TestAuth_Forget(t *testing.T) {
 			},
 		},
 	}
-
-	// Delete it directly from the keyring so it's "non-existent"
-	_ = keyring.Delete("cloakenv", "provider/mykp_forgotten")
 
 	tests := []struct {
 		name           string

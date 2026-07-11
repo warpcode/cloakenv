@@ -32,12 +32,12 @@ func captureOutput(f func()) (string, string) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		io.Copy(&bufOut, rOut)
+		_, _ = io.Copy(&bufOut, rOut)
 	}()
 
 	go func() {
 		defer wg.Done()
-		io.Copy(&bufErr, rErr)
+		_, _ = io.Copy(&bufErr, rErr)
 	}()
 
 	f()
@@ -203,8 +203,8 @@ func TestAuth_Login(t *testing.T) {
 func TestAuth_Forget(t *testing.T) {
 	keyring.MockInit()
 	// Set a dummy password to forget
-	keyring.Set("cloakenv", "provider/mykp", "secret123")
-	keyring.Set("cloakenv", "provider/mykp_forgotten", "secret123")
+	_ = keyring.Set("cloakenv", "provider/mykp", "secret123")
+	_ = keyring.Set("cloakenv", "provider/mykp_forgotten", "secret123")
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
@@ -224,7 +224,7 @@ func TestAuth_Forget(t *testing.T) {
 	}
 
 	// Delete it directly from the keyring so it's "non-existent"
-	keyring.Delete("cloakenv", "provider/mykp_forgotten")
+	_ = keyring.Delete("cloakenv", "provider/mykp_forgotten")
 
 	tests := []struct {
 		name           string
@@ -294,7 +294,7 @@ func TestAuth_Forget(t *testing.T) {
 
 func TestAuth_Status(t *testing.T) {
 	keyring.MockInit()
-	keyring.Set("cloakenv", "provider/mykp_auth", "secret123")
+	_ = keyring.Set("cloakenv", "provider/mykp_auth", "secret123")
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
