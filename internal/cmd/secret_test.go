@@ -14,6 +14,11 @@ import (
 func TestCacheRouting(t *testing.T) {
 	keyring.MockInit()
 
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+	t.Setenv("XDG_CACHE_HOME", tempDir)
+	t.Setenv("LocalAppData", tempDir)
+
 	tests := []struct {
 		name           string
 		args           []string
@@ -70,8 +75,19 @@ func TestCacheRouting(t *testing.T) {
 			oldStdout := os.Stdout
 			oldStderr := os.Stderr
 
-			rOut, wOut, _ := os.Pipe()
-			rErr, wErr, _ := os.Pipe()
+			rOut, wOut, errOut := os.Pipe()
+			if errOut != nil {
+				t.Fatalf("failed to create stdout pipe: %v", errOut)
+			}
+			defer rOut.Close()
+			defer wOut.Close()
+
+			rErr, wErr, errErr := os.Pipe()
+			if errErr != nil {
+				t.Fatalf("failed to create stderr pipe: %v", errErr)
+			}
+			defer rErr.Close()
+			defer wErr.Close()
 
 			os.Stdout = wOut
 			os.Stderr = wErr
