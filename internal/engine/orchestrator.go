@@ -151,7 +151,7 @@ func (o *Orchestrator) resolveRecursive(ctx context.Context, uri string, depth i
 			return "", err
 		}
 
-		results, err := o.Search(ctx, exprQuery, nil)
+		results, err := o.searchRecursive(ctx, exprQuery, nil, depth+1)
 		if err != nil {
 			return "", fmt.Errorf("search URI evaluation failed: %w", err)
 		}
@@ -224,6 +224,14 @@ func (o *Orchestrator) resolveRecursive(ctx context.Context, uri string, depth i
 // a synthetic single-key entry is returned rather than the full entry — this
 // allows -m URIs to inject a single named attribute rather than all fields.
 func (o *Orchestrator) GetEntry(ctx context.Context, uri string) (provider.Entry, error) {
+	return o.getEntryRecursive(ctx, uri, 0)
+}
+
+func (o *Orchestrator) getEntryRecursive(ctx context.Context, uri string, depth int) (provider.Entry, error) {
+	if depth > 5 {
+		return provider.Entry{}, fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5 resolving entry %q", uri)
+	}
+
 	scheme, location, err := parseURI(uri)
 	if err != nil {
 		return provider.Entry{}, err
@@ -290,7 +298,7 @@ func (o *Orchestrator) GetEntry(ctx context.Context, uri string) (provider.Entry
 			resolvedAttrs[k] = v
 			continue
 		}
-		resolvedVal, err := o.resolveAttrRecursive(ctx, v, 0)
+		resolvedVal, err := o.resolveAttrRecursive(ctx, v, depth+1)
 		if err != nil {
 			return provider.Entry{}, fmt.Errorf("failed to resolve attribute %q: %w", k, err)
 		}
@@ -309,7 +317,7 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 	switch typedVal := val.(type) {
 	case string:
 		if strings.Contains(typedVal, "://") {
-			resolved, err := o.resolveRecursive(ctx, typedVal, depth)
+			resolved, err := o.resolveRecursive(ctx, typedVal, depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -507,11 +515,11 @@ func (o *Orchestrator) getSearchableProviders(ctx context.Context, repoScopes []
 	return providersToSearch, nil
 }
 
-func (o *Orchestrator) resolveSearchResultAttributes(ctx context.Context, r provider.SearchResult) provider.SearchResult {
+func (o *Orchestrator) resolveSearchResultAttributes(ctx context.Context, r provider.SearchResult, depth int) provider.SearchResult {
 	// Recursively resolve attributes
 	resolvedAttrs := make(map[string]any)
 	for k, v := range r.Entry.Attributes {
-		res, err := o.resolveAttrRecursive(ctx, v, 0)
+		res, err := o.resolveAttrRecursive(ctx, v, depth+1)
 		if err == nil {
 			resolvedAttrs[k] = res
 		} else {
@@ -596,6 +604,10 @@ func (o *Orchestrator) filterResultsByExpression(expressionStr string, allResult
 
 // Search queries entries across searchable repositories using an expression.
 func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoScopes []string) ([]provider.SearchResult, error) {
+	return o.searchRecursive(ctx, expressionStr, repoScopes, 0)
+}
+
+func (o *Orchestrator) searchRecursive(ctx context.Context, expressionStr string, repoScopes []string, depth int) ([]provider.SearchResult, error) {
 	providersToSearch, err := o.getSearchableProviders(ctx, repoScopes)
 	if err != nil {
 		return nil, err
@@ -611,7 +623,7 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 		for _, r := range results {
 			r.Provider = o.config.Vaults[name].Provider
 			r.Vault = name
-			allResults = append(allResults, o.resolveSearchResultAttributes(ctx, r))
+			allResults = append(allResults, o.resolveSearchResultAttributes(ctx, r, depth))
 		}
 	}
 
