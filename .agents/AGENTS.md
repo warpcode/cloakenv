@@ -153,6 +153,8 @@ docs: update README with JSON provider usage
 - Every new exported function or method in `internal/` must have a corresponding `_test.go` entry.
 - Use `testify` only if already present in `go.mod`; otherwise use stdlib `testing` and `errors` packages.
 - Mock or stub external I/O (keyring, filesystem) in unit tests. Integration tests requiring real keyring access must be skipped in CI via `t.Skip()` or build tags.
+- **Keyring/Cache Testing Isolation**: Tests that execute cache operations (such as `ClearCache()`) or interact with keyring providers must invoke `keyring.MockInit()` and set environment variables (`HOME`, `XDG_CACHE_HOME`, `LocalAppData`) to a temporary directory (`t.TempDir()`) during test setup to prevent local cache erasure and test leakage.
+- **Safe Redirection in Tests**: When capturing stdout or stderr using `os.Pipe()`, check the returned error immediately. Defer closing both writer ends (`wOut.Close()`, `wErr.Close()`) immediately after creation to prevent resource leaks (dangling goroutines/pipes) if the test function panics.
 
 ### Integration Tests
 
