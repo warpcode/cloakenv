@@ -67,7 +67,10 @@ func TestRun_Errors(t *testing.T) {
 			oldStderr := os.Stderr
 			defer func() { os.Stderr = oldStderr }()
 
-			r, w, _ := os.Pipe()
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("failed to create pipe: %v", err)
+			}
 			defer r.Close()
 
 			os.Stderr = w
@@ -78,18 +81,19 @@ func TestRun_Errors(t *testing.T) {
 
 			exitCode := Run(tc.args, cfg)
 
-			w.Close()
+			w.Close() // Close write end so read can finish
 			var buf bytes.Buffer
 			if _, err := io.Copy(&buf, r); err != nil {
-				t.Fatalf("Failed to read from pipe: %v", err)
+				t.Errorf("failed to read from pipe: %v", err)
 			}
+			os.Stderr = oldStderr // Restore early so test failure output isn't captured
 
 			if exitCode != tc.wantExit {
-				t.Errorf("Run() exit code = %d, want %d", exitCode, tc.wantExit)
+				t.Errorf("expected exit code %d, got %d", tc.wantExit, exitCode)
 			}
 
 			if tc.wantErr != "" && !strings.Contains(buf.String(), tc.wantErr) {
-				t.Errorf("Run() stderr output = %q, want containing %q", buf.String(), tc.wantErr)
+				t.Errorf("expected stderr to contain %q, got %q", tc.wantErr, buf.String())
 			}
 		})
 	}
@@ -116,7 +120,7 @@ func TestRunCommandExecution(t *testing.T) {
 	// Create a temporary template file instead of depending on the external one
 	tmpFile, err := os.CreateTemp("", "test_template_*.env")
 	if err != nil {
-		t.Fatalf("Failed to create temp file: %v", err)
+		t.Fatalf("Failed to create temp template file: %v", err)
 	}
 	defer os.Remove(tmpFile.Name())
 
@@ -126,32 +130,32 @@ TEST_TEMPLATE_B=env://SHOW_TEST_VAR_B
 TEST_LITERAL_VAL=literal_value_here
 `
 	if _, err := tmpFile.WriteString(templateContent); err != nil {
-		t.Fatalf("Failed to write to temp file: %v", err)
+		t.Fatalf("Failed to write to temp template file: %v", err)
 	}
 	tmpFile.Close()
 
 	tests := []struct {
 		name           string
-		envVars        map[string]string // setup in parent before running subprocess
-		runArgs        []string          // args for Run()
-		expectedOutput []string          // strings expected in stdout
+		envVars        map[string]string
+		runArgs        []string
+		expectedOutput []string
 	}{
 		{
-			name: "Resolve with -e",
+			name: "Direct env var resolution via -e",
 			envVars: map[string]string{
-				"CLOAKENV_TEST_VAR": "test_val_e",
+				"CLOAKENV_TEST_B": "value_from_env_b",
 			},
 			runArgs: []string{
-				"-e", "CLOAKENV_TEST_INJECTED=env://CLOAKENV_TEST_VAR",
+				"-e", "CLOAKENV_TEST_A=env://CLOAKENV_TEST_B",
 				"--",
 				os.Args[0], "-test.run=TestHelperProcess",
 			},
 			expectedOutput: []string{
-				"CLOAKENV_TEST_INJECTED=test_val_e",
+				"CLOAKENV_TEST_A=value_from_env_b",
 			},
 		},
 		{
-			name: "Resolve with -t template",
+			name: "Template resolution via -t",
 			envVars: map[string]string{
 				"SHOW_TEST_VAR_A": "template_val_a",
 				"SHOW_TEST_VAR_B": "template_val_b",
