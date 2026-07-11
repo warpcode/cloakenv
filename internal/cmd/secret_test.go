@@ -21,6 +21,7 @@ func TestGet_Help(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer r.Close()
 	os.Stdout = w
 
 	exitCode := Get(args, cfg)
@@ -54,7 +55,9 @@ func TestGet_InvalidArgs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r, w, _ := os.Pipe()
+			defer r.Close()
 			os.Stderr = w
+			defer func() { os.Stderr = oldStderr }()
 
 			exitCode := Get(tt.args, cfg)
 
@@ -80,6 +83,7 @@ func TestGet_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create pipe: %v", err)
 	}
+	defer r.Close()
 	os.Stdout = w
 
 	t.Setenv("GET_TEST_VAR", "test_value")
@@ -110,6 +114,7 @@ func TestGet_ResolutionError(t *testing.T) {
 	defer func() { os.Stderr = oldStderr }()
 
 	r, w, _ := os.Pipe()
+	defer r.Close()
 	os.Stderr = w
 
 	args := []string{"env://NON_EXISTENT_VAR_FOR_TEST"}
