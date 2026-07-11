@@ -99,7 +99,10 @@ func TestRunCommandExecution(t *testing.T) {
 	// Re-exec the test binary if we are in the subprocess
 	if os.Getenv("GO_WANT_RUN_SUBPROCESS") == "1" {
 		var args []string
-		json.Unmarshal([]byte(os.Getenv("RUN_ARGS")), &args)
+		if err := json.Unmarshal([]byte(os.Getenv("RUN_ARGS")), &args); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to unmarshal RUN_ARGS: %v\n", err)
+			os.Exit(1)
+		}
 
 		cfg := &config.Config{
 			Vaults: make(map[string]config.VaultConfig),
