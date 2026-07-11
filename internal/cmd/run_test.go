@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -64,7 +65,11 @@ func TestRun_Errors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Capture stderr
 			oldStderr := os.Stderr
+			defer func() { os.Stderr = oldStderr }()
+
 			r, w, _ := os.Pipe()
+			defer r.Close()
+
 			os.Stderr = w
 
 			cfg := &config.Config{
@@ -78,7 +83,6 @@ func TestRun_Errors(t *testing.T) {
 			if _, err := io.Copy(&buf, r); err != nil {
 				t.Fatalf("Failed to read from pipe: %v", err)
 			}
-			os.Stderr = oldStderr
 
 			if exitCode != tc.wantExit {
 				t.Errorf("Run() exit code = %d, want %d", exitCode, tc.wantExit)
@@ -94,8 +98,8 @@ func TestRun_Errors(t *testing.T) {
 func TestRunCommandExecution(t *testing.T) {
 	// Re-exec the test binary if we are in the subprocess
 	if os.Getenv("GO_WANT_RUN_SUBPROCESS") == "1" {
-		argsStr := os.Getenv("RUN_ARGS")
-		args := strings.Split(argsStr, "|")
+		var args []string
+		json.Unmarshal([]byte(os.Getenv("RUN_ARGS")), &args)
 
 		cfg := &config.Config{
 			Vaults: make(map[string]config.VaultConfig),
@@ -169,9 +173,10 @@ TEST_LITERAL_VAL=literal_value_here
 			}
 
 			cmd := exec.Command(os.Args[0], "-test.run=TestRunCommandExecution")
+			argsData, _ := json.Marshal(tc.runArgs)
 			cmd.Env = append(os.Environ(),
 				"GO_WANT_RUN_SUBPROCESS=1",
-				"RUN_ARGS="+strings.Join(tc.runArgs, "|"),
+				"RUN_ARGS="+string(argsData),
 				"GO_WANT_HELPER_PROCESS=1",
 			)
 
