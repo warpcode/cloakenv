@@ -28,6 +28,7 @@ func captureOutput(t *testing.T, f func()) (string, string) {
 	rErr, wErr, err := os.Pipe()
 	if err != nil {
 		wOut.Close()
+		rOut.Close()
 		t.Fatalf("failed to create stderr pipe: %v", err)
 	}
 
@@ -50,11 +51,12 @@ func captureOutput(t *testing.T, f func()) (string, string) {
 	}()
 
 	f()
-
 	wOut.Close()
 	wErr.Close()
 
 	wg.Wait()
+	rOut.Close()
+	rErr.Close()
 
 	return bufOut.String(), bufErr.String()
 }
