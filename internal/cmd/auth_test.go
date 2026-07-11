@@ -50,7 +50,15 @@ func captureOutput(t *testing.T, f func()) (string, string) {
 		_, _ = io.Copy(&bufErr, rErr)
 	}()
 
+	// Ensure we close the write ends even if f() panics
+	defer func() {
+		wOut.Close()
+		wErr.Close()
+	}()
+
 	f()
+
+	// Normal close to signal EOF to io.Copy goroutines
 	wOut.Close()
 	wErr.Close()
 
