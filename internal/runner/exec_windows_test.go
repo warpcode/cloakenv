@@ -1,4 +1,5 @@
 //go:build windows
+// +build windows
 
 package runner
 
@@ -11,7 +12,6 @@ func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
-	defer os.Exit(0) // Ensure we don't run other tests in the helper process
 
 	args := os.Args
 	for len(args) > 0 {
