@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/warpcode/cloakenv/internal/utils"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -155,16 +157,10 @@ func toEntry(name string, raw map[string]any) Entry {
 		kLower := strings.ToLower(k)
 		switch kLower {
 		case "tags":
-			if tagSlice, ok := v.([]any); ok {
-				for _, t := range tagSlice {
-					if str, ok := t.(string); ok {
-						entry.Tags = append(entry.Tags, str)
-					}
-				}
-			} else if tagSliceStr, ok := v.([]string); ok {
+			if tagSliceStr, ok := v.([]string); ok {
 				entry.Tags = tagSliceStr
-			} else if tagStr, ok := v.(string); ok {
-				entry.Tags = parseTags(tagStr)
+			} else {
+				entry.Tags = utils.ParseTags(v)
 			}
 		case "title":
 			if str, ok := v.(string); ok {
