@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/warpcode/cloakenv/internal/utils"
 
@@ -20,11 +21,16 @@ import (
 // name from config (e.g., "work://"), not a fixed string.
 type KeePassProvider struct {
 	db *gokeepasslib.Database
+
+	cacheMu    sync.RWMutex
+	entryCache map[*gokeepasslib.Entry]map[string]string
 }
 
 // NewKeePassProvider returns a new KeePass provider instance.
 func NewKeePassProvider() *KeePassProvider {
-	return &KeePassProvider{}
+	return &KeePassProvider{
+		entryCache: make(map[*gokeepasslib.Entry]map[string]string),
+	}
 }
 
 // Scheme returns "keepass" as the provider type identifier.
@@ -194,7 +200,7 @@ func (k *KeePassProvider) findEntry(location string) (*gokeepasslib.Entry, strin
 	// Find the entry by title within the target group
 	for i := range currentGroup.Entries {
 		entry := &currentGroup.Entries[i]
-		if getEntryTitle(entry) == entryTitle {
+		if k.getEntryTitle(entry) == entryTitle {
 			return entry, attr, nil
 		}
 	}
@@ -216,7 +222,7 @@ func (k *KeePassProvider) GetSecret(_ context.Context, location string) (string,
 	}
 
 	// First, try standard string value attribute (e.g. Password, UserName)
-	val := getEntryValue(entry, attr)
+	val := k.getEntryValue(entry, attr)
 	if val != "" {
 		return val, nil
 	}
@@ -234,7 +240,7 @@ func (k *KeePassProvider) GetSecret(_ context.Context, location string) (string,
 		}
 	}
 
-	return "", fmt.Errorf("keepass provider: attribute %q is empty or not found for entry %q", attr, getEntryTitle(entry))
+	return "", fmt.Errorf("keepass provider: attribute %q is empty or not found for entry %q", attr, k.getEntryTitle(entry))
 }
 
 // GetEntry retrieves a complete structured entry by location.
@@ -277,7 +283,7 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 
 		for i := range g.Entries {
 			entry := &g.Entries[i]
-			title := getEntryTitle(entry)
+			title := k.getEntryTitle(entry)
 			var entryPath string
 			if groupPath == "" {
 				entryPath = title
@@ -336,7 +342,7 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 
 // toEntry converts a gokeepasslib.Entry into provider.Entry.
 func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) Entry {
-	title := getEntryTitle(entry)
+	title := k.getEntryTitle(entry)
 	tags := utils.ParseTagString(entry.Tags)
 
 	attrs := make(map[string]any)
@@ -374,23 +380,34 @@ func parseKeePassLocation(location string) (string, string) {
 }
 
 // getEntryTitle extracts the Title value from a KeePass entry.
-func getEntryTitle(entry *gokeepasslib.Entry) string {
-	for _, v := range entry.Values {
-		if v.Key == "Title" {
-			return v.Value.Content
-		}
-	}
-	return ""
+func (k *KeePassProvider) getEntryTitle(entry *gokeepasslib.Entry) string {
+	return k.getEntryValue(entry, "Title")
 }
 
 // getEntryValue extracts a named value from a KeePass entry.
-func getEntryValue(entry *gokeepasslib.Entry, key string) string {
-	for _, v := range entry.Values {
-		if v.Key == key {
-			return v.Value.Content
-		}
+// It caches the parsed values in a map for faster subsequent lookups.
+func (k *KeePassProvider) getEntryValue(entry *gokeepasslib.Entry, key string) string {
+	k.cacheMu.RLock()
+	if m, ok := k.entryCache[entry]; ok {
+		k.cacheMu.RUnlock()
+		return m[key]
 	}
-	return ""
+	k.cacheMu.RUnlock()
+
+	k.cacheMu.Lock()
+	defer k.cacheMu.Unlock()
+	// Double check in case another goroutine populated it while waiting for the lock
+	if m, ok := k.entryCache[entry]; ok {
+		return m[key]
+	}
+
+	m := make(map[string]string, len(entry.Values))
+	for _, v := range entry.Values {
+		m[v.Key] = v.Value.Content
+	}
+	k.entryCache[entry] = m
+
+	return m[key]
 }
 
 // SetSecret returns an error because the KeePass provider is currently read-only.
