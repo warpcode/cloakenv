@@ -72,6 +72,7 @@ func TestRun_Errors(t *testing.T) {
 				t.Fatalf("failed to create pipe: %v", err)
 			}
 			defer r.Close()
+			defer w.Close()
 
 			os.Stderr = w
 

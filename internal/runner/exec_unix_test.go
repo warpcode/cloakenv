@@ -45,6 +45,8 @@ func TestRunCommand_NotFound(t *testing.T) {
 		t.Fatalf("Failed to create pipe: %v", err)
 	}
 	defer r.Close()
+	defer w.Close()
+
 	os.Stderr = w
 
 	exitCode := RunCommand([]string{"this-command-definitely-does-not-exist"}, os.Environ())
@@ -89,6 +91,8 @@ func TestRunCommand_ExecFailure(t *testing.T) {
 		t.Fatalf("Failed to create pipe: %v", err)
 	}
 	defer r.Close()
+	defer w.Close()
+
 	os.Stderr = w
 
 	exitCode := RunCommand([]string{tmpFile.Name()}, os.Environ())
@@ -101,7 +105,7 @@ func TestRunCommand_ExecFailure(t *testing.T) {
 		t.Errorf("Expected exit code 1, got %d", exitCode)
 	}
 
-	if !strings.Contains(stderr.String(), "Execution failed:") {
-		t.Errorf("Expected stderr to contain 'Execution failed:', got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "Execution failed") {
+		t.Errorf("Expected stderr to contain 'Execution failed', got %q", stderr.String())
 	}
 }
