@@ -37,17 +37,18 @@ func captureOutput(t *testing.T, f func()) (string, string) {
 
 	var outBuf, errBuf bytes.Buffer
 	var wg sync.WaitGroup
+	var errOut, errErr error
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		io.Copy(&outBuf, rOut)
+		_, errOut = io.Copy(&outBuf, rOut)
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		io.Copy(&errBuf, rErr)
+		_, errErr = io.Copy(&errBuf, rErr)
 	}()
 
 	f()
@@ -61,6 +62,13 @@ func captureOutput(t *testing.T, f func()) (string, string) {
 	wg.Wait()
 	rOut.Close()
 	rErr.Close()
+
+	if errOut != nil {
+		t.Errorf("failed to copy stdout: %v", errOut)
+	}
+	if errErr != nil {
+		t.Errorf("failed to copy stderr: %v", errErr)
+	}
 
 	return outBuf.String(), errBuf.String()
 }
