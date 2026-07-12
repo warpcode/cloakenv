@@ -131,6 +131,10 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 }
 
 func (k *KeePassProvider) unlock(vaultPath string, password string) error {
+	k.cacheMu.Lock()
+	k.entryCache = make(map[*gokeepasslib.Entry]map[string]string)
+	k.cacheMu.Unlock()
+
 	// Expand ~ to home directory
 	if strings.HasPrefix(vaultPath, "~/") {
 		home, err := os.UserHomeDir()
