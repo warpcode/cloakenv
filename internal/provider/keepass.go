@@ -396,8 +396,12 @@ func (k *KeePassProvider) getEntryValue(entry *gokeepasslib.Entry, key string) s
 
 	k.cacheMu.Lock()
 	defer k.cacheMu.Unlock()
-	// Double check in case another goroutine populated it while waiting for the lock
-	if m, ok := k.entryCache[entry]; ok {
+
+	// Lazily initialize entryCache to prevent panic if provider wasn't created via NewKeePassProvider
+	if k.entryCache == nil {
+		k.entryCache = make(map[*gokeepasslib.Entry]map[string]string)
+	} else if m, ok := k.entryCache[entry]; ok {
+		// Double check in case another goroutine populated it while waiting for the lock
 		return m[key]
 	}
 
