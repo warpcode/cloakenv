@@ -239,6 +239,22 @@ cloakenv search 'hostname matches "bastion\\..*\\.example\\.com"'
 If you search on a property (like `bit_strength`) that doesn't exist on all entries, the query engine will **gracefully skip** matching entries that lack that property, rather than throwing a runtime error.
 
 
+## Explicit Expansion Syntax (`${...}`)
+
+`cloakenv` uses a secure, explicit syntax for resolving and injecting secrets. Any configuration value or template environment string containing `${scheme://...}` expressions will have those expressions dynamically replaced with their resolved secret values at runtime.
+
+### Key Rules & Behavior
+1. **Explicit Wrapping**: Secrets are only resolved when enclosed in `${...}`. Raw URIs (such as `env://DB_USER`) without `${...}` are treated as literal strings.
+2. **CLI Convenience**: For CLI commands such as `cloakenv get`, raw URIs are automatically wrapped in `${...}` transparently to save typing.
+3. **Multiple Expansions**: You can mix literal text and multiple secret expansions in a single configuration value:
+   ```yaml
+   connection_string: "mysql://${env://DB_USER}:${keyring://mysql/password}@localhost:3306/db"
+   ```
+4. **Escaping**: Use `$$` to escape the expansion syntax and output literal `$` or `${...}` sequences:
+   - `$$` becomes `$`
+   - `$${env://USER}` becomes `${env://USER}`
+5. **No Nesting**: Nested expansions (e.g., `${env://${USER}}`) are not supported and will return a validation error.
+
 ## Vaults & URI Schemes
 
 `cloakenv` supports configured **Vaults**. Each vault manages a specific URI scheme (acting as its vault reference):
