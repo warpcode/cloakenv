@@ -1,2 +1,2 @@
-TEST_A=env://TEST_A_VAR
-TEST_B=env://TEST_B_VAR
+TEST_A=${env://TEST_A_VAR}
+TEST_B=${env://TEST_B_VAR}

@@ -118,21 +118,82 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	return o, nil
 }
 
-// Resolve takes a full URI (e.g., "work://AI/OpenAI:Password") and
+// Resolve takes a full value, expands any ${...} expressions, and
 // returns the resolved secret value.
 func (o *Orchestrator) Resolve(ctx context.Context, uri string) (string, error) {
-	return o.resolveRecursive(ctx, uri, 0)
+	return o.ResolveWithKey(ctx, uri, "")
 }
 
-func (o *Orchestrator) resolveRecursive(ctx context.Context, uri string, depth int) (string, error) {
+// ResolveWithKey takes a full value, expands any ${...} expressions, and
+// includes the configKey in any failure messages if provided.
+func (o *Orchestrator) ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error) {
+	return o.expandString(ctx, uri, 0, configKey)
+}
+
+func (o *Orchestrator) expandString(ctx context.Context, s string, depth int, configKey string) (string, error) {
 	if depth > 5 {
-		return "", fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5 resolving %q", uri)
+		return "", fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5")
 	}
 
+	var sb strings.Builder
+	i := 0
+	n := len(s)
+	for i < n {
+		if i+1 < n && s[i] == '$' && s[i+1] == '$' {
+			sb.WriteByte('$')
+			i += 2
+			continue
+		}
+		if i+1 < n && s[i] == '$' && s[i+1] == '{' {
+			// Find matching '}'
+			start := i + 2
+			end := -1
+			for j := start; j < n; j++ {
+				if s[j] == '}' {
+					end = j
+					break
+				}
+			}
+			if end == -1 {
+				keyPart := ""
+				if configKey != "" {
+					keyPart = fmt.Sprintf(" in configuration key %q", configKey)
+				}
+				return "", fmt.Errorf("unclosed expansion syntax '${...}'%s", keyPart)
+			}
+
+			innerText := s[start:end]
+			if strings.Contains(innerText, "${") {
+				keyPart := ""
+				if configKey != "" {
+					keyPart = fmt.Sprintf(" in configuration key %q", configKey)
+				}
+				return "", fmt.Errorf("nested expansions are not supported%s: %q", keyPart, s)
+			}
+
+			resolved, err := o.resolveSingleURI(ctx, innerText, depth, configKey)
+			if err != nil {
+				keyPart := ""
+				if configKey != "" {
+					keyPart = fmt.Sprintf(" in configuration key %q", configKey)
+				}
+				return "", fmt.Errorf("failed to resolve expansion %q%s: %w", innerText, keyPart, err)
+			}
+
+			sb.WriteString(resolved)
+			i = end + 1
+			continue
+		}
+		sb.WriteByte(s[i])
+		i++
+	}
+	return sb.String(), nil
+}
+
+func (o *Orchestrator) resolveSingleURI(ctx context.Context, uri string, depth int, configKey string) (string, error) {
 	scheme, location, err := parseURI(uri)
 	if err != nil {
-		// If not a valid URI (doesn't contain ://), treat it as a literal value
-		return uri, nil
+		return "", fmt.Errorf("invalid URI format: %w", err)
 	}
 
 	o.mu.Lock()
@@ -141,7 +202,7 @@ func (o *Orchestrator) resolveRecursive(ctx context.Context, uri string, depth i
 	o.mu.Unlock()
 
 	if !isBuiltin && !isVault && scheme != "search" {
-		return uri, nil
+		return "", fmt.Errorf("unknown scheme or vault: %q", scheme)
 	}
 
 	// Handle search scheme dynamically
@@ -166,10 +227,13 @@ func (o *Orchestrator) resolveRecursive(ctx context.Context, uri string, depth i
 			return "", fmt.Errorf("attribute %q not found in matched entry %q", attr, matchedEntry.Title)
 		}
 
+		var valStr string
 		if str, ok := val.(string); ok {
-			return o.resolveRecursive(ctx, str, depth+1)
+			valStr = str
+		} else {
+			valStr = fmt.Sprintf("%v", val)
 		}
-		return o.resolveRecursive(ctx, fmt.Sprintf("%v", val), depth+1)
+		return o.expandString(ctx, valStr, depth+1, configKey)
 	}
 
 	var val string
@@ -192,30 +256,26 @@ func (o *Orchestrator) resolveRecursive(ctx context.Context, uri string, depth i
 		}
 	}
 
-	if strings.Contains(val, "://") {
-		shouldResolve := true
+	shouldResolve := true
+	if _, isBuiltin := o.builtins[scheme]; !isBuiltin {
+		// For vault providers: ask the cached provider whether it gates
+		// value resolution. If it implements ValueResolvableProvider it
+		// expects the engine to honour the resolve_values flag; otherwise
+		// we fall through and resolve unconditionally (legacy behaviour).
+		o.mu.Lock()
+		p, cached := o.vaultCache[scheme]
+		o.mu.Unlock()
 
-		if _, isBuiltin := o.builtins[scheme]; !isBuiltin {
-			// For vault providers: ask the cached provider whether it gates
-			// value resolution. If it implements ValueResolvableProvider it
-			// expects the engine to honour the resolve_values flag; otherwise
-			// we fall through and resolve unconditionally (legacy behaviour).
-			o.mu.Lock()
-			p, cached := o.vaultCache[scheme]
-			o.mu.Unlock()
-
-			if cached {
-				if _, ok := p.(provider.ValueResolvableProvider); ok {
-					shouldResolve = o.config.Vaults[scheme].ResolveValues
-				}
+		if cached {
+			if _, ok := p.(provider.ValueResolvableProvider); ok {
+				shouldResolve = o.config.Vaults[scheme].ResolveValues
 			}
-		}
-
-		if shouldResolve {
-			return o.resolveRecursive(ctx, val, depth+1)
 		}
 	}
 
+	if shouldResolve {
+		return o.expandString(ctx, val, depth+1, configKey)
+	}
 	return val, nil
 }
 
@@ -242,7 +302,7 @@ func (o *Orchestrator) getEntryRecursive(ctx context.Context, uri string, depth 
 	if attrIdx := strings.LastIndex(location, ":"); attrIdx >= 0 {
 		attrName := location[attrIdx+1:]
 		if attrName != "" {
-			val, err := o.Resolve(ctx, uri)
+			val, err := o.resolveSingleURI(ctx, uri, 0, "")
 			if err != nil {
 				return provider.Entry{}, err
 			}
@@ -298,7 +358,7 @@ func (o *Orchestrator) getEntryRecursive(ctx context.Context, uri string, depth 
 			resolvedAttrs[k] = v
 			continue
 		}
-		resolvedVal, err := o.resolveAttrRecursive(ctx, v, depth+1)
+		resolvedVal, err := o.resolveAttrRecursive(ctx, v, depth+1, k)
 		if err != nil {
 			return provider.Entry{}, fmt.Errorf("failed to resolve attribute %q: %w", k, err)
 		}
@@ -309,21 +369,14 @@ func (o *Orchestrator) getEntryRecursive(ctx context.Context, uri string, depth 
 	return entry, nil
 }
 
-func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth int) (any, error) {
+func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth int, configKey string) (any, error) {
 	if depth > 5 {
 		return nil, errors.New("max recursion depth reached resolving attribute")
 	}
 
 	switch typedVal := val.(type) {
 	case string:
-		if strings.Contains(typedVal, "://") {
-			resolved, err := o.resolveRecursive(ctx, typedVal, depth+1)
-			if err != nil {
-				return nil, err
-			}
-			return resolved, nil
-		}
-		return typedVal, nil
+		return o.expandString(ctx, typedVal, depth+1, configKey)
 	case []string:
 		resolvedSlice := make([]string, len(typedVal))
 		var wg sync.WaitGroup
@@ -348,7 +401,7 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 					default:
 					}
 
-					res, err := o.resolveAttrRecursive(ctx, v, depth)
+					res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
 					if err != nil {
 						mu.Lock()
 						if firstErr == nil {
@@ -369,7 +422,7 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 				if ctx.Err() != nil {
 					break LoopStr
 				}
-				res, err := o.resolveAttrRecursive(ctx, v, depth)
+				res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
 				if err != nil {
 					mu.Lock()
 					if firstErr == nil {
@@ -418,7 +471,7 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 					default:
 					}
 
-					res, err := o.resolveAttrRecursive(ctx, v, depth)
+					res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
 					if err != nil {
 						mu.Lock()
 						if firstErr == nil {
@@ -435,7 +488,7 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 				if ctx.Err() != nil {
 					break LoopAny
 				}
-				res, err := o.resolveAttrRecursive(ctx, v, depth)
+				res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
 				if err != nil {
 					mu.Lock()
 					if firstErr == nil {
@@ -519,7 +572,7 @@ func (o *Orchestrator) resolveSearchResultAttributes(ctx context.Context, r prov
 	// Recursively resolve attributes
 	resolvedAttrs := make(map[string]any)
 	for k, v := range r.Entry.Attributes {
-		res, err := o.resolveAttrRecursive(ctx, v, depth+1)
+		res, err := o.resolveAttrRecursive(ctx, v, depth+1, k)
 		if err == nil {
 			resolvedAttrs[k] = res
 		} else {
@@ -796,7 +849,7 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 			explicitWg.Add(1)
 			go func(k, uri string) {
 				defer explicitWg.Done()
-				val, err := o.Resolve(ctx, uri)
+				val, err := o.ResolveWithKey(ctx, uri, k)
 				if err != nil {
 					explicitErrOnce.Do(func() {
 						explicitErr = fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)

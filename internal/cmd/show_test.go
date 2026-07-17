@@ -26,7 +26,7 @@ func TestShow_KeysFormat(t *testing.T) {
 	t.Setenv("SHOW_TEST_VAR_B", "valB")
 
 	// Call Show with keys format (with keys that should sort B before A)
-	args := []string{"-e", "KEY_B=env://SHOW_TEST_VAR_B", "-e", "KEY_A=env://SHOW_TEST_VAR_A", "-o", "keys"}
+	args := []string{"-e", "KEY_B=${env://SHOW_TEST_VAR_B}", "-e", "KEY_A=${env://SHOW_TEST_VAR_A}", "-o", "keys"}
 	cfg := &config.Config{
 		Vaults: make(map[string]config.VaultConfig),
 	}
@@ -79,9 +79,9 @@ func TestShow_KeysFormattingBehavior(t *testing.T) {
 
 	// Explicit keys with lowercase, hyphens, and multiple underscores
 	args := []string{
-		"-e", "db-user=env://SHOW_TEST_VAR_B",
-		"-e", "api--key=env://SHOW_TEST_VAR_A",
-		"-e", "multiple___underscores=env://SHOW_TEST_VAR_A",
+		"-e", "db-user=${env://SHOW_TEST_VAR_B}",
+		"-e", "api--key=${env://SHOW_TEST_VAR_A}",
+		"-e", "multiple___underscores=${env://SHOW_TEST_VAR_A}",
 		"-o", "keys",
 	}
 	cfg := &config.Config{

@@ -22,7 +22,7 @@ func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 	t.Setenv("ORCH_TEST_USER", "env_user")
 
 	// Create entries.yaml
-	// Here password maps to env://ORCH_TEST_USER, demonstrating recursive resolution!
+	// Here password maps to ${env://ORCH_TEST_USER}, demonstrating recursive resolution!
 	yamlContent := `
 entries:
   ssh_prod:
@@ -30,7 +30,7 @@ entries:
       - auth:ssh
       - env:prod
     title: "Production SSH Key"
-    username: env://ORCH_TEST_USER
+    username: ${env://ORCH_TEST_USER}
     password: "my_raw_password"
     bit_strength: 4096
   ssh_staging:
@@ -71,8 +71,8 @@ entries:
 
 	t.Run("RecursiveResolution", func(t *testing.T) {
 		// 1. Test recursive resolution
-		// my_repo://entries.ssh_prod.username should resolve to env://ORCH_TEST_USER which resolves to "env_user"
-		val, err := orch.Resolve(ctx, "my_repo://entries.ssh_prod.username")
+		// ${my_repo://entries.ssh_prod.username} should resolve to ${env://ORCH_TEST_USER} which resolves to "env_user"
+		val, err := orch.Resolve(ctx, "${my_repo://entries.ssh_prod.username}")
 		if err != nil {
 			t.Fatalf("failed to resolve: %v", err)
 		}
@@ -120,7 +120,7 @@ entries:
 	t.Run("SearchURI", func(t *testing.T) {
 		// 4. Test search:// URI scheme in Resolve
 		// Resolves Hostname or Password dynamically
-		val, err := orch.Resolve(ctx, `search://tags=auth:ssh,env:prod/password`)
+		val, err := orch.Resolve(ctx, `${search://tags=auth:ssh,env:prod/password}`)
 		if err != nil {
 			t.Fatalf("failed to resolve search:// URI: %v", err)
 		}
@@ -263,25 +263,25 @@ servers:
 	// 2. Verify Retrievals
 	t.Run("RetrieveSecrets", func(t *testing.T) {
 		// Custom static default Password
-		val, err := orch.Resolve(ctx, "custom_static://custom1")
+		val, err := orch.Resolve(ctx, "${custom_static://custom1}")
 		if err != nil || val != "custom_password" {
 			t.Errorf("expected 'custom_password', got: %v (err: %v)", val, err)
 		}
 
 		// Custom static specific key
-		val, err = orch.Resolve(ctx, "custom_static://custom1:username")
+		val, err = orch.Resolve(ctx, "${custom_static://custom1:username}")
 		if err != nil || val != "custom_user" {
 			t.Errorf("expected 'custom_user', got: %v (err: %v)", val, err)
 		}
 
 		// Custom single — entity named "Static_Flat", access specific attribute
-		val, err = orch.Resolve(ctx, "custom_single://Static_Flat:db_user")
+		val, err = orch.Resolve(ctx, "${custom_single://Static_Flat:db_user}")
 		if err != nil || val != "postgres" {
 			t.Errorf("expected 'postgres', got: %v (err: %v)", val, err)
 		}
 
 		// Flat file attributes
-		val, err = orch.Resolve(ctx, "flat_file://api_key")
+		val, err = orch.Resolve(ctx, "${flat_file://api_key}")
 		if err != nil || val != "super_secret_api_token" {
 			t.Errorf("expected 'super_secret_api_token', got: %v (err: %v)", val, err)
 		}
@@ -290,7 +290,7 @@ servers:
 	// 3. Verify Serialization of structured values
 	t.Run("ValueSerialization", func(t *testing.T) {
 		// Metadata (should be serialized YAML)
-		val, err := orch.Resolve(ctx, "flat_file://metadata")
+		val, err := orch.Resolve(ctx, "${flat_file://metadata}")
 		if err != nil {
 			t.Fatalf("failed to resolve metadata: %v", err)
 		}
@@ -300,7 +300,7 @@ servers:
 		}
 
 		// Servers (should be serialized YAML array)
-		val, err = orch.Resolve(ctx, "flat_file://servers")
+		val, err = orch.Resolve(ctx, "${flat_file://servers}")
 		if err != nil {
 			t.Fatalf("failed to resolve servers: %v", err)
 		}
@@ -373,7 +373,7 @@ func TestResolveValues(t *testing.T) {
 					ResolveValues: resolveValues,
 					Entities: map[string]map[string]any{
 						"entity1": {
-							"Password": "vault_b://entry1:secret",
+							"Password": "${vault_b://entry1:secret}",
 						},
 					},
 				},
@@ -396,7 +396,7 @@ func TestResolveValues(t *testing.T) {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
 
-		val, err := orch.Resolve(ctx, "vault_a://entity1:Password")
+		val, err := orch.Resolve(ctx, "${vault_a://entity1:Password}")
 		if err != nil {
 			t.Fatalf("Resolve failed: %v", err)
 		}
@@ -411,12 +411,12 @@ func TestResolveValues(t *testing.T) {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
 
-		val, err := orch.Resolve(ctx, "vault_a://entity1:Password")
+		val, err := orch.Resolve(ctx, "${vault_a://entity1:Password}")
 		if err != nil {
 			t.Fatalf("Resolve failed: %v", err)
 		}
 		// Should return the raw URI string, not the resolved secret.
-		if val != "vault_b://entry1:secret" {
+		if val != "${vault_b://entry1:secret}" {
 			t.Errorf("expected raw URI, got %q", val)
 		}
 	})
@@ -437,7 +437,7 @@ func TestResolveValues(t *testing.T) {
 		if !ok {
 			t.Fatal("expected 'Password' attribute in entry")
 		}
-		if raw != "vault_b://entry1:secret" {
+		if raw != "${vault_b://entry1:secret}" {
 			t.Errorf("expected raw URI in attribute, got %q", raw)
 		}
 	})
@@ -451,7 +451,7 @@ func TestResolveValues(t *testing.T) {
 					ResolveValues: true,
 					Entities: map[string]map[string]any{
 						"entry": {
-							"Password": "vault_c://entry:Password",
+							"Password": "${vault_c://entry:Password}",
 						},
 					},
 				},
@@ -463,7 +463,7 @@ func TestResolveValues(t *testing.T) {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
 
-		_, err = orch.Resolve(ctx, "vault_c://entry:Password")
+		_, err = orch.Resolve(ctx, "${vault_c://entry:Password}")
 		if err == nil {
 			t.Error("expected error due to circular reference, got nil")
 		}
@@ -725,4 +725,106 @@ func TestResolveLiteralValues(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOrchestratorExpansion(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("EXP_USER", "jane")
+	t.Setenv("EXP_HOST", "local")
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"vault_exp": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"database": {
+						"password": "supersecretpassword",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("Single expansion in a value", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, "${env://EXP_USER}")
+		if err != nil {
+			t.Fatalf("failed to resolve: %v", err)
+		}
+		if val != "jane" {
+			t.Errorf("expected 'jane', got %q", val)
+		}
+	})
+
+	t.Run("Multiple expansions in a single value", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, "${env://EXP_USER}-${env://EXP_HOST}")
+		if err != nil {
+			t.Fatalf("failed to resolve: %v", err)
+		}
+		if val != "jane-local" {
+			t.Errorf("expected 'jane-local', got %q", val)
+		}
+	})
+
+	t.Run("Expansion embedded in longer strings (URIs, file paths)", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, "mysql://${env://EXP_USER}:${vault_exp://database:password}@${env://EXP_HOST}:3306/db")
+		if err != nil {
+			t.Fatalf("failed to resolve: %v", err)
+		}
+		expected := "mysql://jane:supersecretpassword@local:3306/db"
+		if val != expected {
+			t.Errorf("expected %q, got %q", expected, val)
+		}
+	})
+
+	t.Run("Escaped ${} remains literal", func(t *testing.T) {
+		// $$ becomes literal $
+		// $${env://EXP_USER} becomes literal ${env://EXP_USER}
+		val, err := orch.Resolve(ctx, "$${env://EXP_USER}")
+		if err != nil {
+			t.Fatalf("failed to resolve: %v", err)
+		}
+		if val != "${env://EXP_USER}" {
+			t.Errorf("expected '${env://EXP_USER}', got %q", val)
+		}
+
+		// my$$password becomes literal my$password
+		val, err = orch.Resolve(ctx, "my$$password")
+		if err != nil {
+			t.Fatalf("failed to resolve: %v", err)
+		}
+		if val != "my$password" {
+			t.Errorf("expected 'my$password', got %q", val)
+		}
+	})
+
+	t.Run("Provider resolution errors surface useful messages", func(t *testing.T) {
+		_, err := orch.ResolveWithKey(ctx, "mysql://${env://NON_EXISTENT_VAR_FOR_EXP}", "DATABASE_URI")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		expectedPart := "in configuration key \"DATABASE_URI\""
+		if !strings.Contains(err.Error(), expectedPart) {
+			t.Errorf("expected error message to contain %q, got %q", expectedPart, err.Error())
+		}
+		expectedExprPart := "failed to resolve expansion \"env://NON_EXISTENT_VAR_FOR_EXP\""
+		if !strings.Contains(err.Error(), expectedExprPart) {
+			t.Errorf("expected error message to contain %q, got %q", expectedExprPart, err.Error())
+		}
+	})
+
+	t.Run("Nested expansions are disallowed", func(t *testing.T) {
+		_, err := orch.Resolve(ctx, "${env://${EXP_USER}}")
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		expectedPart := "nested expansions are not supported"
+		if !strings.Contains(err.Error(), expectedPart) {
+			t.Errorf("expected error message to contain %q, got %q", expectedPart, err.Error())
+		}
+	})
 }

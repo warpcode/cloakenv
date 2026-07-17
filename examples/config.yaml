@@ -61,7 +61,7 @@ vaults:
     entities:
       custom1:
         username: "custom_user"
-        Password: "custom_single://my_static_vault:secret_key"
+        Password: "${custom_single://my_static_vault:secret_key}"
         tags: [testing, static]
 
   # Defines the custom_single:// URI scheme using a single named entity

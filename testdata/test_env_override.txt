@@ -1,1 +1,1 @@
-PARENT_X=env://FILE_VAR
+PARENT_X=${env://FILE_VAR}
