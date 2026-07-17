@@ -4,8 +4,8 @@ entries:
       - auth:ssh
       - env:prod
     title: "Production SSH Key"
-    username: env://USER
-    password: keyring://ssh/prod_pass
+    username: ${env://USER}
+    password: ${keyring://ssh/prod_pass}
     hostname: "bastion.prod.example.com"
     bit_strength: 4096
     public_keys:
