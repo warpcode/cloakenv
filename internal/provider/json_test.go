@@ -280,7 +280,6 @@ func TestJsonProviderSingleEntity(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if results[0].Path != "" {
 		t.Errorf("expected empty path, got %q", results[0].Path)
 	}
 }
@@ -304,5 +303,82 @@ func TestJsonProvider_DeleteSecret(t *testing.T) {
 	}
 	if err != nil && !strings.Contains(err.Error(), "read-only") {
 		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
+	}
+}
+
+func TestJsonProviderInitialize_Errors(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "cloakenv-json-init-test")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	invalidJsonPath := filepath.Join(tempDir, "invalid.json")
+	if err := os.WriteFile(invalidJsonPath, []byte("{invalid json"), 0644); err != nil {
+		t.Fatalf("failed to write invalid json: %v", err)
+	}
+
+	nullJsonPath := filepath.Join(tempDir, "null.json")
+	if err := os.WriteFile(nullJsonPath, []byte("null"), 0644); err != nil {
+		t.Fatalf("failed to write null json: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		cfg     ProviderConfig
+		wantErr bool
+	}{
+		{
+			name: "missing vault_path",
+			cfg: ProviderConfig{
+				Settings: map[string]string{},
+			},
+			wantErr: true,
+		},
+		{
+			name: "non-existent file",
+			cfg: ProviderConfig{
+				Settings: map[string]string{
+					"vault_path": filepath.Join(tempDir, "does-not-exist.json"),
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "directory as file path",
+			cfg: ProviderConfig{
+				Settings: map[string]string{
+					"vault_path": tempDir,
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid json content",
+			cfg: ProviderConfig{
+				Settings: map[string]string{
+					"vault_path": invalidJsonPath,
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "null json content",
+			cfg: ProviderConfig{
+				Settings: map[string]string{
+					"vault_path": nullJsonPath,
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jp := NewJsonProvider()
+			err := jp.Initialize(ctx, tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Initialize() error = %v, wantErr %v", err, tt.wantErr)
 	}
 }
