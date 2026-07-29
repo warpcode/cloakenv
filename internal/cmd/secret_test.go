@@ -495,7 +495,10 @@ func TestSet(t *testing.T) {
 		os.Stdin = r
 
 		go func() {
-			w.Write([]byte("stdin_value\n"))
+			_, err := w.Write([]byte("stdin_value\n"))
+			if err != nil {
+				t.Errorf("failed to write to pipe: %v", err)
+			}
 			w.Close()
 		}()
 
