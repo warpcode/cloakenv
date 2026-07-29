@@ -289,3 +289,45 @@ list:
 		t.Errorf("expected empty path, got %q", results[0].Path)
 	}
 }
+
+func TestYamlProvider_InitializeErrors(t *testing.T) {
+	tempDir := t.TempDir()
+
+	invalidYamlPath := filepath.Join(tempDir, "invalid.yaml")
+	if err := os.WriteFile(invalidYamlPath, []byte("invalid:\n  yaml: [content"), 0644); err != nil {
+		t.Fatalf("failed to write invalid yaml file: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		cfg     ProviderConfig
+		wantErr bool
+	}{
+		{
+			name: "Missing vault_path",
+			cfg: ProviderConfig{
+				Settings: map[string]string{},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Invalid YAML syntax",
+			cfg: ProviderConfig{
+				Settings: map[string]string{
+					"vault_path": invalidYamlPath,
+				},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yp := NewYamlProvider()
+			err := yp.Initialize(context.Background(), tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Initialize() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
