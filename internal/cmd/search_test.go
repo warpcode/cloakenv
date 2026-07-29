@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/provider"
 )
 
@@ -285,4 +289,253 @@ func TestFlattenSearchResults(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSearch(t *testing.T) {
+	t.Run("HelpFlag", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		defer func() { os.Stdout = oldStdout }()
+		defer w.Close()
+		os.Stdout = w
+
+		args := []string{"--help"}
+		cfg := &config.Config{}
+		exitCode := Search(args, cfg)
+
+		if exitCode != 0 {
+			t.Errorf("expected exit code 0, got %d", exitCode)
+		}
+
+		var buf bytes.Buffer
+		w.Close()
+		if _, err := io.Copy(&buf, r); err != nil {
+			t.Fatalf("failed to copy: %v", err)
+		}
+		output := buf.String()
+
+		if !strings.Contains(output, "Usage:") || !strings.Contains(output, "cloakenv search") {
+			t.Errorf("expected help output, got %s", output)
+		}
+	})
+
+	t.Run("InvalidArgs", func(t *testing.T) {
+		oldStderr := os.Stderr
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		defer func() { os.Stderr = oldStderr }()
+		defer w.Close()
+		os.Stderr = w
+
+		args := []string{"-o"}
+		cfg := &config.Config{}
+		exitCode := Search(args, cfg)
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1, got %d", exitCode)
+		}
+
+		var buf bytes.Buffer
+		w.Close()
+		if _, err := io.Copy(&buf, r); err != nil {
+			t.Fatalf("failed to copy: %v", err)
+		}
+		output := buf.String()
+
+		if !strings.Contains(output, "requires an argument") {
+			t.Errorf("expected output to contain 'requires an argument', got %s", output)
+		}
+	})
+
+	t.Run("InvalidConfig", func(t *testing.T) {
+		oldStderr := os.Stderr
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		defer func() { os.Stderr = oldStderr }()
+		defer w.Close()
+		os.Stderr = w
+
+		args := []string{}
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"my_yaml": {
+					Provider: "invalid_provider",
+				},
+			},
+		}
+		exitCode := Search(args, cfg)
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1, got %d", exitCode)
+		}
+
+		var buf bytes.Buffer
+		w.Close()
+		if _, err := io.Copy(&buf, r); err != nil {
+			t.Fatalf("failed to copy: %v", err)
+		}
+		output := buf.String()
+
+		if !strings.Contains(output, "Config error") {
+			t.Errorf("expected output to contain 'Config error', got %s", output)
+		}
+	})
+
+	t.Run("QueryError", func(t *testing.T) {
+		oldStderr := os.Stderr
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		defer func() { os.Stderr = oldStderr }()
+		defer w.Close()
+		os.Stderr = w
+
+		args := []string{"invalid syntax === "}
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"my_yaml": {
+					Provider:  "yaml",
+					VaultPath: "../../testdata/test_entries.yaml",
+				},
+			},
+		}
+		exitCode := Search(args, cfg)
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1, got %d", exitCode)
+		}
+
+		var buf bytes.Buffer
+		w.Close()
+		if _, err := io.Copy(&buf, r); err != nil {
+			t.Fatalf("failed to copy: %v", err)
+		}
+		output := buf.String()
+
+		if !strings.Contains(output, "Search failed") {
+			t.Errorf("expected output to contain 'Search failed', got %s", output)
+		}
+	})
+
+	t.Run("SuccessfulQueryJSON", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		defer func() { os.Stdout = oldStdout }()
+		defer w.Close()
+		os.Stdout = w
+
+		args := []string{"title == 'Production SSH Key'", "-o", "json"}
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"my_yaml": {
+					Provider:  "yaml",
+					VaultPath: "../../testdata/test_entries.yaml",
+				},
+			},
+		}
+		exitCode := Search(args, cfg)
+
+		if exitCode != 0 {
+			t.Errorf("expected exit code 0, got %d", exitCode)
+		}
+
+		var buf bytes.Buffer
+		w.Close()
+		if _, err := io.Copy(&buf, r); err != nil {
+			t.Fatalf("failed to copy: %v", err)
+		}
+		output := buf.String()
+
+		if !strings.Contains(output, "Production SSH Key") {
+			t.Errorf("expected output to contain 'Production SSH Key', got %s", output)
+		}
+	})
+
+	t.Run("SelectedKeys", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		defer func() { os.Stdout = oldStdout }()
+		defer w.Close()
+		os.Stdout = w
+
+		args := []string{"-i", "title", "-i", "USERNAME", "-o", "json"}
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"my_yaml": {
+					Provider:  "yaml",
+					VaultPath: "../../testdata/test_entries.yaml",
+				},
+			},
+		}
+		exitCode := Search(args, cfg)
+
+		if exitCode != 0 {
+			t.Errorf("expected exit code 0, got %d", exitCode)
+		}
+
+		var buf bytes.Buffer
+		w.Close()
+		if _, err := io.Copy(&buf, r); err != nil {
+			t.Fatalf("failed to copy: %v", err)
+		}
+		output := buf.String()
+
+		if !strings.Contains(output, "title") || !strings.Contains(output, "USERNAME") {
+			t.Errorf("expected output to contain selected keys 'title' and 'USERNAME', got %s", output)
+		}
+		if strings.Contains(output, "BIT_STRENGTH") {
+			t.Errorf("did not expect output to contain 'BIT_STRENGTH', got %s", output)
+		}
+	})
+
+	t.Run("YAMLOutput", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		defer func() { os.Stdout = oldStdout }()
+		defer w.Close()
+		os.Stdout = w
+
+		args := []string{"title == 'Production SSH Key'", "-o", "yaml"}
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"my_yaml": {
+					Provider:  "yaml",
+					VaultPath: "../../testdata/test_entries.yaml",
+				},
+			},
+		}
+		exitCode := Search(args, cfg)
+
+		if exitCode != 0 {
+			t.Errorf("expected exit code 0, got %d", exitCode)
+		}
+
+		var buf bytes.Buffer
+		w.Close()
+		if _, err := io.Copy(&buf, r); err != nil {
+			t.Fatalf("failed to copy: %v", err)
+		}
+		output := buf.String()
+
+		if !strings.Contains(output, "title: Production SSH Key") {
+			t.Errorf("expected yaml output to contain 'title: Production SSH Key', got %s", output)
+		}
+	})
 }
