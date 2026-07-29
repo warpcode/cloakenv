@@ -319,6 +319,196 @@ func captureOutputWithExitCode(t *testing.T, f func() int) (int, string, string)
 	return exitCode, <-outC, <-errC
 }
 
+func TestSet(t *testing.T) {
+	t.Run("HelpFlag", func(t *testing.T) {
+		exitCode, stdout, _ := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"--help"}, &config.Config{})
+		})
+
+		if exitCode != 0 {
+			t.Errorf("expected exit code 0 for help flag, got %d", exitCode)
+		}
+
+		if !strings.Contains(stdout, "Usage:") {
+			t.Errorf("expected help text, got %q", stdout)
+		}
+	})
+
+	t.Run("InvalidArgs", func(t *testing.T) {
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{}, &config.Config{})
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 for invalid args, got %d", exitCode)
+		}
+
+		if !strings.Contains(stderr, "Usage:") {
+			t.Errorf("expected usage text, got %q", stderr)
+		}
+	})
+
+	t.Run("MissingTTLValue", func(t *testing.T) {
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test", "value", "--ttl"}, &config.Config{})
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 for missing TTL value, got %d", exitCode)
+		}
+
+		if !strings.Contains(stderr, "missing value for --ttl flag") {
+			t.Errorf("expected missing value error, got %q", stderr)
+		}
+	})
+
+	t.Run("InvalidTTL", func(t *testing.T) {
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test", "value", "--ttl", "invalid"}, &config.Config{})
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 for invalid TTL format, got %d", exitCode)
+		}
+
+		if !strings.Contains(stderr, "Invalid TTL duration format:") {
+			t.Errorf("expected invalid TTL format error, got %q", stderr)
+		}
+	})
+
+	t.Run("TooManyArgs", func(t *testing.T) {
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test", "value", "extra"}, &config.Config{})
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 for too many args, got %d", exitCode)
+		}
+
+		if !strings.Contains(stderr, "Usage:") {
+			t.Errorf("expected usage text, got %q", stderr)
+		}
+	})
+
+	t.Run("InvalidURI", func(t *testing.T) {
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"invalid-uri", "value"}, &config.Config{})
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 for invalid URI, got %d", exitCode)
+		}
+
+		if !strings.Contains(stderr, "Invalid URI format:") {
+			t.Errorf("expected Invalid URI format error, got %q", stderr)
+		}
+	})
+
+	t.Run("TTLNotSupported", func(t *testing.T) {
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"env://test", "value", "--ttl", "1h"}, &config.Config{})
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 for unsupported TTL scheme, got %d", exitCode)
+		}
+
+		if !strings.Contains(stderr, "flag --ttl is only supported by the 'cache' provider") {
+			t.Errorf("expected unsupported TTL scheme error, got %q", stderr)
+		}
+	})
+
+	t.Run("FallbackTTLInvalid", func(t *testing.T) {
+		cfg := &config.Config{
+			Cache: config.CacheConfig{DefaultTTL: "invalid"},
+		}
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test", "value"}, cfg)
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 for invalid default TTL, got %d", exitCode)
+		}
+
+		if !strings.Contains(stderr, "Invalid default_ttl in global config:") {
+			t.Errorf("expected invalid default TTL config error, got %q", stderr)
+		}
+	})
+
+	t.Run("ConfigError", func(t *testing.T) {
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"bad": {Provider: "invalid_provider"},
+			},
+		}
+
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test", "value"}, cfg)
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 for config error, got %d", exitCode)
+		}
+
+		if !strings.Contains(stderr, "Config error:") {
+			t.Errorf("expected Config error message, got %q", stderr)
+		}
+	})
+
+	t.Run("Success_Positional", func(t *testing.T) {
+		keyring.MockInit()
+		cfg := &config.Config{
+			Vaults: make(map[string]config.VaultConfig),
+		}
+
+		cacheDir := t.TempDir()
+		t.Setenv("XDG_CACHE_HOME", cacheDir)
+		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test", "testvalue"}, cfg)
+		})
+
+		if exitCode != 0 {
+			t.Errorf("expected exit code 0 for successful set, got %d (stderr: %s)", exitCode, stderr)
+		}
+	})
+
+	t.Run("Success_Stdin", func(t *testing.T) {
+		keyring.MockInit()
+		cfg := &config.Config{
+			Vaults: make(map[string]config.VaultConfig),
+		}
+
+		cacheDir := t.TempDir()
+		t.Setenv("XDG_CACHE_HOME", cacheDir)
+		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+
+		oldStdin := os.Stdin
+		defer func() { os.Stdin = oldStdin }()
+
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		defer r.Close()
+		os.Stdin = r
+
+		go func() {
+			w.Write([]byte("stdin_value\n"))
+			w.Close()
+		}()
+
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test", "-"}, cfg)
+		})
+
+		if exitCode != 0 {
+			t.Errorf("expected exit code 0 for successful set via stdin, got %d (stderr: %s)", exitCode, stderr)
+		}
+	})
+}
+
 func TestDelete(t *testing.T) {
 	t.Run("HelpFlag", func(t *testing.T) {
 		exitCode, stdout, _ := captureOutputWithExitCode(t, func() int {
