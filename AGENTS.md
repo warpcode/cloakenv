@@ -175,7 +175,7 @@ The `testdata/testDB.kdbx` database provides a stable fixture for KeePass integr
 
 ### Scope
 
-- Only modify files within the `cloakenv` workspace (`/home/jase/src/cloakenv`).
+- Only modify files within the `cloakenv` workspace.
 - Do not modify files outside this workspace (e.g., `~/.agents/AGENTS.md`) unless the user explicitly requests a global memory update.
 
 ### Code Changes
