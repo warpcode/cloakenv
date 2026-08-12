@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/warpcode/cloakenv/internal/provider"
 )
 
 func TestParseSearchArgs(t *testing.T) {
@@ -185,6 +187,101 @@ func TestParseSearchArgs(t *testing.T) {
 
 			if outputFormat != tc.wantOutputFormat {
 				t.Errorf("outputFormat = %q, want %q", outputFormat, tc.wantOutputFormat)
+			}
+		})
+	}
+}
+
+func TestFlattenSearchResults(t *testing.T) {
+	entry := provider.SearchResult{
+		Provider: "keepass",
+		Vault:    "myvault",
+		Path:     "path/to/entry",
+		Entry: provider.Entry{
+			Title: "My Title",
+			Tags:  []string{"tag1", "tag2"},
+			Attributes: map[string]any{
+				"password": "secret_password",
+				"USERNAME": "admin",
+				"Title":    "conflict_title", // Should be ignored in default
+				"TAGS":     "conflict_tags",
+				"some-key": "value",
+			},
+		},
+	}
+
+	tests := []struct {
+		name         string
+		results      []provider.SearchResult
+		selectedKeys []string
+		want         []map[string]any
+	}{
+		{
+			name:         "empty results",
+			results:      []provider.SearchResult{},
+			selectedKeys: nil,
+			want:         []map[string]any{},
+		},
+		{
+			name:         "default flattening (no selected keys)",
+			results:      []provider.SearchResult{entry},
+			selectedKeys: nil,
+			want: []map[string]any{
+				{
+					"provider": "keepass",
+					"vault":    "myvault",
+					"path":     "path/to/entry",
+					"title":    "My Title",
+					"tags":     []string{"tag1", "tag2"},
+					"PASSWORD": "secret_password",
+					"USERNAME": "admin",
+					"SOME_KEY": "value",
+				},
+			},
+		},
+		{
+			name:         "specific metadata keys",
+			results:      []provider.SearchResult{entry},
+			selectedKeys: []string{"provider", "TITLE", "vault", "path", "tags"},
+			want: []map[string]any{
+				{
+					"provider": "keepass",
+					"title":    "My Title",
+					"vault":    "myvault",
+					"path":     "path/to/entry",
+					"tags":     []string{"tag1", "tag2"},
+				},
+			},
+		},
+		{
+			name:         "specific attributes case insensitive",
+			results:      []provider.SearchResult{entry},
+			selectedKeys: []string{"password", "username", "some-key"},
+			want: []map[string]any{
+				{
+					"PASSWORD": "secret_password",
+					"USERNAME": "admin",
+					"SOME_KEY": "value",
+				},
+			},
+		},
+		{
+			name:         "missing attributes",
+			results:      []provider.SearchResult{entry},
+			selectedKeys: []string{"nonexistent"},
+			want: []map[string]any{
+				{
+					"NONEXISTENT": nil,
+				},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := flattenSearchResults(tc.results, tc.selectedKeys)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("flattenSearchResults() = %v, want %v", got, tc.want)
 			}
 		})
 	}
