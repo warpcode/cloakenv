@@ -369,6 +369,70 @@ func (o *Orchestrator) getEntryRecursive(ctx context.Context, uri string, depth 
 	return entry, nil
 }
 
+func resolveSliceRecursive[T any](ctx context.Context, o *Orchestrator, typedVal []T, depth int, configKey string, formatFn func(any) T) ([]T, error) {
+	resolvedSlice := make([]T, len(typedVal))
+	var wg sync.WaitGroup
+	var firstErr error
+	var mu sync.Mutex
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+Loop:
+	for i, v := range typedVal {
+		select {
+		case o.concurrencySem <- struct{}{}:
+			wg.Add(1)
+			go func(i int, v any) {
+				defer wg.Done()
+				defer func() { <-o.concurrencySem }()
+
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
+				if err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+						cancel()
+					}
+					mu.Unlock()
+					return
+				}
+				resolvedSlice[i] = formatFn(res)
+			}(i, v)
+		default:
+			// Fallback to sequential if concurrency limit is reached
+			if ctx.Err() != nil {
+				break Loop
+			}
+			res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+					cancel()
+				}
+				mu.Unlock()
+				break Loop
+			}
+			resolvedSlice[i] = formatFn(res)
+		}
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return resolvedSlice, nil
+}
+
 func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth int, configKey string) (any, error) {
 	if depth > 5 {
 		return nil, errors.New("max recursion depth reached resolving attribute")
@@ -378,137 +442,16 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 	case string:
 		return o.expandString(ctx, typedVal, depth+1, configKey)
 	case []string:
-		resolvedSlice := make([]string, len(typedVal))
-		var wg sync.WaitGroup
-		var firstErr error
-		var mu sync.Mutex
-
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-
-	LoopStr:
-		for i, v := range typedVal {
-			select {
-			case o.concurrencySem <- struct{}{}:
-				wg.Add(1)
-				go func(i int, v string) {
-					defer wg.Done()
-					defer func() { <-o.concurrencySem }()
-
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-
-					res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
-					if err != nil {
-						mu.Lock()
-						if firstErr == nil {
-							firstErr = err
-							cancel()
-						}
-						mu.Unlock()
-						return
-					}
-					if str, ok := res.(string); ok {
-						resolvedSlice[i] = str
-					} else {
-						resolvedSlice[i] = fmt.Sprintf("%v", res)
-					}
-				}(i, v)
-			default:
-				// Fallback to sequential if concurrency limit is reached
-				if ctx.Err() != nil {
-					break LoopStr
-				}
-				res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
-				if err != nil {
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
-						cancel()
-					}
-					mu.Unlock()
-					break LoopStr
-				}
-				if str, ok := res.(string); ok {
-					resolvedSlice[i] = str
-				} else {
-					resolvedSlice[i] = fmt.Sprintf("%v", res)
-				}
+		return resolveSliceRecursive(ctx, o, typedVal, depth, configKey, func(res any) string {
+			if str, ok := res.(string); ok {
+				return str
 			}
-		}
-		wg.Wait()
-		if firstErr != nil {
-			return nil, firstErr
-		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return resolvedSlice, nil
+			return fmt.Sprintf("%v", res)
+		})
 	case []any:
-		resolvedSlice := make([]any, len(typedVal))
-		var wg sync.WaitGroup
-		var firstErr error
-		var mu sync.Mutex
-
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-
-	LoopAny:
-		for i, v := range typedVal {
-			select {
-			case o.concurrencySem <- struct{}{}:
-				wg.Add(1)
-				go func(i int, v any) {
-					defer wg.Done()
-					defer func() { <-o.concurrencySem }()
-
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-
-					res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
-					if err != nil {
-						mu.Lock()
-						if firstErr == nil {
-							firstErr = err
-							cancel()
-						}
-						mu.Unlock()
-						return
-					}
-					resolvedSlice[i] = res
-				}(i, v)
-			default:
-				// Fallback to sequential if concurrency limit is reached
-				if ctx.Err() != nil {
-					break LoopAny
-				}
-				res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
-				if err != nil {
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
-						cancel()
-					}
-					mu.Unlock()
-					break LoopAny
-				}
-				resolvedSlice[i] = res
-			}
-		}
-		wg.Wait()
-		if firstErr != nil {
-			return nil, firstErr
-		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return resolvedSlice, nil
+		return resolveSliceRecursive(ctx, o, typedVal, depth, configKey, func(res any) any {
+			return res
+		})
 	default:
 		return val, nil
 	}
