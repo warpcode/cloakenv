@@ -14,7 +14,6 @@ func TestJsonProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
 
 	jsonContent := `{
 		"entries": {
@@ -105,7 +104,6 @@ func TestJsonProviderCustomEntriesKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
 
 	// 1. Custom key: "hosts"
 	hostsContent := `{
@@ -200,7 +198,6 @@ func TestJsonProviderSingleEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
 
 	jsonContent := `{
 		"title": "My Single JSON Vault",
@@ -308,7 +305,6 @@ func TestJsonProvider_DeleteSecret(t *testing.T) {
 
 func TestJsonProviderInitialize_Errors(t *testing.T) {
 	tempDir := t.TempDir()
-	defer os.RemoveAll(tempDir)
 
 	invalidJsonPath := filepath.Join(tempDir, "invalid.json")
 	if err := os.WriteFile(invalidJsonPath, []byte("{invalid json"), 0644); err != nil {
