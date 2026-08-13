@@ -2,6 +2,9 @@ package engine
 
 import (
 	"context"
+	"errors"
+
+	"github.com/warpcode/cloakenv/internal/provider"
 	"os"
 	"path/filepath"
 	"strings"
@@ -827,4 +830,165 @@ func TestOrchestratorExpansion(t *testing.T) {
 			t.Errorf("expected error message to contain %q, got %q", expectedPart, err.Error())
 		}
 	})
+}
+
+type failInitProvider struct{}
+
+func (f *failInitProvider) Scheme() string { return "failinit" }
+func (f *failInitProvider) Initialize(_ context.Context, _ provider.ProviderConfig) error {
+	return errors.New("init failed")
+}
+func (f *failInitProvider) GetSecret(_ context.Context, _ string) (string, error) { return "", nil }
+func (f *failInitProvider) SetSecret(_ context.Context, _, _ string) error        { return nil }
+func (f *failInitProvider) DeleteSecret(_ context.Context, _ string) error        { return nil }
+func (f *failInitProvider) Validate(_ map[string]string) error                    { return nil }
+func (f *failInitProvider) Search(_ context.Context, _ provider.SearchQuery) ([]provider.SearchResult, error) {
+	return nil, nil
+}
+func (f *failInitProvider) GetEntry(_ context.Context, _ string) (provider.Entry, error) {
+	return provider.Entry{}, nil
+}
+
+func TestGetEntry(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"vault_x": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"myentity": {
+						"Password":  "s3cr3t",
+						"recursive": "vault_x://myentity",
+					},
+					"error_attr": {
+						"Password": "${vault_missing://nonexistent}",
+					},
+				},
+				ResolveValues: true,
+			},
+			"vault_y": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"target": {
+						"Password": "pass",
+					},
+					"no_resolve": {
+						"Password": "vault_y://target",
+					},
+				},
+				ResolveValues: false,
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	orch.builtins["failinit"] = &failInitProvider{}
+
+	tests := []struct {
+		name      string
+		uri       string
+		depth     int
+		wantErr   string
+		wantAttrs map[string]string
+	}{
+		{
+			name:    "depth_exceeded",
+			uri:     "vault_x://myentity",
+			depth:   6,
+			wantErr: "infinite secret resolution recursion detected",
+		},
+		{
+			name:    "invalid_uri",
+			uri:     "://invalid",
+			wantErr: "malformed URI",
+		},
+		{
+			name:    "attribute_selector_resolve_error",
+			uri:     "vault_missing://myentity:Password",
+			wantErr: "unknown scheme",
+		},
+		{
+			name:    "get_vault_provider_error",
+			uri:     "nonexistent_vault://myentity",
+			wantErr: "unknown scheme or vault",
+		},
+		{
+			name:    "searchable_get_entry_error",
+			uri:     "vault_x://nonexistent_entity",
+			wantErr: "not found",
+		},
+		{
+			name:    "resolve_attr_recursive_error",
+			uri:     "vault_x://error_attr",
+			wantErr: "failed to resolve attribute",
+		},
+		{
+			name:    "provider_not_searchable",
+			uri:     "keyring://foo",
+			wantErr: "does not support structured entries",
+		},
+		{
+			name:    "ensure_initialized_error",
+			uri:     "failinit://foo",
+			wantErr: "init failed",
+		},
+		{
+			name:      "attribute_selector_success",
+			uri:       "vault_y://target:Password",
+			wantAttrs: map[string]string{"Password": "pass"},
+		},
+		{
+			name:      "no_resolve_values",
+			uri:       "vault_y://no_resolve",
+			wantAttrs: map[string]string{"Password": "vault_y://target"},
+		},
+		{
+			name:      "full_entry_success",
+			uri:       "vault_x://myentity",
+			wantAttrs: map[string]string{"Password": "s3cr3t", "recursive": "vault_x://myentity"}, // recursive doesn't loop infinitely unless actually resolved deeper?
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var entry provider.Entry
+			var err error
+
+			if tt.depth > 0 {
+				entry, err = orch.getEntryRecursive(ctx, tt.uri, tt.depth)
+			} else {
+				entry, err = orch.GetEntry(ctx, tt.uri)
+			}
+
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.wantAttrs != nil {
+				if len(entry.Attributes) != len(tt.wantAttrs) {
+					t.Errorf("expected %d attributes, got %d: %v", len(tt.wantAttrs), len(entry.Attributes), entry.Attributes)
+				}
+				for k, v := range tt.wantAttrs {
+					if entry.Attributes[k] != v {
+						t.Errorf("expected attribute %q to be %q, got %q", k, v, entry.Attributes[k])
+					}
+				}
+			}
+		})
+	}
 }
