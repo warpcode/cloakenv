@@ -22,8 +22,8 @@ import (
 type KeePassProvider struct {
 	db *gokeepasslib.Database
 
-	cacheMu    sync.RWMutex
-	entryCache map[*gokeepasslib.Entry]map[string]string
+	cacheMu     sync.RWMutex
+	entryCache  map[*gokeepasslib.Entry]map[string]string
 	binaryCache map[int]string
 }
 

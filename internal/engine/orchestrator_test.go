@@ -992,3 +992,343 @@ func TestGetEntry(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchCommand(t *testing.T) {
+	tests := []struct {
+		name        string
+		ruleCommand string
+		cmdArgs     []string
+		wantMatch   bool
+	}{
+		{
+			name:        "empty rule or args",
+			ruleCommand: "",
+			cmdArgs:     []string{"aws"},
+			wantMatch:   false,
+		},
+		{
+			name:        "nil cmdArgs",
+			ruleCommand: "aws",
+			cmdArgs:     nil,
+			wantMatch:   false,
+		},
+		{
+			name:        "exact executable name",
+			ruleCommand: "aws",
+			cmdArgs:     []string{"aws", "s3", "ls"},
+			wantMatch:   true,
+		},
+		{
+			name:        "full executable path basename",
+			ruleCommand: "aws",
+			cmdArgs:     []string{"/usr/local/bin/aws", "ec2", "describe-instances"},
+			wantMatch:   true,
+		},
+		{
+			name:        "exact path match",
+			ruleCommand: "/usr/bin/python3",
+			cmdArgs:     []string{"/usr/bin/python3", "script.py"},
+			wantMatch:   true,
+		},
+		{
+			name:        "case insensitive executable match",
+			ruleCommand: "AWS",
+			cmdArgs:     []string{"aws", "s3"},
+			wantMatch:   true,
+		},
+		{
+			name:        "subcommand prefix match",
+			ruleCommand: "git push",
+			cmdArgs:     []string{"git", "push", "origin", "main"},
+			wantMatch:   true,
+		},
+		{
+			name:        "subcommand prefix mismatch",
+			ruleCommand: "git push",
+			cmdArgs:     []string{"git", "status"},
+			wantMatch:   false,
+		},
+		{
+			name:        "glob pattern executable match",
+			ruleCommand: "kubectl*",
+			cmdArgs:     []string{"kubectl-prod", "get", "pods"},
+			wantMatch:   true,
+		},
+		{
+			name:        "glob pattern script match",
+			ruleCommand: "*.sh",
+			cmdArgs:     []string{"./deploy.sh", "staging"},
+			wantMatch:   true,
+		},
+		{
+			name:        "glob pattern full command match",
+			ruleCommand: "npm run *",
+			cmdArgs:     []string{"npm", "run", "build"},
+			wantMatch:   true,
+		},
+		{
+			name:        "non matching executable",
+			ruleCommand: "terraform",
+			cmdArgs:     []string{"helm", "install"},
+			wantMatch:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MatchCommand(tt.ruleCommand, tt.cmdArgs)
+			if got != tt.wantMatch {
+				t.Errorf("MatchCommand(%q, %v) = %v, want %v", tt.ruleCommand, tt.cmdArgs, got, tt.wantMatch)
+			}
+		})
+	}
+}
+
+func TestBuildEnvForCommand_Autoload(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("TEST_REGION", "us-east-1")
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"aws_dev": {
+				Provider:     "custom_vault",
+				SingleEntity: boolPtr(true),
+				Attributes: map[string]any{
+					"AWS_ACCESS_KEY_ID":     "AKIA1111",
+					"AWS_SECRET_ACCESS_KEY": "secret1111",
+					"EXTRA_VAR":             "should_be_filtered",
+				},
+			},
+			"k8s_vault": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"staging": {
+						"KUBECONFIG": "/path/to/staging.conf",
+					},
+				},
+			},
+		},
+		Autoload: []config.AutoloadRule{
+			{
+				Match:  "aws",
+				Vaults: []string{"aws_dev"},
+				Env: map[string]string{
+					"AWS_DEFAULT_REGION": "env://TEST_REGION",
+				},
+				Whitelist: []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION"},
+			},
+			{
+				Match: "kubectl*",
+				Merge: []string{"k8s_vault://staging"},
+				Env: map[string]string{
+					"K8S_ENV": "staging",
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("Matching command autoloads vaults, env, and applies whitelist", func(t *testing.T) {
+		cmdArgs := []string{"aws", "s3", "ls"}
+		_, res, err := orch.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil)
+		if err != nil {
+			t.Fatalf("failed to build env: %v", err)
+		}
+
+		envMap := make(map[string]string)
+		for _, item := range res {
+			k, v, _ := strings.Cut(item, "=")
+			envMap[k] = v
+		}
+
+		if envMap["AWS_ACCESS_KEY_ID"] != "AKIA1111" {
+			t.Errorf("expected AWS_ACCESS_KEY_ID=AKIA1111, got %q", envMap["AWS_ACCESS_KEY_ID"])
+		}
+		if envMap["AWS_SECRET_ACCESS_KEY"] != "secret1111" {
+			t.Errorf("expected AWS_SECRET_ACCESS_KEY=secret1111, got %q", envMap["AWS_SECRET_ACCESS_KEY"])
+		}
+		if envMap["AWS_DEFAULT_REGION"] != "us-east-1" {
+			t.Errorf("expected AWS_DEFAULT_REGION=us-east-1, got %q", envMap["AWS_DEFAULT_REGION"])
+		}
+		if _, exists := envMap["EXTRA_VAR"]; exists {
+			t.Errorf("expected EXTRA_VAR to be filtered out by autoload whitelist")
+		}
+	})
+
+	t.Run("CLI explicit flag overrides autoload env", func(t *testing.T) {
+		cmdArgs := []string{"aws", "s3", "ls"}
+		explicit := map[string]string{
+			"AWS_DEFAULT_REGION": "us-west-2",
+		}
+		_, res, err := orch.BuildEnvForCommand(ctx, cmdArgs, explicit, nil, nil)
+		if err != nil {
+			t.Fatalf("failed to build env: %v", err)
+		}
+
+		envMap := make(map[string]string)
+		for _, item := range res {
+			k, v, _ := strings.Cut(item, "=")
+			envMap[k] = v
+		}
+
+		if envMap["AWS_DEFAULT_REGION"] != "us-west-2" {
+			t.Errorf("expected CLI explicit flag us-west-2 to override autoload, got %q", envMap["AWS_DEFAULT_REGION"])
+		}
+	})
+
+	t.Run("Matching glob command autoloads merge URI and env", func(t *testing.T) {
+		cmdArgs := []string{"kubectl-prod", "get", "pods"}
+		_, res, err := orch.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil)
+		if err != nil {
+			t.Fatalf("failed to build env: %v", err)
+		}
+
+		envMap := make(map[string]string)
+		for _, item := range res {
+			k, v, _ := strings.Cut(item, "=")
+			envMap[k] = v
+		}
+
+		if envMap["KUBECONFIG"] != "/path/to/staging.conf" {
+			t.Errorf("expected KUBECONFIG=/path/to/staging.conf, got %q", envMap["KUBECONFIG"])
+		}
+		if envMap["K8S_ENV"] != "staging" {
+			t.Errorf("expected K8S_ENV=staging, got %q", envMap["K8S_ENV"])
+		}
+	})
+
+	t.Run("Non matching command does not apply autoload rules", func(t *testing.T) {
+		cmdArgs := []string{"helm", "install"}
+		_, res, err := orch.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil)
+		if err != nil {
+			t.Fatalf("failed to build env: %v", err)
+		}
+
+		envMap := make(map[string]string)
+		for _, item := range res {
+			k, v, _ := strings.Cut(item, "=")
+			envMap[k] = v
+		}
+
+		if _, exists := envMap["AWS_ACCESS_KEY_ID"]; exists {
+			t.Errorf("did not expect AWS_ACCESS_KEY_ID for helm command")
+		}
+		if _, exists := envMap["KUBECONFIG"]; exists {
+			t.Errorf("did not expect KUBECONFIG for helm command")
+		}
+	})
+
+	t.Run("Regex match and command transformation substitution", func(t *testing.T) {
+		regexCfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"litellm_vault": {
+					Provider:     "custom_vault",
+					SingleEntity: boolPtr(true),
+					Attributes: map[string]any{
+						"LITELLM_KEY": "sk-12345",
+					},
+				},
+			},
+			Autoload: []config.AutoloadRule{
+				{
+					Match:   `^litellm\s+(.*)$`,
+					Command: `uvx --with 'litellm[proxy]' --with 'fastapi<0.116' litellm \1`,
+					Vaults:  []string{"litellm_vault"},
+				},
+			},
+		}
+
+		orchRegex, err := NewOrchestrator(regexCfg)
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		cmdArgs := []string{"litellm", "--config", "~/.config/litellm/config.yaml"}
+		newCmdArgs, res, err := orchRegex.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil)
+		if err != nil {
+			t.Fatalf("failed to build env for command: %v", err)
+		}
+
+		expectedArgs := []string{"uvx", "--with", "litellm[proxy]", "--with", "fastapi<0.116", "litellm", "--config", "~/.config/litellm/config.yaml"}
+		if len(newCmdArgs) != len(expectedArgs) {
+			t.Fatalf("expected %d args, got %d (%v)", len(expectedArgs), len(newCmdArgs), newCmdArgs)
+		}
+		for idx, arg := range newCmdArgs {
+			if arg != expectedArgs[idx] {
+				t.Errorf("arg[%d]: expected %q, got %q", idx, expectedArgs[idx], arg)
+			}
+		}
+
+		envMap := make(map[string]string)
+		for _, item := range res {
+			k, v, _ := strings.Cut(item, "=")
+			envMap[k] = v
+		}
+		if envMap["LITELLM_KEY"] != "sk-12345" {
+			t.Errorf("expected LITELLM_KEY=sk-12345, got %q", envMap["LITELLM_KEY"])
+		}
+	})
+
+	t.Run("Validation rejects autoload rule with empty match", func(t *testing.T) {
+		invalidCfg := &config.Config{
+			Autoload: []config.AutoloadRule{
+				{Match: "", Command: "echo 1"},
+			},
+		}
+		_, err := NewOrchestrator(invalidCfg)
+		if err == nil {
+			t.Fatal("expected error for empty autoload match, got nil")
+		}
+	})
+}
+
+func TestSplitCommand(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    []string
+		wantErr bool
+	}{
+		{
+			input:   "uvx --with 'litellm[proxy]' --with 'fastapi<0.116' litellm --config config.yaml",
+			want:    []string{"uvx", "--with", "litellm[proxy]", "--with", "fastapi<0.116", "litellm", "--config", "config.yaml"},
+			wantErr: false,
+		},
+		{
+			input:   `echo "hello world" 'foo bar'`,
+			want:    []string{"echo", "hello world", "foo bar"},
+			wantErr: false,
+		},
+		{
+			input:   `cmd 'unclosed quote`,
+			want:    nil,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got, err := splitCommand(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("splitCommand(%q) err = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+			if !tt.wantErr {
+				if len(got) != len(tt.want) {
+					t.Fatalf("splitCommand(%q) len = %d, want %d", tt.input, len(got), len(tt.want))
+				}
+				for i := range got {
+					if got[i] != tt.want[i] {
+						t.Errorf("token %d = %q, want %q", i, got[i], tt.want[i])
+					}
+				}
+			}
+		})
+	}
+}
+
+func boolPtr(b bool) *bool {
+	return &b
+}

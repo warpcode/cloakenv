@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -115,6 +116,15 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 		}
 	}
 
+	// Validate autoload configuration rules
+	if cfg != nil {
+		for idx, rule := range cfg.Autoload {
+			if strings.TrimSpace(rule.Match) == "" {
+				return nil, fmt.Errorf("invalid config: autoload rule #%d is missing 'match'", idx+1)
+			}
+		}
+	}
+
 	return o, nil
 }
 
@@ -127,7 +137,26 @@ func (o *Orchestrator) Resolve(ctx context.Context, uri string) (string, error) 
 // ResolveWithKey takes a full value, expands any ${...} expressions, and
 // includes the configKey in any failure messages if provided.
 func (o *Orchestrator) ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error) {
+	if !strings.Contains(uri, "${") {
+		if scheme, _, err := parseURI(uri); err == nil && o.isKnownScheme(scheme) {
+			uri = "${" + uri + "}"
+		}
+	}
 	return o.expandString(ctx, uri, 0, configKey)
+}
+
+func (o *Orchestrator) isKnownScheme(scheme string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if _, ok := o.builtins[scheme]; ok {
+		return true
+	}
+	if o.config != nil {
+		if _, ok := o.config.Vaults[scheme]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (o *Orchestrator) expandString(ctx context.Context, s string, depth int, configKey string) (string, error) {
@@ -692,8 +721,247 @@ func parseSearchURI(location string) (string, string, error) {
 	return strings.Join(conditions, " and "), attr, nil
 }
 
-// BuildEnv constructs the full environment block.
+// MatchCommand reports whether a command argument slice matches an autoload rule match pattern.
+func MatchCommand(ruleMatch string, cmdArgs []string) bool {
+	matched, _, _ := MatchCommandRule(config.AutoloadRule{Match: ruleMatch}, cmdArgs)
+	return matched
+}
+
+// MatchCommandRule evaluates an autoload rule against command arguments.
+// If it matches and specifies a command replacement template, it returns the substituted command args.
+func MatchCommandRule(rule config.AutoloadRule, cmdArgs []string) (bool, []string, error) {
+	if len(cmdArgs) == 0 {
+		return false, cmdArgs, nil
+	}
+
+	pattern := strings.TrimSpace(rule.Match)
+	if pattern == "" {
+		return false, cmdArgs, nil
+	}
+
+	fullCmd := strings.Join(cmdArgs, " ")
+	execPath := cmdArgs[0]
+	execBase := filepath.Base(execPath)
+
+	ruleLower := strings.ToLower(pattern)
+	execPathLower := strings.ToLower(execPath)
+	execBaseLower := strings.ToLower(execBase)
+	fullCmdLower := strings.ToLower(fullCmd)
+
+	var re *regexp.Regexp
+	var matchIndices []int
+
+	// 1. Attempt Regex compilation & match
+	compiled, err := regexp.Compile(pattern)
+	if err == nil {
+		indices := compiled.FindStringSubmatchIndex(fullCmd)
+		if indices != nil {
+			re = compiled
+			matchIndices = indices
+		}
+	} else {
+		if compiledCi, errCi := regexp.Compile("(?i)" + pattern); errCi == nil {
+			indices := compiledCi.FindStringSubmatchIndex(fullCmd)
+			if indices != nil {
+				re = compiledCi
+				matchIndices = indices
+			}
+		}
+	}
+
+	isMatched := matchIndices != nil
+
+	// 2. Fallback to basename / glob / prefix matching if regex didn't match
+	if !isMatched {
+		if execBaseLower == ruleLower || execPathLower == ruleLower || fullCmdLower == ruleLower ||
+			strings.HasPrefix(fullCmdLower, ruleLower+" ") || strings.HasPrefix(fullCmdLower, ruleLower+"\t") ||
+			matchWildcard(ruleLower, execBaseLower) || matchWildcard(ruleLower, execPathLower) || matchWildcard(ruleLower, fullCmdLower) {
+			isMatched = true
+		}
+	}
+
+	if !isMatched {
+		return false, cmdArgs, nil
+	}
+
+	// 3. Command Substitution: If rule.Command provides a replacement template
+	if strings.TrimSpace(rule.Command) != "" {
+		template := convertBackslashGroups(rule.Command)
+		var expanded string
+		if re != nil && matchIndices != nil {
+			expanded = string(re.ExpandString(nil, template, fullCmd, matchIndices))
+		} else {
+			expanded = template
+		}
+		newArgs, err := splitCommand(expanded)
+		if err != nil {
+			return true, cmdArgs, fmt.Errorf("failed to parse substituted command %q: %w", expanded, err)
+		}
+		return true, newArgs, nil
+	}
+
+	return true, cmdArgs, nil
+}
+
+func convertBackslashGroups(template string) string {
+	var sb strings.Builder
+	for i := 0; i < len(template); i++ {
+		if template[i] == '\\' && i+1 < len(template) && template[i+1] >= '1' && template[i+1] <= '9' {
+			sb.WriteByte('$')
+			sb.WriteByte(template[i+1])
+			i++
+			continue
+		}
+		sb.WriteByte(template[i])
+	}
+	return sb.String()
+}
+
+func splitCommand(s string) ([]string, error) {
+	var tokens []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+
+		if escaped {
+			current.WriteByte(ch)
+			escaped = false
+			continue
+		}
+
+		if ch == '\\' && !inSingle {
+			escaped = true
+			continue
+		}
+
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+
+		if ch == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+
+		if (ch == ' ' || ch == '\t' || ch == '\n') && !inSingle && !inDouble {
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
+			continue
+		}
+
+		current.WriteByte(ch)
+	}
+
+	if inSingle || inDouble {
+		return nil, fmt.Errorf("unclosed quote in command string: %s", s)
+	}
+
+	if current.Len() > 0 {
+		tokens = append(tokens, current.String())
+	}
+
+	return tokens, nil
+}
+
+func matchWildcard(pattern, text string) bool {
+	if pattern == "*" {
+		return true
+	}
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		return pattern == text
+	}
+	if !strings.HasPrefix(text, parts[0]) {
+		return false
+	}
+	text = text[len(parts[0]):]
+	for i := 1; i < len(parts)-1; i++ {
+		p := parts[i]
+		if p == "" {
+			continue
+		}
+		idx := strings.Index(text, p)
+		if idx == -1 {
+			return false
+		}
+		text = text[idx+len(p):]
+	}
+	return strings.HasSuffix(text, parts[len(parts)-1])
+}
+
+// BuildEnv constructs the full environment block without command autoloading.
 func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, merges []string, whitelist []string) ([]string, error) {
+	_, env, err := o.BuildEnvForCommand(ctx, nil, explicit, merges, whitelist)
+	return env, err
+}
+
+// BuildEnvForCommand constructs the full environment block and evaluates config autoload rules,
+// returning any substituted command arguments, the resolved environment slice, and any error.
+func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cmdArgs []string, explicit map[string]string, merges []string, whitelist []string) ([]string, []string, error) {
+	var autoMerges []string
+	autoExplicit := make(map[string]string)
+	var autoWhitelist []string
+	currentCmdArgs := cmdArgs
+
+	if len(cmdArgs) > 0 && o.config != nil {
+		for _, rule := range o.config.Autoload {
+			matched, newCmdArgs, err := MatchCommandRule(rule, currentCmdArgs)
+			if err != nil {
+				return nil, nil, err
+			}
+			if matched {
+				currentCmdArgs = newCmdArgs
+				for _, v := range rule.Vaults {
+					v = strings.TrimSpace(v)
+					if v != "" {
+						if !strings.Contains(v, "://") {
+							v = v + "://"
+						}
+						autoMerges = append(autoMerges, v)
+					}
+				}
+				for _, m := range rule.Merge {
+					m = strings.TrimSpace(m)
+					if m != "" {
+						if !strings.Contains(m, "://") {
+							m = m + "://"
+						}
+						autoMerges = append(autoMerges, m)
+					}
+				}
+				for k, uri := range rule.Env {
+					if k != "" && uri != "" {
+						autoExplicit[k] = uri
+					}
+				}
+				for _, w := range rule.Whitelist {
+					w = strings.TrimSpace(w)
+					if w != "" {
+						autoWhitelist = append(autoWhitelist, w)
+					}
+				}
+			}
+		}
+	}
+
+	combinedMerges := append(autoMerges, merges...)
+	combinedWhitelist := append(autoWhitelist, whitelist...)
+
+	combinedExplicit := make(map[string]string)
+	for k, v := range autoExplicit {
+		combinedExplicit[k] = v
+	}
+	for k, v := range explicit {
+		combinedExplicit[k] = v // CLI explicit flags -e override autoload env
+	}
+
 	// 1. Get parent environment
 	parentEnvMap := make(map[string]string)
 	for _, envStr := range os.Environ() {
@@ -705,21 +973,21 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 
 	// whitelistSet is a helper to quickly check if a key is whitelisted
 	whitelistSet := make(map[string]bool)
-	for _, k := range whitelist {
+	for _, k := range combinedWhitelist {
 		whitelistSet[utils.FormatKey(k)] = true
 	}
-	hasWhitelist := len(whitelist) > 0
+	hasWhitelist := len(combinedWhitelist) > 0
 
 	// We will resolve/load the merge sources in parallel.
 	type loadedSource struct {
 		keys map[string]string
 	}
-	loaded := make([]loadedSource, len(merges))
+	loaded := make([]loadedSource, len(combinedMerges))
 	var wg sync.WaitGroup
 	var errOnce sync.Once
 	var firstErr error
 
-	for i, m := range merges {
+	for i, m := range combinedMerges {
 		wg.Add(1)
 		go func(idx int, uri string) {
 			defer wg.Done()
@@ -754,7 +1022,7 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 	}
 	wg.Wait()
 	if firstErr != nil {
-		return nil, firstErr
+		return nil, nil, firstErr
 	}
 
 	// finalEnv maps key -> value, initialized with parent environment (always forwarded)
@@ -772,13 +1040,13 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 
 	// - Explicit mappings (-e highest priority)
 	// These are never filtered by whitelist and overwrite everything.
-	if len(explicit) > 0 {
+	if len(combinedExplicit) > 0 {
 		var explicitWg sync.WaitGroup
 		var explicitErrOnce sync.Once
 		var explicitErr error
 		var mu sync.Mutex
 
-		for k, uri := range explicit {
+		for k, uri := range combinedExplicit {
 			explicitWg.Add(1)
 			go func(k, uri string) {
 				defer explicitWg.Done()
@@ -796,7 +1064,7 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 		}
 		explicitWg.Wait()
 		if explicitErr != nil {
-			return nil, explicitErr
+			return nil, nil, explicitErr
 		}
 	}
 
@@ -806,7 +1074,11 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 		result = append(result, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	return result, nil
+	if len(currentCmdArgs) == 0 {
+		currentCmdArgs = cmdArgs
+	}
+
+	return currentCmdArgs, result, nil
 }
 
 func serializeValHelper(val any) (string, error) {
@@ -1034,11 +1306,33 @@ func (o *Orchestrator) initJson(ctx context.Context, vaultName string, vault con
 // initCustomVault bootstraps a CustomVault provider using config settings.
 func (o *Orchestrator) initCustomVault(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
 	cp := provider.NewCustomVaultProvider()
+	entities := vault.Entities
+	if entities == nil {
+		entities = make(map[string]map[string]any)
+	}
+	if (vault.SingleEntity != nil && *vault.SingleEntity) || len(vault.Attributes) > 0 {
+		entityName := vault.EntityName
+		if entityName == "" {
+			entityName = vaultName
+		}
+		attrs := make(map[string]any)
+		for k, v := range vault.Attributes {
+			attrs[k] = v
+		}
+		if len(vault.Tags) > 0 {
+			attrs["tags"] = vault.Tags
+		}
+		attrs["title"] = entityName
+		entities[""] = attrs
+		entities[entityName] = attrs
+		entities["default"] = attrs
+	}
+
 	err := cp.Initialize(ctx, provider.ProviderConfig{
 		Settings: map[string]string{
 			"vault_name": vaultName,
 		},
-		Entities: vault.Entities,
+		Entities: entities,
 	})
 	if err != nil {
 		return nil, err
