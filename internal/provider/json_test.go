@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -281,5 +282,27 @@ func TestJsonProviderSingleEntity(t *testing.T) {
 	}
 	if results[0].Path != "" {
 		t.Errorf("expected empty path, got %q", results[0].Path)
+	}
+}
+
+func TestJsonProvider_SetSecret(t *testing.T) {
+	jp := NewJsonProvider()
+	err := jp.SetSecret(context.Background(), "KEY", "VAL")
+	if err == nil {
+		t.Error("expected error for SetSecret, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
+	}
+}
+
+func TestJsonProvider_DeleteSecret(t *testing.T) {
+	jp := NewJsonProvider()
+	err := jp.DeleteSecret(context.Background(), "KEY")
+	if err == nil {
+		t.Error("expected error for DeleteSecret, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
 	}
 }
