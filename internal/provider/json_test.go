@@ -268,6 +268,7 @@ func TestJsonProviderSingleEntity(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
+	if results[0].Path != "" {
 		t.Errorf("expected empty path, got %q", results[0].Path)
 	}
 }
@@ -364,5 +365,7 @@ func TestJsonProviderInitialize_Errors(t *testing.T) {
 			err := jp.Initialize(ctx, tt.cfg)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Initialize() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }
