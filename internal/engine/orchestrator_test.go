@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+
 	"github.com/warpcode/cloakenv/internal/provider"
 	"os"
 	"path/filepath"
@@ -904,7 +905,7 @@ func TestGetEntry(t *testing.T) {
 		{
 			name:    "invalid_uri",
 			uri:     "://invalid",
-			wantErr: "invalid URI format", // Or malformed URI depending on parsing
+			wantErr: "malformed URI",
 		},
 		{
 			name:    "attribute_selector_resolve_error",
@@ -969,12 +970,7 @@ func TestGetEntry(t *testing.T) {
 					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
 				}
 				if !strings.Contains(err.Error(), tt.wantErr) {
-					// Fallback for malformed URI differences
-					if tt.name == "invalid_uri" && strings.Contains(err.Error(), "malformed URI") {
-						// Ok
-					} else {
-						t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
-					}
+					t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
 				}
 				return
 			}
