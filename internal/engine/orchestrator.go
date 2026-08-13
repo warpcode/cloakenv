@@ -834,8 +834,20 @@ func splitCommand(s string) ([]string, error) {
 		}
 
 		if ch == '\\' && !inSingle {
-			escaped = true
-			continue
+			if i+1 < len(s) {
+				next := s[i+1]
+				if inDouble {
+					if next == '"' || next == '\\' || next == '$' || next == '`' {
+						escaped = true
+						continue
+					}
+				} else {
+					if next == ' ' || next == '\t' || next == '\n' || next == '"' || next == '\'' || next == '\\' {
+						escaped = true
+						continue
+					}
+				}
+			}
 		}
 
 		if ch == '\'' && !inDouble {

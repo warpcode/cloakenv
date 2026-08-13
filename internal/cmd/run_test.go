@@ -251,7 +251,7 @@ func TestRun_Autoload(t *testing.T) {
 			Autoload: []config.AutoloadRule{
 				{
 					Match:   `^my-alias\s+(.*)$`,
-					Command: os.Args[0] + ` \1`,
+					Command: fmt.Sprintf("%q $1", os.Args[0]),
 					Vaults:  []string{"mock_vault"},
 				},
 			},

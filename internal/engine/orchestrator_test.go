@@ -1303,6 +1303,21 @@ func TestSplitCommand(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			input:   `C:\Users\runner\AppData\Local\Temp\tool.exe arg1 arg2`,
+			want:    []string{`C:\Users\runner\AppData\Local\Temp\tool.exe`, "arg1", "arg2"},
+			wantErr: false,
+		},
+		{
+			input:   `"C:\Program Files\Tool\tool.exe" --flag "value"`,
+			want:    []string{`C:\Program Files\Tool\tool.exe`, "--flag", "value"},
+			wantErr: false,
+		},
+		{
+			input:   `tool\ name arg`,
+			want:    []string{"tool name", "arg"},
+			wantErr: false,
+		},
+		{
 			input:   `cmd 'unclosed quote`,
 			want:    nil,
 			wantErr: true,
