@@ -10,10 +10,7 @@ import (
 )
 
 func TestJsonProvider(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "cloakenv-json-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
+	tempDir := t.TempDir()
 
 	jsonContent := `{
 		"entries": {
@@ -100,10 +97,7 @@ func TestJsonProvider(t *testing.T) {
 }
 
 func TestJsonProviderCustomEntriesKey(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "cloakenv-json-test-custom")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
+	tempDir := t.TempDir()
 
 	// 1. Custom key: "hosts"
 	hostsContent := `{
@@ -194,10 +188,7 @@ func TestJsonProviderCustomEntriesKey(t *testing.T) {
 }
 
 func TestJsonProviderSingleEntity(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "cloakenv-json-single")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
+	tempDir := t.TempDir()
 
 	jsonContent := `{
 		"title": "My Single JSON Vault",
