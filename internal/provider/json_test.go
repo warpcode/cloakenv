@@ -307,10 +307,7 @@ func TestJsonProvider_DeleteSecret(t *testing.T) {
 }
 
 func TestJsonProviderInitialize_Errors(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "cloakenv-json-init-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
+	tempDir := t.TempDir()
 	defer os.RemoveAll(tempDir)
 
 	invalidJsonPath := filepath.Join(tempDir, "invalid.json")
