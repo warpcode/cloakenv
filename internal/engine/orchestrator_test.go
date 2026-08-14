@@ -1344,6 +1344,69 @@ func TestSplitCommand(t *testing.T) {
 	}
 }
 
+func TestCheckAccess(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"valid_vault": {
+				Provider: "custom_vault",
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	// We'll configure a failing vault using a provider that doesn't exist
+	// which will cause initVaultProvider to return an "unsupported provider type" error.
+	orch.config.Vaults["failing_vault"] = config.VaultConfig{
+		Provider: "unsupported_provider",
+	}
+
+	tests := []struct {
+		name      string
+		vaultName string
+		wantErr   string
+	}{
+		{
+			name:      "valid_vault",
+			vaultName: "valid_vault",
+			wantErr:   "",
+		},
+		{
+			name:      "unknown_vault",
+			vaultName: "nonexistent_vault",
+			wantErr:   "unknown scheme or vault",
+		},
+		{
+			name:      "failing_vault",
+			vaultName: "failing_vault",
+			wantErr:   "unsupported provider type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := orch.CheckAccess(ctx, tt.vaultName)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func boolPtr(b bool) *bool {
 	return &b
 }
