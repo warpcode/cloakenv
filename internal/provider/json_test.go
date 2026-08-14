@@ -295,6 +295,50 @@ func TestJsonProvider_DeleteSecret(t *testing.T) {
 	}
 }
 
+func TestJsonProvider_Validate(t *testing.T) {
+	jp := NewJsonProvider()
+
+	tests := []struct {
+		name     string
+		settings map[string]string
+		wantErr  bool
+	}{
+		{
+			name: "valid vault_path",
+			settings: map[string]string{
+				"vault_path": "/path/to/vault.json",
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty vault_path",
+			settings: map[string]string{
+				"vault_path": "",
+			},
+			wantErr: true,
+		},
+		{
+			name:     "missing vault_path",
+			settings: map[string]string{},
+			wantErr:  true,
+		},
+		{
+			name:     "nil settings",
+			settings: nil,
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := jp.Validate(tt.settings)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestJsonProviderInitialize_Errors(t *testing.T) {
 	tempDir := t.TempDir()
 
