@@ -369,3 +369,80 @@ func TestJsonProviderInitialize_Errors(t *testing.T) {
 		})
 	}
 }
+
+func TestSerializeJsonVal(t *testing.T) {
+	tests := []struct {
+		name    string
+		val     any
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "string",
+			val:     "hello world",
+			want:    "hello world",
+			wantErr: false,
+		},
+		{
+			name:    "slice of any",
+			val:     []any{"item1", 2, true},
+			want:    `["item1",2,true]`,
+			wantErr: false,
+		},
+		{
+			name:    "map of string to any",
+			val:     map[string]any{"key1": "val1", "key2": 42},
+			want:    `{"key1":"val1","key2":42}`,
+			wantErr: false,
+		},
+		{
+			name:    "integer (default)",
+			val:     42,
+			want:    "42",
+			wantErr: false,
+		},
+		{
+			name:    "float (default)",
+			val:     3.14,
+			want:    "3.14",
+			wantErr: false,
+		},
+		{
+			name:    "boolean (default)",
+			val:     true,
+			want:    "true",
+			wantErr: false,
+		},
+		{
+			name:    "nil (default)",
+			val:     nil,
+			want:    "<nil>",
+			wantErr: false,
+		},
+		{
+			name:    "unserializable slice",
+			val:     []any{make(chan int)},
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "unserializable map",
+			val:     map[string]any{"key": make(chan int)},
+			want:    "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := serializeJsonVal(tt.val)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("serializeJsonVal() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("serializeJsonVal() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
