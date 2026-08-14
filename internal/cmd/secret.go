@@ -46,7 +46,7 @@ func Get(args []string, cfg *config.Config) int {
 
 	val, err := orch.Resolve(ctx, args[0])
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Resolution failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Resolution failed\n")
 		return 1
 	}
 
