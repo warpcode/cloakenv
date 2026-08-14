@@ -89,38 +89,34 @@ func Set(args []string, cfg *config.Config) int {
 		}
 	}
 
-	if len(posArgs) < 1 || len(posArgs) > 2 {
-		fmt.Fprintln(os.Stderr, "Usage: cloakenv set <uri> [value] [--ttl <duration>]")
+	if len(posArgs) != 1 {
+		fmt.Fprintln(os.Stderr, "Usage: cloakenv set <uri> [--ttl <duration>]")
 		return 1
 	}
 
 	uri := posArgs[0]
 	var value string
 
-	if len(posArgs) == 2 && posArgs[1] != "-" {
-		value = posArgs[1]
+	var b []byte
+	var err error
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Fprint(os.Stderr, "Enter secret value: ")
+		b, err = term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
 	} else {
-		var b []byte
-		var err error
-		if term.IsTerminal(int(os.Stdin.Fd())) {
-			fmt.Fprint(os.Stderr, "Enter secret value: ")
-			b, err = term.ReadPassword(int(os.Stdin.Fd()))
-			fmt.Fprintln(os.Stderr)
-		} else {
-			b, err = io.ReadAll(os.Stdin)
-		}
+		b, err = io.ReadAll(os.Stdin)
+	}
 
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", err)
-			return 1
-		}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", err)
+		return 1
+	}
 
-		value = string(b)
-		if strings.HasSuffix(value, "\r\n") {
-			value = strings.TrimSuffix(value, "\r\n")
-		} else if strings.HasSuffix(value, "\n") {
-			value = strings.TrimSuffix(value, "\n")
-		}
+	value = string(b)
+	if strings.HasSuffix(value, "\r\n") {
+		value = strings.TrimSuffix(value, "\r\n")
+	} else if strings.HasSuffix(value, "\n") {
+		value = strings.TrimSuffix(value, "\n")
 	}
 
 	// Provider-specific validation: --ttl is cache:// only

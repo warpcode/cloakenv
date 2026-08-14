@@ -567,9 +567,18 @@ func TestDelete(t *testing.T) {
 		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
 
 		// Set secret
+		oldStdin := os.Stdin
+		rIn, wIn, _ := os.Pipe()
+		os.Stdin = rIn
+		wIn.Write([]byte("testvalue"))
+		wIn.Close()
+
 		captureOutputWithExitCode(t, func() int {
-			return Set([]string{"cache://test", "testvalue"}, cfg)
+			return Set([]string{"cache://test"}, cfg)
 		})
+
+		os.Stdin = oldStdin
+		rIn.Close()
 
 		exitCode, stdout, _ := captureOutputWithExitCode(t, func() int {
 			return Delete([]string{"cache://test"}, cfg)
