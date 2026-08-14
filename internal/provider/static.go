@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/warpcode/cloakenv/internal/utils"
@@ -313,6 +314,19 @@ func (p *staticProvider) Search(_ context.Context, query SearchQuery) ([]SearchR
 	return results, nil
 }
 
+func anyToString(v any) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case int:
+		return strconv.Itoa(val)
+	case bool:
+		return strconv.FormatBool(val)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 func convertToEntriesMap(val any) (map[string]map[string]any, error) {
 	switch m := val.(type) {
 	case map[string]map[string]any:
@@ -325,7 +339,7 @@ func convertToEntriesMap(val any) (map[string]map[string]any, error) {
 			} else if entryMap2, ok := v.(map[any]any); ok {
 				converted := make(map[string]any)
 				for ek, ev := range entryMap2 {
-					converted[fmt.Sprintf("%v", ek)] = ev
+					converted[anyToString(ek)] = ev
 				}
 				res[k] = converted
 			} else {
@@ -336,13 +350,13 @@ func convertToEntriesMap(val any) (map[string]map[string]any, error) {
 	case map[any]any:
 		res := make(map[string]map[string]any)
 		for k, v := range m {
-			kStr := fmt.Sprintf("%v", k)
+			kStr := anyToString(k)
 			if entryMap, ok := v.(map[string]any); ok {
 				res[kStr] = entryMap
 			} else if entryMap2, ok := v.(map[any]any); ok {
 				converted := make(map[string]any)
 				for ek, ev := range entryMap2 {
-					converted[fmt.Sprintf("%v", ek)] = ev
+					converted[anyToString(ek)] = ev
 				}
 				res[kStr] = converted
 			} else {
@@ -378,7 +392,7 @@ func resolveDotPath(val any, path string) (any, error) {
 			if !ok {
 				found := false
 				for k, v := range m {
-					if fmt.Sprintf("%v", k) == part {
+					if anyToString(k) == part {
 						next = v
 						found = true
 						break
@@ -405,3 +419,4 @@ func resolveDotPath(val any, path string) (any, error) {
 	}
 	return curr, nil
 }
+

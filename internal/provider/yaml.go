@@ -35,6 +35,6 @@ func serializeYamlVal(val any) (string, error) {
 		}
 		return strings.TrimSuffix(string(data), "\n"), nil
 	default:
-		return fmt.Sprintf("%v", v), nil
+		return anyToString(v), nil
 	}
 }
