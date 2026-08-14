@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/zalando/go-keyring"
 )
 
 func TestOrchestratorRecursiveAndSearch(t *testing.T) {
@@ -1409,4 +1410,102 @@ func TestCheckAccess(t *testing.T) {
 
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+type mockCacheProvider struct {
+	clearCalled bool
+}
+
+func (m *mockCacheProvider) Scheme() string { return "cache" }
+func (m *mockCacheProvider) Initialize(_ context.Context, _ provider.ProviderConfig) error {
+	return nil
+}
+func (m *mockCacheProvider) GetSecret(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (m *mockCacheProvider) SetSecret(_ context.Context, _, _ string) error {
+	return nil
+}
+func (m *mockCacheProvider) DeleteSecret(_ context.Context, _ string) error {
+	return nil
+}
+func (m *mockCacheProvider) Validate(_ map[string]string) error {
+	return nil
+}
+func (m *mockCacheProvider) ClearCache() error {
+	m.clearCalled = true
+	return nil
+}
+
+func TestClearCache(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	cfg := &config.Config{}
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("missing cache provider", func(t *testing.T) {
+		origCache := orch.builtins["cache"]
+		delete(orch.builtins, "cache")
+		defer func() { orch.builtins["cache"] = origCache }()
+
+		err := orch.ClearCache(context.Background())
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "cache provider not registered") {
+			t.Errorf("expected error message to contain 'cache provider not registered', got %q", err.Error())
+		}
+	})
+
+	t.Run("initialization failure", func(t *testing.T) {
+		origCache := orch.builtins["cache"]
+		orch.builtins["cache"] = &failInitProvider{}
+		defer func() { orch.builtins["cache"] = origCache }()
+		delete(orch.initializedBuiltins, "cache")
+
+		err := orch.ClearCache(context.Background())
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "init failed") {
+			t.Errorf("expected error message to contain 'init failed', got %q", err.Error())
+		}
+	})
+
+	t.Run("invalid cache provider type", func(t *testing.T) {
+		origCache := orch.builtins["cache"]
+		orch.builtins["cache"] = provider.NewEnvProvider()
+		defer func() { orch.builtins["cache"] = origCache }()
+		delete(orch.initializedBuiltins, "cache")
+
+		err := orch.ClearCache(context.Background())
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "invalid cache provider type") {
+			t.Errorf("expected error message to contain 'invalid cache provider type', got %q", err.Error())
+		}
+	})
+
+	t.Run("successful clear cache with mock", func(t *testing.T) {
+		origCache := orch.builtins["cache"]
+		mockCache := &mockCacheProvider{}
+		orch.builtins["cache"] = mockCache
+		defer func() { orch.builtins["cache"] = origCache }()
+		delete(orch.initializedBuiltins, "cache")
+
+		err := orch.ClearCache(context.Background())
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if !mockCache.clearCalled {
+			t.Errorf("expected mock cache to have clearCalled = true")
+		}
+	})
 }
