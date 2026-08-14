@@ -253,6 +253,14 @@ func (j *JsonProvider) GetEntry(_ context.Context, location string) (Entry, erro
 func (j *JsonProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
 	var results []SearchResult
 
+	var lowerQueryTags []string
+	if len(query.Tags) > 0 {
+		lowerQueryTags = make([]string, len(query.Tags))
+		for i, qt := range query.Tags {
+			lowerQueryTags[i] = strings.ToLower(qt)
+		}
+	}
+
 	if j.singleEntity {
 		entry, ok := j.entries[""]
 		if !ok {
@@ -265,15 +273,23 @@ func (j *JsonProvider) Search(_ context.Context, query SearchQuery) ([]SearchRes
 			}
 		}
 
-		if len(query.Tags) > 0 {
-			tagMap := make(map[string]bool)
-			for _, t := range entry.Tags {
-				tagMap[strings.ToLower(t)] = true
-			}
-			for _, qt := range query.Tags {
-				if !tagMap[strings.ToLower(qt)] {
-					return results, nil
+		if len(lowerQueryTags) > 0 {
+			match := true
+			for _, qt := range lowerQueryTags {
+				found := false
+				for _, t := range entry.Tags {
+					if strings.ToLower(t) == qt {
+						found = true
+						break
+					}
 				}
+				if !found {
+					match = false
+					break
+				}
+			}
+			if !match {
+				return results, nil
 			}
 		}
 
@@ -297,14 +313,17 @@ func (j *JsonProvider) Search(_ context.Context, query SearchQuery) ([]SearchRes
 			}
 		}
 
-		if len(query.Tags) > 0 {
-			tagMap := make(map[string]bool)
-			for _, t := range entry.Tags {
-				tagMap[strings.ToLower(t)] = true
-			}
+		if len(lowerQueryTags) > 0 {
 			match := true
-			for _, qt := range query.Tags {
-				if !tagMap[strings.ToLower(qt)] {
+			for _, qt := range lowerQueryTags {
+				found := false
+				for _, t := range entry.Tags {
+					if strings.ToLower(t) == qt {
+						found = true
+						break
+					}
+				}
+				if !found {
 					match = false
 					break
 				}
