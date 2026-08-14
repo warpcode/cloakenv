@@ -154,6 +154,7 @@ func TestAuth_Login(t *testing.T) {
 		args          []string
 		expectedError string
 		expectedCode  int
+		customCfg     *config.Config
 	}{
 		{
 			name:          "missing vault argument",
@@ -179,13 +180,30 @@ func TestAuth_Login(t *testing.T) {
 			expectedError: "Authentication failed: keepass provider: no credentials found for remote \"mykp\" and stdin is not a terminal",
 			expectedCode:  1,
 		},
+		{
+			name: "orchestrator init error",
+			args: []string{"login", "env"},
+			customCfg: &config.Config{
+				Vaults: map[string]config.VaultConfig{
+					"env": {
+						Provider: "json",
+					},
+				},
+			},
+			expectedError: "Config error: invalid config: vault name \"env\" conflicts with built-in scheme",
+			expectedCode:  1,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var exitCode int
 			_, stderr := captureOutput(t, func() {
-				exitCode = Auth(tc.args, cfg)
+				c := cfg
+				if tc.customCfg != nil {
+					c = tc.customCfg
+				}
+				exitCode = Auth(tc.args, c)
 			})
 
 			if exitCode != tc.expectedCode {
