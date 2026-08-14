@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -101,5 +102,26 @@ func BenchmarkYamlProvider_Search(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func BenchmarkYamlSearchTags(b *testing.B) {
+	y := NewYamlProvider()
+	for i := 0; i < 1000; i++ {
+		y.entries[strconv.Itoa(i)] = Entry{
+			Title: "Test",
+			Tags:  []string{"tag1", "tag2", "tag3"},
+		}
+	}
+
+	query := SearchQuery{
+		Tags: []string{"tag1", "tag2"},
+	}
+
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = y.Search(ctx, query)
 	}
 }
