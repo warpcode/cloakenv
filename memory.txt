@@ -1,0 +1,5 @@
+- KeePassProvider in cloakenv uses gokeepasslib.
+- O(N) or O(N*M) lookups inside nested loops can be optimized by lazily building an in-memory map.
+- When caching in Go, use sync.RWMutex with a double-checked locking pattern for safe concurrent access.
+- In `unlock`, make sure to reset caches like `binCache` to `nil` to prevent stale data.
+- Benchmark performance can be effectively measured by pre-populating mock struct structures like `gokeepasslib.RootData` inside a Go Benchmark function.

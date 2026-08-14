@@ -24,6 +24,7 @@ type KeePassProvider struct {
 
 	cacheMu    sync.RWMutex
 	entryCache map[*gokeepasslib.Entry]map[string]string
+	binCache   map[int]string
 }
 
 // NewKeePassProvider returns a new KeePass provider instance.
@@ -133,6 +134,7 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 func (k *KeePassProvider) unlock(vaultPath string, password string) error {
 	k.cacheMu.Lock()
 	k.entryCache = make(map[*gokeepasslib.Entry]map[string]string)
+	k.binCache = nil
 	k.cacheMu.Unlock()
 
 	// Expand ~ to home directory
@@ -234,11 +236,9 @@ func (k *KeePassProvider) GetSecret(_ context.Context, location string) (string,
 	// If not found in Values, check if it exists in Binaries (as an attachment name)
 	for _, ref := range entry.Binaries {
 		if ref.Name == attr {
-			// Found the attachment reference! Let's find it in the global Meta binaries list
-			for _, bin := range k.db.Content.Meta.Binaries {
-				if bin.ID == ref.Value.ID {
-					return string(bin.Content), nil
-				}
+			content, ok := k.getBinary(ref.Value.ID)
+			if ok {
+				return content, nil
 			}
 			return "", fmt.Errorf("keepass provider: binary reference ID %d not found in database metadata", ref.Value.ID)
 		}
@@ -356,11 +356,9 @@ func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) Entry {
 
 	// Add attachments as attributes
 	for _, ref := range entry.Binaries {
-		for _, bin := range k.db.Content.Meta.Binaries {
-			if bin.ID == ref.Value.ID {
-				attrs[ref.Name] = string(bin.Content)
-				break
-			}
+		content, ok := k.getBinary(ref.Value.ID)
+		if ok {
+			attrs[ref.Name] = content
 		}
 	}
 
@@ -434,4 +432,29 @@ func (k *KeePassProvider) Validate(settings map[string]string) error {
 		return errors.New("keepass provider: vault_path is required")
 	}
 	return nil
+}
+
+// getBinary returns the string content of a binary by its ID.
+// It caches the parsed binaries in a map for O(1) lookups.
+func (k *KeePassProvider) getBinary(id int) (string, bool) {
+	k.cacheMu.RLock()
+	if k.binCache != nil {
+		content, ok := k.binCache[id]
+		k.cacheMu.RUnlock()
+		return content, ok
+	}
+	k.cacheMu.RUnlock()
+
+	k.cacheMu.Lock()
+	defer k.cacheMu.Unlock()
+
+	if k.binCache == nil {
+		k.binCache = make(map[int]string, len(k.db.Content.Meta.Binaries))
+		for _, bin := range k.db.Content.Meta.Binaries {
+			k.binCache[bin.ID] = string(bin.Content)
+		}
+	}
+
+	content, ok := k.binCache[id]
+	return content, ok
 }
