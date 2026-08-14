@@ -244,6 +244,9 @@ func (p *staticProvider) GetEntry(_ context.Context, location string) (Entry, er
 func (p *staticProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
 	var results []SearchResult
 
+	queryTitleLower := strings.ToLower(query.Title)
+	queryPathLower := strings.ToLower(query.Path)
+
 	if p.singleEntity {
 		entry, ok := p.entries[""]
 		if !ok {
@@ -251,18 +254,21 @@ func (p *staticProvider) Search(_ context.Context, query SearchQuery) ([]SearchR
 		}
 
 		if query.Title != "" {
-			if !strings.Contains(strings.ToLower(entry.Title), strings.ToLower(query.Title)) {
+			if !strings.Contains(strings.ToLower(entry.Title), queryTitleLower) {
 				return results, nil
 			}
 		}
 
 		if len(query.Tags) > 0 {
-			tagMap := make(map[string]bool)
-			for _, t := range entry.Tags {
-				tagMap[strings.ToLower(t)] = true
-			}
 			for _, qt := range query.Tags {
-				if !tagMap[strings.ToLower(qt)] {
+				found := false
+				for _, t := range entry.Tags {
+					if strings.EqualFold(t, qt) {
+						found = true
+						break
+					}
+				}
+				if !found {
 					return results, nil
 				}
 			}
@@ -277,25 +283,28 @@ func (p *staticProvider) Search(_ context.Context, query SearchQuery) ([]SearchR
 
 	for name, entry := range p.entries {
 		if query.Title != "" {
-			if !strings.Contains(strings.ToLower(entry.Title), strings.ToLower(query.Title)) {
+			if !strings.Contains(strings.ToLower(entry.Title), queryTitleLower) {
 				continue
 			}
 		}
 
 		if query.Path != "" {
-			if !strings.Contains(strings.ToLower(name), strings.ToLower(query.Path)) {
+			if !strings.Contains(strings.ToLower(name), queryPathLower) {
 				continue
 			}
 		}
 
 		if len(query.Tags) > 0 {
-			tagMap := make(map[string]bool)
-			for _, t := range entry.Tags {
-				tagMap[strings.ToLower(t)] = true
-			}
 			match := true
 			for _, qt := range query.Tags {
-				if !tagMap[strings.ToLower(qt)] {
+				found := false
+				for _, t := range entry.Tags {
+					if strings.EqualFold(t, qt) {
+						found = true
+						break
+					}
+				}
+				if !found {
 					match = false
 					break
 				}
