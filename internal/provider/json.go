@@ -253,6 +253,16 @@ func (j *JsonProvider) GetEntry(_ context.Context, location string) (Entry, erro
 func (j *JsonProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
 	var results []SearchResult
 
+	lowerQueryTitle := strings.ToLower(query.Title)
+	lowerQueryPath := strings.ToLower(query.Path)
+	var lowerQueryTags []string
+	if len(query.Tags) > 0 {
+		lowerQueryTags = make([]string, len(query.Tags))
+		for i, qt := range query.Tags {
+			lowerQueryTags[i] = strings.ToLower(qt)
+		}
+	}
+
 	if j.singleEntity {
 		entry, ok := j.entries[""]
 		if !ok {
@@ -260,7 +270,7 @@ func (j *JsonProvider) Search(_ context.Context, query SearchQuery) ([]SearchRes
 		}
 
 		if query.Title != "" {
-			if !strings.Contains(strings.ToLower(entry.Title), strings.ToLower(query.Title)) {
+			if !strings.Contains(strings.ToLower(entry.Title), lowerQueryTitle) {
 				return results, nil
 			}
 		}
@@ -270,8 +280,8 @@ func (j *JsonProvider) Search(_ context.Context, query SearchQuery) ([]SearchRes
 			for _, t := range entry.Tags {
 				tagMap[strings.ToLower(t)] = true
 			}
-			for _, qt := range query.Tags {
-				if !tagMap[strings.ToLower(qt)] {
+			for _, qt := range lowerQueryTags {
+				if !tagMap[qt] {
 					return results, nil
 				}
 			}
@@ -286,13 +296,13 @@ func (j *JsonProvider) Search(_ context.Context, query SearchQuery) ([]SearchRes
 
 	for name, entry := range j.entries {
 		if query.Title != "" {
-			if !strings.Contains(strings.ToLower(entry.Title), strings.ToLower(query.Title)) {
+			if !strings.Contains(strings.ToLower(entry.Title), lowerQueryTitle) {
 				continue
 			}
 		}
 
 		if query.Path != "" {
-			if !strings.Contains(strings.ToLower(name), strings.ToLower(query.Path)) {
+			if !strings.Contains(strings.ToLower(name), lowerQueryPath) {
 				continue
 			}
 		}
@@ -303,8 +313,8 @@ func (j *JsonProvider) Search(_ context.Context, query SearchQuery) ([]SearchRes
 				tagMap[strings.ToLower(t)] = true
 			}
 			match := true
-			for _, qt := range query.Tags {
-				if !tagMap[strings.ToLower(qt)] {
+			for _, qt := range lowerQueryTags {
+				if !tagMap[qt] {
 					match = false
 					break
 				}
