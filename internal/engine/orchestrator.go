@@ -666,12 +666,32 @@ func (v *visitor) Visit(node *ast.Node) {
 	}
 
 	switch n := (*node).(type) {
-	case *ast.CallNode:
-		*v.err = fmt.Errorf("function calls are not allowed in search expressions")
+	case *ast.IdentifierNode,
+		*ast.IntegerNode,
+		*ast.FloatNode,
+		*ast.BoolNode,
+		*ast.StringNode,
+		*ast.BytesNode,
+		*ast.ConstantNode,
+		*ast.UnaryNode,
+		*ast.BinaryNode,
+		*ast.ArrayNode,
+		*ast.MapNode,
+		*ast.PairNode,
+		*ast.NilNode,
+		*ast.SliceNode,
+		*ast.BuiltinNode,
+		*ast.PredicateNode,
+		*ast.PointerNode,
+		*ast.ConditionalNode,
+		*ast.ChainNode:
+		// Safe node types are allowed
 	case *ast.MemberNode:
 		if n.Method {
 			*v.err = fmt.Errorf("method calls are not allowed in search expressions")
 		}
+	default:
+		*v.err = fmt.Errorf("expression node type %T is not allowed", *node)
 	}
 }
 func parseSearchURI(location string) (string, string, error) {

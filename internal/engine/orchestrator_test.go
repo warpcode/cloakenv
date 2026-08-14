@@ -149,7 +149,7 @@ entries:
 	t.Run("SecurityValidation", func(t *testing.T) {
 		// 6. Test security validation: disallow function calls and method calls
 		_, err := orch.Search(ctx, `print(tags)`, nil)
-		if err == nil || !strings.Contains(err.Error(), "function calls are not allowed") {
+		if err == nil || !strings.Contains(err.Error(), "is not allowed") {
 			t.Errorf("expected error about function calls, got: %v", err)
 		}
 
