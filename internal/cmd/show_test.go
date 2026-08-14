@@ -174,3 +174,56 @@ func TestShow_TemplateFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestShouldQuoteDotenvValue(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{
+			name:  "empty string",
+			input: "",
+			want:  false,
+		},
+		{
+			name:  "no special characters",
+			input: "hello",
+			want:  false,
+		},
+		{
+			name:  "with space",
+			input: "hello world",
+			want:  true,
+		},
+		{
+			name:  "with newline",
+			input: "hello\nworld",
+			want:  true,
+		},
+		{
+			name:  "with carriage return",
+			input: "hello\rworld",
+			want:  true,
+		},
+		{
+			name:  "with hash",
+			input: "hello#world",
+			want:  true,
+		},
+		{
+			name:  "with double quote",
+			input: "hello\"world",
+			want:  true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldQuoteDotenvValue(tc.input)
+			if got != tc.want {
+				t.Errorf("shouldQuoteDotenvValue(%q) = %v; want %v", tc.input, got, tc.want)
+			}
+		})
+	}
+}
