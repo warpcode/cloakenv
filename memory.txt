@@ -1,4 +1,0 @@
-# Memory Recording
-* To optimize goroutine spawning inside loops where items are independent but concurrency needs bounding, an atomic counter over array indices combined with a fixed pool of workers (`numWorkers = min(len(items), maxConcurrency)`) reduces allocation overhead and improves throughput.
-* When working with atomic variables in `for` loops, ensure context cancellations properly terminate workers.
-* The main thread can also participate in the work queue using the same atomic counter after spawning workers, further utilizing available thread resources without blocking strictly on `wg.Wait()`.
