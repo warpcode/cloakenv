@@ -684,7 +684,9 @@ func (v *visitor) Visit(node *ast.Node) {
 		*ast.PredicateNode,
 		*ast.PointerNode,
 		*ast.ConditionalNode,
-		*ast.ChainNode:
+		*ast.ChainNode,
+		*ast.VariableDeclaratorNode,
+		*ast.SequenceNode:
 		// Safe node types are allowed
 	case *ast.MemberNode:
 		if n.Method {
