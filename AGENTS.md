@@ -30,6 +30,7 @@ internal/
   provider/              # Built-in & custom secret vaults
   runner/                # Process execution wrapping logic
   utils/                 # Shared formatting and flag utilities
+  yaml/                  # Centralized YAML parsing, serialization, and error wrapping
 examples/                # Example databases and config.yaml
 testdata/                # Test fixtures (testDB.kdbx, YAML/JSON samples)
 Makefile                 # Build, test, fmt, vet, install targets
@@ -42,6 +43,7 @@ Makefile                 # Build, test, fmt, vet, install targets
 | `internal/config` | Parse and validate `config.yaml` | Resolve secrets or perform I/O beyond file reads |
 | `internal/engine` | Orchestrate URI resolution, caching, env injection | Directly import provider-specific libraries |
 | `internal/provider` | Implement `provider.Provider` interface per backend | Share mutable state between providers |
+| `internal/yaml` | Centralize YAML encoding/decoding and error context wrapping | Perform business logic or URI resolution |
 
 ---
 
