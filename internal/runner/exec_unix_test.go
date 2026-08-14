@@ -36,6 +36,65 @@ func TestRunCommand_Success(t *testing.T) {
 	}
 }
 
+func TestRunCommand_InvalidArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "empty args",
+			args: []string{},
+			want: "Command missing",
+		},
+		{
+			name: "empty command",
+			args: []string{""},
+			want: "Invalid command: \"\"",
+		},
+		{
+			name: "dot command",
+			args: []string{"."},
+			want: "Invalid command: \".\"",
+		},
+		{
+			name: "dot dot command",
+			args: []string{".."},
+			want: "Invalid command: \"..\"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+
+			oldStderr := os.Stderr
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("Failed to create pipe: %v", err)
+			}
+			defer r.Close()
+			defer w.Close()
+
+			os.Stderr = w
+
+			exitCode := RunCommand(tt.args, os.Environ())
+
+			w.Close()
+			os.Stderr = oldStderr
+			stderr.ReadFrom(r)
+
+			if exitCode != 1 {
+				t.Errorf("Expected exit code 1, got %d", exitCode)
+			}
+
+			if !strings.Contains(stderr.String(), tt.want) {
+				t.Errorf("Expected stderr to contain %q, got %q", tt.want, stderr.String())
+			}
+		})
+	}
+}
+
 func TestRunCommand_NotFound(t *testing.T) {
 	var stderr bytes.Buffer
 
