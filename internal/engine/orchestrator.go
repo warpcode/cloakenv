@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -21,7 +22,7 @@ import (
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
-	"gopkg.in/yaml.v3"
+	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 // Orchestrator resolves secret URIs by dispatching to the appropriate
@@ -115,6 +116,15 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 		}
 	}
 
+	// Validate autoload configuration rules
+	if cfg != nil {
+		for idx, rule := range cfg.Autoload {
+			if strings.TrimSpace(rule.Match) == "" {
+				return nil, fmt.Errorf("invalid config: autoload rule #%d is missing 'match'", idx+1)
+			}
+		}
+	}
+
 	return o, nil
 }
 
@@ -127,7 +137,26 @@ func (o *Orchestrator) Resolve(ctx context.Context, uri string) (string, error) 
 // ResolveWithKey takes a full value, expands any ${...} expressions, and
 // includes the configKey in any failure messages if provided.
 func (o *Orchestrator) ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error) {
+	if !strings.Contains(uri, "${") {
+		if scheme, _, err := parseURI(uri); err == nil && o.isKnownScheme(scheme) {
+			uri = "${" + uri + "}"
+		}
+	}
 	return o.expandString(ctx, uri, 0, configKey)
+}
+
+func (o *Orchestrator) isKnownScheme(scheme string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if _, ok := o.builtins[scheme]; ok {
+		return true
+	}
+	if o.config != nil {
+		if _, ok := o.config.Vaults[scheme]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (o *Orchestrator) expandString(ctx context.Context, s string, depth int, configKey string) (string, error) {
@@ -369,6 +398,70 @@ func (o *Orchestrator) getEntryRecursive(ctx context.Context, uri string, depth 
 	return entry, nil
 }
 
+func resolveSliceRecursive[T any](ctx context.Context, o *Orchestrator, typedVal []T, depth int, configKey string, formatFn func(any) T) ([]T, error) {
+	resolvedSlice := make([]T, len(typedVal))
+	var wg sync.WaitGroup
+	var firstErr error
+	var mu sync.Mutex
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+Loop:
+	for i, v := range typedVal {
+		select {
+		case o.concurrencySem <- struct{}{}:
+			wg.Add(1)
+			go func(i int, v any) {
+				defer wg.Done()
+				defer func() { <-o.concurrencySem }()
+
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
+				if err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+						cancel()
+					}
+					mu.Unlock()
+					return
+				}
+				resolvedSlice[i] = formatFn(res)
+			}(i, v)
+		default:
+			// Fallback to sequential if concurrency limit is reached
+			if ctx.Err() != nil {
+				break Loop
+			}
+			res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+					cancel()
+				}
+				mu.Unlock()
+				break Loop
+			}
+			resolvedSlice[i] = formatFn(res)
+		}
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return resolvedSlice, nil
+}
+
 func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth int, configKey string) (any, error) {
 	if depth > 5 {
 		return nil, errors.New("max recursion depth reached resolving attribute")
@@ -378,137 +471,16 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 	case string:
 		return o.expandString(ctx, typedVal, depth+1, configKey)
 	case []string:
-		resolvedSlice := make([]string, len(typedVal))
-		var wg sync.WaitGroup
-		var firstErr error
-		var mu sync.Mutex
-
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-
-	LoopStr:
-		for i, v := range typedVal {
-			select {
-			case o.concurrencySem <- struct{}{}:
-				wg.Add(1)
-				go func(i int, v string) {
-					defer wg.Done()
-					defer func() { <-o.concurrencySem }()
-
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-
-					res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
-					if err != nil {
-						mu.Lock()
-						if firstErr == nil {
-							firstErr = err
-							cancel()
-						}
-						mu.Unlock()
-						return
-					}
-					if str, ok := res.(string); ok {
-						resolvedSlice[i] = str
-					} else {
-						resolvedSlice[i] = fmt.Sprintf("%v", res)
-					}
-				}(i, v)
-			default:
-				// Fallback to sequential if concurrency limit is reached
-				if ctx.Err() != nil {
-					break LoopStr
-				}
-				res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
-				if err != nil {
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
-						cancel()
-					}
-					mu.Unlock()
-					break LoopStr
-				}
-				if str, ok := res.(string); ok {
-					resolvedSlice[i] = str
-				} else {
-					resolvedSlice[i] = fmt.Sprintf("%v", res)
-				}
+		return resolveSliceRecursive(ctx, o, typedVal, depth, configKey, func(res any) string {
+			if str, ok := res.(string); ok {
+				return str
 			}
-		}
-		wg.Wait()
-		if firstErr != nil {
-			return nil, firstErr
-		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return resolvedSlice, nil
+			return fmt.Sprintf("%v", res)
+		})
 	case []any:
-		resolvedSlice := make([]any, len(typedVal))
-		var wg sync.WaitGroup
-		var firstErr error
-		var mu sync.Mutex
-
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-
-	LoopAny:
-		for i, v := range typedVal {
-			select {
-			case o.concurrencySem <- struct{}{}:
-				wg.Add(1)
-				go func(i int, v any) {
-					defer wg.Done()
-					defer func() { <-o.concurrencySem }()
-
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-
-					res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
-					if err != nil {
-						mu.Lock()
-						if firstErr == nil {
-							firstErr = err
-							cancel()
-						}
-						mu.Unlock()
-						return
-					}
-					resolvedSlice[i] = res
-				}(i, v)
-			default:
-				// Fallback to sequential if concurrency limit is reached
-				if ctx.Err() != nil {
-					break LoopAny
-				}
-				res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
-				if err != nil {
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
-						cancel()
-					}
-					mu.Unlock()
-					break LoopAny
-				}
-				resolvedSlice[i] = res
-			}
-		}
-		wg.Wait()
-		if firstErr != nil {
-			return nil, firstErr
-		}
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return resolvedSlice, nil
+		return resolveSliceRecursive(ctx, o, typedVal, depth, configKey, func(res any) any {
+			return res
+		})
 	default:
 		return val, nil
 	}
@@ -601,20 +573,10 @@ func (o *Orchestrator) filterResultsByExpression(expressionStr string, allResult
 			return nil, err
 		}
 
-		// Union all attribute keys for compilation type checking
-		unionAttrs := make(map[string]any)
-		for _, r := range allResults {
-			for k, v := range r.Entry.Attributes {
-				unionAttrs[k] = v
-			}
-		}
 		sampleEnv := map[string]any{
 			"title": "",
 			"tags":  []string{},
 			"path":  "",
-		}
-		for k, v := range unionAttrs {
-			sampleEnv[k] = v
 		}
 
 		program, err = expr.Compile(expressionStr, expr.Env(sampleEnv), expr.AllowUndefinedVariables())
@@ -759,9 +721,194 @@ func parseSearchURI(location string) (string, string, error) {
 	return strings.Join(conditions, " and "), attr, nil
 }
 
-// BuildEnv constructs the full environment block.
-func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, merges []string, whitelist []string) ([]string, error) {
-	// 1. Get parent environment
+// MatchCommand reports whether a command argument slice matches an autoload rule match pattern.
+func MatchCommand(ruleMatch string, cmdArgs []string) bool {
+	matched, _, _ := MatchCommandRule(config.AutoloadRule{Match: ruleMatch}, cmdArgs)
+	return matched
+}
+
+// MatchCommandRule evaluates an autoload rule against command arguments.
+// If it matches and specifies a command replacement template, it returns the substituted command args.
+func MatchCommandRule(rule config.AutoloadRule, cmdArgs []string) (bool, []string, error) {
+	if len(cmdArgs) == 0 {
+		return false, cmdArgs, nil
+	}
+
+	pattern := strings.TrimSpace(rule.Match)
+	if pattern == "" {
+		return false, cmdArgs, nil
+	}
+
+	fullCmd := strings.Join(cmdArgs, " ")
+	execPath := cmdArgs[0]
+	execBase := filepath.Base(execPath)
+
+	ruleLower := strings.ToLower(pattern)
+	execPathLower := strings.ToLower(execPath)
+	execBaseLower := strings.ToLower(execBase)
+	fullCmdLower := strings.ToLower(fullCmd)
+
+	var re *regexp.Regexp
+	var matchIndices []int
+
+	// 1. Attempt Regex compilation & match
+	compiled, err := regexp.Compile(pattern)
+	if err == nil {
+		indices := compiled.FindStringSubmatchIndex(fullCmd)
+		if indices != nil {
+			re = compiled
+			matchIndices = indices
+		}
+	} else {
+		if compiledCi, errCi := regexp.Compile("(?i)" + pattern); errCi == nil {
+			indices := compiledCi.FindStringSubmatchIndex(fullCmd)
+			if indices != nil {
+				re = compiledCi
+				matchIndices = indices
+			}
+		}
+	}
+
+	isMatched := matchIndices != nil
+
+	// 2. Fallback to basename / glob / prefix matching if regex didn't match
+	if !isMatched {
+		if execBaseLower == ruleLower || execPathLower == ruleLower || fullCmdLower == ruleLower ||
+			strings.HasPrefix(fullCmdLower, ruleLower+" ") || strings.HasPrefix(fullCmdLower, ruleLower+"\t") ||
+			matchWildcard(ruleLower, execBaseLower) || matchWildcard(ruleLower, execPathLower) || matchWildcard(ruleLower, fullCmdLower) {
+			isMatched = true
+		}
+	}
+
+	if !isMatched {
+		return false, cmdArgs, nil
+	}
+
+	// 3. Command Substitution: If rule.Command provides a replacement template
+	if strings.TrimSpace(rule.Command) != "" {
+		template := convertBackslashGroups(rule.Command)
+		var expanded string
+		if re != nil && matchIndices != nil {
+			expanded = string(re.ExpandString(nil, template, fullCmd, matchIndices))
+		} else {
+			expanded = template
+		}
+		newArgs, err := splitCommand(expanded)
+		if err != nil {
+			return true, cmdArgs, fmt.Errorf("failed to parse substituted command %q: %w", expanded, err)
+		}
+		return true, newArgs, nil
+	}
+
+	return true, cmdArgs, nil
+}
+
+func convertBackslashGroups(template string) string {
+	var sb strings.Builder
+	for i := 0; i < len(template); i++ {
+		if template[i] == '\\' && i+1 < len(template) && template[i+1] >= '1' && template[i+1] <= '9' {
+			sb.WriteByte('$')
+			sb.WriteByte(template[i+1])
+			i++
+			continue
+		}
+		sb.WriteByte(template[i])
+	}
+	return sb.String()
+}
+
+func splitCommand(s string) ([]string, error) {
+	var tokens []string
+	var current strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+
+		if escaped {
+			current.WriteByte(ch)
+			escaped = false
+			continue
+		}
+
+		if ch == '\\' && !inSingle {
+			if i+1 < len(s) {
+				next := s[i+1]
+				if inDouble {
+					if next == '"' || next == '\\' || next == '$' || next == '`' {
+						escaped = true
+						continue
+					}
+				} else {
+					if next == ' ' || next == '\t' || next == '\n' || next == '"' || next == '\'' || next == '\\' {
+						escaped = true
+						continue
+					}
+				}
+			}
+		}
+
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+			continue
+		}
+
+		if ch == '"' && !inSingle {
+			inDouble = !inDouble
+			continue
+		}
+
+		if (ch == ' ' || ch == '\t' || ch == '\n') && !inSingle && !inDouble {
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
+			continue
+		}
+
+		current.WriteByte(ch)
+	}
+
+	if inSingle || inDouble {
+		return nil, fmt.Errorf("unclosed quote in command string: %s", s)
+	}
+
+	if current.Len() > 0 {
+		tokens = append(tokens, current.String())
+	}
+
+	return tokens, nil
+}
+
+func matchWildcard(pattern, text string) bool {
+	if pattern == "*" {
+		return true
+	}
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		return pattern == text
+	}
+	if !strings.HasPrefix(text, parts[0]) {
+		return false
+	}
+	text = text[len(parts[0]):]
+	for i := 1; i < len(parts)-1; i++ {
+		p := parts[i]
+		if p == "" {
+			continue
+		}
+		idx := strings.Index(text, p)
+		if idx == -1 {
+			return false
+		}
+		text = text[idx+len(p):]
+	}
+	return strings.HasSuffix(text, parts[len(parts)-1])
+}
+
+func getParentEnv() map[string]string {
 	parentEnvMap := make(map[string]string)
 	for _, envStr := range os.Environ() {
 		k, v, ok := strings.Cut(envStr, "=")
@@ -769,19 +916,17 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 			parentEnvMap[k] = v
 		}
 	}
+	return parentEnvMap
+}
 
-	// whitelistSet is a helper to quickly check if a key is whitelisted
+func (o *Orchestrator) resolveMergeSources(ctx context.Context, merges []string, whitelist []string) ([]map[string]string, error) {
 	whitelistSet := make(map[string]bool)
 	for _, k := range whitelist {
 		whitelistSet[utils.FormatKey(k)] = true
 	}
 	hasWhitelist := len(whitelist) > 0
 
-	// We will resolve/load the merge sources in parallel.
-	type loadedSource struct {
-		keys map[string]string
-	}
-	loaded := make([]loadedSource, len(merges))
+	loaded := make([]map[string]string, len(merges))
 	var wg sync.WaitGroup
 	var errOnce sync.Once
 	var firstErr error
@@ -799,8 +944,7 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 				return
 			}
 			for k, v := range entry.Attributes {
-				kLower := strings.ToLower(k)
-				if kLower == "title" || kLower == "tags" {
+				if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 					continue
 				}
 				formattedKey := utils.FormatKey(k)
@@ -816,55 +960,136 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 				}
 				keys[formattedKey] = strVal
 			}
-			loaded[idx] = loadedSource{keys: keys}
+			loaded[idx] = keys
 		}(i, m)
 	}
 	wg.Wait()
 	if firstErr != nil {
 		return nil, firstErr
 	}
+	return loaded, nil
+}
 
-	// finalEnv maps key -> value, initialized with parent environment (always forwarded)
-	finalEnv := make(map[string]string)
-	for k, v := range parentEnvMap {
-		finalEnv[k] = v
+func (o *Orchestrator) resolveExplicitMappings(ctx context.Context, explicit map[string]string) (map[string]string, error) {
+	if len(explicit) == 0 {
+		return nil, nil
 	}
 
-	// Merge sources sequentially: later overrides earlier
-	for _, src := range loaded {
-		for k, v := range src.keys {
+	resolved := make(map[string]string)
+	var wg sync.WaitGroup
+	var errOnce sync.Once
+	var explicitErr error
+	var mu sync.Mutex
+
+	for k, uri := range explicit {
+		wg.Add(1)
+		go func(k, uri string) {
+			defer wg.Done()
+			val, err := o.ResolveWithKey(ctx, uri, k)
+			if err != nil {
+				errOnce.Do(func() {
+					explicitErr = fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)
+				})
+				return
+			}
+			mu.Lock()
+			resolved[utils.FormatKey(k)] = val
+			mu.Unlock()
+		}(k, uri)
+	}
+	wg.Wait()
+	if explicitErr != nil {
+		return nil, explicitErr
+	}
+	return resolved, nil
+}
+
+// BuildEnv constructs the full environment block without command autoloading.
+func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, merges []string, whitelist []string) ([]string, error) {
+	_, env, err := o.BuildEnvForCommand(ctx, nil, explicit, merges, whitelist)
+	return env, err
+}
+
+// BuildEnvForCommand constructs the full environment block and evaluates config autoload rules,
+// returning any substituted command arguments, the resolved environment slice, and any error.
+func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cmdArgs []string, explicit map[string]string, merges []string, whitelist []string) ([]string, []string, error) {
+	var autoMerges []string
+	autoExplicit := make(map[string]string)
+	var autoWhitelist []string
+	currentCmdArgs := cmdArgs
+
+	if len(cmdArgs) > 0 && o.config != nil {
+		for _, rule := range o.config.Autoload {
+			matched, newCmdArgs, err := MatchCommandRule(rule, currentCmdArgs)
+			if err != nil {
+				return nil, nil, err
+			}
+			if matched {
+				currentCmdArgs = newCmdArgs
+				for _, v := range rule.Vaults {
+					v = strings.TrimSpace(v)
+					if v != "" {
+						if !strings.Contains(v, "://") {
+							v = v + "://"
+						}
+						autoMerges = append(autoMerges, v)
+					}
+				}
+				for _, m := range rule.Merge {
+					m = strings.TrimSpace(m)
+					if m != "" {
+						if !strings.Contains(m, "://") {
+							m = m + "://"
+						}
+						autoMerges = append(autoMerges, m)
+					}
+				}
+				for k, uri := range rule.Env {
+					if k != "" && uri != "" {
+						autoExplicit[k] = uri
+					}
+				}
+				for _, w := range rule.Whitelist {
+					w = strings.TrimSpace(w)
+					if w != "" {
+						autoWhitelist = append(autoWhitelist, w)
+					}
+				}
+			}
+		}
+	}
+
+	combinedMerges := append(autoMerges, merges...)
+	combinedWhitelist := append(autoWhitelist, whitelist...)
+
+	combinedExplicit := make(map[string]string)
+	for k, v := range autoExplicit {
+		combinedExplicit[k] = v
+	}
+	for k, v := range explicit {
+		combinedExplicit[k] = v // CLI explicit flags -e override autoload env
+	}
+
+	finalEnv := getParentEnv()
+
+	mergedSources, err := o.resolveMergeSources(ctx, combinedMerges, combinedWhitelist)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for _, src := range mergedSources {
+		for k, v := range src {
 			finalEnv[k] = v
 		}
 	}
 
-	// - Explicit mappings (-e highest priority)
-	// These are never filtered by whitelist and overwrite everything.
-	if len(explicit) > 0 {
-		var explicitWg sync.WaitGroup
-		var explicitErrOnce sync.Once
-		var explicitErr error
-		var mu sync.Mutex
+	explicitResolved, err := o.resolveExplicitMappings(ctx, combinedExplicit)
+	if err != nil {
+		return nil, nil, err
+	}
 
-		for k, uri := range explicit {
-			explicitWg.Add(1)
-			go func(k, uri string) {
-				defer explicitWg.Done()
-				val, err := o.ResolveWithKey(ctx, uri, k)
-				if err != nil {
-					explicitErrOnce.Do(func() {
-						explicitErr = fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)
-					})
-					return
-				}
-				mu.Lock()
-				finalEnv[utils.FormatKey(k)] = val
-				mu.Unlock()
-			}(k, uri)
-		}
-		explicitWg.Wait()
-		if explicitErr != nil {
-			return nil, explicitErr
-		}
+	for k, v := range explicitResolved {
+		finalEnv[k] = v
 	}
 
 	// Convert finalEnv map to []string slice in "KEY=VALUE" format
@@ -873,7 +1098,11 @@ func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string,
 		result = append(result, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	return result, nil
+	if len(currentCmdArgs) == 0 {
+		currentCmdArgs = cmdArgs
+	}
+
+	return currentCmdArgs, result, nil
 }
 
 func serializeValHelper(val any) (string, error) {
@@ -955,7 +1184,9 @@ func (o *Orchestrator) ClearCache(ctx context.Context) error {
 		return err
 	}
 
-	cacheProv, ok := p.(*provider.CacheProvider)
+	cacheProv, ok := p.(interface {
+		ClearCache() error
+	})
 	if !ok {
 		return fmt.Errorf("invalid cache provider type")
 	}
@@ -1101,11 +1332,33 @@ func (o *Orchestrator) initJson(ctx context.Context, vaultName string, vault con
 // initCustomVault bootstraps a CustomVault provider using config settings.
 func (o *Orchestrator) initCustomVault(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
 	cp := provider.NewCustomVaultProvider()
+	entities := vault.Entities
+	if entities == nil {
+		entities = make(map[string]map[string]any)
+	}
+	if (vault.SingleEntity != nil && *vault.SingleEntity) || len(vault.Attributes) > 0 {
+		entityName := vault.EntityName
+		if entityName == "" {
+			entityName = vaultName
+		}
+		attrs := make(map[string]any)
+		for k, v := range vault.Attributes {
+			attrs[k] = v
+		}
+		if len(vault.Tags) > 0 {
+			attrs["tags"] = vault.Tags
+		}
+		attrs["title"] = entityName
+		entities[""] = attrs
+		entities[entityName] = attrs
+		entities["default"] = attrs
+	}
+
 	err := cp.Initialize(ctx, provider.ProviderConfig{
 		Settings: map[string]string{
 			"vault_name": vaultName,
 		},
-		Entities: vault.Entities,
+		Entities: entities,
 	})
 	if err != nil {
 		return nil, err

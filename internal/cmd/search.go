@@ -53,7 +53,8 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 	outputFormat = "yaml" // default
 	i := 0
 	for i < len(args) {
-		if args[i] == "-o" || args[i] == "--output" {
+		switch args[i] {
+		case "-o", "--output":
 			if i+1 >= len(args) {
 				return "", nil, nil, "", fmt.Errorf("flag -o/--output requires an argument")
 			}
@@ -63,21 +64,22 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 			}
 			outputFormat = format
 			i += 2
-		} else if args[i] == "--vault" {
+		case "--vault":
 			if i+1 >= len(args) {
 				return "", nil, nil, "", fmt.Errorf("flag --vault requires an argument")
 			}
 			repoScopes = append(repoScopes, args[i+1])
 			i += 2
-		} else if args[i] == "-i" {
+		case "-i":
 			if i+1 >= len(args) {
 				return "", nil, nil, "", fmt.Errorf("flag -i requires an argument")
 			}
 			selectedKeys = append(selectedKeys, args[i+1])
 			i += 2
-		} else if strings.HasPrefix(args[i], "-") {
-			return "", nil, nil, "", fmt.Errorf("unknown flag: %s", args[i])
-		} else {
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				return "", nil, nil, "", fmt.Errorf("unknown flag: %s", args[i])
+			}
 			if query != "" {
 				return "", nil, nil, "", fmt.Errorf("usage: cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]")
 			}
@@ -91,54 +93,57 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 func flattenSearchResults(results []provider.SearchResult, selectedKeys []string) []map[string]any {
 	flatResults := make([]map[string]any, len(results))
 	for i, r := range results {
-		flatRes := make(map[string]any)
-		if len(selectedKeys) > 0 {
-			for _, field := range selectedKeys {
-				fieldLower := strings.ToLower(field)
-				switch fieldLower {
-				case "provider":
-					flatRes["provider"] = r.Provider
-				case "vault":
-					flatRes["vault"] = r.Vault
-				case "path":
-					flatRes["path"] = r.Path
-				case "title":
-					flatRes["title"] = r.Entry.Title
-				case "tags":
-					flatRes["tags"] = r.Entry.Tags
-				default:
-					found := false
-					for k, v := range r.Entry.Attributes {
-						if strings.ToLower(k) == fieldLower {
-							flatRes[utils.FormatKey(k)] = v
-							found = true
-							break
-						}
-					}
-					if !found {
-						if v, ok := r.Entry.Attributes[field]; ok {
-							flatRes[utils.FormatKey(field)] = v
-						} else {
-							flatRes[utils.FormatKey(field)] = nil
-						}
-					}
-				}
-			}
-		} else {
-			flatRes["provider"] = r.Provider
-			flatRes["vault"] = r.Vault
-			flatRes["path"] = r.Path
-			flatRes["title"] = r.Entry.Title
-			flatRes["tags"] = r.Entry.Tags
-			for k, v := range r.Entry.Attributes {
-				kLower := strings.ToLower(k)
-				if kLower == "title" || kLower == "tags" {
-					continue
-				}
+		flatResults[i] = flattenEntry(r, selectedKeys)
+	}
+	return flatResults
+}
+
+func flattenEntry(r provider.SearchResult, selectedKeys []string) map[string]any {
+	flatRes := make(map[string]any)
+	if len(selectedKeys) > 0 {
+		for _, field := range selectedKeys {
+			fieldLower := strings.ToLower(field)
+			switch fieldLower {
+			case "provider":
+				flatRes["provider"] = r.Provider
+			case "vault":
+				flatRes["vault"] = r.Vault
+			case "path":
+				flatRes["path"] = r.Path
+			case "title":
+				flatRes["title"] = r.Entry.Title
+			case "tags":
+				flatRes["tags"] = r.Entry.Tags
+			default:
+				k, v := getAttributeCaseInsensitive(r.Entry.Attributes, field, fieldLower)
 				flatRes[utils.FormatKey(k)] = v
 			}
 		}
-		flatResults[i] = flatRes
+	} else {
+		flatRes["provider"] = r.Provider
+		flatRes["vault"] = r.Vault
+		flatRes["path"] = r.Path
+		flatRes["title"] = r.Entry.Title
+		flatRes["tags"] = r.Entry.Tags
+		for k, v := range r.Entry.Attributes {
+			kLower := strings.ToLower(k)
+			if kLower == "title" || kLower == "tags" {
+				continue
+			}
+			flatRes[utils.FormatKey(k)] = v
+		}
 	}
-	return flatResults
+	return flatRes
+}
+
+func getAttributeCaseInsensitive(attributes map[string]any, field, fieldLower string) (string, any) {
+	for k, v := range attributes {
+		if strings.ToLower(k) == fieldLower {
+			return k, v
+		}
+	}
+	if v, ok := attributes[field]; ok {
+		return field, v
+	}
+	return field, nil
 }
