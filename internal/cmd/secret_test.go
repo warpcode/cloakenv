@@ -32,7 +32,9 @@ func TestGet_Help(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r); err != nil { t.Fatalf("failed to read from pipe: %v", err) }
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("failed to read from pipe: %v", err)
+	}
 	if !strings.Contains(buf.String(), "Usage:") {
 		t.Errorf("expected help output, got %q", buf.String())
 	}
@@ -66,7 +68,9 @@ func TestGet_InvalidArgs(t *testing.T) {
 
 			w.Close()
 			var buf bytes.Buffer
-			if _, err := io.Copy(&buf, r); err != nil { t.Fatalf("failed to read from pipe: %v", err) }
+			if _, err := io.Copy(&buf, r); err != nil {
+				t.Fatalf("failed to read from pipe: %v", err)
+			}
 
 			if exitCode != 1 {
 				t.Errorf("expected exit code 1, got %d", exitCode)
@@ -130,7 +134,9 @@ func TestGet_ResolutionError(t *testing.T) {
 	w.Close()
 
 	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r); err != nil { t.Fatalf("failed to read from pipe: %v", err) }
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("failed to read from pipe: %v", err)
+	}
 
 	if exitCode != 1 {
 		t.Errorf("expected exit code 1, got %d", exitCode)

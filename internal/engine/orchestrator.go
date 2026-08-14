@@ -333,48 +333,12 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 				go func(i int, v string) {
 					defer wg.Done()
 					defer func() { <-o.concurrencySem }()
-
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-
-					res, err := o.resolveAttrRecursive(ctx, v, depth)
-					if err != nil {
-						mu.Lock()
-						if firstErr == nil {
-							firstErr = err
-							cancel()
-						}
-						mu.Unlock()
-						return
-					}
-					if str, ok := res.(string); ok {
-						resolvedSlice[i] = str
-					} else {
-						resolvedSlice[i] = fmt.Sprintf("%v", res)
-					}
+					_ = o.processStringElement(ctx, cancel, v, depth, i, resolvedSlice, &mu, &firstErr)
 				}(i, v)
 			default:
 				// Fallback to sequential if concurrency limit is reached
-				if ctx.Err() != nil {
+				if err := o.processStringElement(ctx, cancel, v, depth, i, resolvedSlice, &mu, &firstErr); err != nil {
 					break LoopStr
-				}
-				res, err := o.resolveAttrRecursive(ctx, v, depth)
-				if err != nil {
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
-						cancel()
-					}
-					mu.Unlock()
-					break LoopStr
-				}
-				if str, ok := res.(string); ok {
-					resolvedSlice[i] = str
-				} else {
-					resolvedSlice[i] = fmt.Sprintf("%v", res)
 				}
 			}
 		}
@@ -403,41 +367,13 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 				go func(i int, v any) {
 					defer wg.Done()
 					defer func() { <-o.concurrencySem }()
-
-					select {
-					case <-ctx.Done():
-						return
-					default:
-					}
-
-					res, err := o.resolveAttrRecursive(ctx, v, depth)
-					if err != nil {
-						mu.Lock()
-						if firstErr == nil {
-							firstErr = err
-							cancel()
-						}
-						mu.Unlock()
-						return
-					}
-					resolvedSlice[i] = res
+					_ = o.processAnyElement(ctx, cancel, v, depth, i, resolvedSlice, &mu, &firstErr)
 				}(i, v)
 			default:
 				// Fallback to sequential if concurrency limit is reached
-				if ctx.Err() != nil {
+				if err := o.processAnyElement(ctx, cancel, v, depth, i, resolvedSlice, &mu, &firstErr); err != nil {
 					break LoopAny
 				}
-				res, err := o.resolveAttrRecursive(ctx, v, depth)
-				if err != nil {
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
-						cancel()
-					}
-					mu.Unlock()
-					break LoopAny
-				}
-				resolvedSlice[i] = res
 			}
 		}
 		wg.Wait()
@@ -1149,4 +1085,50 @@ func newBareProvider(providerType string) (provider.SecretProvider, error) {
 	default:
 		return nil, fmt.Errorf("unsupported provider type %q", providerType)
 	}
+}
+
+func (o *Orchestrator) processStringElement(ctx context.Context, cancel context.CancelFunc, v string, depth int, i int, resolvedSlice []string, mu *sync.Mutex, firstErr *error) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	res, err := o.resolveAttrRecursive(ctx, v, depth)
+	if err != nil {
+		mu.Lock()
+		if *firstErr == nil {
+			*firstErr = err
+			cancel()
+		}
+		mu.Unlock()
+		return err
+	}
+	if str, ok := res.(string); ok {
+		resolvedSlice[i] = str
+	} else {
+		resolvedSlice[i] = fmt.Sprintf("%v", res)
+	}
+	return nil
+}
+
+func (o *Orchestrator) processAnyElement(ctx context.Context, cancel context.CancelFunc, v any, depth int, i int, resolvedSlice []any, mu *sync.Mutex, firstErr *error) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	res, err := o.resolveAttrRecursive(ctx, v, depth)
+	if err != nil {
+		mu.Lock()
+		if *firstErr == nil {
+			*firstErr = err
+			cancel()
+		}
+		mu.Unlock()
+		return err
+	}
+	resolvedSlice[i] = res
+	return nil
 }
