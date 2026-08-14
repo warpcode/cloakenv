@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -41,17 +40,9 @@ func (j *JsonProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 	}
 	j.filePath = vaultPath
 	j.entries = make(map[string]Entry)
-	data, err := os.ReadFile(vaultPath)
+	raw, err := getParsedFile(vaultPath, "json")
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("json provider: failed to read file %s: %w", vaultPath, err)
-	}
-
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("json provider: failed to parse JSON %s: %w", vaultPath, err)
+		return fmt.Errorf("json provider: %w", err)
 	}
 
 	if raw == nil {

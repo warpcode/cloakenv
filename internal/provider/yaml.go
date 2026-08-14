@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -83,17 +82,9 @@ func (y *YamlProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 	}
 	y.filePath = vaultPath
 	y.entries = make(map[string]Entry)
-	data, err := os.ReadFile(vaultPath)
+	raw, err := getParsedFile(vaultPath, "yaml")
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("yaml provider: failed to read file %s: %w", vaultPath, err)
-	}
-
-	var raw map[string]any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("yaml provider: failed to parse YAML %s: %w", vaultPath, err)
+		return fmt.Errorf("yaml provider: %w", err)
 	}
 
 	if raw == nil {
