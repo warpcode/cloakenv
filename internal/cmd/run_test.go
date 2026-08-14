@@ -59,6 +59,12 @@ func TestRun_Errors(t *testing.T) {
 			wantExit: 1,
 			wantErr:  "Error parsing template file",
 		},
+		{
+			name:     "Non-existent Command",
+			args:     []string{"--", "this_command_should_not_exist_xyz123"},
+			wantExit: 1,
+			wantErr:  "this_command_should_not_exist_xyz123",
+		},
 	}
 
 	for _, tc := range tests {
