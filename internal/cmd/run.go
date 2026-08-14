@@ -23,6 +23,7 @@ func Run(args []string, cfg *config.Config) int {
 		merges      []string
 		whitelist   []string
 		cmdArgs     []string
+		noAutoload  bool
 	)
 
 	// Parse flags manually to support repeated -e, -m, and -i flags + -- separator
@@ -32,6 +33,9 @@ func Run(args []string, cfg *config.Config) int {
 		case args[i] == "--":
 			cmdArgs = args[i+1:]
 			i = len(args) // break out of loop
+		case args[i] == "--no-autoload" || args[i] == "--skip-autoload":
+			noAutoload = true
+			i++
 		case args[i] == "-e" && i+1 < len(args):
 			i++
 			key, uri, ok := strings.Cut(args[i], "=")
@@ -80,13 +84,22 @@ func Run(args []string, cfg *config.Config) int {
 	}
 	ctx := context.Background()
 
-	// Build the environment block (pass-through if no mappings specified)
-	env, err := orch.BuildEnv(ctx, explicitEnv, merges, whitelist)
+	var activeCmdArgs []string
+	if !noAutoload {
+		activeCmdArgs = cmdArgs
+	}
+
+	// Build the environment block and evaluate command transformations
+	finalCmdArgs, env, err := orch.BuildEnvForCommand(ctx, activeCmdArgs, explicitEnv, merges, whitelist)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Secret resolution failed: %v\n", err)
 		return 1
 	}
 
+	if len(finalCmdArgs) == 0 {
+		finalCmdArgs = cmdArgs
+	}
+
 	// Execute the wrapped command
-	return runner.RunCommand(cmdArgs, env)
+	return runner.RunCommand(finalCmdArgs, env)
 }

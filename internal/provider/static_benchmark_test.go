@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-func BenchmarkYamlProviderSearch(b *testing.B) {
-	yp := NewYamlProvider()
+func BenchmarkStaticProviderSearch(b *testing.B) {
+	yp := &staticProvider{}
 
 	// Create a large number of dummy entries
 	yp.entries = make(map[string]Entry)

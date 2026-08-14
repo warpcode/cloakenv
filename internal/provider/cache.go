@@ -190,12 +190,26 @@ func (c *CacheProvider) SetSecret(ctx context.Context, location string, value st
 	fileData := append(nonce, ciphertext...)
 
 	filePath := c.getCacheFilePath(location)
-	tmpFile := filePath + ".tmp"
-	if err := os.WriteFile(tmpFile, fileData, 0600); err != nil {
+
+	f, err := os.CreateTemp(filepath.Dir(filePath), filepath.Base(filePath)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("cache provider: failed to create temp cache file: %w", err)
+	}
+	tmpFile := f.Name()
+
+	if _, err := f.Write(fileData); err != nil {
+		f.Close()
+		os.Remove(tmpFile)
 		return fmt.Errorf("cache provider: failed to write temp cache file: %w", err)
 	}
+
+	if err := f.Close(); err != nil {
+		os.Remove(tmpFile)
+		return fmt.Errorf("cache provider: failed to close temp cache file: %w", err)
+	}
+
 	if err := os.Rename(tmpFile, filePath); err != nil {
-		_ = os.Remove(tmpFile)
+		os.Remove(tmpFile)
 		return fmt.Errorf("cache provider: failed to commit cache file: %w", err)
 	}
 
