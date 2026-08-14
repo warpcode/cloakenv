@@ -1106,7 +1106,6 @@ func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cmdArgs []string,
 	return currentCmdArgs, result, nil
 }
 
-
 func serializeValHelper(val any) (string, error) {
 	switch v := val.(type) {
 	case string:
@@ -1186,7 +1185,9 @@ func (o *Orchestrator) ClearCache(ctx context.Context) error {
 		return err
 	}
 
-	cacheProv, ok := p.(*provider.CacheProvider)
+	cacheProv, ok := p.(interface {
+		ClearCache() error
+	})
 	if !ok {
 		return fmt.Errorf("invalid cache provider type")
 	}
