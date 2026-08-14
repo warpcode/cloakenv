@@ -274,6 +274,16 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 
 	var results []SearchResult
 
+	queryTitleLower := strings.ToLower(query.Title)
+	queryPathLower := strings.ToLower(query.Path)
+	var queryTagsLower []string
+	if len(query.Tags) > 0 {
+		queryTagsLower = make([]string, len(query.Tags))
+		for i, t := range query.Tags {
+			queryTagsLower[i] = strings.ToLower(t)
+		}
+	}
+
 	var traverse func(g *gokeepasslib.Group, currentPath string)
 	traverse = func(g *gokeepasslib.Group, currentPath string) {
 		var groupPath string
@@ -297,14 +307,14 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 
 			// Filter by title substring if specified
 			if query.Title != "" {
-				if !strings.Contains(strings.ToLower(title), strings.ToLower(query.Title)) {
+				if !strings.Contains(strings.ToLower(title), queryTitleLower) {
 					continue
 				}
 			}
 
 			// Filter by path substring if specified
 			if query.Path != "" {
-				if !strings.Contains(strings.ToLower(entryPath), strings.ToLower(query.Path)) {
+				if !strings.Contains(strings.ToLower(entryPath), queryPathLower) {
 					continue
 				}
 			}
@@ -318,8 +328,8 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 					tagMap[strings.ToLower(t)] = true
 				}
 				match := true
-				for _, qt := range query.Tags {
-					if !tagMap[strings.ToLower(qt)] {
+				for _, qt := range queryTagsLower {
+					if !tagMap[qt] {
 						match = false
 						break
 					}
