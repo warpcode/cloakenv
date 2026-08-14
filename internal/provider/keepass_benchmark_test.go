@@ -5,7 +5,10 @@ import (
 	"testing"
 
 	"github.com/tobischo/gokeepasslib/v3"
+	"github.com/zalando/go-keyring"
 )
+
+var benchmarkResult []SearchResult
 
 func BenchmarkKeePassProvider_Search_Binaries(b *testing.B) {
 	k := NewKeePassProvider()
@@ -51,11 +54,44 @@ func BenchmarkKeePassProvider_Search_Binaries(b *testing.B) {
 	ctx := context.Background()
 	query := SearchQuery{}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := k.Search(ctx, query)
+		res, err := k.Search(ctx, query)
 		if err != nil {
 			b.Fatal(err)
 		}
+		benchmarkResult = res
+	}
+}
+
+func BenchmarkKeePassProviderSearch(b *testing.B) {
+	keyring.MockInit()
+	ctx := context.Background()
+
+	// Setup mock credentials
+	if err := keyring.Set("cloakenv", "provider/testdb", "password123"); err != nil {
+		b.Fatalf("failed to set mock credentials: %v", err)
+	}
+
+	kp := NewKeePassProvider()
+	cfg := ProviderConfig{
+		Settings: map[string]string{
+			"vault_path":  "../../testdata/testDB.kdbx",
+			"remote_name": "testdb",
+		},
+	}
+	if err := kp.Initialize(ctx, cfg); err != nil {
+		b.Fatalf("Initialize failed: %v", err)
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		res, err := kp.Search(ctx, SearchQuery{Title: "Test Website"})
+		if err != nil {
+			b.Fatalf("Search failed: %v", err)
+		}
+		benchmarkResult = res
 	}
 }

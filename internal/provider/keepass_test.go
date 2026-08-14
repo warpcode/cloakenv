@@ -122,32 +122,3 @@ func TestKeePassProvider(t *testing.T) {
 		}
 	})
 }
-
-func BenchmarkKeePassProviderSearch(b *testing.B) {
-	keyring.MockInit()
-	ctx := context.Background()
-
-	// Setup mock credentials
-	if err := keyring.Set("cloakenv", "provider/testdb", "password123"); err != nil {
-		b.Fatalf("failed to set mock credentials: %v", err)
-	}
-
-	kp := NewKeePassProvider()
-	cfg := ProviderConfig{
-		Settings: map[string]string{
-			"vault_path":  "../../testdata/testDB.kdbx",
-			"remote_name": "testdb",
-		},
-	}
-	if err := kp.Initialize(ctx, cfg); err != nil {
-		b.Fatalf("Initialize failed: %v", err)
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := kp.Search(ctx, SearchQuery{Title: "Test Website"})
-		if err != nil {
-			b.Fatalf("Search failed: %v", err)
-		}
-	}
-}
