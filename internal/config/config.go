@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 var userHomeDir = os.UserHomeDir

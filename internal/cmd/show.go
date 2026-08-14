@@ -11,7 +11,7 @@ import (
 	"github.com/warpcode/cloakenv/internal/engine"
 	"github.com/warpcode/cloakenv/internal/provider"
 	"github.com/warpcode/cloakenv/internal/utils"
-	"gopkg.in/yaml.v3"
+	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 type showOptions struct {
