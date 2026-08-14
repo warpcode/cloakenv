@@ -92,17 +92,32 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 
 func flattenSearchResults(results []provider.SearchResult, selectedKeys []string) []map[string]any {
 	flatResults := make([]map[string]any, len(results))
+
+	selectedKeysLower := make([]string, len(selectedKeys))
+	for i, field := range selectedKeys {
+		selectedKeysLower[i] = strings.ToLower(field)
+	}
+
 	for i, r := range results {
-		flatResults[i] = flattenEntry(r, selectedKeys)
+		flatResults[i] = flattenEntry(r, selectedKeys, selectedKeysLower)
 	}
 	return flatResults
 }
 
-func flattenEntry(r provider.SearchResult, selectedKeys []string) map[string]any {
+func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
 	flatRes := make(map[string]any)
+
+	var lowerAttrs map[string]string
+	if len(r.Entry.Attributes) > 0 {
+		lowerAttrs = make(map[string]string, len(r.Entry.Attributes))
+		for k := range r.Entry.Attributes {
+			lowerAttrs[strings.ToLower(k)] = k
+		}
+	}
+
 	if len(selectedKeys) > 0 {
-		for _, field := range selectedKeys {
-			fieldLower := strings.ToLower(field)
+		for j, field := range selectedKeys {
+			fieldLower := selectedKeysLower[j]
 			switch fieldLower {
 			case "provider":
 				flatRes["provider"] = r.Provider
@@ -115,8 +130,19 @@ func flattenEntry(r provider.SearchResult, selectedKeys []string) map[string]any
 			case "tags":
 				flatRes["tags"] = r.Entry.Tags
 			default:
-				k, v := getAttributeCaseInsensitive(r.Entry.Attributes, field, fieldLower)
-				flatRes[utils.FormatKey(k)] = v
+				found := false
+				if origKey, ok := lowerAttrs[fieldLower]; ok {
+					flatRes[utils.FormatKey(origKey)] = r.Entry.Attributes[origKey]
+					found = true
+				}
+
+				if !found {
+					if v, ok := r.Entry.Attributes[field]; ok {
+						flatRes[utils.FormatKey(field)] = v
+					} else {
+						flatRes[utils.FormatKey(field)] = nil
+					}
+				}
 			}
 		}
 	} else {
@@ -134,17 +160,5 @@ func flattenEntry(r provider.SearchResult, selectedKeys []string) map[string]any
 		}
 	}
 	return flatRes
-}
-
-func getAttributeCaseInsensitive(attributes map[string]any, field, fieldLower string) (string, any) {
-	for k, v := range attributes {
-		if strings.ToLower(k) == fieldLower {
-			return k, v
-		}
-	}
-	if v, ok := attributes[field]; ok {
-		return field, v
-	}
-	return field, nil
 }
 
