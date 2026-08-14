@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 // YamlProvider implements SecretProvider and SearchableProvider for static YAML registries.

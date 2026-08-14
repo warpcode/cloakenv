@@ -22,7 +22,7 @@ import (
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
-	"gopkg.in/yaml.v3"
+	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 // Orchestrator resolves secret URIs by dispatching to the appropriate
