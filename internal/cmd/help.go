@@ -8,7 +8,7 @@ import (
 const generalUsage = `cloakenv — pluggable secret orchestrator & runtime injector
 
 Usage:
-  cloakenv [-c config_path] run [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] -- <command> [args]
+  cloakenv [-c config_path] run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] -- <command> [args]
   cloakenv [-c config_path] get <uri>
   cloakenv [-c config_path] set <uri> [value] [--ttl <duration>]
   cloakenv [-c config_path] delete <uri>
@@ -29,6 +29,7 @@ Commands:
 
 Flags:
   -c config_path  Custom configuration file path (global flag)
+  -E              Start with an empty environment (do not inherit from parent)
   -e KEY=uri      Map an environment variable to a secret URI (repeatable)
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -m entry-uri    Merge all attributes from an entry into the environment (repeatable)
@@ -57,7 +58,7 @@ func PrintUsageStdout() {
 // PrintRunHelp prints usage help for the run subcommand.
 func PrintRunHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv run [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] -- <command> [args]
+  cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] -- <command> [args]
 
 Description:
   Wrap a binary execution, resolving and injecting secret environment variables.
@@ -65,6 +66,7 @@ Description:
   Config autoload rules defined in ~/.config/cloakenv/config.yaml matching <command> will be evaluated automatically.
 
 Flags:
+  -E              Start with an empty environment (do not inherit from parent)
   -e KEY=uri      Map an environment variable to a secret URI (repeatable)
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -m entry-uri    Merge all attributes from an entry into the environment (repeatable)

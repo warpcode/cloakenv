@@ -12,7 +12,7 @@ import (
 	"github.com/warpcode/cloakenv/internal/utils"
 )
 
-// Run handles "cloakenv run [-e KEY=uri ...] [-m entry-uri] [-i KEY ...] -- <cmd> [args]".
+// Run handles "cloakenv run [-E] [-e KEY=uri ...] [-m entry-uri] [-i KEY ...] [--no-autoload] -- <cmd> [args]".
 func Run(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
 		PrintRunHelp()
@@ -24,6 +24,7 @@ func Run(args []string, cfg *config.Config) int {
 		whitelist   []string
 		cmdArgs     []string
 		noAutoload  bool
+		emptyEnv    bool
 	)
 
 	// Parse flags manually to support repeated -e, -m, and -i flags + -- separator
@@ -33,6 +34,9 @@ func Run(args []string, cfg *config.Config) int {
 		case args[i] == "--":
 			cmdArgs = args[i+1:]
 			i = len(args) // break out of loop
+		case args[i] == "-E":
+			emptyEnv = true
+			i++
 		case args[i] == "--no-autoload" || args[i] == "--skip-autoload":
 			noAutoload = true
 			i++
@@ -90,7 +94,7 @@ func Run(args []string, cfg *config.Config) int {
 	}
 
 	// Build the environment block and evaluate command transformations
-	finalCmdArgs, env, err := orch.BuildEnvForCommand(ctx, activeCmdArgs, explicitEnv, merges, whitelist)
+	finalCmdArgs, env, err := orch.BuildEnvForCommand(ctx, activeCmdArgs, explicitEnv, merges, whitelist, emptyEnv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Secret resolution failed: %v\n", err)
 		return 1

@@ -1058,14 +1058,14 @@ func (o *Orchestrator) resolveExplicitMappings(ctx context.Context, explicit map
 }
 
 // BuildEnv constructs the full environment block without command autoloading.
-func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, merges []string, whitelist []string) ([]string, error) {
-	_, env, err := o.BuildEnvForCommand(ctx, nil, explicit, merges, whitelist)
+func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, merges []string, whitelist []string, emptyEnv bool) ([]string, error) {
+	_, env, err := o.BuildEnvForCommand(ctx, nil, explicit, merges, whitelist, emptyEnv)
 	return env, err
 }
 
 // BuildEnvForCommand constructs the full environment block and evaluates config autoload rules,
 // returning any substituted command arguments, the resolved environment slice, and any error.
-func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cmdArgs []string, explicit map[string]string, merges []string, whitelist []string) ([]string, []string, error) {
+func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cmdArgs []string, explicit map[string]string, merges []string, whitelist []string, emptyEnv bool) ([]string, []string, error) {
 	var autoMerges []string
 	autoExplicit := make(map[string]string)
 	var autoWhitelist []string
@@ -1123,7 +1123,12 @@ func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cmdArgs []string,
 		combinedExplicit[k] = v // CLI explicit flags -e override autoload env
 	}
 
-	finalEnv := getParentEnv()
+	var finalEnv map[string]string
+	if !emptyEnv {
+		finalEnv = getParentEnv()
+	} else {
+		finalEnv = make(map[string]string)
+	}
 
 	mergedSources, err := o.resolveMergeSources(ctx, combinedMerges, combinedWhitelist)
 	if err != nil {
