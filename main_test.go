@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -109,4 +110,75 @@ func TestMainArgsParsing(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadConfig(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Save original customConfigPath and restore it after test
+	originalConfigPath := customConfigPath
+	defer func() { customConfigPath = originalConfigPath }()
+
+	t.Run("Valid custom config path", func(t *testing.T) {
+		validPath := filepath.Join(tempDir, "valid.yaml")
+		yamlContent := `
+cache:
+  default_ttl: 2h
+keyring:
+  prefix: test-prefix-
+`
+		if err := os.WriteFile(validPath, []byte(yamlContent), 0644); err != nil {
+			t.Fatalf("failed to write temp config file: %v", err)
+		}
+
+		customConfigPath = validPath
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if cfg == nil {
+			t.Fatal("expected non-nil config")
+		}
+		if cfg.Cache.DefaultTTL != "2h" {
+			t.Errorf("expected default_ttl '2h', got %q", cfg.Cache.DefaultTTL)
+		}
+		if cfg.Keyring.Prefix != "test-prefix-" {
+			t.Errorf("expected prefix 'test-prefix-', got %q", cfg.Keyring.Prefix)
+		}
+	})
+
+	t.Run("Invalid custom config path", func(t *testing.T) {
+		invalidPath := filepath.Join(tempDir, "invalid.yaml")
+		if err := os.WriteFile(invalidPath, []byte("invalid: yaml: :"), 0644); err != nil {
+			t.Fatalf("failed to write invalid yaml file: %v", err)
+		}
+
+		customConfigPath = invalidPath
+		_, err := loadConfig()
+		if err == nil {
+			t.Fatal("expected error for invalid yaml, got nil")
+		}
+	})
+
+	t.Run("Non-existent custom config path", func(t *testing.T) {
+		nonExistentPath := filepath.Join(tempDir, "does-not-exist.yaml")
+		customConfigPath = nonExistentPath
+		cfg, err := loadConfig()
+		if err != nil {
+			t.Fatalf("expected no error for non-existent config, got %v", err)
+		}
+		if cfg == nil {
+			t.Fatal("expected non-nil config for non-existent file")
+		}
+	})
+
+	t.Run("Empty custom config path uses default", func(t *testing.T) {
+		customConfigPath = ""
+
+		// Since we cannot easily mock userHomeDir from the main package across all platforms,
+		// we just ensure that calling loadConfig with an empty customConfigPath doesn't panic
+		// and correctly delegates to DefaultConfigPath and Load.
+		// Depending on the environment, it may return a config or an error (e.g., if ~/.config/cloakenv/config.yaml is malformed).
+		_, _ = loadConfig()
+	})
 }
