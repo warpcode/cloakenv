@@ -77,6 +77,9 @@ func TestRunCommand_InvalidArgs(t *testing.T) {
 			defer w.Close()
 
 			os.Stderr = w
+			t.Cleanup(func() {
+				os.Stderr = oldStderr
+			})
 
 			exitCode := RunCommand(tt.args, os.Environ())
 
@@ -107,6 +110,9 @@ func TestRunCommand_NotFound(t *testing.T) {
 	defer w.Close()
 
 	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+	})
 
 	exitCode := RunCommand([]string{"this-command-definitely-does-not-exist"}, os.Environ())
 
@@ -153,6 +159,9 @@ func TestRunCommand_ExecFailure(t *testing.T) {
 	defer w.Close()
 
 	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+	})
 
 	exitCode := RunCommand([]string{tmpFile.Name()}, os.Environ())
 

@@ -13,7 +13,18 @@ import (
 // Windows does not support Unix-like execve/syscall.Exec, so we fall back
 // to executing the subprocess and proxying standard descriptors.
 func RunCommand(cmdArgs []string, env []string) int {
-	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
+	if len(cmdArgs) == 0 {
+		fmt.Fprintf(os.Stderr, "Command missing\n")
+		return 1
+	}
+
+	commandName := cmdArgs[0]
+	if commandName == "" || commandName == "." || commandName == ".." {
+		fmt.Fprintf(os.Stderr, "Invalid command: %q\n", commandName)
+		return 1
+	}
+
+	cmd := exec.Command(commandName, cmdArgs[1:]...)
 	cmd.Env = env
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
