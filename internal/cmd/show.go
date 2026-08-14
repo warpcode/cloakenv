@@ -14,19 +14,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Show handles "cloakenv show <entry-uri> [--yaml | --json]"
-func Show(args []string, cfg *config.Config) int {
-	if utils.HasHelpFlag(args) {
-		PrintShowHelp()
-		return 0
+type showOptions struct {
+	merges        []string
+	explicit      map[string]string
+	whitelist     []string
+	outputFormat  string
+	positionalURI string
+}
+
+func parseShowFlags(args []string) (*showOptions, error) {
+	opts := &showOptions{
+		explicit:     make(map[string]string),
+		outputFormat: "yaml",
 	}
-	var (
-		merges        []string
-		explicit      = make(map[string]string)
-		whitelist     []string
-		outputFormat  = "yaml" // default
-		positionalURI string
-	)
 
 	i := 0
 	for i < len(args) {
@@ -35,62 +35,164 @@ func Show(args []string, cfg *config.Config) int {
 			i++
 			format := args[i]
 			if format != "yaml" && format != "json" && format != "env" && format != "keys" {
-				fmt.Fprintf(os.Stderr, "Invalid output format %q (expected yaml, json, env, or keys)\n", format)
-				return 1
+				return nil, fmt.Errorf("Invalid output format %q (expected yaml, json, env, or keys)", format)
 			}
-			outputFormat = format
+			opts.outputFormat = format
 			i++
 		case args[i] == "-m" && i+1 < len(args):
 			i++
-			merges = append(merges, args[i])
+			opts.merges = append(opts.merges, args[i])
 			i++
 		case args[i] == "-e" && i+1 < len(args):
 			i++
 			key, uri, ok := strings.Cut(args[i], "=")
 			if !ok || key == "" || uri == "" {
-				fmt.Fprintf(os.Stderr, "Invalid -e format: %q (expected KEY=uri)\n", args[i])
-				return 1
+				return nil, fmt.Errorf("Invalid -e format: %q (expected KEY=uri)", args[i])
 			}
-			explicit[key] = uri
+			opts.explicit[key] = uri
 			i++
 		case args[i] == "-t" && i+1 < len(args):
 			i++
 			templatePath := args[i]
 			envs, err := utils.ParseTemplateFile(templatePath)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing template file %s: %v\n", templatePath, err)
-				return 1
+				return nil, fmt.Errorf("Error parsing template file %s: %v", templatePath, err)
 			}
 			for k, v := range envs {
-				explicit[k] = v
+				opts.explicit[k] = v
 			}
 			i++
 		case args[i] == "-i" && i+1 < len(args):
 			i++
-			whitelist = append(whitelist, args[i])
+			opts.whitelist = append(opts.whitelist, args[i])
 			i++
 		case strings.HasPrefix(args[i], "-"):
-			fmt.Fprintf(os.Stderr, "Unknown flag: %s\n", args[i])
-			return 1
+			return nil, fmt.Errorf("Unknown flag: %s", args[i])
 		default:
-			if positionalURI != "" {
-				fmt.Fprintln(os.Stderr, "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]")
-				fmt.Fprintln(os.Stderr, "   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]")
-				return 1
+			if opts.positionalURI != "" {
+				return nil, fmt.Errorf("Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]")
 			}
-			positionalURI = args[i]
+			opts.positionalURI = args[i]
 			i++
 		}
 	}
 
-	hasFlags := len(merges) > 0 || len(explicit) > 0 || len(whitelist) > 0
-	if hasFlags && positionalURI != "" {
-		merges = append([]string{positionalURI}, merges...)
-		positionalURI = ""
+	hasFlags := len(opts.merges) > 0 || len(opts.explicit) > 0 || len(opts.whitelist) > 0
+	if hasFlags && opts.positionalURI != "" {
+		opts.merges = append([]string{opts.positionalURI}, opts.merges...)
+		opts.positionalURI = ""
 	}
-	if !hasFlags && positionalURI == "" {
-		fmt.Fprintln(os.Stderr, "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]")
-		fmt.Fprintln(os.Stderr, "   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]")
+	if !hasFlags && opts.positionalURI == "" {
+		return nil, fmt.Errorf("Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]")
+	}
+
+	return opts, nil
+}
+
+func buildMergedEntry(ctx context.Context, orch *engine.Orchestrator, merges []string, whitelist []string, explicit map[string]string) (provider.Entry, error) {
+	entry := provider.Entry{
+		Tags:       []string{},
+		Attributes: make(map[string]any),
+	}
+
+	whitelistSet := make(map[string]bool)
+	for _, k := range whitelist {
+		whitelistSet[utils.FormatKey(k)] = true
+	}
+	hasWhitelist := len(whitelist) > 0
+
+	// Resolve the entries concurrently, then merge them in order
+	type loadedEntry struct {
+		entry provider.Entry
+		err   error
+	}
+	loadedMerges := make([]loadedEntry, len(merges))
+	var mWg sync.WaitGroup
+	for idx, mURI := range merges {
+		mWg.Add(1)
+		go func(i int, uri string) {
+			defer mWg.Done()
+			e, err := orch.GetEntry(ctx, uri)
+			loadedMerges[i] = loadedEntry{entry: e, err: err}
+		}(idx, mURI)
+	}
+	mWg.Wait()
+
+	// Check if any merge failed
+	for _, lm := range loadedMerges {
+		if lm.err != nil {
+			return provider.Entry{}, fmt.Errorf("Failed to retrieve entry: %v", lm.err)
+		}
+	}
+
+	// Merge tags and attributes in order
+	tagSet := make(map[string]bool)
+	for _, lm := range loadedMerges {
+		for _, tag := range lm.entry.Tags {
+			tagSet[tag] = true
+		}
+		for k, v := range lm.entry.Attributes {
+			kLower := strings.ToLower(k)
+			if kLower == "title" || kLower == "tags" {
+				continue
+			}
+			formattedKey := utils.FormatKey(k)
+			if hasWhitelist && !whitelistSet[formattedKey] {
+				continue
+			}
+			entry.Attributes[k] = v
+		}
+	}
+
+	// Build the tags slice from tagSet
+	var uniqueTags []string
+	for tag := range tagSet {
+		uniqueTags = append(uniqueTags, tag)
+	}
+	entry.Tags = uniqueTags
+
+	// Resolve explicit -e mappings (highest priority, not subject to whitelist)
+	if len(explicit) > 0 {
+		type resolvedMapping struct {
+			key string
+			val string
+			err error
+		}
+		resolvedList := make([]resolvedMapping, len(explicit))
+		var eWg sync.WaitGroup
+		idx := 0
+		for k, uri := range explicit {
+			eWg.Add(1)
+			go func(i int, key, u string) {
+				defer eWg.Done()
+				val, err := orch.Resolve(ctx, u)
+				resolvedList[i] = resolvedMapping{key: key, val: val, err: err}
+			}(idx, k, uri)
+			idx++
+		}
+		eWg.Wait()
+
+		for _, rm := range resolvedList {
+			if rm.err != nil {
+				return provider.Entry{}, fmt.Errorf("Failed to resolve mapping %s=%s: %v", rm.key, explicit[rm.key], rm.err)
+			}
+			entry.Attributes[rm.key] = rm.val
+		}
+	}
+
+	return entry, nil
+}
+
+// Show handles "cloakenv show <entry-uri> [--yaml | --json]"
+func Show(args []string, cfg *config.Config) int {
+	if utils.HasHelpFlag(args) {
+		PrintShowHelp()
+		return 0
+	}
+
+	opts, err := parseShowFlags(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 
@@ -103,104 +205,17 @@ func Show(args []string, cfg *config.Config) int {
 
 	var entry provider.Entry
 
-	if positionalURI != "" {
-		entry, err = orch.GetEntry(ctx, positionalURI)
+	if opts.positionalURI != "" {
+		entry, err = orch.GetEntry(ctx, opts.positionalURI)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to retrieve entry: %v\n", err)
 			return 1
 		}
 	} else {
-		// Initialize a merged entry.
-		entry = provider.Entry{
-			Tags:       []string{},
-			Attributes: make(map[string]any),
-		}
-
-		whitelistSet := make(map[string]bool)
-		for _, k := range whitelist {
-			whitelistSet[utils.FormatKey(k)] = true
-		}
-		hasWhitelist := len(whitelist) > 0
-
-		// Resolve the entries concurrently, then merge them in order
-		type loadedEntry struct {
-			entry provider.Entry
-			err   error
-		}
-		loadedMerges := make([]loadedEntry, len(merges))
-		var mWg sync.WaitGroup
-		for idx, mURI := range merges {
-			mWg.Add(1)
-			go func(i int, uri string) {
-				defer mWg.Done()
-				e, err := orch.GetEntry(ctx, uri)
-				loadedMerges[i] = loadedEntry{entry: e, err: err}
-			}(idx, mURI)
-		}
-		mWg.Wait()
-
-		// Check if any merge failed
-		for _, lm := range loadedMerges {
-			if lm.err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to retrieve entry: %v\n", lm.err)
-				return 1
-			}
-		}
-
-		// Merge tags and attributes in order
-		tagSet := make(map[string]bool)
-		for _, lm := range loadedMerges {
-			for _, tag := range lm.entry.Tags {
-				tagSet[tag] = true
-			}
-			for k, v := range lm.entry.Attributes {
-				kLower := strings.ToLower(k)
-				if kLower == "title" || kLower == "tags" {
-					continue
-				}
-				formattedKey := utils.FormatKey(k)
-				if hasWhitelist && !whitelistSet[formattedKey] {
-					continue
-				}
-				entry.Attributes[k] = v
-			}
-		}
-
-		// Build the tags slice from tagSet
-		var uniqueTags []string
-		for tag := range tagSet {
-			uniqueTags = append(uniqueTags, tag)
-		}
-		entry.Tags = uniqueTags
-
-		// Resolve explicit -e mappings (highest priority, not subject to whitelist)
-		if len(explicit) > 0 {
-			type resolvedMapping struct {
-				key string
-				val string
-				err error
-			}
-			resolvedList := make([]resolvedMapping, len(explicit))
-			var eWg sync.WaitGroup
-			idx := 0
-			for k, uri := range explicit {
-				eWg.Add(1)
-				go func(i int, key, u string) {
-					defer eWg.Done()
-					val, err := orch.Resolve(ctx, u)
-					resolvedList[i] = resolvedMapping{key: key, val: val, err: err}
-				}(idx, k, uri)
-				idx++
-			}
-			eWg.Wait()
-
-			for _, rm := range resolvedList {
-				if rm.err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to resolve mapping %s=%s: %v\n", rm.key, explicit[rm.key], rm.err)
-					return 1
-				}
-				entry.Attributes[rm.key] = rm.val
-			}
+		entry, err = buildMergedEntry(ctx, orch, opts.merges, opts.whitelist, opts.explicit)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
 		}
 	}
 
@@ -215,17 +230,17 @@ func Show(args []string, cfg *config.Config) int {
 	}
 	entry.Attributes = formattedAttributes
 
-	if outputFormat == "keys" {
+	if opts.outputFormat == "keys" {
 		printKeysFormat(entry.Attributes)
 		return 0
 	}
 
-	if outputFormat == "env" {
+	if opts.outputFormat == "env" {
 		printEnvFormat(entry.Attributes)
 		return 0
 	}
 
-	asJSON := (outputFormat == "json")
+	asJSON := (opts.outputFormat == "json")
 	if err := utils.RenderOutput(entry.Attributes, asJSON, "entry"); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
