@@ -154,8 +154,7 @@ func Show(args []string, cfg *config.Config) int {
 				tagSet[tag] = true
 			}
 			for k, v := range lm.entry.Attributes {
-				kLower := strings.ToLower(k)
-				if kLower == "title" || kLower == "tags" {
+				if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 					continue
 				}
 				formattedKey := utils.FormatKey(k)
@@ -207,8 +206,7 @@ func Show(args []string, cfg *config.Config) int {
 	// Format all keys in entry.Attributes by default
 	formattedAttributes := make(map[string]any)
 	for k, v := range entry.Attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
+		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
 		formattedAttributes[utils.FormatKey(k)] = v
@@ -236,8 +234,7 @@ func Show(args []string, cfg *config.Config) int {
 
 func printEnvFormat(attributes map[string]any) {
 	for k, v := range attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
+		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
 		strVal, _ := serializeEntryAttrValue(v)
@@ -271,8 +268,7 @@ func serializeEntryAttrValue(val any) (string, error) {
 
 func printKeysFormat(attributes map[string]any) {
 	for k := range attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
+		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
 		fmt.Println(k)

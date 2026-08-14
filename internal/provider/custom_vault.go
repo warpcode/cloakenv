@@ -154,15 +154,14 @@ func toEntry(name string, raw map[string]any) Entry {
 	}
 
 	for k, v := range raw {
-		kLower := strings.ToLower(k)
-		switch kLower {
-		case "tags":
+		switch {
+		case strings.EqualFold(k, "tags"):
 			if tagSliceStr, ok := v.([]string); ok {
 				entry.Tags = tagSliceStr
 			} else {
 				entry.Tags = utils.ParseTags(v)
 			}
-		case "title":
+		case strings.EqualFold(k, "title"):
 			if str, ok := v.(string); ok {
 				entry.Title = str
 			}

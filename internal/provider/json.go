@@ -122,13 +122,12 @@ func (j *JsonProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 		}
 
 		for k, v := range attributesMap {
-			kLower := strings.ToLower(k)
-			switch kLower {
-			case "tags":
+			switch {
+			case strings.EqualFold(k, "tags"):
 				if len(tags) == 0 {
 					tags = utils.ParseTags(v)
 				}
-			case "title":
+			case strings.EqualFold(k, "title"):
 				if cfg.EntityName == "" {
 					if str, ok := v.(string); ok {
 						entry.Title = str
@@ -169,11 +168,10 @@ func (j *JsonProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 		}
 
 		for k, v := range rawEntry {
-			kLower := strings.ToLower(k)
-			switch kLower {
-			case "tags":
+			switch {
+			case strings.EqualFold(k, "tags"):
 				entry.Tags = utils.ParseTags(v)
-			case "title":
+			case strings.EqualFold(k, "title"):
 				if str, ok := v.(string); ok {
 					entry.Title = str
 				}
