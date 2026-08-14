@@ -101,96 +101,18 @@ func (y *YamlProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 	}
 	y.rawContent = raw
 
-	// Determine singleEntity status: defaults to true if no entities root key is configured in Settings or config and database has no entries/entities root key.
-	if cfg.SingleEntity != nil {
-		y.singleEntity = *cfg.SingleEntity
-	} else {
-		_, hasEntities := raw["entities"]
-		_, hasEntries := raw["entries"]
-		hasRootKey := hasEntities || hasEntries
-		y.singleEntity = (cfg.EntitiesRootKey == "" && cfg.Settings["entities_root_key"] == "" && cfg.Settings["entries_key"] == "" && !hasRootKey)
-	}
-
-	entitiesRootKey := cfg.EntitiesRootKey
-	if entitiesRootKey == "" {
-		entitiesRootKey = cfg.Settings["entities_root_key"]
-	}
-	if entitiesRootKey == "" {
-		entitiesRootKey = cfg.Settings["entries_key"]
-	}
-	if entitiesRootKey == "" {
-		if y.singleEntity {
-			entitiesRootKey = "."
-		} else {
-			if _, ok := raw["entities"]; ok {
-				entitiesRootKey = "entities"
-			} else if _, ok := raw["entries"]; ok {
-				entitiesRootKey = "entries"
-			} else {
-				entitiesRootKey = "entities"
-			}
-		}
-	}
+	y.singleEntity = determineSingleEntity(cfg, raw)
+	entitiesRootKey := determineEntitiesRootKey(cfg, raw, y.singleEntity)
 
 	if y.singleEntity {
-		var attributesMap map[string]any
-		if entitiesRootKey == "." {
-			attributesMap = raw
-		} else {
-			val, ok := raw[entitiesRootKey]
-			if ok {
-				if m, ok := val.(map[string]any); ok {
-					attributesMap = m
-				} else if m2, ok := val.(map[any]any); ok {
-					attributesMap = make(map[string]any)
-					for k, v := range m2 {
-						attributesMap[fmt.Sprintf("%v", k)] = v
-					}
-				}
-			}
-		}
-		if attributesMap == nil {
-			attributesMap = make(map[string]any)
-		}
-
-		title := cfg.EntityName
-		if title == "" {
-			if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
-				title = vaultName
-			} else {
-				title = filepath.Base(vaultPath)
-			}
-		}
-
-		tags := cfg.Tags
-		entry := Entry{
-			Title:      title,
-			Attributes: make(map[string]any),
-		}
-
-		for k, v := range attributesMap {
-			kLower := strings.ToLower(k)
-			switch kLower {
-			case "tags":
-				if len(tags) == 0 {
-					tags = utils.ParseTags(v)
-				}
-			case "title":
-				if cfg.EntityName == "" {
-					if str, ok := v.(string); ok {
-						entry.Title = str
-					}
-				}
-			default:
-				entry.Attributes[k] = v
-			}
-		}
-		entry.Tags = tags
-		y.entries[""] = entry
-		return nil
+		return y.loadSingleEntity(cfg, raw, entitiesRootKey, vaultPath)
 	}
 
-	// Multiple entities
+	return y.loadMultipleEntities(raw, entitiesRootKey)
+}
+
+// loadMultipleEntities loads multiple entities into the YamlProvider.
+func (y *YamlProvider) loadMultipleEntities(raw map[string]any, entitiesRootKey string) error {
 	var rawEntries map[string]map[string]any
 	if entitiesRootKey == "." {
 		var err error
@@ -234,6 +156,99 @@ func (y *YamlProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 	}
 
 	return nil
+}
+
+// determineSingleEntity defaults to true if no entities root key is configured in Settings or config and database has no entries/entities root key.
+func determineSingleEntity(cfg ProviderConfig, raw map[string]any) bool {
+	if cfg.SingleEntity != nil {
+		return *cfg.SingleEntity
+	}
+	_, hasEntities := raw["entities"]
+	_, hasEntries := raw["entries"]
+	hasRootKey := hasEntities || hasEntries
+	return cfg.EntitiesRootKey == "" && cfg.Settings["entities_root_key"] == "" && cfg.Settings["entries_key"] == "" && !hasRootKey
+}
+
+// loadSingleEntity loads a single entity configuration into the YamlProvider.
+func (y *YamlProvider) loadSingleEntity(cfg ProviderConfig, raw map[string]any, entitiesRootKey string, vaultPath string) error {
+	var attributesMap map[string]any
+	if entitiesRootKey == "." {
+		attributesMap = raw
+	} else {
+		val, ok := raw[entitiesRootKey]
+		if ok {
+			if m, ok := val.(map[string]any); ok {
+				attributesMap = m
+			} else if m2, ok := val.(map[any]any); ok {
+				attributesMap = make(map[string]any)
+				for k, v := range m2 {
+					attributesMap[fmt.Sprintf("%v", k)] = v
+				}
+			}
+		}
+	}
+	if attributesMap == nil {
+		attributesMap = make(map[string]any)
+	}
+
+	title := cfg.EntityName
+	if title == "" {
+		if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
+			title = vaultName
+		} else {
+			title = filepath.Base(vaultPath)
+		}
+	}
+
+	tags := cfg.Tags
+	entry := Entry{
+		Title:      title,
+		Attributes: make(map[string]any),
+	}
+
+	for k, v := range attributesMap {
+		kLower := strings.ToLower(k)
+		switch kLower {
+		case "tags":
+			if len(tags) == 0 {
+				tags = utils.ParseTags(v)
+			}
+		case "title":
+			if cfg.EntityName == "" {
+				if str, ok := v.(string); ok {
+					entry.Title = str
+				}
+			}
+		default:
+			entry.Attributes[k] = v
+		}
+	}
+	entry.Tags = tags
+	y.entries[""] = entry
+	return nil
+}
+
+// determineEntitiesRootKey finds the appropriate root key for entries based on config and data.
+func determineEntitiesRootKey(cfg ProviderConfig, raw map[string]any, singleEntity bool) string {
+	entitiesRootKey := cfg.EntitiesRootKey
+	if entitiesRootKey == "" {
+		entitiesRootKey = cfg.Settings["entities_root_key"]
+	}
+	if entitiesRootKey == "" {
+		entitiesRootKey = cfg.Settings["entries_key"]
+	}
+	if entitiesRootKey == "" {
+		if singleEntity {
+			entitiesRootKey = "."
+		} else if _, ok := raw["entities"]; ok {
+			entitiesRootKey = "entities"
+		} else if _, ok := raw["entries"]; ok {
+			entitiesRootKey = "entries"
+		} else {
+			entitiesRootKey = "entities"
+		}
+	}
+	return entitiesRootKey
 }
 
 // resolveDotPath traverses a map or slice structure using a dot-separated path.
