@@ -41,108 +41,129 @@ func (j *JsonProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 	}
 	j.filePath = vaultPath
 	j.entries = make(map[string]Entry)
-	data, err := os.ReadFile(vaultPath)
+
+	raw, err := j.loadAndParseFile(vaultPath)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("json provider: failed to read file %s: %w", vaultPath, err)
+		return err
 	}
-
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("json provider: failed to parse JSON %s: %w", vaultPath, err)
-	}
-
 	if raw == nil {
 		return nil
 	}
 	j.rawContent = raw
 
-	// Determine singleEntity status: defaults to true if no entities root key is configured in Settings or config and database has no entries/entities root key.
-	if cfg.SingleEntity != nil {
-		j.singleEntity = *cfg.SingleEntity
-	} else {
-		_, hasEntities := raw["entities"]
-		_, hasEntries := raw["entries"]
-		hasRootKey := hasEntities || hasEntries
-		j.singleEntity = (cfg.EntitiesRootKey == "" && cfg.Settings["entities_root_key"] == "" && cfg.Settings["entries_key"] == "" && !hasRootKey)
-	}
-
-	entitiesRootKey := cfg.EntitiesRootKey
-	if entitiesRootKey == "" {
-		entitiesRootKey = cfg.Settings["entities_root_key"]
-	}
-	if entitiesRootKey == "" {
-		entitiesRootKey = cfg.Settings["entries_key"]
-	}
-	if entitiesRootKey == "" {
-		if j.singleEntity {
-			entitiesRootKey = "."
-		} else {
-			if _, ok := raw["entities"]; ok {
-				entitiesRootKey = "entities"
-			} else if _, ok := raw["entries"]; ok {
-				entitiesRootKey = "entries"
-			} else {
-				entitiesRootKey = "entities"
-			}
-		}
-	}
+	j.singleEntity = determineSingleEntityMode(cfg, raw)
+	entitiesRootKey := determineEntitiesRootKey(cfg, raw, j.singleEntity)
 
 	if j.singleEntity {
-		var attributesMap map[string]any
-		if entitiesRootKey == "." {
-			attributesMap = raw
-		} else {
-			val, ok := raw[entitiesRootKey]
-			if ok {
-				if m, ok := val.(map[string]any); ok {
-					attributesMap = m
-				}
-			}
-		}
-		if attributesMap == nil {
-			attributesMap = make(map[string]any)
-		}
-
-		title := cfg.EntityName
-		if title == "" {
-			if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
-				title = vaultName
-			} else {
-				title = filepath.Base(vaultPath)
-			}
-		}
-
-		tags := cfg.Tags
-		entry := Entry{
-			Title:      title,
-			Attributes: make(map[string]any),
-		}
-
-		for k, v := range attributesMap {
-			kLower := strings.ToLower(k)
-			switch kLower {
-			case "tags":
-				if len(tags) == 0 {
-					tags = utils.ParseTags(v)
-				}
-			case "title":
-				if cfg.EntityName == "" {
-					if str, ok := v.(string); ok {
-						entry.Title = str
-					}
-				}
-			default:
-				entry.Attributes[k] = v
-			}
-		}
-		entry.Tags = tags
-		j.entries[""] = entry
-		return nil
+		return j.processSingleEntity(cfg, raw, entitiesRootKey, vaultPath)
 	}
 
+	return j.processMultipleEntities(raw, entitiesRootKey)
+}
+
+func (j *JsonProvider) loadAndParseFile(vaultPath string) (map[string]any, error) {
+	data, err := os.ReadFile(vaultPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("json provider: failed to read file %s: %w", vaultPath, err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("json provider: failed to parse JSON %s: %w", vaultPath, err)
+	}
+	return raw, nil
+}
+
+func determineSingleEntityMode(cfg ProviderConfig, raw map[string]any) bool {
+	if cfg.SingleEntity != nil {
+		return *cfg.SingleEntity
+	}
+	_, hasEntities := raw["entities"]
+	_, hasEntries := raw["entries"]
+	hasRootKey := hasEntities || hasEntries
+	return cfg.EntitiesRootKey == "" && cfg.Settings["entities_root_key"] == "" && cfg.Settings["entries_key"] == "" && !hasRootKey
+}
+
+func determineEntitiesRootKey(cfg ProviderConfig, raw map[string]any, singleEntity bool) string {
+	entitiesRootKey := cfg.EntitiesRootKey
+	if entitiesRootKey != "" {
+		return entitiesRootKey
+	}
+	if key := cfg.Settings["entities_root_key"]; key != "" {
+		return key
+	}
+	if key := cfg.Settings["entries_key"]; key != "" {
+		return key
+	}
+
+	if singleEntity {
+		return "."
+	}
+	if _, ok := raw["entities"]; ok {
+		return "entities"
+	}
+	if _, ok := raw["entries"]; ok {
+		return "entries"
+	}
+	return "entities"
+}
+
+func (j *JsonProvider) processSingleEntity(cfg ProviderConfig, raw map[string]any, entitiesRootKey string, vaultPath string) error {
+	var attributesMap map[string]any
+	if entitiesRootKey == "." {
+		attributesMap = raw
+	} else {
+		if val, ok := raw[entitiesRootKey]; ok {
+			if m, ok := val.(map[string]any); ok {
+				attributesMap = m
+			}
+		}
+	}
+	if attributesMap == nil {
+		attributesMap = make(map[string]any)
+	}
+
+	title := cfg.EntityName
+	if title == "" {
+		if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
+			title = vaultName
+		} else {
+			title = filepath.Base(vaultPath)
+		}
+	}
+
+	tags := cfg.Tags
+	entry := Entry{
+		Title:      title,
+		Attributes: make(map[string]any),
+	}
+
+	for k, v := range attributesMap {
+		kLower := strings.ToLower(k)
+		switch kLower {
+		case "tags":
+			if len(tags) == 0 {
+				tags = utils.ParseTags(v)
+			}
+		case "title":
+			if cfg.EntityName == "" {
+				if str, ok := v.(string); ok {
+					entry.Title = str
+				}
+			}
+		default:
+			entry.Attributes[k] = v
+		}
+	}
+	entry.Tags = tags
+	j.entries[""] = entry
+	return nil
+}
+
+func (j *JsonProvider) processMultipleEntities(raw map[string]any, entitiesRootKey string) error {
 	var rawEntries map[string]map[string]any
 	if entitiesRootKey == "." {
 		var err error
