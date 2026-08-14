@@ -22,8 +22,9 @@ import (
 type KeePassProvider struct {
 	db *gokeepasslib.Database
 
-	cacheMu    sync.RWMutex
-	entryCache map[*gokeepasslib.Entry]map[string]string
+	cacheMu     sync.RWMutex
+	entryCache  map[*gokeepasslib.Entry]map[string]string
+	binaryCache map[int][]byte
 }
 
 // NewKeePassProvider returns a new KeePass provider instance.
@@ -133,6 +134,7 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 func (k *KeePassProvider) unlock(vaultPath string, password string) error {
 	k.cacheMu.Lock()
 	k.entryCache = make(map[*gokeepasslib.Entry]map[string]string)
+	k.binaryCache = nil
 	k.cacheMu.Unlock()
 
 	// Expand ~ to home directory
@@ -235,10 +237,8 @@ func (k *KeePassProvider) GetSecret(_ context.Context, location string) (string,
 	for _, ref := range entry.Binaries {
 		if ref.Name == attr {
 			// Found the attachment reference! Let's find it in the global Meta binaries list
-			for _, bin := range k.db.Content.Meta.Binaries {
-				if bin.ID == ref.Value.ID {
-					return string(bin.Content), nil
-				}
+			if content, ok := k.getBinaryContent(ref.Value.ID); ok {
+				return string(content), nil
 			}
 			return "", fmt.Errorf("keepass provider: binary reference ID %d not found in database metadata", ref.Value.ID)
 		}
@@ -356,11 +356,8 @@ func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) Entry {
 
 	// Add attachments as attributes
 	for _, ref := range entry.Binaries {
-		for _, bin := range k.db.Content.Meta.Binaries {
-			if bin.ID == ref.Value.ID {
-				attrs[ref.Name] = string(bin.Content)
-				break
-			}
+		if content, ok := k.getBinaryContent(ref.Value.ID); ok {
+			attrs[ref.Name] = string(content)
 		}
 	}
 
@@ -386,6 +383,32 @@ func parseKeePassLocation(location string) (string, string) {
 // getEntryTitle extracts the Title value from a KeePass entry.
 func (k *KeePassProvider) getEntryTitle(entry *gokeepasslib.Entry) string {
 	return k.getEntryValue(entry, "Title")
+}
+
+// getBinaryContent retrieves the binary content by its ID.
+// It lazily initializes a binary cache to speed up subsequent lookups.
+func (k *KeePassProvider) getBinaryContent(id int) ([]byte, bool) {
+	k.cacheMu.RLock()
+	if k.binaryCache != nil {
+		content, ok := k.binaryCache[id]
+		k.cacheMu.RUnlock()
+		return content, ok
+	}
+	k.cacheMu.RUnlock()
+
+	k.cacheMu.Lock()
+	defer k.cacheMu.Unlock()
+
+	// Double-check after acquiring the write lock
+	if k.binaryCache == nil {
+		k.binaryCache = make(map[int][]byte, len(k.db.Content.Meta.Binaries))
+		for _, bin := range k.db.Content.Meta.Binaries {
+			k.binaryCache[bin.ID] = bin.Content
+		}
+	}
+
+	content, ok := k.binaryCache[id]
+	return content, ok
 }
 
 // getEntryValue extracts a named value from a KeePass entry.
