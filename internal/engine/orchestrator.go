@@ -908,6 +908,103 @@ func matchWildcard(pattern, text string) bool {
 	return strings.HasSuffix(text, parts[len(parts)-1])
 }
 
+func getParentEnv() map[string]string {
+	parentEnvMap := make(map[string]string)
+	for _, envStr := range os.Environ() {
+		k, v, ok := strings.Cut(envStr, "=")
+		if ok && k != "" {
+			parentEnvMap[k] = v
+		}
+	}
+	return parentEnvMap
+}
+
+func (o *Orchestrator) resolveMergeSources(ctx context.Context, merges []string, whitelist []string) ([]map[string]string, error) {
+	whitelistSet := make(map[string]bool)
+	for _, k := range whitelist {
+		whitelistSet[utils.FormatKey(k)] = true
+	}
+	hasWhitelist := len(whitelist) > 0
+
+	loaded := make([]map[string]string, len(merges))
+	var wg sync.WaitGroup
+	var errOnce sync.Once
+	var firstErr error
+
+	for i, m := range merges {
+		wg.Add(1)
+		go func(idx int, uri string) {
+			defer wg.Done()
+			keys := make(map[string]string)
+			entry, err := o.GetEntry(ctx, uri)
+			if err != nil {
+				errOnce.Do(func() {
+					firstErr = fmt.Errorf("failed to get entry %s: %w", uri, err)
+				})
+				return
+			}
+			for k, v := range entry.Attributes {
+				kLower := strings.ToLower(k)
+				if kLower == "title" || kLower == "tags" {
+					continue
+				}
+				formattedKey := utils.FormatKey(k)
+				if hasWhitelist && !whitelistSet[formattedKey] {
+					continue
+				}
+				strVal, err := serializeValHelper(v)
+				if err != nil {
+					errOnce.Do(func() {
+						firstErr = fmt.Errorf("failed to serialize attribute %q in entry %s: %w", k, uri, err)
+					})
+					return
+				}
+				keys[formattedKey] = strVal
+			}
+			loaded[idx] = keys
+		}(i, m)
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
+	}
+	return loaded, nil
+}
+
+func (o *Orchestrator) resolveExplicitMappings(ctx context.Context, explicit map[string]string) (map[string]string, error) {
+	if len(explicit) == 0 {
+		return nil, nil
+	}
+
+	resolved := make(map[string]string)
+	var wg sync.WaitGroup
+	var errOnce sync.Once
+	var explicitErr error
+	var mu sync.Mutex
+
+	for k, uri := range explicit {
+		wg.Add(1)
+		go func(k, uri string) {
+			defer wg.Done()
+			val, err := o.ResolveWithKey(ctx, uri, k)
+			if err != nil {
+				errOnce.Do(func() {
+					explicitErr = fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)
+				})
+				return
+			}
+			mu.Lock()
+			resolved[utils.FormatKey(k)] = val
+			mu.Unlock()
+		}(k, uri)
+	}
+	wg.Wait()
+	if explicitErr != nil {
+		return nil, explicitErr
+	}
+	return resolved, nil
+}
+
 // BuildEnv constructs the full environment block without command autoloading.
 func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, merges []string, whitelist []string) ([]string, error) {
 	_, env, err := o.BuildEnvForCommand(ctx, nil, explicit, merges, whitelist)
@@ -974,110 +1071,26 @@ func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cmdArgs []string,
 		combinedExplicit[k] = v // CLI explicit flags -e override autoload env
 	}
 
-	// 1. Get parent environment
-	parentEnvMap := make(map[string]string)
-	for _, envStr := range os.Environ() {
-		k, v, ok := strings.Cut(envStr, "=")
-		if ok && k != "" {
-			parentEnvMap[k] = v
-		}
+	finalEnv := getParentEnv()
+
+	mergedSources, err := o.resolveMergeSources(ctx, combinedMerges, combinedWhitelist)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	// whitelistSet is a helper to quickly check if a key is whitelisted
-	whitelistSet := make(map[string]bool)
-	for _, k := range combinedWhitelist {
-		whitelistSet[utils.FormatKey(k)] = true
-	}
-	hasWhitelist := len(combinedWhitelist) > 0
-
-	// We will resolve/load the merge sources in parallel.
-	type loadedSource struct {
-		keys map[string]string
-	}
-	loaded := make([]loadedSource, len(combinedMerges))
-	var wg sync.WaitGroup
-	var errOnce sync.Once
-	var firstErr error
-
-	for i, m := range combinedMerges {
-		wg.Add(1)
-		go func(idx int, uri string) {
-			defer wg.Done()
-			keys := make(map[string]string)
-			entry, err := o.GetEntry(ctx, uri)
-			if err != nil {
-				errOnce.Do(func() {
-					firstErr = fmt.Errorf("failed to get entry %s: %w", uri, err)
-				})
-				return
-			}
-			for k, v := range entry.Attributes {
-				kLower := strings.ToLower(k)
-				if kLower == "title" || kLower == "tags" {
-					continue
-				}
-				formattedKey := utils.FormatKey(k)
-				if hasWhitelist && !whitelistSet[formattedKey] {
-					continue
-				}
-				strVal, err := serializeValHelper(v)
-				if err != nil {
-					errOnce.Do(func() {
-						firstErr = fmt.Errorf("failed to serialize attribute %q in entry %s: %w", k, uri, err)
-					})
-					return
-				}
-				keys[formattedKey] = strVal
-			}
-			loaded[idx] = loadedSource{keys: keys}
-		}(i, m)
-	}
-	wg.Wait()
-	if firstErr != nil {
-		return nil, nil, firstErr
-	}
-
-	// finalEnv maps key -> value, initialized with parent environment (always forwarded)
-	finalEnv := make(map[string]string)
-	for k, v := range parentEnvMap {
-		finalEnv[k] = v
-	}
-
-	// Merge sources sequentially: later overrides earlier
-	for _, src := range loaded {
-		for k, v := range src.keys {
+	for _, src := range mergedSources {
+		for k, v := range src {
 			finalEnv[k] = v
 		}
 	}
 
-	// - Explicit mappings (-e highest priority)
-	// These are never filtered by whitelist and overwrite everything.
-	if len(combinedExplicit) > 0 {
-		var explicitWg sync.WaitGroup
-		var explicitErrOnce sync.Once
-		var explicitErr error
-		var mu sync.Mutex
+	explicitResolved, err := o.resolveExplicitMappings(ctx, combinedExplicit)
+	if err != nil {
+		return nil, nil, err
+	}
 
-		for k, uri := range combinedExplicit {
-			explicitWg.Add(1)
-			go func(k, uri string) {
-				defer explicitWg.Done()
-				val, err := o.ResolveWithKey(ctx, uri, k)
-				if err != nil {
-					explicitErrOnce.Do(func() {
-						explicitErr = fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)
-					})
-					return
-				}
-				mu.Lock()
-				finalEnv[utils.FormatKey(k)] = val
-				mu.Unlock()
-			}(k, uri)
-		}
-		explicitWg.Wait()
-		if explicitErr != nil {
-			return nil, nil, explicitErr
-		}
+	for k, v := range explicitResolved {
+		finalEnv[k] = v
 	}
 
 	// Convert finalEnv map to []string slice in "KEY=VALUE" format
@@ -1092,6 +1105,7 @@ func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cmdArgs []string,
 
 	return currentCmdArgs, result, nil
 }
+
 
 func serializeValHelper(val any) (string, error) {
 	switch v := val.(type) {
