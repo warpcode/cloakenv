@@ -19,7 +19,8 @@ import (
 // It is a remote-type provider: the URI scheme is the user-defined remote
 // name from config (e.g., "work://"), not a fixed string.
 type KeePassProvider struct {
-	db *gokeepasslib.Database
+	db       *gokeepasslib.Database
+	binaries map[int]string
 }
 
 // NewKeePassProvider returns a new KeePass provider instance.
@@ -151,6 +152,11 @@ func (k *KeePassProvider) unlock(vaultPath string, password string) error {
 		return fmt.Errorf("keepass provider: failed to unlock protected entries: %w", err)
 	}
 
+	k.binaries = make(map[int]string, len(k.db.Content.Meta.Binaries))
+	for _, bin := range k.db.Content.Meta.Binaries {
+		k.binaries[bin.ID] = string(bin.Content)
+	}
+
 	k.db.Credentials = nil
 	return nil
 }
@@ -225,10 +231,8 @@ func (k *KeePassProvider) GetSecret(_ context.Context, location string) (string,
 	for _, ref := range entry.Binaries {
 		if ref.Name == attr {
 			// Found the attachment reference! Let's find it in the global Meta binaries list
-			for _, bin := range k.db.Content.Meta.Binaries {
-				if bin.ID == ref.Value.ID {
-					return string(bin.Content), nil
-				}
+			if content, ok := k.binaries[ref.Value.ID]; ok {
+				return content, nil
 			}
 			return "", fmt.Errorf("keepass provider: binary reference ID %d not found in database metadata", ref.Value.ID)
 		}
@@ -346,11 +350,8 @@ func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) Entry {
 
 	// Add attachments as attributes
 	for _, ref := range entry.Binaries {
-		for _, bin := range k.db.Content.Meta.Binaries {
-			if bin.ID == ref.Value.ID {
-				attrs[ref.Name] = string(bin.Content)
-				break
-			}
+		if content, ok := k.binaries[ref.Value.ID]; ok {
+			attrs[ref.Name] = content
 		}
 	}
 
