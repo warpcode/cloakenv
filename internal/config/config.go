@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 var userHomeDir = os.UserHomeDir
@@ -21,6 +21,29 @@ type Config struct {
 	Cache      CacheConfig            `yaml:"cache"`
 	Keyring    KeyringConfig          `yaml:"keyring"`
 	Vaults     map[string]VaultConfig `yaml:"vaults"`
+	Autoload   []AutoloadRule         `yaml:"autoload"`
+}
+
+// AutoloadRule defines rules for matching, masking, and autoloading secret vaults/URIs/env vars
+// based on matching commands executed via `cloakenv run -- <command>`.
+type AutoloadRule struct {
+	// Match is a required regex pattern, glob, or command string to match against incoming CLI command arguments.
+	Match string `yaml:"match"`
+
+	// Command is an optional target command replacement template with \1 or $1 regex capture group expansions.
+	Command string `yaml:"command"`
+
+	// Vaults is a list of vault names or URIs to merge into environment variables.
+	Vaults []string `yaml:"vaults"`
+
+	// Merge is a list of entry URIs or vault URIs to merge into environment variables.
+	Merge []string `yaml:"merge"`
+
+	// Env is a map of environment variable names to secret URIs.
+	Env map[string]string `yaml:"env"`
+
+	// Whitelist is a list of key names to filter merged entries.
+	Whitelist []string `yaml:"whitelist"`
 }
 
 // CacheConfig holds cache-related configuration settings.

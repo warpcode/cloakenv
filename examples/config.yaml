@@ -27,7 +27,7 @@ vaults:
   # Defines the home:// URI scheme (KeePass provider, excluded from dynamic searches)
   home:
     provider: "keepass"
-    vault_path: "~/secrets/personal_vault.kdbx"
+    vault_path: "~/.keepass/Accounts.kdbx"
     searchable: false
 
   # Defines the json_dev:// URI scheme (JSON static file provider)
@@ -61,7 +61,7 @@ vaults:
     entities:
       custom1:
         username: "custom_user"
-        Password: "custom_single://my_static_vault:secret_key"
+        Password: "${custom_single://my_static_vault:secret_key}"
         tags: [testing, static]
 
   # Defines the custom_single:// URI scheme using a single named entity
@@ -74,6 +74,34 @@ vaults:
       my_static_vault:
         secret_key: "secret_value"
         tags: [static, local]
+
+# Autoloading configuration: Automatically match commands, mask/transform command lines, and inject vault credentials
+autoload:
+  # Regex matching + command transformation (Alias masking):
+  # Running: `cloakenv run -- litellm --config ~/.config/litellm/config.yaml`
+  # Expands to: `uvx --with 'litellm[proxy]' --with 'fastapi<0.116' litellm --config ~/.config/litellm/config.yaml`
+  # while injecting credentials from litellm/keys vault.
+  - match: "^litellm\\s+(.*)$"
+    command: "uvx --with 'litellm[proxy]' --with 'fastapi<0.116' litellm \\1"
+    env:
+      OPENROUTER_API_KEY: "...."
+      NVIDIA_NIM_API_KEY: "...."
+
+  - match: "aws"
+    vaults:
+      - "keepass_dev://aws/credentials"
+    env:
+      AWS_DEFAULT_REGION: "env://DEFAULT_REGION"
+    whitelist:
+      - "AWS_ACCESS_KEY_ID"
+      - "AWS_SECRET_ACCESS_KEY"
+      - "AWS_DEFAULT_REGION"
+
+  - match: "kubectl*"
+    merge:
+      - "yaml_dev://clusters/staging"
+    env:
+      KUBECONFIG_TOKEN: "keyring://k8s/token"
 
 # Note on Built-in Vaults:
 # The following schemes are built-in and do not need to be registered in the 'vaults' block:

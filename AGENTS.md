@@ -30,6 +30,7 @@ internal/
   provider/              # Built-in & custom secret vaults
   runner/                # Process execution wrapping logic
   utils/                 # Shared formatting and flag utilities
+  yaml/                  # Centralized YAML parsing, serialization, and error wrapping
 examples/                # Example databases and config.yaml
 testdata/                # Test fixtures (testDB.kdbx, YAML/JSON samples)
 Makefile                 # Build, test, fmt, vet, install targets
@@ -42,6 +43,7 @@ Makefile                 # Build, test, fmt, vet, install targets
 | `internal/config` | Parse and validate `config.yaml` | Resolve secrets or perform I/O beyond file reads |
 | `internal/engine` | Orchestrate URI resolution, caching, env injection | Directly import provider-specific libraries |
 | `internal/provider` | Implement `provider.Provider` interface per backend | Share mutable state between providers |
+| `internal/yaml` | Centralize YAML encoding/decoding and error context wrapping | Perform business logic or URI resolution |
 
 ---
 
@@ -153,6 +155,8 @@ docs: update README with JSON provider usage
 - Every new exported function or method in `internal/` must have a corresponding `_test.go` entry.
 - Use `testify` only if already present in `go.mod`; otherwise use stdlib `testing` and `errors` packages.
 - Mock or stub external I/O (keyring, filesystem) in unit tests. Integration tests requiring real keyring access must be skipped in CI via `t.Skip()` or build tags.
+- **Keyring/Cache Testing Isolation**: Tests that execute cache operations (such as `ClearCache()`) or interact with keyring providers must invoke `keyring.MockInit()` and set environment variables (`HOME`, `XDG_CACHE_HOME`, `LocalAppData`) to a temporary directory (`t.TempDir()`) during test setup to prevent local cache erasure and test leakage.
+- **Safe Redirection in Tests**: When capturing stdout or stderr using `os.Pipe()`, check the returned error immediately. Defer closing both writer ends (`wOut.Close()`, `wErr.Close()`) immediately after creation to prevent resource leaks (dangling goroutines/pipes) if the test function panics.
 
 ### Integration Tests
 
@@ -173,7 +177,7 @@ The `testdata/testDB.kdbx` database provides a stable fixture for KeePass integr
 
 ### Scope
 
-- Only modify files within the `cloakenv` workspace (`/home/jase/src/cloakenv`).
+- Only modify files within the `cloakenv` workspace.
 - Do not modify files outside this workspace (e.g., `~/.agents/AGENTS.md`) unless the user explicitly requests a global memory update.
 
 ### Code Changes

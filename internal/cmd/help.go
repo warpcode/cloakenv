@@ -5,14 +5,12 @@ import (
 	"os"
 )
 
-// PrintUsage prints the general usage instructions to stderr.
-func PrintUsage() {
-	fmt.Fprintln(os.Stderr, `cloakenv — pluggable secret orchestrator & runtime injector
+const generalUsage = `cloakenv — pluggable secret orchestrator & runtime injector
 
 Usage:
   cloakenv [-c config_path] run [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] -- <command> [args]
   cloakenv [-c config_path] get <uri>
-  cloakenv [-c config_path] set <uri> <value> [--ttl <duration>]
+  cloakenv [-c config_path] set <uri> [value] [--ttl <duration>]
   cloakenv [-c config_path] delete <uri>
   cloakenv [-c config_path] cache clear
   cloakenv [-c config_path] show <entry-uri> [args]
@@ -44,65 +42,34 @@ URI schemes:
   env://VARIABLE_NAME          Built-in: read from current process environment (read-only)
   cache://KEY                  Built-in: local file cache (AES-GCM encrypted, key in OS keyring)
   search://query/attribute     Built-in: resolve dynamically matched credentials
-  <vault>://Path/To/Entry      Config-defined: resolved via ~/.config/cloakenv/config.yaml`)
+  <vault>://Path/To/Entry      Config-defined: resolved via ~/.config/cloakenv/config.yaml`
+
+// PrintUsage prints the general usage instructions to stderr.
+func PrintUsage() {
+	fmt.Fprintln(os.Stderr, generalUsage)
 }
 
 // PrintUsageStdout prints the general usage instructions to stdout.
 func PrintUsageStdout() {
-	fmt.Fprintln(os.Stdout, `cloakenv — pluggable secret orchestrator & runtime injector
-
-Usage:
-  cloakenv [-c config_path] run [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] -- <command> [args]
-  cloakenv [-c config_path] get <uri>
-  cloakenv [-c config_path] set <uri> <value> [--ttl <duration>]
-  cloakenv [-c config_path] delete <uri>
-  cloakenv [-c config_path] cache clear
-  cloakenv [-c config_path] show <entry-uri> [args]
-  cloakenv [-c config_path] search [query] [args]
-  cloakenv [-c config_path] auth <login|forget|status> [vault]
-
-Commands:
-  run     Wrap a binary with injected environment variables
-  get     Retrieve and print a single secret value raw to stdout (no trailing newline)
-  set     Store a secret value at a writable URI (keyring://, cache://)
-  delete  Remove a secret from a writable URI (keyring://, cache://)
-  cache   Manage local encrypted cache (subcommand: clear)
-  show    Retrieve and display a structured entry
-  search  Search for structured entries
-  auth    Manage vault credentials and status (subcommands: login, forget, status)
-
-Flags:
-  -c config_path  Custom configuration file path (global flag)
-  -e KEY=uri      Map an environment variable to a secret URI (repeatable)
-  -t template     Load template .env file mapping KEY=uri per line (repeatable)
-  -m entry-uri    Merge all attributes from an entry into the environment (repeatable)
-  -i KEY          Filter/whitelist keys/variables (repeatable)
-  -o, --output    Output format: plain, json, yaml, env (depends on command)
-  --vault vault   Scope search to a specific vault (repeatable)
-  --ttl duration  Expiration duration for cache entries (e.g. 5m, 1h, set only)
-
-URI schemes:
-  keyring://service/account    Built-in: OS keyring (macOS Keychain, Linux D-Bus, Windows Credential Manager)
-  env://VARIABLE_NAME          Built-in: read from current process environment (read-only)
-  cache://KEY                  Built-in: local file cache (AES-GCM encrypted, key in OS keyring)
-  search://query/attribute     Built-in: resolve dynamically matched credentials
-  <vault>://Path/To/Entry      Config-defined: resolved via ~/.config/cloakenv/config.yaml`)
+	fmt.Fprintln(os.Stdout, generalUsage)
 }
 
 // PrintRunHelp prints usage help for the run subcommand.
 func PrintRunHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv run [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] -- <command> [args]
+  cloakenv run [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] -- <command> [args]
 
 Description:
   Wrap a binary execution, resolving and injecting secret environment variables.
   If no -- separator is used, any remaining arguments are treated as the command.
+  Config autoload rules defined in ~/.config/cloakenv/config.yaml matching <command> will be evaluated automatically.
 
 Flags:
   -e KEY=uri      Map an environment variable to a secret URI (repeatable)
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -m entry-uri    Merge all attributes from an entry into the environment (repeatable)
-  -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)`)
+  -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
+  --no-autoload   Disable config command autoloading rules for this run execution`)
 }
 
 // PrintGetHelp prints usage help for the get subcommand.
@@ -120,14 +87,15 @@ Arguments:
 // PrintSetHelp prints usage help for the set subcommand.
 func PrintSetHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv set <uri> <value> [--ttl <duration>]
+  cloakenv set <uri> [value] [--ttl <duration>]
 
 Description:
   Store a secret value at a writable URI. Currently only 'keyring://' and 'cache://' schemes are writable.
+  If [value] is omitted or set to "-", the secret value will be securely read from standard input (stdin).
 
 Arguments:
   <uri>           The secret URI where the value will be stored
-  <value>         The secret value to write
+  [value]         The secret value to write (optional, defaults to stdin)
 
 Flags:
   --ttl duration  Expiration duration for cache entries (e.g. 5m, 1h).

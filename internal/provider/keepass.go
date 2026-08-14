@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+
+	"github.com/warpcode/cloakenv/internal/utils"
 
 	"github.com/tobischo/gokeepasslib/v3"
 	"github.com/zalando/go-keyring"
@@ -18,11 +21,17 @@ import (
 // name from config (e.g., "work://"), not a fixed string.
 type KeePassProvider struct {
 	db *gokeepasslib.Database
+
+	cacheMu     sync.RWMutex
+	entryCache  map[*gokeepasslib.Entry]map[string]string
+	binaryCache map[int]string
 }
 
 // NewKeePassProvider returns a new KeePass provider instance.
 func NewKeePassProvider() *KeePassProvider {
-	return &KeePassProvider{}
+	return &KeePassProvider{
+		entryCache: make(map[*gokeepasslib.Entry]map[string]string),
+	}
 }
 
 // Scheme returns "keepass" as the provider type identifier.
@@ -123,6 +132,11 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 }
 
 func (k *KeePassProvider) unlock(vaultPath string, password string) error {
+	k.cacheMu.Lock()
+	k.entryCache = make(map[*gokeepasslib.Entry]map[string]string)
+	k.binaryCache = nil
+	k.cacheMu.Unlock()
+
 	// Expand ~ to home directory
 	if strings.HasPrefix(vaultPath, "~/") {
 		home, err := os.UserHomeDir()
@@ -192,7 +206,7 @@ func (k *KeePassProvider) findEntry(location string) (*gokeepasslib.Entry, strin
 	// Find the entry by title within the target group
 	for i := range currentGroup.Entries {
 		entry := &currentGroup.Entries[i]
-		if getEntryTitle(entry) == entryTitle {
+		if k.getEntryTitle(entry) == entryTitle {
 			return entry, attr, nil
 		}
 	}
@@ -214,7 +228,7 @@ func (k *KeePassProvider) GetSecret(_ context.Context, location string) (string,
 	}
 
 	// First, try standard string value attribute (e.g. Password, UserName)
-	val := getEntryValue(entry, attr)
+	val := k.getEntryValue(entry, attr)
 	if val != "" {
 		return val, nil
 	}
@@ -222,17 +236,15 @@ func (k *KeePassProvider) GetSecret(_ context.Context, location string) (string,
 	// If not found in Values, check if it exists in Binaries (as an attachment name)
 	for _, ref := range entry.Binaries {
 		if ref.Name == attr {
-			// Found the attachment reference! Let's find it in the global Meta binaries list
-			for _, bin := range k.db.Content.Meta.Binaries {
-				if bin.ID == ref.Value.ID {
-					return string(bin.Content), nil
-				}
+			// Found the attachment reference! Let's find it in the binary cache
+			if content, ok := k.getBinaryContent(ref.Value.ID); ok {
+				return content, nil
 			}
 			return "", fmt.Errorf("keepass provider: binary reference ID %d not found in database metadata", ref.Value.ID)
 		}
 	}
 
-	return "", fmt.Errorf("keepass provider: attribute %q is empty or not found for entry %q", attr, getEntryTitle(entry))
+	return "", fmt.Errorf("keepass provider: attribute %q is empty or not found for entry %q", attr, k.getEntryTitle(entry))
 }
 
 // GetEntry retrieves a complete structured entry by location.
@@ -275,7 +287,7 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 
 		for i := range g.Entries {
 			entry := &g.Entries[i]
-			title := getEntryTitle(entry)
+			title := k.getEntryTitle(entry)
 			var entryPath string
 			if groupPath == "" {
 				entryPath = title
@@ -297,7 +309,7 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 				}
 			}
 
-			entryTags := parseTags(entry.Tags)
+			entryTags := utils.ParseTagString(entry.Tags)
 
 			// Filter by tags if specified
 			if len(query.Tags) > 0 {
@@ -334,8 +346,8 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 
 // toEntry converts a gokeepasslib.Entry into provider.Entry.
 func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) Entry {
-	title := getEntryTitle(entry)
-	tags := parseTags(entry.Tags)
+	title := k.getEntryTitle(entry)
+	tags := utils.ParseTagString(entry.Tags)
 
 	attrs := make(map[string]any)
 	for _, v := range entry.Values {
@@ -344,11 +356,8 @@ func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) Entry {
 
 	// Add attachments as attributes
 	for _, ref := range entry.Binaries {
-		for _, bin := range k.db.Content.Meta.Binaries {
-			if bin.ID == ref.Value.ID {
-				attrs[ref.Name] = string(bin.Content)
-				break
-			}
+		if content, ok := k.getBinaryContent(ref.Value.ID); ok {
+			attrs[ref.Name] = content
 		}
 	}
 
@@ -357,22 +366,6 @@ func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) Entry {
 		Tags:       tags,
 		Attributes: attrs,
 	}
-}
-
-// parseTags splits a comma-separated tags string into a slice of strings.
-func parseTags(tagsStr string) []string {
-	if tagsStr == "" {
-		return nil
-	}
-	parts := strings.Split(tagsStr, ",")
-	var tags []string
-	for _, p := range parts {
-		t := strings.TrimSpace(p)
-		if t != "" {
-			tags = append(tags, t)
-		}
-	}
-	return tags
 }
 
 // parseKeePassLocation splits "Path/To/Entry:Attribute" into path and attribute.
@@ -388,23 +381,38 @@ func parseKeePassLocation(location string) (string, string) {
 }
 
 // getEntryTitle extracts the Title value from a KeePass entry.
-func getEntryTitle(entry *gokeepasslib.Entry) string {
-	for _, v := range entry.Values {
-		if v.Key == "Title" {
-			return v.Value.Content
-		}
-	}
-	return ""
+func (k *KeePassProvider) getEntryTitle(entry *gokeepasslib.Entry) string {
+	return k.getEntryValue(entry, "Title")
 }
 
 // getEntryValue extracts a named value from a KeePass entry.
-func getEntryValue(entry *gokeepasslib.Entry, key string) string {
-	for _, v := range entry.Values {
-		if v.Key == key {
-			return v.Value.Content
-		}
+// It caches the parsed values in a map for faster subsequent lookups.
+func (k *KeePassProvider) getEntryValue(entry *gokeepasslib.Entry, key string) string {
+	k.cacheMu.RLock()
+	if m, ok := k.entryCache[entry]; ok {
+		k.cacheMu.RUnlock()
+		return m[key]
 	}
-	return ""
+	k.cacheMu.RUnlock()
+
+	k.cacheMu.Lock()
+	defer k.cacheMu.Unlock()
+
+	// Lazily initialize entryCache to prevent panic if provider wasn't created via NewKeePassProvider
+	if k.entryCache == nil {
+		k.entryCache = make(map[*gokeepasslib.Entry]map[string]string)
+	} else if m, ok := k.entryCache[entry]; ok {
+		// Double check in case another goroutine populated it while waiting for the lock
+		return m[key]
+	}
+
+	m := make(map[string]string, len(entry.Values))
+	for _, v := range entry.Values {
+		m[v.Key] = v.Value.Content
+	}
+	k.entryCache[entry] = m
+
+	return m[key]
 }
 
 // SetSecret returns an error because the KeePass provider is currently read-only.
@@ -423,4 +431,30 @@ func (k *KeePassProvider) Validate(settings map[string]string) error {
 		return errors.New("keepass provider: vault_path is required")
 	}
 	return nil
+}
+
+// getBinaryContent extracts the content of a binary by its ID from the global metadata.
+// It caches the parsed values in a map for faster subsequent lookups.
+func (k *KeePassProvider) getBinaryContent(id int) (string, bool) {
+	k.cacheMu.RLock()
+	if k.binaryCache != nil {
+		content, ok := k.binaryCache[id]
+		k.cacheMu.RUnlock()
+		return content, ok
+	}
+	k.cacheMu.RUnlock()
+
+	k.cacheMu.Lock()
+	defer k.cacheMu.Unlock()
+
+	// Lazily initialize binaryCache
+	if k.binaryCache == nil {
+		k.binaryCache = make(map[int]string, len(k.db.Content.Meta.Binaries))
+		for _, bin := range k.db.Content.Meta.Binaries {
+			k.binaryCache[bin.ID] = string(bin.Content)
+		}
+	}
+
+	content, ok := k.binaryCache[id]
+	return content, ok
 }
