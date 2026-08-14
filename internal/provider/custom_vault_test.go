@@ -93,3 +93,111 @@ func TestCustomVaultProvider_MultipleEntities(t *testing.T) {
 		t.Errorf("expected 1 result for tag query, got %d, err: %v", len(results), err)
 	}
 }
+
+func TestCustomVaultProvider_Search(t *testing.T) {
+	ctx := context.Background()
+	p := NewCustomVaultProvider()
+
+	cfg := ProviderConfig{
+		Entities: map[string]map[string]any{
+			"projectA/db": {
+				"Password": "pass1",
+				"Title":    "Database Prod",
+				"tags":     "env:prod, type:db",
+			},
+			"projectA/web": {
+				"Password": "pass2",
+				"Title":    "Web Server Prod",
+				"tags":     []any{"env:prod", "type:web"},
+			},
+			"projectB/db": {
+				"Password": "pass3",
+				"Title":    "Database Staging",
+				"tags":     []string{"env:staging", "type:db"},
+			},
+		},
+	}
+
+	if err := p.Initialize(ctx, cfg); err != nil {
+		t.Fatalf("failed to initialize: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		query       SearchQuery
+		wantResults int
+	}{
+		{
+			name:        "Empty query returns all",
+			query:       SearchQuery{},
+			wantResults: 3,
+		},
+		{
+			name:        "Title exact match",
+			query:       SearchQuery{Title: "Database Prod"},
+			wantResults: 1,
+		},
+		{
+			name:        "Title partial match case-insensitive",
+			query:       SearchQuery{Title: "database"},
+			wantResults: 2,
+		},
+		{
+			name:        "Title mismatch",
+			query:       SearchQuery{Title: "Cache"},
+			wantResults: 0,
+		},
+		{
+			name:        "Path exact match",
+			query:       SearchQuery{Path: "projectA/db"},
+			wantResults: 1,
+		},
+		{
+			name:        "Path partial match case-insensitive",
+			query:       SearchQuery{Path: "projecta"},
+			wantResults: 2,
+		},
+		{
+			name:        "Path mismatch",
+			query:       SearchQuery{Path: "projectC"},
+			wantResults: 0,
+		},
+		{
+			name:        "Tags single match",
+			query:       SearchQuery{Tags: []string{"env:prod"}},
+			wantResults: 2,
+		},
+		{
+			name:        "Tags multiple match",
+			query:       SearchQuery{Tags: []string{"env:prod", "type:db"}},
+			wantResults: 1,
+		},
+		{
+			name:        "Tags partial mismatch",
+			query:       SearchQuery{Tags: []string{"env:prod", "type:cache"}},
+			wantResults: 0,
+		},
+		{
+			name:        "Tags case-insensitive match",
+			query:       SearchQuery{Tags: []string{"ENV:PROD"}},
+			wantResults: 2,
+		},
+		{
+			name:        "Combination match",
+			query:       SearchQuery{Title: "database", Path: "projectb", Tags: []string{"env:staging"}},
+			wantResults: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results, err := p.Search(ctx, tt.query)
+			if err != nil {
+				t.Fatalf("Search failed: %v", err)
+			}
+			if len(results) != tt.wantResults {
+				t.Errorf("expected %d results, got %d", tt.wantResults, len(results))
+			}
+		})
+	}
+}
