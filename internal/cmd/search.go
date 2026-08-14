@@ -115,21 +115,8 @@ func flattenEntry(r provider.SearchResult, selectedKeys []string) map[string]any
 			case "tags":
 				flatRes["tags"] = r.Entry.Tags
 			default:
-				found := false
-				for k, v := range r.Entry.Attributes {
-					if strings.ToLower(k) == fieldLower {
-						flatRes[utils.FormatKey(k)] = v
-						found = true
-						break
-					}
-				}
-				if !found {
-					if v, ok := r.Entry.Attributes[field]; ok {
-						flatRes[utils.FormatKey(field)] = v
-					} else {
-						flatRes[utils.FormatKey(field)] = nil
-					}
-				}
+				k, v := getAttributeCaseInsensitive(r.Entry.Attributes, field, fieldLower)
+				flatRes[utils.FormatKey(k)] = v
 			}
 		}
 	} else {
@@ -148,3 +135,16 @@ func flattenEntry(r provider.SearchResult, selectedKeys []string) map[string]any
 	}
 	return flatRes
 }
+
+func getAttributeCaseInsensitive(attributes map[string]any, field, fieldLower string) (string, any) {
+	for k, v := range attributes {
+		if strings.ToLower(k) == fieldLower {
+			return k, v
+		}
+	}
+	if v, ok := attributes[field]; ok {
+		return field, v
+	}
+	return field, nil
+}
+
