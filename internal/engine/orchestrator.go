@@ -944,8 +944,7 @@ func (o *Orchestrator) resolveMergeSources(ctx context.Context, merges []string,
 				return
 			}
 			for k, v := range entry.Attributes {
-				kLower := strings.ToLower(k)
-				if kLower == "title" || kLower == "tags" {
+				if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 					continue
 				}
 				formattedKey := utils.FormatKey(k)
