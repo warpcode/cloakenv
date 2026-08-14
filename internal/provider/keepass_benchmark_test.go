@@ -36,7 +36,7 @@ func BenchmarkKeePassProvider_Search_Binaries(b *testing.B) {
 		// Add some binary references
 		for j := 0; j < 5; j++ {
 			entry.Binaries = append(entry.Binaries, gokeepasslib.BinaryReference{
-				Name:  "Attachment",
+				Name: "Attachment",
 				Value: struct {
 					ID int `xml:"Ref,attr"`
 				}{ID: (i*5 + j) % numBinaries},

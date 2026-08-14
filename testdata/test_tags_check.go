@@ -14,8 +14,14 @@ func main() {
 	}
 	defer file.Close()
 
+	password := os.Getenv("KEEPASS_PASSWORD")
+	if password == "" {
+		fmt.Println("KEEPASS_PASSWORD environment variable must be set")
+		os.Exit(1)
+	}
+
 	db := gokeepasslib.NewDatabase()
-	db.Credentials = gokeepasslib.NewPasswordCredentials("password123")
+	db.Credentials = gokeepasslib.NewPasswordCredentials(password)
 	if err := gokeepasslib.NewDecoder(file).Decode(db); err != nil {
 		panic(err)
 	}
