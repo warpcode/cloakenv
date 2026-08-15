@@ -42,7 +42,7 @@ func (j *JsonProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 	j.filePath = vaultPath
 	j.entries = make(map[string]Entry)
 
-	raw, err := j.loadAndParseFile(vaultPath)
+	raw, err := loadAndParseFile(vaultPath)
 	if err != nil {
 		return err
 	}
@@ -55,13 +55,13 @@ func (j *JsonProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 	entitiesRootKey := determineEntitiesRootKey(cfg, raw, j.singleEntity)
 
 	if j.singleEntity {
-		return j.processSingleEntity(cfg, raw, entitiesRootKey, vaultPath)
+		return j.processSingleEntity(cfg, raw, entitiesRootKey)
 	}
 
 	return j.processMultipleEntities(raw, entitiesRootKey)
 }
 
-func (j *JsonProvider) loadAndParseFile(vaultPath string) (map[string]any, error) {
+func loadAndParseFile(vaultPath string) (map[string]any, error) {
 	data, err := os.ReadFile(vaultPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -111,7 +111,7 @@ func determineEntitiesRootKey(cfg ProviderConfig, raw map[string]any, singleEnti
 	return "entities"
 }
 
-func (j *JsonProvider) processSingleEntity(cfg ProviderConfig, raw map[string]any, entitiesRootKey string, vaultPath string) error {
+func (j *JsonProvider) processSingleEntity(cfg ProviderConfig, raw map[string]any, entitiesRootKey string) error {
 	var attributesMap map[string]any
 	if entitiesRootKey == "." {
 		attributesMap = raw
@@ -131,7 +131,7 @@ func (j *JsonProvider) processSingleEntity(cfg ProviderConfig, raw map[string]an
 		if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
 			title = vaultName
 		} else {
-			title = filepath.Base(vaultPath)
+			title = filepath.Base(j.filePath)
 		}
 	}
 
