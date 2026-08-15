@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -106,6 +107,92 @@ func TestMainArgsParsing(t *testing.T) {
 			}
 			if tt.wantErr != "" && !strings.Contains(stderr.String(), tt.wantErr) {
 				t.Errorf("want stderr to contain %q, got %q", tt.wantErr, stderr.String())
+			}
+		})
+	}
+}
+
+func TestLoadConfig(t *testing.T) {
+	tempDir := t.TempDir()
+
+	validPath := filepath.Join(tempDir, "valid.yaml")
+	yamlContent := `
+cache:
+  default_ttl: 2h
+keyring:
+  prefix: test-prefix-
+`
+	if err := os.WriteFile(validPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write temp config file: %v", err)
+	}
+
+	invalidPath := filepath.Join(tempDir, "invalid.yaml")
+	if err := os.WriteFile(invalidPath, []byte("invalid: yaml: :"), 0644); err != nil {
+		t.Fatalf("failed to write invalid yaml file: %v", err)
+	}
+
+	nonExistentPath := filepath.Join(tempDir, "does-not-exist.yaml")
+
+	originalConfigPath := customConfigPath
+	defer func() { customConfigPath = originalConfigPath }()
+
+	tests := []struct {
+		name       string
+		configPath string
+		wantErr    bool
+		wantTTL    string
+		wantPrefix string
+	}{
+		{
+			name:       "Valid custom config path",
+			configPath: validPath,
+			wantErr:    false,
+			wantTTL:    "2h",
+			wantPrefix: "test-prefix-",
+		},
+		{
+			name:       "Invalid custom config path",
+			configPath: invalidPath,
+			wantErr:    true,
+		},
+		{
+			name:       "Non-existent custom config path",
+			configPath: nonExistentPath,
+			wantErr:    false, // The underlying implementation treats non-existent file as an empty valid config. It doesn't throw an error for explicit paths either.
+		},
+		{
+			name:       "Empty custom config path uses default",
+			configPath: "",
+			wantErr:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			customConfigPath = tt.configPath
+
+			// Isolate testing of the default path by configuring a fake home dir environment
+			if tt.configPath == "" {
+			    t.Setenv("HOME", tempDir)
+			    t.Setenv("USERPROFILE", tempDir) // for windows
+			}
+
+			cfg, err := loadConfig()
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("loadConfig() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if !tt.wantErr {
+				if cfg == nil {
+					t.Fatal("expected non-nil config")
+				}
+				if tt.wantTTL != "" && cfg.Cache.DefaultTTL != tt.wantTTL {
+					t.Errorf("expected default_ttl %q, got %q", tt.wantTTL, cfg.Cache.DefaultTTL)
+				}
+				if tt.wantPrefix != "" && cfg.Keyring.Prefix != tt.wantPrefix {
+					t.Errorf("expected prefix %q, got %q", tt.wantPrefix, cfg.Keyring.Prefix)
+				}
 			}
 		})
 	}
