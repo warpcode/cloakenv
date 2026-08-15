@@ -142,7 +142,6 @@ keyring:
 		wantErr    bool
 		wantTTL    string
 		wantPrefix string
-		skipCheck  bool
 	}{
 		{
 			name:       "Valid custom config path",
@@ -159,23 +158,26 @@ keyring:
 		{
 			name:       "Non-existent custom config path",
 			configPath: nonExistentPath,
-			wantErr:    false,
+			wantErr:    false, // The underlying implementation treats non-existent file as an empty valid config. It doesn't throw an error for explicit paths either.
 		},
 		{
 			name:       "Empty custom config path uses default",
 			configPath: "",
-			skipCheck:  true,
+			wantErr:    false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			customConfigPath = tt.configPath
-			cfg, err := loadConfig()
 
-			if tt.skipCheck {
-				return
+			// Isolate testing of the default path by configuring a fake home dir environment
+			if tt.configPath == "" {
+			    t.Setenv("HOME", tempDir)
+			    t.Setenv("USERPROFILE", tempDir) // for windows
 			}
+
+			cfg, err := loadConfig()
 
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("loadConfig() error = %v, wantErr %v", err, tt.wantErr)
