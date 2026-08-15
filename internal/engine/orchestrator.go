@@ -688,6 +688,8 @@ func (v *visitor) Visit(node *ast.Node) {
 		*ast.VariableDeclaratorNode,
 		*ast.SequenceNode:
 		// Safe node types are allowed
+	case *ast.CallNode:
+		*v.err = fmt.Errorf("function calls are not allowed in search expressions")
 	case *ast.MemberNode:
 		if n.Method {
 			*v.err = fmt.Errorf("method calls are not allowed in search expressions")
