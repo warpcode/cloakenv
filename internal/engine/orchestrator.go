@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/provider"
@@ -407,51 +408,79 @@ func resolveSliceRecursive[T any](ctx context.Context, o *Orchestrator, typedVal
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-Loop:
-	for i, v := range typedVal {
+	numWorkers := len(typedVal)
+	if numWorkers > maxConcurrency {
+		numWorkers = maxConcurrency
+	}
+	var idx atomic.Int64
+
+	workersToSpawn := numWorkers - 1
+	if workersToSpawn < 0 {
+		workersToSpawn = 0
+	}
+
+SpawnLoop:
+	for i := 0; i < workersToSpawn; i++ {
 		select {
 		case o.concurrencySem <- struct{}{}:
 			wg.Add(1)
-			go func(i int, v any) {
+			go func() {
 				defer wg.Done()
 				defer func() { <-o.concurrencySem }()
 
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-
-				res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
-				if err != nil {
-					mu.Lock()
-					if firstErr == nil {
-						firstErr = err
-						cancel()
+				for {
+					i := int(idx.Add(1) - 1)
+					if i >= len(typedVal) {
+						break
 					}
-					mu.Unlock()
-					return
+
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					v := typedVal[i]
+					res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
+					if err != nil {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = err
+							cancel()
+						}
+						mu.Unlock()
+						return
+					}
+					resolvedSlice[i] = formatFn(res)
 				}
-				resolvedSlice[i] = formatFn(res)
-			}(i, v)
+			}()
 		default:
-			// Fallback to sequential if concurrency limit is reached
-			if ctx.Err() != nil {
-				break Loop
-			}
-			res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
-			if err != nil {
-				mu.Lock()
-				if firstErr == nil {
-					firstErr = err
-					cancel()
-				}
-				mu.Unlock()
-				break Loop
-			}
-			resolvedSlice[i] = formatFn(res)
+			break SpawnLoop
 		}
 	}
+
+	for {
+		i := int(idx.Add(1) - 1)
+		if i >= len(typedVal) {
+			break
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		v := typedVal[i]
+		res, err := o.resolveAttrRecursive(ctx, v, depth, configKey)
+		if err != nil {
+			mu.Lock()
+			if firstErr == nil {
+				firstErr = err
+				cancel()
+			}
+			mu.Unlock()
+			break
+		}
+		resolvedSlice[i] = formatFn(res)
+	}
+
 	wg.Wait()
 	if firstErr != nil {
 		return nil, firstErr
