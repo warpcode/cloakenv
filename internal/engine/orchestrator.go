@@ -514,10 +514,6 @@ func (o *Orchestrator) resolveAttrRecursive(ctx context.Context, val any, depth 
 		return val, nil
 	}
 }
-	default:
-		return val, nil
-	}
-}
 
 func (o *Orchestrator) getSearchableProviders(ctx context.Context, repoScopes []string) (map[string]provider.SearchableProvider, error) {
 	providersToSearch := make(map[string]provider.SearchableProvider)
