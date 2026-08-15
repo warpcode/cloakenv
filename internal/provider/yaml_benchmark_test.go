@@ -73,3 +73,33 @@ func BenchmarkAnyToString(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkYamlProvider_Search(b *testing.B) {
+	// Create a large number of dummy entries
+	entries := make(map[string]Entry)
+	for i := 0; i < 10000; i++ {
+		entries[fmt.Sprintf("entry_%d", i)] = Entry{
+			Title: fmt.Sprintf("Entry %d", i),
+			Tags:  []string{"tagA", "tagB", "tagC", "tagD"},
+		}
+	}
+
+	provider := NewYamlProvider()
+	provider.entries = entries
+
+	query := SearchQuery{
+		Title: "entry",
+		Path:  "entry",
+		Tags:  []string{"tagC", "tagD"},
+	}
+
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := provider.Search(ctx, query)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
