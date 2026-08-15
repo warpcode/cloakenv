@@ -161,4 +161,3 @@ func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLo
 	}
 	return flatRes
 }
-

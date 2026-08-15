@@ -428,4 +428,3 @@ func resolveDotPath(val any, path string) (any, error) {
 	}
 	return curr, nil
 }
-
