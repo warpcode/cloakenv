@@ -1,0 +1,10 @@
+# Ignore rule triggers for standard library execution wrapping tools
+internal/runner/exec_unix.go
+internal/runner/exec_windows.go
+
+# Ignore test files invoking themselves, common pattern for os/exec testing
+*_test.go
+
+# Ignore dependabot missing cooldown and github actions mutable tags
+.github/dependabot.yml
+.github/workflows/*.yml
