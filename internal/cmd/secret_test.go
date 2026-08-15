@@ -568,14 +568,19 @@ func TestDelete(t *testing.T) {
 
 		// Set secret
 		oldStdin := os.Stdin
-		rIn, wIn, _ := os.Pipe()
+		rIn, wIn, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
 		os.Stdin = rIn
-		wIn.Write([]byte("testvalue"))
-		wIn.Close()
 		defer func() {
 			os.Stdin = oldStdin
 			rIn.Close()
 		}()
+		if _, err := wIn.Write([]byte("testvalue")); err != nil {
+			t.Fatalf("failed to write to pipe: %v", err)
+		}
+		wIn.Close()
 
 		captureOutputWithExitCode(t, func() int {
 			return Set([]string{"cache://test"}, cfg)
