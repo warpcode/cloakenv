@@ -572,13 +572,14 @@ func TestDelete(t *testing.T) {
 		os.Stdin = rIn
 		wIn.Write([]byte("testvalue"))
 		wIn.Close()
+		defer func() {
+			os.Stdin = oldStdin
+			rIn.Close()
+		}()
 
 		captureOutputWithExitCode(t, func() int {
 			return Set([]string{"cache://test"}, cfg)
 		})
-
-		os.Stdin = oldStdin
-		rIn.Close()
 
 		exitCode, stdout, _ := captureOutputWithExitCode(t, func() int {
 			return Delete([]string{"cache://test"}, cfg)
