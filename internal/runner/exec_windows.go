@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 // RunCommand wraps command execution on Windows using os/exec.Command.
@@ -24,7 +25,19 @@ func RunCommand(cmdArgs []string, env []string) int {
 		return 1
 	}
 
-	cmd := exec.Command(commandName, cmdArgs[1:]...)
+	binary, err := exec.LookPath(commandName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Command not found: %v\n", err)
+		return 1
+	}
+
+	absBinary, err := filepath.Abs(binary)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to resolve absolute path: %v\n", err)
+		return 1
+	}
+
+	cmd := exec.Command(absBinary, cmdArgs[1:]...)
 	cmd.Env = env
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
