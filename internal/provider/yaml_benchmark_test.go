@@ -29,8 +29,12 @@ func BenchmarkYamlProviderInitialize(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	f.Write(raw)
-	f.Close()
+	if _, err := f.Write(raw); err != nil {
+		b.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		b.Fatal(err)
+	}
 
 	cfg := ProviderConfig{
 		Settings: map[string]string{

@@ -147,4 +147,3 @@ func BenchmarkResolveArrayAttr(b *testing.B) {
 		}
 	}
 }
-

@@ -173,8 +173,8 @@ keyring:
 
 			// Isolate testing of the default path by configuring a fake home dir environment
 			if tt.configPath == "" {
-			    t.Setenv("HOME", tempDir)
-			    t.Setenv("USERPROFILE", tempDir) // for windows
+				t.Setenv("HOME", tempDir)
+				t.Setenv("USERPROFILE", tempDir) // for windows
 			}
 
 			cfg, err := loadConfig()
