@@ -43,7 +43,7 @@ func TestRun_Errors(t *testing.T) {
 		},
 		{
 			name:     "No Command",
-			args:     []string{"-e", "A=env://B", "--"},
+			args:     []string{"-e", "A=${env://B}", "--"},
 			wantExit: 1,
 			wantErr:  "No command specified",
 		},
@@ -58,6 +58,12 @@ func TestRun_Errors(t *testing.T) {
 			args:     []string{"-t", "nonexistent_file.yaml", "--", "echo", "1"},
 			wantExit: 1,
 			wantErr:  "Error parsing template file",
+		},
+		{
+			name:     "Non-existent Command",
+			args:     []string{"--", "this_command_should_not_exist_xyz123"},
+			wantExit: 1,
+			wantErr:  "this_command_should_not_exist_xyz123",
 		},
 	}
 
@@ -126,8 +132,8 @@ func TestRunCommandExecution(t *testing.T) {
 	defer os.Remove(tmpFile.Name())
 
 	templateContent := `
-TEST_TEMPLATE_A=env://SHOW_TEST_VAR_A
-TEST_TEMPLATE_B=env://SHOW_TEST_VAR_B
+TEST_TEMPLATE_A=${env://SHOW_TEST_VAR_A}
+TEST_TEMPLATE_B=${env://SHOW_TEST_VAR_B}
 TEST_LITERAL_VAL=literal_value_here
 `
 	if _, err := tmpFile.WriteString(templateContent); err != nil {
@@ -147,7 +153,7 @@ TEST_LITERAL_VAL=literal_value_here
 				"CLOAKENV_TEST_B": "value_from_env_b",
 			},
 			runArgs: []string{
-				"-e", "CLOAKENV_TEST_A=env://CLOAKENV_TEST_B",
+				"-e", "CLOAKENV_TEST_A=${env://CLOAKENV_TEST_B}",
 				"--",
 				os.Args[0], "-test.run=TestHelperProcess",
 			},
@@ -201,4 +207,141 @@ TEST_LITERAL_VAL=literal_value_here
 			}
 		})
 	}
+}
+
+func TestRun_Autoload(t *testing.T) {
+	if os.Getenv("GO_WANT_RUN_AUTOLOAD_SUBPROCESS") == "1" {
+		var args []string
+		if err := json.Unmarshal([]byte(os.Getenv("RUN_ARGS")), &args); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to unmarshal RUN_ARGS: %v\n", err)
+			os.Exit(1)
+		}
+
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"mock_vault": {
+					Provider:     "custom_vault",
+					SingleEntity: boolPtr(true),
+					Attributes: map[string]any{
+						"CLOAKENV_TEST_AUTOLOAD_VAR": "autoloaded_secret_value",
+					},
+				},
+			},
+			Autoload: []config.AutoloadRule{
+				{
+					Match:  "*TestHelperProcess*",
+					Vaults: []string{"mock_vault"},
+				},
+			},
+		}
+
+		exitCode := Run(args, cfg)
+		os.Exit(exitCode)
+	}
+
+	if os.Getenv("GO_WANT_RUN_REGEX_SUBPROCESS") == "1" {
+		var args []string
+		if err := json.Unmarshal([]byte(os.Getenv("RUN_ARGS")), &args); err != nil {
+			os.Exit(1)
+		}
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"mock_vault": {
+					Provider:     "custom_vault",
+					SingleEntity: boolPtr(true),
+					Attributes: map[string]any{
+						"CLOAKENV_TEST_REGEX_SECRET": "transformed_secret_val",
+					},
+				},
+			},
+			Autoload: []config.AutoloadRule{
+				{
+					Match:   `^my-alias\s+(.*)$`,
+					Command: fmt.Sprintf("%q $1", os.Args[0]),
+					Vaults:  []string{"mock_vault"},
+				},
+			},
+		}
+		os.Exit(Run(args, cfg))
+	}
+
+	t.Run("Autoloads config vault for matching command", func(t *testing.T) {
+		runArgs := []string{
+			"--",
+			os.Args[0], "-test.run=TestHelperProcess",
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=TestRun_Autoload")
+		argsData, _ := json.Marshal(runArgs)
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_RUN_AUTOLOAD_SUBPROCESS=1",
+			"RUN_ARGS="+string(argsData),
+			"GO_WANT_HELPER_PROCESS=1",
+		)
+
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
+		}
+
+		output := string(out)
+		expected := "CLOAKENV_TEST_AUTOLOAD_VAR=autoloaded_secret_value"
+		if !strings.Contains(output, expected) {
+			t.Errorf("Expected output to contain %q, but got:\n%s", expected, output)
+		}
+	})
+
+	t.Run("Disables autoload when --no-autoload flag is passed", func(t *testing.T) {
+		runArgs := []string{
+			"--no-autoload",
+			"--",
+			os.Args[0], "-test.run=TestHelperProcess",
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=TestRun_Autoload")
+		argsData, _ := json.Marshal(runArgs)
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_RUN_AUTOLOAD_SUBPROCESS=1",
+			"RUN_ARGS="+string(argsData),
+			"GO_WANT_HELPER_PROCESS=1",
+		)
+
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
+		}
+
+		output := string(out)
+		expected := "CLOAKENV_TEST_AUTOLOAD_VAR=autoloaded_secret_value"
+		if strings.Contains(output, expected) {
+			t.Errorf("Expected output NOT to contain %q with --no-autoload flag, but got:\n%s", expected, output)
+		}
+	})
+
+	t.Run("Autoloads regex match and transforms command", func(t *testing.T) {
+		runArgs := []string{
+			"--",
+			"my-alias", "-test.run=TestHelperProcess",
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=TestRun_Autoload")
+		argsData, _ := json.Marshal(runArgs)
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_RUN_REGEX_SUBPROCESS=1",
+			"RUN_ARGS="+string(argsData),
+			"GO_WANT_HELPER_PROCESS=1",
+		)
+
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
+		}
+
+		output := string(out)
+		expected := "CLOAKENV_TEST_REGEX_SECRET=transformed_secret_val"
+		if !strings.Contains(output, expected) {
+			t.Errorf("Expected output to contain %q, but got:\n%s", expected, output)
+		}
+	})
+}
+
+func boolPtr(b bool) *bool {
+	return &b
 }

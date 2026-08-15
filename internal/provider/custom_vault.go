@@ -8,7 +8,7 @@ import (
 
 	"github.com/warpcode/cloakenv/internal/utils"
 
-	"gopkg.in/yaml.v3"
+	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 // CustomVaultProvider implements SecretProvider and SearchableProvider for multi-entity inline static configs.

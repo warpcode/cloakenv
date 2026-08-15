@@ -53,6 +53,20 @@ vaults:
     tags: [tag1, tag2]
     attributes:
       secret_key: secret_val
+autoload:
+  - match: "aws"
+    vaults:
+      - "keepass"
+    merge:
+      - "custom_static"
+    env:
+      AWS_REGION: "env://REGION"
+    whitelist:
+      - "AWS_ACCESS_KEY_ID"
+  - match: "litellm (.*)$"
+    command: "uvx --with 'litellm[proxy]' litellm \\1"
+    vaults:
+      - "keepass"
 `
 	configPath := filepath.Join(tempDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
@@ -111,6 +125,35 @@ vaults:
 	}
 	if val, ok := staticVault.Attributes["secret_key"]; !ok || val != "secret_val" {
 		t.Errorf("expected attributes to contain secret_key=secret_val, got %v", staticVault.Attributes)
+	}
+
+	// Verify autoload rules parsing
+	if len(cfg.Autoload) != 2 {
+		t.Fatalf("expected 2 autoload rules, got %d", len(cfg.Autoload))
+	}
+	rule := cfg.Autoload[0]
+	if rule.Match != "aws" {
+		t.Errorf("expected match 'aws', got %q", rule.Match)
+	}
+	if len(rule.Vaults) != 1 || rule.Vaults[0] != "keepass" {
+		t.Errorf("expected vaults ['keepass'], got %v", rule.Vaults)
+	}
+	if len(rule.Merge) != 1 || rule.Merge[0] != "custom_static" {
+		t.Errorf("expected merge ['custom_static'], got %v", rule.Merge)
+	}
+	if rule.Env["AWS_REGION"] != "env://REGION" {
+		t.Errorf("expected env AWS_REGION='env://REGION', got %q", rule.Env["AWS_REGION"])
+	}
+	if len(rule.Whitelist) != 1 || rule.Whitelist[0] != "AWS_ACCESS_KEY_ID" {
+		t.Errorf("expected whitelist ['AWS_ACCESS_KEY_ID'], got %v", rule.Whitelist)
+	}
+
+	rule2 := cfg.Autoload[1]
+	if rule2.Match != "litellm (.*)$" {
+		t.Errorf("expected match 'litellm (.*)$', got %q", rule2.Match)
+	}
+	if rule2.Command != "uvx --with 'litellm[proxy]' litellm \\1" {
+		t.Errorf("expected command template, got %q", rule2.Command)
 	}
 
 	// 3. Test invalid YAML file

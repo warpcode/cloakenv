@@ -289,3 +289,170 @@ list:
 		t.Errorf("expected empty path, got %q", results[0].Path)
 	}
 }
+
+func TestYamlProvider_InitializeErrors(t *testing.T) {
+	tempDir := t.TempDir()
+
+	invalidYamlPath := filepath.Join(tempDir, "invalid.yaml")
+	if err := os.WriteFile(invalidYamlPath, []byte("invalid:\n  yaml: [content"), 0644); err != nil {
+		t.Fatalf("failed to write invalid yaml file: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		cfg     ProviderConfig
+		wantErr bool
+	}{
+		{
+			name: "Missing vault_path",
+			cfg: ProviderConfig{
+				Settings: map[string]string{},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Invalid YAML syntax",
+			cfg: ProviderConfig{
+				Settings: map[string]string{
+					"vault_path": invalidYamlPath,
+				},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			yp := NewYamlProvider()
+			err := yp.Initialize(context.Background(), tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Initialize() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestConvertToEntriesMap(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   any
+		want    map[string]map[string]any
+		wantErr bool
+	}{
+		{
+			name: "Valid map[string]map[string]any",
+			input: map[string]map[string]any{
+				"entry1": {
+					"key1": "value1",
+				},
+			},
+			want: map[string]map[string]any{
+				"entry1": {
+					"key1": "value1",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid map[string]any with map[string]any values",
+			input: map[string]any{
+				"entry1": map[string]any{
+					"key1": "value1",
+				},
+			},
+			want: map[string]map[string]any{
+				"entry1": {
+					"key1": "value1",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid map[string]any with map[any]any values",
+			input: map[string]any{
+				"entry1": map[any]any{
+					"key1": "value1",
+					123:    "value2",
+				},
+			},
+			want: map[string]map[string]any{
+				"entry1": {
+					"key1": "value1",
+					"123":  "value2",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Invalid map[string]any with string value",
+			input: map[string]any{
+				"entry1": "string_value_instead_of_map",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Valid map[any]any with map[string]any values",
+			input: map[any]any{
+				"entry1": map[string]any{
+					"key1": "value1",
+				},
+				456: map[string]any{
+					"key2": "value2",
+				},
+			},
+			want: map[string]map[string]any{
+				"entry1": {
+					"key1": "value1",
+				},
+				"456": {
+					"key2": "value2",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid map[any]any with map[any]any values",
+			input: map[any]any{
+				"entry1": map[any]any{
+					"key1": "value1",
+				},
+			},
+			want: map[string]map[string]any{
+				"entry1": {
+					"key1": "value1",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Invalid map[any]any with string value",
+			input: map[any]any{
+				"entry1": "string_value_instead_of_map",
+			},
+			wantErr: true,
+		},
+		{
+			name:    "Invalid input type string",
+			input:   "some_string",
+			wantErr: true,
+		},
+		{
+			name:    "Invalid input type slice",
+			input:   []any{"some", "slice"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := convertToEntriesMap(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("convertToEntriesMap() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("convertToEntriesMap() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

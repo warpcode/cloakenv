@@ -26,7 +26,7 @@ func TestShow_KeysFormat(t *testing.T) {
 	t.Setenv("SHOW_TEST_VAR_B", "valB")
 
 	// Call Show with keys format (with keys that should sort B before A)
-	args := []string{"-e", "KEY_B=env://SHOW_TEST_VAR_B", "-e", "KEY_A=env://SHOW_TEST_VAR_A", "-o", "keys"}
+	args := []string{"-e", "KEY_B=${env://SHOW_TEST_VAR_B}", "-e", "KEY_A=${env://SHOW_TEST_VAR_A}", "-o", "keys"}
 	cfg := &config.Config{
 		Vaults: make(map[string]config.VaultConfig),
 	}
@@ -79,9 +79,9 @@ func TestShow_KeysFormattingBehavior(t *testing.T) {
 
 	// Explicit keys with lowercase, hyphens, and multiple underscores
 	args := []string{
-		"-e", "db-user=env://SHOW_TEST_VAR_B",
-		"-e", "api--key=env://SHOW_TEST_VAR_A",
-		"-e", "multiple___underscores=env://SHOW_TEST_VAR_A",
+		"-e", "db-user=${env://SHOW_TEST_VAR_B}",
+		"-e", "api--key=${env://SHOW_TEST_VAR_A}",
+		"-e", "multiple___underscores=${env://SHOW_TEST_VAR_A}",
 		"-o", "keys",
 	}
 	cfg := &config.Config{
@@ -172,5 +172,58 @@ func TestShow_TemplateFlag(t *testing.T) {
 		if !expectedKeys[line] {
 			t.Errorf("unexpected key in output: %q", line)
 		}
+	}
+}
+
+func TestShouldQuoteDotenvValue(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{
+			name:  "empty string",
+			input: "",
+			want:  false,
+		},
+		{
+			name:  "no special characters",
+			input: "hello",
+			want:  false,
+		},
+		{
+			name:  "with space",
+			input: "hello world",
+			want:  true,
+		},
+		{
+			name:  "with newline",
+			input: "hello\nworld",
+			want:  true,
+		},
+		{
+			name:  "with carriage return",
+			input: "hello\rworld",
+			want:  true,
+		},
+		{
+			name:  "with hash",
+			input: "hello#world",
+			want:  true,
+		},
+		{
+			name:  "with double quote",
+			input: "hello\"world",
+			want:  true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shouldQuoteDotenvValue(tc.input)
+			if got != tc.want {
+				t.Errorf("shouldQuoteDotenvValue(%q) = %v; want %v", tc.input, got, tc.want)
+			}
+		})
 	}
 }

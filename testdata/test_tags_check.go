@@ -33,7 +33,7 @@ func main() {
 					title = v.Value.Content
 				}
 			}
-			fmt.Printf("Entry: %q | Tags: %q\n", title, e.Tags)
+			_, _ = fmt.Printf("Entry: %q | Tags: %q\n", title, e.Tags)
 		}
 		for i := range g.Groups {
 			traverse(&g.Groups[i])

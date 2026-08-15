@@ -172,6 +172,62 @@ Unlike simple Key-Value secrets, an entry has:
 
 ---
 
+## Command Autoloading & Alias Masking (`run -- <command>`)
+
+`cloakenv` supports automatically injecting vault credentials and secret environment variables based on command matching when executing binaries wrapped with `cloakenv run -- <command>`.
+
+In addition to matching commands, `cloakenv` allows masking complex or verbose command invocations behind clean aliases by combining regex `match:` rules with command template substitution (`command:`).
+
+### Configuration (`config.yaml`)
+
+Define an `autoload:` block in your configuration file (`~/.config/cloakenv/config.yaml`):
+
+```yaml
+autoload:
+  # Regex Matching & Command Substitution (Alias Masking):
+  # Running: `cloakenv run -- litellm --config ~/.config/litellm/config.yaml`
+  # Expands to: `uvx --with 'litellm[proxy]' --with 'fastapi<0.116' litellm --config ~/.config/litellm/config.yaml`
+  # while injecting LITELLM_MASTER_KEY into process memory!
+  - match: "^litellm\\s+(.*)$"
+    command: "uvx --with 'litellm[proxy]' --with 'fastapi<0.116' litellm \\1"
+    vaults:
+      - "keepass_dev://litellm/keys"
+    env:
+      LITELLM_MASTER_KEY: "keyring://litellm/master_key"
+
+  - match: "aws"
+    vaults:
+      - "keepass_dev://aws/credentials"
+    env:
+      AWS_DEFAULT_REGION: "env://DEFAULT_REGION"
+    whitelist:
+      - "AWS_ACCESS_KEY_ID"
+      - "AWS_SECRET_ACCESS_KEY"
+      - "AWS_DEFAULT_REGION"
+
+  - match: "kubectl*"
+    merge:
+      - "yaml_dev://clusters/staging"
+    env:
+      KUBECONFIG_TOKEN: "keyring://k8s/token"
+```
+
+### Matching & Transformation Behavior
+- **Regex Matching (`match:`)**: Matches incoming command arguments using regular expressions (e.g. `^litellm\s+(.*)$`, `^aws-(dev|prod)`).
+- **Capture Group Expansion (`command:`)**: When `match:` is specified, capture groups from the regex match (e.g. `\1`, `\2` or `$1`, `$2`) are substituted into the target `command:` string before execution.
+- **Executable Basename & Subcommand Matching**: Matches executable binary names (`aws` matches `aws`, `/usr/bin/aws`) and subcommand prefixes (`git push` matches `git push origin main`).
+- **Wildcard / Glob**: Supports glob pattern matching (e.g., `kubectl*`, `npm run *`, `*.sh`).
+
+### Usage & CLI Flags
+- Running `cloakenv run -- litellm --config ~/.config/litellm/config.yaml` expands the command and injects secrets.
+- Explicit CLI flags (`-e`, `-m`, `-i`) take precedence over config autoload rules.
+- To bypass config autoloading for a single invocation, use `--no-autoload`:
+  ```bash
+  cloakenv run --no-autoload -- aws s3 ls
+  ```
+
+---
+
 ### Query Syntax Reference (Go `expr` syntax)
 
 All queries are evaluated against a flattened environment containing `title`, `tags`, `path`, and all custom attributes of each entry.
@@ -238,6 +294,22 @@ cloakenv search 'hostname matches "bastion\\..*\\.example\\.com"'
 #### 6. Graceful Missing Field Handling
 If you search on a property (like `bit_strength`) that doesn't exist on all entries, the query engine will **gracefully skip** matching entries that lack that property, rather than throwing a runtime error.
 
+
+## Explicit Expansion Syntax (`${...}`)
+
+`cloakenv` uses a secure, explicit syntax for resolving and injecting secrets. Any configuration value or template environment string containing `${scheme://...}` expressions will have those expressions dynamically replaced with their resolved secret values at runtime.
+
+### Key Rules & Behavior
+1. **Explicit Wrapping**: Secrets are only resolved when enclosed in `${...}`. Raw URIs (such as `env://DB_USER`) without `${...}` are treated as literal strings.
+2. **CLI Convenience**: For CLI commands such as `cloakenv get`, raw URIs are automatically wrapped in `${...}` transparently to save typing.
+3. **Multiple Expansions**: You can mix literal text and multiple secret expansions in a single configuration value:
+   ```yaml
+   connection_string: "mysql://${env://DB_USER}:${keyring://mysql/password}@localhost:3306/db"
+   ```
+4. **Escaping**: Use `$$` to escape the expansion syntax and output literal `$` or `${...}` sequences:
+   - `$$` becomes `$`
+   - `$${env://USER}` becomes `${env://USER}`
+5. **No Nesting**: Nested expansions (e.g., `${env://${USER}}`) are not supported and will return a validation error.
 
 ## Vaults & URI Schemes
 

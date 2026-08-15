@@ -5,15 +5,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
 func TestJsonProvider(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "cloakenv-json-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	jsonContent := `{
 		"entries": {
@@ -100,11 +97,7 @@ func TestJsonProvider(t *testing.T) {
 }
 
 func TestJsonProviderCustomEntriesKey(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "cloakenv-json-test-custom")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	// 1. Custom key: "hosts"
 	hostsContent := `{
@@ -195,11 +188,7 @@ func TestJsonProviderCustomEntriesKey(t *testing.T) {
 }
 
 func TestJsonProviderSingleEntity(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "cloakenv-json-single")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	jsonContent := `{
 		"title": "My Single JSON Vault",
@@ -281,5 +270,223 @@ func TestJsonProviderSingleEntity(t *testing.T) {
 	}
 	if results[0].Path != "" {
 		t.Errorf("expected empty path, got %q", results[0].Path)
+	}
+}
+
+func TestJsonProvider_SetSecret(t *testing.T) {
+	jp := NewJsonProvider()
+	err := jp.SetSecret(context.Background(), "KEY", "VAL")
+	if err == nil {
+		t.Error("expected error for SetSecret, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
+	}
+}
+
+func TestJsonProvider_DeleteSecret(t *testing.T) {
+	jp := NewJsonProvider()
+	err := jp.DeleteSecret(context.Background(), "KEY")
+	if err == nil {
+		t.Error("expected error for DeleteSecret, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
+	}
+}
+
+func TestJsonProvider_Validate(t *testing.T) {
+	jp := NewJsonProvider()
+
+	tests := []struct {
+		name     string
+		settings map[string]string
+		wantErr  bool
+	}{
+		{
+			name: "valid vault_path",
+			settings: map[string]string{
+				"vault_path": "/path/to/vault.json",
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty vault_path",
+			settings: map[string]string{
+				"vault_path": "",
+			},
+			wantErr: true,
+		},
+		{
+			name:     "missing vault_path",
+			settings: map[string]string{},
+			wantErr:  true,
+		},
+		{
+			name:     "nil settings",
+			settings: nil,
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := jp.Validate(tt.settings)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestJsonProviderInitialize_Errors(t *testing.T) {
+	tempDir := t.TempDir()
+
+	invalidJsonPath := filepath.Join(tempDir, "invalid.json")
+	if err := os.WriteFile(invalidJsonPath, []byte("{invalid json"), 0644); err != nil {
+		t.Fatalf("failed to write invalid json: %v", err)
+	}
+
+	nullJsonPath := filepath.Join(tempDir, "null.json")
+	if err := os.WriteFile(nullJsonPath, []byte("null"), 0644); err != nil {
+		t.Fatalf("failed to write null json: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		cfg     ProviderConfig
+		wantErr bool
+	}{
+		{
+			name: "missing vault_path",
+			cfg: ProviderConfig{
+				Settings: map[string]string{},
+			},
+			wantErr: true,
+		},
+		{
+			name: "non-existent file",
+			cfg: ProviderConfig{
+				Settings: map[string]string{
+					"vault_path": filepath.Join(tempDir, "does-not-exist.json"),
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "directory as file path",
+			cfg: ProviderConfig{
+				Settings: map[string]string{
+					"vault_path": tempDir,
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid json content",
+			cfg: ProviderConfig{
+				Settings: map[string]string{
+					"vault_path": invalidJsonPath,
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "null json content",
+			cfg: ProviderConfig{
+				Settings: map[string]string{
+					"vault_path": nullJsonPath,
+				},
+			},
+			wantErr: false,
+		},
+	}
+
+	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			jp := NewJsonProvider()
+			err := jp.Initialize(ctx, tt.cfg)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Initialize() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSerializeJsonVal(t *testing.T) {
+	tests := []struct {
+		name    string
+		val     any
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "string",
+			val:     "hello world",
+			want:    "hello world",
+			wantErr: false,
+		},
+		{
+			name:    "slice of any",
+			val:     []any{"item1", 2, true},
+			want:    `["item1",2,true]`,
+			wantErr: false,
+		},
+		{
+			name:    "map of string to any",
+			val:     map[string]any{"key1": "val1", "key2": 42},
+			want:    `{"key1":"val1","key2":42}`,
+			wantErr: false,
+		},
+		{
+			name:    "integer (default)",
+			val:     42,
+			want:    "42",
+			wantErr: false,
+		},
+		{
+			name:    "float (default)",
+			val:     3.14,
+			want:    "3.14",
+			wantErr: false,
+		},
+		{
+			name:    "boolean (default)",
+			val:     true,
+			want:    "true",
+			wantErr: false,
+		},
+		{
+			name:    "nil (default)",
+			val:     nil,
+			want:    "<nil>",
+			wantErr: false,
+		},
+		{
+			name:    "unserializable slice",
+			val:     []any{make(chan int)},
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "unserializable map",
+			val:     map[string]any{"key": make(chan int)},
+			want:    "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := serializeJsonVal(tt.val)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("serializeJsonVal() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("serializeJsonVal() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
