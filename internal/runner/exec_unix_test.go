@@ -125,10 +125,6 @@ func TestRunCommand_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to read from stderr pipe: %v", err)
 	}
-	_, err = stderr.ReadFrom(r)
-	if err != nil {
-		t.Fatalf("Failed to read from stderr pipe: %v", err)
-	}
 
 	if exitCode != 1 {
 		t.Errorf("Expected exit code 1, got %d", exitCode)
