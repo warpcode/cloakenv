@@ -40,7 +40,7 @@ func TestInternalMatchAlias(t *testing.T) {
 		os.Stdout = oldStdout
 
 		var buf bytes.Buffer
-		io.Copy(&buf, r)
+		_, _ = io.Copy(&buf, r)
 		return strings.TrimSpace(buf.String())
 	}
 
