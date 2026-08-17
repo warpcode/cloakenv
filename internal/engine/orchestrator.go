@@ -774,6 +774,44 @@ func parseSearchURI(location string) (string, string, error) {
 	return strings.Join(conditions, " and "), attr, nil
 }
 
+// MatchRunAlias evaluates configured autoload/run alias rules against command arguments
+// and returns the first matching AutoloadRule and true, or an empty rule and false if no rule matched.
+func MatchRunAlias(cfg *config.Config, cmdArgs []string) (config.AutoloadRule, bool) {
+	if cfg == nil || len(cfg.Autoload) == 0 || len(cmdArgs) == 0 {
+		return config.AutoloadRule{}, false
+	}
+	for _, rule := range cfg.Autoload {
+		matched, _, _ := MatchCommandRule(rule, cmdArgs)
+		if matched {
+			return rule, true
+		}
+	}
+	return config.AutoloadRule{}, false
+}
+
+// IsRunAlias reports whether a command argument slice matches any configured autoload/run alias rule.
+func IsRunAlias(cfg *config.Config, cmdArgs []string) bool {
+	_, matched := MatchRunAlias(cfg, cmdArgs)
+	return matched
+}
+
+// MatchRunAlias evaluates configured autoload/run alias rules against command arguments
+// and returns the first matching AutoloadRule and true, or an empty rule and false if no rule matched.
+func (o *Orchestrator) MatchRunAlias(cmdArgs []string) (config.AutoloadRule, bool) {
+	if o == nil {
+		return config.AutoloadRule{}, false
+	}
+	return MatchRunAlias(o.config, cmdArgs)
+}
+
+// IsRunAlias reports whether a command argument slice matches any configured autoload/run alias rule.
+func (o *Orchestrator) IsRunAlias(cmdArgs []string) bool {
+	if o == nil {
+		return false
+	}
+	return IsRunAlias(o.config, cmdArgs)
+}
+
 // MatchCommand reports whether a command argument slice matches an autoload rule match pattern.
 func MatchCommand(ruleMatch string, cmdArgs []string) bool {
 	matched, _, _ := MatchCommandRule(config.AutoloadRule{Match: ruleMatch}, cmdArgs)
