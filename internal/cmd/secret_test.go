@@ -350,7 +350,7 @@ func TestSet(t *testing.T) {
 
 	t.Run("MissingTTLValue", func(t *testing.T) {
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
-			return Set([]string{"cache://test", "value", "--ttl"}, &config.Config{})
+			return Set([]string{"cache://test", "--ttl"}, &config.Config{})
 		})
 
 		if exitCode != 1 {
@@ -364,7 +364,7 @@ func TestSet(t *testing.T) {
 
 	t.Run("InvalidTTL", func(t *testing.T) {
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
-			return Set([]string{"cache://test", "value", "--ttl", "invalid"}, &config.Config{})
+			return Set([]string{"cache://test", "--ttl", "invalid"}, &config.Config{})
 		})
 
 		if exitCode != 1 {
@@ -378,7 +378,7 @@ func TestSet(t *testing.T) {
 
 	t.Run("TooManyArgs", func(t *testing.T) {
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
-			return Set([]string{"cache://test", "value", "extra"}, &config.Config{})
+			return Set([]string{"cache://test", "extra"}, &config.Config{})
 		})
 
 		if exitCode != 1 {
@@ -391,8 +391,23 @@ func TestSet(t *testing.T) {
 	})
 
 	t.Run("InvalidURI", func(t *testing.T) {
+		oldStdin := os.Stdin
+		rIn, wIn, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdin = rIn
+		defer func() {
+			os.Stdin = oldStdin
+			rIn.Close()
+		}()
+		if _, err := wIn.Write([]byte("value")); err != nil {
+			t.Fatalf("failed to write to pipe: %v", err)
+		}
+		wIn.Close()
+
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
-			return Set([]string{"invalid-uri", "value"}, &config.Config{})
+			return Set([]string{"invalid-uri"}, &config.Config{})
 		})
 
 		if exitCode != 1 {
@@ -405,8 +420,23 @@ func TestSet(t *testing.T) {
 	})
 
 	t.Run("TTLNotSupported", func(t *testing.T) {
+		oldStdin := os.Stdin
+		rIn, wIn, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdin = rIn
+		defer func() {
+			os.Stdin = oldStdin
+			rIn.Close()
+		}()
+		if _, err := wIn.Write([]byte("value")); err != nil {
+			t.Fatalf("failed to write to pipe: %v", err)
+		}
+		wIn.Close()
+
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
-			return Set([]string{"env://test", "value", "--ttl", "1h"}, &config.Config{})
+			return Set([]string{"env://test", "--ttl", "1h"}, &config.Config{})
 		})
 
 		if exitCode != 1 {
@@ -422,8 +452,23 @@ func TestSet(t *testing.T) {
 		cfg := &config.Config{
 			Cache: config.CacheConfig{DefaultTTL: "invalid"},
 		}
+		oldStdin := os.Stdin
+		rIn, wIn, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdin = rIn
+		defer func() {
+			os.Stdin = oldStdin
+			rIn.Close()
+		}()
+		if _, err := wIn.Write([]byte("value")); err != nil {
+			t.Fatalf("failed to write to pipe: %v", err)
+		}
+		wIn.Close()
+
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
-			return Set([]string{"cache://test", "value"}, cfg)
+			return Set([]string{"cache://test"}, cfg)
 		})
 
 		if exitCode != 1 {
@@ -441,9 +486,23 @@ func TestSet(t *testing.T) {
 				"bad": {Provider: "invalid_provider"},
 			},
 		}
+		oldStdin := os.Stdin
+		rIn, wIn, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdin = rIn
+		defer func() {
+			os.Stdin = oldStdin
+			rIn.Close()
+		}()
+		if _, err := wIn.Write([]byte("value")); err != nil {
+			t.Fatalf("failed to write to pipe: %v", err)
+		}
+		wIn.Close()
 
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
-			return Set([]string{"cache://test", "value"}, cfg)
+			return Set([]string{"cache://test"}, cfg)
 		})
 
 		if exitCode != 1 {
@@ -452,25 +511,6 @@ func TestSet(t *testing.T) {
 
 		if !strings.Contains(stderr, "Config error:") {
 			t.Errorf("expected Config error message, got %q", stderr)
-		}
-	})
-
-	t.Run("Success_Positional", func(t *testing.T) {
-		keyring.MockInit()
-		cfg := &config.Config{
-			Vaults: make(map[string]config.VaultConfig),
-		}
-
-		cacheDir := t.TempDir()
-		t.Setenv("XDG_CACHE_HOME", cacheDir)
-		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
-
-		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
-			return Set([]string{"cache://test", "testvalue"}, cfg)
-		})
-
-		if exitCode != 0 {
-			t.Errorf("expected exit code 0 for successful set, got %d (stderr: %s)", exitCode, stderr)
 		}
 	})
 
@@ -485,29 +525,76 @@ func TestSet(t *testing.T) {
 		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
 
 		oldStdin := os.Stdin
-		defer func() { os.Stdin = oldStdin }()
-
-		r, w, err := os.Pipe()
+		rIn, wIn, err := os.Pipe()
 		if err != nil {
 			t.Fatalf("failed to create pipe: %v", err)
 		}
-		defer r.Close()
-		os.Stdin = r
-
-		go func() {
-			_, err := w.Write([]byte("stdin_value\n"))
-			if err != nil {
-				t.Errorf("failed to write to pipe: %v", err)
-			}
-			w.Close()
+		os.Stdin = rIn
+		defer func() {
+			os.Stdin = oldStdin
+			rIn.Close()
 		}()
 
+		if _, err := wIn.Write([]byte("stdin_value\n")); err != nil {
+			t.Fatalf("failed to write to pipe: %v", err)
+		}
+		wIn.Close()
+
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
-			return Set([]string{"cache://test", "-"}, cfg)
+			return Set([]string{"cache://test"}, cfg)
 		})
 
 		if exitCode != 0 {
 			t.Errorf("expected exit code 0 for successful set via stdin, got %d (stderr: %s)", exitCode, stderr)
+		}
+
+		exitCode, stdout, _ := captureOutputWithExitCode(t, func() int {
+			return Get([]string{"cache://test"}, cfg)
+		})
+		if exitCode != 0 || stdout != "stdin_value" {
+			t.Errorf("expected value %q, got %q (exit code %d)", "stdin_value", stdout, exitCode)
+		}
+	})
+
+	t.Run("Success_CRLF", func(t *testing.T) {
+		keyring.MockInit()
+		cfg := &config.Config{
+			Vaults: make(map[string]config.VaultConfig),
+		}
+
+		cacheDir := t.TempDir()
+		t.Setenv("XDG_CACHE_HOME", cacheDir)
+		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+
+		oldStdin := os.Stdin
+		rIn, wIn, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdin = rIn
+		defer func() {
+			os.Stdin = oldStdin
+			rIn.Close()
+		}()
+
+		if _, err := wIn.Write([]byte("crlf_value\r\n")); err != nil {
+			t.Fatalf("failed to write to pipe: %v", err)
+		}
+		wIn.Close()
+
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test_crlf"}, cfg)
+		})
+
+		if exitCode != 0 {
+			t.Errorf("expected exit code 0 for successful set with CRLF, got %d (stderr: %s)", exitCode, stderr)
+		}
+
+		exitCode, stdout, _ := captureOutputWithExitCode(t, func() int {
+			return Get([]string{"cache://test_crlf"}, cfg)
+		})
+		if exitCode != 0 || stdout != "crlf_value" {
+			t.Errorf("expected crlf_value without CRLF, got %q (exit: %d)", stdout, exitCode)
 		}
 	})
 }

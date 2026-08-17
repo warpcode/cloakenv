@@ -132,8 +132,8 @@ You can start using `cloakenv` immediately with the built-in providers—**no co
 ### 1. Store a secret securely in your OS Keyring
 
 ```bash
-# Store an API key in your OS keyring under service "openai" and account "dev_key"
-cloakenv set keyring://openai/dev_key "sk-proj-1234567890abcdef"
+# Store an API key in your OS keyring (reads securely from stdin or interactive prompt)
+echo -n "sk-proj-1234567890abcdef" | cloakenv set keyring://openai/dev_key
 ```
 
 ### 2. Retrieve a secret for a script or subshell
@@ -305,13 +305,13 @@ cloakenv get "work://Infrastructure/SSH:id_rsa" > ~/.ssh/id_rsa_temp
 
 ### `set` — Write to Keyring or Cache
 
-Writes a secret to a writable provider (`keyring://` or `cache://`).
+Writes a secret to a writable provider (`keyring://` or `cache://`). The secret value is read securely from standard input (stdin) or an interactive masked prompt, preventing exposure in shell history or process lists.
 
 ```bash
-cloakenv set <uri> [value] [--ttl <duration>]
+cloakenv set <uri> [--ttl <duration>]
 ```
 
-- If `[value]` is omitted or set to `-`, `cloakenv` securely prompts for the secret via masked terminal input or reads it from piped standard input.
+- The secret value is securely read from standard input (stdin) or prompted interactively if running in a terminal.
 - `--ttl <duration>`: Optional Time-To-Live expiration (e.g. `5m`, `1h`, `24h`) for `cache://` secrets.
 
 #### Examples:
@@ -321,10 +321,10 @@ cloakenv set <uri> [value] [--ttl <duration>]
 cloakenv set keyring://aws/secret_access_key
 
 # 2. Pipe secret from another CLI tool or file
-cat ~/.my_token | cloakenv set keyring://app/token -
+cat ~/.my_token | cloakenv set keyring://app/token
 
 # 3. Store a temporary session token in cache for 30 minutes
-cloakenv set cache://session_token "temp_jwt_token_xyz" --ttl 30m
+echo -n "temp_jwt_token_xyz" | cloakenv set cache://session_token --ttl 30m
 ```
 
 ---

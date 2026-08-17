@@ -62,7 +62,7 @@ func Get(args []string, cfg *config.Config) int {
 	return 0
 }
 
-// Set handles "cloakenv set <uri> [value] [--ttl <duration>]".
+// Set handles "cloakenv set <uri> [--ttl <duration>]".
 func Set(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
 		PrintSetHelp()
