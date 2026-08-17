@@ -1510,7 +1510,6 @@ func TestClearCache(t *testing.T) {
 	})
 }
 
-
 func TestOrchestratorBuildEnvEmptyEnv(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{

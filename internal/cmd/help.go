@@ -10,7 +10,7 @@ const generalUsage = `cloakenv — pluggable secret orchestrator & runtime injec
 Usage:
   cloakenv [-c config_path] run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] -- <command> [args]
   cloakenv [-c config_path] get <uri>
-  cloakenv [-c config_path] set <uri> [value] [--ttl <duration>]
+  cloakenv [-c config_path] set <uri> [--ttl <duration>]
   cloakenv [-c config_path] delete <uri>
   cloakenv [-c config_path] cache clear
   cloakenv [-c config_path] show <entry-uri> [args]
@@ -89,15 +89,14 @@ Arguments:
 // PrintSetHelp prints usage help for the set subcommand.
 func PrintSetHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv set <uri> [value] [--ttl <duration>]
+  cloakenv set <uri> [--ttl <duration>]
 
 Description:
   Store a secret value at a writable URI. Currently only 'keyring://' and 'cache://' schemes are writable.
-  If [value] is omitted or set to "-", the secret value will be securely read from standard input (stdin).
+  The secret value will be securely read from standard input (stdin).
 
 Arguments:
   <uri>           The secret URI where the value will be stored
-  [value]         The secret value to write (optional, defaults to stdin)
 
 Flags:
   --ttl duration  Expiration duration for cache entries (e.g. 5m, 1h).
