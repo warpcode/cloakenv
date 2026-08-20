@@ -142,10 +142,11 @@ TEST_LITERAL_VAL=literal_value_here
 	tmpFile.Close()
 
 	tests := []struct {
-		name           string
-		envVars        map[string]string
-		runArgs        []string
-		expectedOutput []string
+		name             string
+		envVars          map[string]string
+		runArgs          []string
+		expectedOutput   []string
+		unexpectedOutput []string
 	}{
 		{
 			name: "Direct env var resolution via -e",
@@ -178,6 +179,25 @@ TEST_LITERAL_VAL=literal_value_here
 				"TEST_LITERAL_VAL=literal_value_here",
 			},
 		},
+		{
+			name: "Empty environment with -E skips parent environment",
+			envVars: map[string]string{
+				"CLOAKENV_TEST_PARENT": "should_be_skipped",
+			},
+			runArgs: []string{
+				"-E",
+				"-e", "GO_WANT_HELPER_PROCESS=1",
+				"-e", "CLOAKENV_TEST_EXPLICIT=explicit_val",
+				"--",
+				os.Args[0], "-test.run=TestHelperProcess",
+			},
+			expectedOutput: []string{
+				"CLOAKENV_TEST_EXPLICIT=explicit_val",
+			},
+			unexpectedOutput: []string{
+				"CLOAKENV_TEST_PARENT",
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -203,6 +223,11 @@ TEST_LITERAL_VAL=literal_value_here
 			for _, expected := range tc.expectedOutput {
 				if !strings.Contains(output, expected) {
 					t.Errorf("Expected output to contain %q, but got:\n%s", expected, output)
+				}
+			}
+			for _, unexpected := range tc.unexpectedOutput {
+				if strings.Contains(output, unexpected) {
+					t.Errorf("Expected output NOT to contain %q, but got:\n%s", unexpected, output)
 				}
 			}
 		})

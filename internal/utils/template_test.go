@@ -7,15 +7,13 @@ import (
 )
 
 func TestParseTemplateFile(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "cloakenv-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
+	t.Chdir(tempDir)
 
 	tests := []struct {
 		name      string
 		content   string
+		setupPath func(t *testing.T, baseDir string) (clean, dirty string)
 		want      map[string]string
 		expectErr bool
 	}{
@@ -33,6 +31,10 @@ KEY4='val4'
 				"KEY3": "val3",
 				"KEY4": "val4",
 			},
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				p := filepath.Join(baseDir, "test.env")
+				return p, p
+			},
 			expectErr: false,
 		},
 		{
@@ -48,42 +50,92 @@ C=D
 				"A": "B",
 				"C": "D",
 			},
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				p := filepath.Join(baseDir, "test.env")
+				return p, p
+			},
 			expectErr: false,
 		},
 		{
-			name:      "invalid format (missing equal)",
-			content:   "INVALID_LINE\n",
-			want:      nil,
+			name:    "invalid format (missing equal)",
+			content: "INVALID_LINE\n",
+			want:    nil,
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				p := filepath.Join(baseDir, "test.env")
+				return p, p
+			},
 			expectErr: true,
 		},
 		{
-			name:      "empty key",
-			content:   "=value\n",
-			want:      nil,
+			name:    "empty key",
+			content: "=value\n",
+			want:    nil,
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				p := filepath.Join(baseDir, "test.env")
+				return p, p
+			},
 			expectErr: true,
 		},
 		{
-			name:      "empty value",
-			content:   "KEY=\n",
-			want:      nil,
+			name:    "empty value",
+			content: "KEY=\n",
+			want:    nil,
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				p := filepath.Join(baseDir, "test.env")
+				return p, p
+			},
 			expectErr: true,
 		},
 		{
-			name:      "empty value with spaces",
-			content:   "KEY=   \n",
-			want:      nil,
+			name:    "empty value with spaces",
+			content: "KEY=   \n",
+			want:    nil,
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				p := filepath.Join(baseDir, "test.env")
+				return p, p
+			},
+			expectErr: true,
+		},
+		{
+			name: "redundant path segments",
+			content: `
+K=V
+`,
+			want: map[string]string{
+				"K": "V",
+			},
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				dummyDir := filepath.Join(baseDir, "dummy")
+				if err := os.Mkdir(dummyDir, 0755); err != nil && !os.IsExist(err) {
+					t.Fatalf("failed to create dummy dir: %v", err)
+				}
+				cleanTmpFile := filepath.Join(baseDir, "test.env")
+				dirtyTmpFile := filepath.Join(baseDir, "dummy", "..", "test.env")
+				return cleanTmpFile, dirtyTmpFile
+			},
+			expectErr: false,
+		},
+		{
+			name:    "non-existent file",
+			content: "",
+			want:    nil,
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				return "", filepath.Join(baseDir, "does_not_exist.env")
+			},
 			expectErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpFile := filepath.Join(tempDir, "test.env")
-			if err := os.WriteFile(tmpFile, []byte(tt.content), 0644); err != nil {
-				t.Fatalf("failed to write test file: %v", err)
+			cleanTmpFile, dirtyTmpFile := tt.setupPath(t, tempDir)
+			if cleanTmpFile != "" {
+				if err := os.WriteFile(cleanTmpFile, []byte(tt.content), 0644); err != nil {
+					t.Fatalf("failed to write test file: %v", err)
+				}
 			}
 
-			got, err := ParseTemplateFile(tmpFile)
+			got, err := ParseTemplateFile(dirtyTmpFile)
 			if (err != nil) != tt.expectErr {
 				t.Errorf("ParseTemplateFile() error = %v, expectErr = %v", err, tt.expectErr)
 				return

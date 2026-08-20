@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
 // ParseTemplateFile reads a template file and returns a map of KEY to URI.
-func ParseTemplateFile(filepath string) (map[string]string, error) {
-	file, err := os.Open(filepath)
+func ParseTemplateFile(fpath string) (map[string]string, error) {
+	cleanPath := filepath.Clean(fpath)
+	file, err := os.Open(cleanPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open template file: %w", err)
 	}

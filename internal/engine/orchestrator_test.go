@@ -646,7 +646,7 @@ func TestOrchestratorBuildEnvMerges(t *testing.T) {
 			"DB_PASS": "explicit_pass",
 		}
 
-		res, err := orch.BuildEnv(ctx, explicit, merges, nil)
+		res, err := orch.BuildEnv(ctx, explicit, merges, nil, false)
 		if err != nil {
 			t.Fatalf("failed to build env: %v", err)
 		}
@@ -677,7 +677,7 @@ func TestOrchestratorBuildEnvMerges(t *testing.T) {
 			"DB_PASS": "explicit_pass", // Explicit is never filtered
 		}
 
-		res, err := orch.BuildEnv(ctx, explicit, merges, whitelist)
+		res, err := orch.BuildEnv(ctx, explicit, merges, whitelist, false)
 		if err != nil {
 			t.Fatalf("failed to build env: %v", err)
 		}
@@ -1135,7 +1135,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 
 	t.Run("Matching command autoloads vaults, env, and applies whitelist", func(t *testing.T) {
 		cmdArgs := []string{"aws", "s3", "ls"}
-		_, res, err := orch.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil)
+		_, res, err := orch.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil, false)
 		if err != nil {
 			t.Fatalf("failed to build env: %v", err)
 		}
@@ -1165,7 +1165,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		explicit := map[string]string{
 			"AWS_DEFAULT_REGION": "us-west-2",
 		}
-		_, res, err := orch.BuildEnvForCommand(ctx, cmdArgs, explicit, nil, nil)
+		_, res, err := orch.BuildEnvForCommand(ctx, cmdArgs, explicit, nil, nil, false)
 		if err != nil {
 			t.Fatalf("failed to build env: %v", err)
 		}
@@ -1183,7 +1183,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 
 	t.Run("Matching glob command autoloads merge URI and env", func(t *testing.T) {
 		cmdArgs := []string{"kubectl-prod", "get", "pods"}
-		_, res, err := orch.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil)
+		_, res, err := orch.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil, false)
 		if err != nil {
 			t.Fatalf("failed to build env: %v", err)
 		}
@@ -1204,7 +1204,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 
 	t.Run("Non matching command does not apply autoload rules", func(t *testing.T) {
 		cmdArgs := []string{"helm", "install"}
-		_, res, err := orch.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil)
+		_, res, err := orch.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil, false)
 		if err != nil {
 			t.Fatalf("failed to build env: %v", err)
 		}
@@ -1249,7 +1249,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		}
 
 		cmdArgs := []string{"litellm", "--config", "~/.config/litellm/config.yaml"}
-		newCmdArgs, res, err := orchRegex.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil)
+		newCmdArgs, res, err := orchRegex.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil, false)
 		if err != nil {
 			t.Fatalf("failed to build env for command: %v", err)
 		}
@@ -1590,4 +1590,50 @@ func TestClearCache(t *testing.T) {
 			t.Errorf("expected mock cache to have clearCalled = true")
 		}
 	})
+}
+
+func TestOrchestratorBuildEnvEmptyEnv(t *testing.T) {
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"my_vault": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"app_one": {
+						"DB_USER": "user1",
+						"DB_PASS": "pass1",
+						"PORT":    "3000",
+					},
+				},
+			},
+		},
+	}
+	orch, _ := NewOrchestrator(cfg)
+	ctx := context.Background()
+
+	merges := []string{
+		"my_vault://app_one",
+	}
+	explicit := map[string]string{
+		"DB_PASS": "explicit_pass",
+	}
+
+	t.Setenv("TEST_ENV_VAR", "TEST_VALUE")
+
+	res, err := orch.BuildEnv(ctx, explicit, merges, nil, true)
+	if err != nil {
+		t.Fatalf("failed to build env: %v", err)
+	}
+
+	envMap := make(map[string]string)
+	for _, item := range res {
+		k, v, _ := strings.Cut(item, "=")
+		envMap[k] = v
+	}
+
+	if len(res) != 3 {
+		t.Errorf("expected 3 env variables, got %d", len(res))
+	}
+	if _, ok := envMap["TEST_ENV_VAR"]; ok {
+		t.Errorf("expected TEST_ENV_VAR to not be present")
+	}
 }
