@@ -1274,6 +1274,77 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		}
 	})
 
+	t.Run("Autoload command substitution with secret URIs", func(t *testing.T) {
+		t.Setenv("EXP_USER", "alice")
+		uriCfg := &config.Config{
+			Autoload: []config.AutoloadRule{
+				{
+					Match:   `^testest(.*)$`,
+					Command: `echo "${env://EXP_USER}"`,
+				},
+			},
+		}
+		orchURI, err := NewOrchestrator(uriCfg)
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		cmdArgs := []string{"testest"}
+		newCmdArgs, _, err := orchURI.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil, false)
+		if err != nil {
+			t.Fatalf("failed to build env for command: %v", err)
+		}
+
+		expectedArgs := []string{"echo", "alice"}
+		if len(newCmdArgs) != len(expectedArgs) {
+			t.Fatalf("expected %d args, got %d (%v)", len(expectedArgs), len(newCmdArgs), newCmdArgs)
+		}
+		for idx, arg := range newCmdArgs {
+			if arg != expectedArgs[idx] {
+				t.Errorf("arg[%d]: expected %q, got %q", idx, expectedArgs[idx], arg)
+			}
+		}
+	})
+
+	t.Run("Direct command arguments with secret URIs and escaped tokens", func(t *testing.T) {
+		t.Setenv("CLI_TOKEN", "secret-token-123")
+		directCfg := &config.Config{}
+		orchDirect, err := NewOrchestrator(directCfg)
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		cmdArgs := []string{"mycli", "--token=${env://CLI_TOKEN}", "--raw=$${env://CLI_TOKEN}", "plain-arg"}
+		newCmdArgs, _, err := orchDirect.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil, false)
+		if err != nil {
+			t.Fatalf("failed to build env for command: %v", err)
+		}
+
+		expectedArgs := []string{"mycli", "--token=secret-token-123", "--raw=${env://CLI_TOKEN}", "plain-arg"}
+		if len(newCmdArgs) != len(expectedArgs) {
+			t.Fatalf("expected %d args, got %d (%v)", len(expectedArgs), len(newCmdArgs), newCmdArgs)
+		}
+		for idx, arg := range newCmdArgs {
+			if arg != expectedArgs[idx] {
+				t.Errorf("arg[%d]: expected %q, got %q", idx, expectedArgs[idx], arg)
+			}
+		}
+	})
+
+	t.Run("Command argument with invalid secret URI returns error", func(t *testing.T) {
+		failCfg := &config.Config{}
+		orchFail, err := NewOrchestrator(failCfg)
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		cmdArgs := []string{"mycli", "--token=${nonexistent_vault://missing}"}
+		_, _, err = orchFail.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil, false)
+		if err == nil {
+			t.Fatal("expected error for unresolvable secret URI in command arg, got nil")
+		}
+	})
+
 	t.Run("Validation rejects autoload rule with empty match", func(t *testing.T) {
 		invalidCfg := &config.Config{
 			Autoload: []config.AutoloadRule{

@@ -101,8 +101,20 @@ func TestInternalMatchAlias(t *testing.T) {
 				t.Errorf("expected exit code 1 for no match, got %d", exitCode)
 			}
 		})
-		if out != "false" {
-			t.Errorf("expected output 'false', got %q", out)
+		if out != "" {
+			t.Errorf("expected empty output, got %q", out)
+		}
+	})
+
+	t.Run("Empty args plain output", func(t *testing.T) {
+		out := captureStdout(t, func() {
+			exitCode := Internal([]string{"match-alias", "--"}, cfg)
+			if exitCode != 1 {
+				t.Errorf("expected exit code 1 for empty args, got %d", exitCode)
+			}
+		})
+		if out != "" {
+			t.Errorf("expected empty output, got %q", out)
 		}
 	})
 

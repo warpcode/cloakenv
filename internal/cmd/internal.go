@@ -74,8 +74,6 @@ Description:
 			res := MatchAliasResult{Matched: false}
 			data, _ := json.MarshalIndent(res, "", "  ")
 			fmt.Println(string(data))
-		} else {
-			fmt.Println("false")
 		}
 		return 1
 	}
@@ -100,15 +98,11 @@ Description:
 			return 1
 		}
 		fmt.Println(string(data))
-	} else {
-		if matched {
-			if rule.Match != "" {
-				fmt.Println(rule.Match)
-			} else {
-				fmt.Println("true")
-			}
+	} else if matched {
+		if rule.Match != "" {
+			fmt.Println(rule.Match)
 		} else {
-			fmt.Println("false")
+			fmt.Println("true")
 		}
 	}
 

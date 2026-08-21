@@ -1198,7 +1198,16 @@ func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cmdArgs []string,
 		currentCmdArgs = cmdArgs
 	}
 
-	return currentCmdArgs, result, nil
+	resolvedCmdArgs := make([]string, len(currentCmdArgs))
+	for i, arg := range currentCmdArgs {
+		resolvedArg, err := o.Resolve(ctx, arg)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to resolve command argument %q: %w", arg, err)
+		}
+		resolvedCmdArgs[i] = resolvedArg
+	}
+
+	return resolvedCmdArgs, result, nil
 }
 
 func serializeValHelper(val any) (string, error) {
