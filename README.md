@@ -29,6 +29,7 @@
   - [`show` — Inspect & Export Structured Records](#show--inspect--export-structured-records)
   - [`search` — Dynamic Querying Across Vaults](#search--dynamic-querying-across-vaults)
   - [`auth` — Manage Vault Authentication](#auth--manage-vault-authentication)
+  - [`internal` — Developer & Hook Helpers](#internal--developer--hook-helpers)
 - [Secret Providers & Schemes](#secret-providers--schemes)
   - [Built-In Providers (Zero Setup)](#built-in-providers-zero-setup)
   - [Configured Vaults](#configured-vaults)
@@ -92,7 +93,7 @@ flowchart TD
 
 ## Prerequisites
 
-- [Go](https://go.dev/) 1.23 or higher.
+- [Go](https://go.dev/) 1.26.2 or higher.
 - A supported operating system credential store:
   - **macOS**: Keychain (built-in)
   - **Linux**: D-Bus Secret Service (`gnome-keyring`, `ksecretsservice`, or `keepassxc`)
@@ -230,6 +231,7 @@ Commands:
   show    Retrieve and display a structured entry
   search  Search for structured entries across vaults
   auth    Manage vault credentials and status (login, forget, status)
+  internal  Developer & hook helpers (match-alias)
 ```
 
 ---
@@ -239,18 +241,19 @@ Commands:
 Wraps and executes a target command, injecting resolved environment variables directly into its process environment.
 
 ```bash
-cloakenv run [flags] -- <command> [args...]
+cloakenv run [-E] [flags] -- <command> [args...]
 ```
 
 > [!TIP]
 > If the `--` separator is omitted, all remaining positional arguments are treated as the command.
 
 #### Flags:
+- `-E`: Start with an empty environment (do not inherit from parent process). Useful for wrapping untrusted processes or preventing secret leakage from the parent shell.
 - `-e KEY=uri`: Explicitly map an environment variable to a secret URI (repeatable).
 - `-t template_path`: Load a `.env` template file containing `KEY=uri` or literal definitions (repeatable).
 - `-m entry-uri`: Merge all attributes from a structured entry into the environment (repeatable). Can target a single attribute using `:attribute`.
 - `-i KEY`: Whitelist key filter (repeatable). When `-i` is specified, only the whitelisted keys from `-m` merges are injected. (`-e` mappings always bypass whitelist filtering).
-- `--no-autoload` (or `--skip-autoload`): Bypass configuration `autoload:` rules for this execution.
+- `--no-autoload`: Bypass configuration `autoload:` rules for this execution.
 
 #### Examples:
 
@@ -462,6 +465,38 @@ cloakenv auth forget work
 
 ---
 
+### `internal` — Developer & Hook Helpers
+
+Internal helper commands for scripting and automation. These are not intended for direct end-user usage.
+
+```
+Usage:
+  cloakenv internal <subcommand> [args]
+```
+
+#### `match-alias` — Check Autoload Rule Matches
+
+Tests whether a command matches any configured `autoload:` rule without resolving secrets or triggering side effects. Useful for external shell hooks that need to detect whether `cloakenv run` would apply autoload rules to a given command.
+
+```bash
+cloakenv internal match-alias [--json] -- <command> [args]
+```
+
+- Exits with code **0** if a match is found, **1** if no match.
+- `--json`: Output structured JSON with the matched rule details (`match`, `command`, `vaults`, `merge`, `env`, `whitelist`).
+
+#### Examples:
+
+```bash
+# Check if "aws s3 ls" matches any autoload rule
+cloakenv internal match-alias -- aws s3 ls
+
+# Get structured JSON output for scripting
+cloakenv internal match-alias --json -- kubectl get pods
+```
+
+---
+
 ## Secret Providers & Schemes
 
 ### Built-In Providers (Zero Setup)
@@ -622,6 +657,9 @@ cloakenv search '("auth:ssh" in tags or "auth:tls" in tags) and bit_strength >= 
 > [!NOTE]
 > If an entry lacks a field referenced in the search query (e.g. searching `bit_strength == 4096` when some entries have no `bit_strength` attribute), `cloakenv` **gracefully skips** non-matching entries without raising runtime errors.
 
+> [!NOTE]
+> The search engine uses a **strict allowlist** for expression nodes. Only safe primitives, builtins, comparisons, and boolean logic are permitted. Arbitrary function calls and method invocations on entries are blocked for security.
+
 ---
 
 ## Configuration Reference (`config.yaml`)
@@ -735,6 +773,9 @@ make test-all    # Run fmt, vet, test, and bench in sequence
 make install     # Install binary to $GOBIN or $GOPATH/bin
 make uninstall   # Remove installed binary
 ```
+
+> [!NOTE]
+> CI runs lint, cross-platform tests (Linux, macOS, Windows), and [Semgrep](https://semgrep.dev/) static analysis for code scanning. All checks must pass before merge.
 
 ### Running Test Verification with Test Fixture
 
