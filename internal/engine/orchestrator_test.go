@@ -1408,6 +1408,88 @@ func TestCheckAccess(t *testing.T) {
 	}
 }
 
+func TestMatchRunAlias(t *testing.T) {
+	cfg := &config.Config{
+		Autoload: []config.AutoloadRule{
+			{
+				Match:   "^litellm\\s+(.*)$",
+				Command: "uvx --with 'litellm[proxy]' litellm \\1",
+				Vaults:  []string{"work_vault"},
+				Env: map[string]string{
+					"LITELLM_KEY": "keyring://litellm/master_key",
+				},
+			},
+			{
+				Match:  "aws",
+				Vaults: []string{"aws_prod"},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("Match regex rule", func(t *testing.T) {
+		cmdArgs := []string{"litellm", "--config", "config.yaml"}
+
+		rule, matched := MatchRunAlias(cfg, cmdArgs)
+		if !matched {
+			t.Fatalf("expected MatchRunAlias to return true")
+		}
+		if rule.Match != "^litellm\\s+(.*)$" {
+			t.Errorf("expected match ^litellm\\s+(.*)$, got %q", rule.Match)
+		}
+
+		ruleOrch, matchedOrch := orch.MatchRunAlias(cmdArgs)
+		if !matchedOrch || ruleOrch.Match != rule.Match {
+			t.Errorf("orchestrator method mismatch: got (%v, %t)", ruleOrch, matchedOrch)
+		}
+
+		if !IsRunAlias(cfg, cmdArgs) || !orch.IsRunAlias(cmdArgs) {
+			t.Errorf("expected IsRunAlias to return true")
+		}
+	})
+
+	t.Run("Match simple rule", func(t *testing.T) {
+		cmdArgs := []string{"aws", "s3", "ls"}
+
+		rule, matched := MatchRunAlias(cfg, cmdArgs)
+		if !matched {
+			t.Fatalf("expected MatchRunAlias to return true")
+		}
+		if rule.Match != "aws" {
+			t.Errorf("expected match 'aws', got %q", rule.Match)
+		}
+	})
+
+	t.Run("No match", func(t *testing.T) {
+		cmdArgs := []string{"helm", "status"}
+
+		_, matched := MatchRunAlias(cfg, cmdArgs)
+		if matched {
+			t.Errorf("expected MatchRunAlias to return false for unmatched command")
+		}
+		if IsRunAlias(cfg, cmdArgs) || orch.IsRunAlias(cmdArgs) {
+			t.Errorf("expected IsRunAlias to return false for unmatched command")
+		}
+	})
+
+	t.Run("Nil or empty inputs", func(t *testing.T) {
+		if IsRunAlias(nil, []string{"aws"}) {
+			t.Errorf("expected IsRunAlias(nil, ...) to return false")
+		}
+		var nilOrch *Orchestrator
+		if nilOrch.IsRunAlias([]string{"aws"}) {
+			t.Errorf("expected nilOrch.IsRunAlias(...) to return false")
+		}
+		if IsRunAlias(cfg, nil) || IsRunAlias(cfg, []string{}) {
+			t.Errorf("expected IsRunAlias with empty cmdArgs to return false")
+		}
+	})
+}
+
 func boolPtr(b bool) *bool {
 	return &b
 }

@@ -70,6 +70,8 @@ func main() {
 		os.Exit(cmd.Search(os.Args[2:], cfg))
 	case "auth":
 		os.Exit(cmd.Auth(os.Args[2:], cfg))
+	case "internal":
+		os.Exit(cmd.Internal(os.Args[2:], cfg))
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", os.Args[1])
 		cmd.PrintUsage()
