@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"encoding/json"
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"strings"
@@ -29,23 +29,31 @@ func TestInternalMatchAlias(t *testing.T) {
 		},
 	}
 
-	captureStdout := func(fn func()) string {
+	captureStdout := func(t *testing.T, fn func()) string {
+		t.Helper()
 		oldStdout := os.Stdout
-		r, w, _ := os.Pipe()
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create stdout pipe: %v", err)
+		}
+		defer r.Close()
+		defer w.Close()
+
 		os.Stdout = w
+		defer func() {
+			os.Stdout = oldStdout
+		}()
 
 		fn()
 
-		w.Close()
-		os.Stdout = oldStdout
-
+		_ = w.Close()
 		var buf bytes.Buffer
 		_, _ = io.Copy(&buf, r)
 		return strings.TrimSpace(buf.String())
 	}
 
 	t.Run("Matched command plain output", func(t *testing.T) {
-		out := captureStdout(func() {
+		out := captureStdout(t, func() {
 			exitCode := Internal([]string{"match-alias", "--", "aws", "s3", "ls"}, cfg)
 			if exitCode != 0 {
 				t.Errorf("expected exit code 0, got %d", exitCode)
@@ -57,7 +65,7 @@ func TestInternalMatchAlias(t *testing.T) {
 	})
 
 	t.Run("Matched command JSON output", func(t *testing.T) {
-		out := captureStdout(func() {
+		out := captureStdout(t, func() {
 			exitCode := Internal([]string{"match-alias", "--json", "--", "litellm", "--config", "config.yaml"}, cfg)
 			if exitCode != 0 {
 				t.Errorf("expected exit code 0, got %d", exitCode)
@@ -87,7 +95,7 @@ func TestInternalMatchAlias(t *testing.T) {
 	})
 
 	t.Run("Unmatched command plain output", func(t *testing.T) {
-		out := captureStdout(func() {
+		out := captureStdout(t, func() {
 			exitCode := Internal([]string{"match-alias", "--", "helm", "status"}, cfg)
 			if exitCode != 1 {
 				t.Errorf("expected exit code 1 for no match, got %d", exitCode)
@@ -99,7 +107,7 @@ func TestInternalMatchAlias(t *testing.T) {
 	})
 
 	t.Run("Unmatched command JSON output", func(t *testing.T) {
-		out := captureStdout(func() {
+		out := captureStdout(t, func() {
 			exitCode := Internal([]string{"match-alias", "--json", "--", "helm", "status"}, cfg)
 			if exitCode != 1 {
 				t.Errorf("expected exit code 1 for no match, got %d", exitCode)
@@ -117,7 +125,7 @@ func TestInternalMatchAlias(t *testing.T) {
 	})
 
 	t.Run("Help flag", func(t *testing.T) {
-		out := captureStdout(func() {
+		out := captureStdout(t, func() {
 			exitCode := Internal([]string{"match-alias", "--help"}, cfg)
 			if exitCode != 0 {
 				t.Errorf("expected exit code 0 for help, got %d", exitCode)

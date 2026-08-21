@@ -12,13 +12,13 @@ import (
 
 // MatchAliasResult represents the structured JSON output for match-alias.
 type MatchAliasResult struct {
-	Matched   bool                `json:"matched"`
-	Match     string              `json:"match,omitempty"`
-	Command   string              `json:"command,omitempty"`
-	Vaults    []string            `json:"vaults,omitempty"`
-	Merge     []string            `json:"merge,omitempty"`
-	Env       map[string]string   `json:"env,omitempty"`
-	Whitelist []string            `json:"whitelist,omitempty"`
+	Matched   bool              `json:"matched"`
+	Match     string            `json:"match,omitempty"`
+	Command   string            `json:"command,omitempty"`
+	Vaults    []string          `json:"vaults,omitempty"`
+	Merge     []string          `json:"merge,omitempty"`
+	Env       map[string]string `json:"env,omitempty"`
+	Whitelist []string          `json:"whitelist,omitempty"`
 }
 
 // Internal handles internal helper commands, specifically "cloakenv internal match-alias [--json] -- <command> [args]".

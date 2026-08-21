@@ -1420,7 +1420,7 @@ func TestMatchRunAlias(t *testing.T) {
 				},
 			},
 			{
-				Match: "aws",
+				Match:  "aws",
 				Vaults: []string{"aws_prod"},
 			},
 		},
