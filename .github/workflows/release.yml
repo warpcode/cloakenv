@@ -10,7 +10,7 @@ on:
 
 permissions:
   contents: write  # Required to create/update releases and push tags
-  workflows: write # Required to update workflow files when pushing tags
+  actions: write # Required to update workflow files when pushing tags
 
 jobs:
   build-and-publish:
