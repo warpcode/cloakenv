@@ -111,6 +111,7 @@ func Set(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", readErr)
 		return 1
 	}
+	defer utils.ZeroBytes(b)
 
 	value = string(b)
 	if strings.HasSuffix(value, "\r\n") {

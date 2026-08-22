@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/warpcode/cloakenv/internal/utils"
 	"github.com/zalando/go-keyring"
 )
 
@@ -124,6 +125,7 @@ func (c *CacheProvider) GetSecret(ctx context.Context, location string) (string,
 	if err != nil {
 		return "", fmt.Errorf("cache provider: decryption failed: %w", err)
 	}
+	defer utils.ZeroBytes(plaintext)
 
 	// Verify plaintext metadata layout (at least 16 bytes for writeTime + TTL)
 	if len(plaintext) < 16 {
@@ -166,7 +168,12 @@ func (c *CacheProvider) SetSecret(ctx context.Context, location string, value st
 	binary.BigEndian.PutUint64(metadata[0:8], uint64(writeTime))
 	binary.BigEndian.PutUint64(metadata[8:16], uint64(ttl.Nanoseconds()))
 
-	plaintext := append(metadata, []byte(value)...)
+	valBytes := []byte(value)
+	plaintext := append(metadata, valBytes...)
+	defer func() {
+		utils.ZeroBytes(plaintext)
+		utils.ZeroBytes(valBytes)
+	}()
 
 	// AES-GCM encryption
 	block, err := aes.NewCipher(c.aesKey)
