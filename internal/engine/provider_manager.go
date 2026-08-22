@@ -40,6 +40,14 @@ func (pm *ProviderManager) Keyring() *provider.OSKeyringProvider {
 	return pm.keyring
 }
 
+// HasBuiltin reports whether the given scheme is a registered built-in provider.
+func (pm *ProviderManager) HasBuiltin(scheme string) bool {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	_, ok := pm.builtins[scheme]
+	return ok
+}
+
 // GetProvider retrieves and initializes a provider by scheme.
 // Returns the provider, and a boolean indicating if it is a built-in provider.
 func (pm *ProviderManager) GetProvider(ctx context.Context, scheme string) (provider.SecretProvider, bool, error) {

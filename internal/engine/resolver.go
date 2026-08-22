@@ -53,15 +53,15 @@ func (r *Resolver) ResolveWithKey(ctx context.Context, uri string, configKey str
 }
 
 func (r *Resolver) isKnownScheme(scheme string) bool {
+	if r.providers.HasBuiltin(scheme) {
+		return true
+	}
 	cfg := r.providers.Config()
 	if cfg != nil {
-		if _, ok := cfg.Vaults[scheme]; ok {
-			return true
-		}
+		_, ok := cfg.Vaults[scheme]
+		return ok
 	}
-	// Check builtins by fetching it (a bit hacky but works without exposing internal map)
-	_, isBuiltin, err := r.providers.GetProvider(context.Background(), scheme)
-	return err == nil && isBuiltin
+	return false
 }
 
 func (r *Resolver) expandString(ctx context.Context, s string, depth int, configKey string) (string, error) {

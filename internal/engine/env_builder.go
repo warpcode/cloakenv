@@ -22,11 +22,11 @@ type EnvResolver interface {
 // EnvBuilder handles the construction of the environment block.
 type EnvBuilder struct {
 	config   *config.Config
-	resolver *Resolver
+	resolver EnvResolver
 }
 
 // NewEnvBuilder creates a new EnvBuilder.
-func NewEnvBuilder(cfg *config.Config, r *Resolver) *EnvBuilder {
+func NewEnvBuilder(cfg *config.Config, r EnvResolver) *EnvBuilder {
 	return &EnvBuilder{
 		config:   cfg,
 		resolver: r,
