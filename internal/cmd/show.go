@@ -28,53 +28,46 @@ func parseShowFlags(args []string) (*showOptions, error) {
 		outputFormat: "yaml",
 	}
 
-	i := 0
-	for i < len(args) {
-		switch {
-		case (args[i] == "-o" || args[i] == "--output") && i+1 < len(args):
-			i++
-			format := args[i]
-			if format != "yaml" && format != "json" && format != "env" && format != "keys" {
-				return nil, fmt.Errorf("Invalid output format %q (expected yaml, json, env, or keys)", format)
-			}
-			opts.outputFormat = format
-			i++
-		case args[i] == "-m" && i+1 < len(args):
-			i++
-			opts.merges = append(opts.merges, args[i])
-			i++
-		case args[i] == "-e" && i+1 < len(args):
-			i++
-			key, uri, ok := strings.Cut(args[i], "=")
-			if !ok || key == "" || uri == "" {
-				return nil, fmt.Errorf("Invalid -e format: %q (expected KEY=uri)", args[i])
-			}
-			opts.explicit[key] = uri
-			i++
-		case args[i] == "-t" && i+1 < len(args):
-			i++
-			templatePath := args[i]
-			envs, err := utils.ParseTemplateFile(templatePath)
-			if err != nil {
-				return nil, fmt.Errorf("Error parsing template file %s: %v", templatePath, err)
-			}
-			for k, v := range envs {
-				opts.explicit[k] = v
-			}
-			i++
-		case args[i] == "-i" && i+1 < len(args):
-			i++
-			opts.whitelist = append(opts.whitelist, args[i])
-			i++
-		case strings.HasPrefix(args[i], "-"):
-			return nil, fmt.Errorf("Unknown flag: %s", args[i])
-		default:
-			if opts.positionalURI != "" {
-				return nil, fmt.Errorf("Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]")
-			}
-			opts.positionalURI = args[i]
-			i++
+	usageMsg := "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]"
+
+	parser := NewFlagParser()
+	parser.Var([]string{"-o", "--output"}, true, "", func(name, val string) error {
+		if val != "yaml" && val != "json" && val != "env" && val != "keys" {
+			return fmt.Errorf("Invalid output format %q (expected yaml, json, env, or keys)", val)
 		}
+		opts.outputFormat = val
+		return nil
+	})
+	parser.StringSlice([]string{"-m"}, &opts.merges, "")
+	parser.Var([]string{"-e"}, true, "", func(name, val string) error {
+		key, uri, ok := strings.Cut(val, "=")
+		if !ok || key == "" || uri == "" {
+			return fmt.Errorf("Invalid -e format: %q (expected KEY=uri)", val)
+		}
+		opts.explicit[key] = uri
+		return nil
+	})
+	parser.Var([]string{"-t"}, true, "", func(name, val string) error {
+		envs, err := utils.ParseTemplateFile(val)
+		if err != nil {
+			return fmt.Errorf("Error parsing template file %s: %v", val, err)
+		}
+		for k, v := range envs {
+			opts.explicit[k] = v
+		}
+		return nil
+	})
+	parser.StringSlice([]string{"-i"}, &opts.whitelist, "")
+	parser.PositionalHandler = func(arg string) error {
+		if opts.positionalURI != "" {
+			return fmt.Errorf("%s", usageMsg)
+		}
+		opts.positionalURI = arg
+		return nil
+	}
+
+	if _, err := parser.Parse(args); err != nil {
+		return nil, err
 	}
 
 	hasFlags := len(opts.merges) > 0 || len(opts.explicit) > 0 || len(opts.whitelist) > 0
@@ -83,7 +76,7 @@ func parseShowFlags(args []string) (*showOptions, error) {
 		opts.positionalURI = ""
 	}
 	if !hasFlags && opts.positionalURI == "" {
-		return nil, fmt.Errorf("Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]")
+		return nil, fmt.Errorf("%s", usageMsg)
 	}
 
 	return opts, nil

@@ -27,54 +27,37 @@ func Run(args []string, cfg *config.Config) int {
 		emptyEnv    bool
 	)
 
-	// Parse flags manually to support repeated -e, -m, and -i flags + -- separator
-	i := 0
-	for i < len(args) {
-		switch {
-		case args[i] == "--":
-			cmdArgs = args[i+1:]
-			i = len(args) // break out of loop
-		case args[i] == "-E":
-			emptyEnv = true
-			i++
-		case args[i] == "--no-autoload" || args[i] == "--skip-autoload":
-			noAutoload = true
-			i++
-		case args[i] == "-e" && i+1 < len(args):
-			i++
-			key, uri, ok := strings.Cut(args[i], "=")
-			if !ok || key == "" || uri == "" {
-				fmt.Fprintf(os.Stderr, "Invalid -e format: %q (expected KEY=uri)\n", args[i])
-				return 1
-			}
-			explicitEnv[key] = uri
-			i++
-		case args[i] == "-t" && i+1 < len(args):
-			i++
-			templatePath := args[i]
-			envs, err := utils.ParseTemplateFile(templatePath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error parsing template file %s: %v\n", templatePath, err)
-				return 1
-			}
-			for k, v := range envs {
-				explicitEnv[k] = v
-			}
-			i++
-		case args[i] == "-m" && i+1 < len(args):
-			i++
-			merges = append(merges, args[i])
-			i++
-		case args[i] == "-i" && i+1 < len(args):
-			i++
-			whitelist = append(whitelist, args[i])
-			i++
-		default:
-			// Treat remaining args as the command if no -- separator was used
-			cmdArgs = args[i:]
-			i = len(args)
+	parser := NewFlagParser()
+	parser.StopAtNonFlag = true
+	parser.Bool([]string{"-E"}, &emptyEnv)
+	parser.Bool([]string{"--no-autoload", "--skip-autoload"}, &noAutoload)
+	parser.Var([]string{"-e"}, true, "", func(name, val string) error {
+		key, uri, ok := strings.Cut(val, "=")
+		if !ok || key == "" || uri == "" {
+			return fmt.Errorf("Invalid -e format: %q (expected KEY=uri)", val)
 		}
+		explicitEnv[key] = uri
+		return nil
+	})
+	parser.Var([]string{"-t"}, true, "", func(name, val string) error {
+		envs, err := utils.ParseTemplateFile(val)
+		if err != nil {
+			return fmt.Errorf("Error parsing template file %s: %v", val, err)
+		}
+		for k, v := range envs {
+			explicitEnv[k] = v
+		}
+		return nil
+	})
+	parser.StringSlice([]string{"-m"}, &merges, "")
+	parser.StringSlice([]string{"-i"}, &whitelist, "")
+
+	rem, err := parser.Parse(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
+	cmdArgs = rem
 
 	if len(cmdArgs) == 0 {
 		fmt.Fprintln(os.Stderr, "No command specified. Usage: cloakenv run [flags] -- <command> [args]")
