@@ -1209,6 +1209,7 @@ func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cmdArgs []string,
 	return resolvedCmdArgs, result, nil
 }
 
+
 // Keyring returns the built-in keyring provider for direct access
 // (used by the config subcommands).
 func (o *Orchestrator) Keyring() *provider.OSKeyringProvider {

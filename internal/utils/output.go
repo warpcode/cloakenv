@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"regexp"
-	"strings"
 
 	"github.com/warpcode/cloakenv/internal/yaml"
 )
@@ -28,27 +26,61 @@ func RenderOutput(data any, asJSON bool, errorLabel string) error {
 	return nil
 }
 
-var nonAlphanumericRun = regexp.MustCompile(`[^a-zA-Z0-9]+`)
-
 // FormatKey formats a key to THIS_KEY format: uppercase with non-alphanumeric
 // runs replaced by a single underscore.
 func FormatKey(key string) string {
-	return strings.ToUpper(nonAlphanumericRun.ReplaceAllString(key, "_"))
+	if key == "" {
+		return ""
+	}
+
+	needsTransform := false
+	inNonAlpha := false
+	for i := 0; i < len(key); i++ {
+		c := key[i]
+		if ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9') {
+			inNonAlpha = false
+		} else if 'a' <= c && c <= 'z' {
+			needsTransform = true
+			break
+		} else {
+			if inNonAlpha {
+				needsTransform = true
+				break
+			}
+			if c != '_' {
+				needsTransform = true
+				break
+			}
+			inNonAlpha = true
+		}
+	}
+
+	if !needsTransform {
+		return key
+	}
+
+	b := make([]byte, 0, len(key))
+	inNonAlpha = false
+	for i := 0; i < len(key); i++ {
+		c := key[i]
+		if ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9') {
+			if 'a' <= c && c <= 'z' {
+				c = c - 'a' + 'A'
+			}
+			b = append(b, c)
+			inNonAlpha = false
+		} else {
+			if !inNonAlpha {
+				b = append(b, '_')
+				inNonAlpha = true
+			}
+		}
+	}
+	return string(b)
 }
 
 // SerializeAttrValue converts an attribute value into a string representation for environment usage.
-// Strings are returned as-is, slices and maps are serialized as YAML, and other types are formatted using %v.
+// Strings are returned as-is, slices and maps are serialized as YAML, and other types are formatted using fast-path conversions or %v.
 func SerializeAttrValue(val any) (string, error) {
-	switch v := val.(type) {
-	case string:
-		return v, nil
-	case []any, map[string]any, map[any]any, []string:
-		data, err := yaml.Marshal(v)
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSuffix(string(data), "\n"), nil
-	default:
-		return fmt.Sprintf("%v", v), nil
-	}
+	return yaml.SerializeValue(val)
 }

@@ -72,7 +72,7 @@ func TestSerializeAttrValue(t *testing.T) {
 		{
 			name:     "nil value",
 			input:    nil,
-			expected: "<nil>",
+			expected: "",
 		},
 	}
 

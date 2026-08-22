@@ -176,16 +176,9 @@ func toEntry(name string, raw map[string]any) Entry {
 
 // serializeVal converts structured yaml/json data to string format.
 func serializeVal(val any) (string, error) {
-	switch v := val.(type) {
-	case string:
-		return v, nil
-	case []any, map[string]any, map[any]any:
-		data, err := yaml.Marshal(v)
-		if err != nil {
-			return "", fmt.Errorf("custom_vault serialization failed: %w", err)
-		}
-		return strings.TrimSuffix(string(data), "\n"), nil
-	default:
-		return fmt.Sprintf("%v", v), nil
+	s, err := yaml.SerializeValue(val)
+	if err != nil {
+		return "", fmt.Errorf("custom_vault serialization failed: %w", err)
 	}
+	return s, nil
 }
