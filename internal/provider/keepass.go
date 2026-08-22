@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -68,28 +69,35 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 	}
 
 	forcePrompt := cfg.Settings["force_prompt"] == "true"
-	var password string
+	var password []byte
 	var fromKeyring bool
 
 	accountName := "provider/" + remoteName
 
+	// Ensure password byte slice is scrubbed from heap memory upon exit
+	defer func() {
+		if password != nil {
+			utils.ZeroBytes(password)
+		}
+	}()
+
 	// 1. Try keyring if not forcing prompt
 	if !forcePrompt {
-		var err error
-		password, err = keyring.Get(keyringPrefix, accountName)
-		if err == nil && password != "" {
+		pwStr, err := keyring.Get(keyringPrefix, accountName)
+		if err == nil && pwStr != "" {
+			password = []byte(pwStr)
 			fromKeyring = true
 		}
 	}
 
 	// 2. If not found and not forcing prompt, return an error instructing to login
-	if password == "" && !forcePrompt {
+	if len(password) == 0 && !forcePrompt {
 		return fmt.Errorf("no credentials found for remote %q; please log in first using 'cloakenv auth login %s'", remoteName, remoteName)
 	}
 
 	// 3. Prompt user if forcePrompt is true or if we are logging in
 	var prompted bool
-	if password == "" || forcePrompt {
+	if len(password) == 0 || forcePrompt {
 		if term.IsTerminal(int(os.Stdin.Fd())) {
 			fmt.Printf("Enter master password for remote %q: ", remoteName)
 			bytePassword, err := term.ReadPassword(int(os.Stdin.Fd()))
@@ -97,15 +105,18 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 				return fmt.Errorf("keepass provider: failed to read password: %w", err)
 			}
 			fmt.Println()
-			password = string(bytePassword)
+			password = bytePassword
 			prompted = true
 		} else {
 			reader := bufio.NewReader(os.Stdin)
-			line, err := reader.ReadString('\n')
+			lineBytes, err := reader.ReadBytes('\n')
 			if err != nil {
 				return fmt.Errorf("keepass provider: no credentials found for remote %q and stdin is not a terminal (failed to read piped password: %w)", remoteName, err)
 			}
-			password = strings.TrimRight(line, "\r\n")
+			trimmed := bytes.TrimRight(lineBytes, "\r\n")
+			password = make([]byte, len(trimmed))
+			copy(password, trimmed)
+			utils.ZeroBytes(lineBytes)
 			prompted = true
 		}
 	}
@@ -123,7 +134,7 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 
 	// 5. Save password to keyring if prompted and verified
 	if prompted {
-		if err := keyring.Set(keyringPrefix, accountName, password); err != nil {
+		if err := keyring.Set(keyringPrefix, accountName, string(password)); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to save credentials to keyring: %v\n", err)
 		}
 	}
@@ -131,7 +142,7 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 	return nil
 }
 
-func (k *KeePassProvider) unlock(vaultPath string, password string) error {
+func (k *KeePassProvider) unlock(vaultPath string, password []byte) error {
 	k.cacheMu.Lock()
 	k.entryCache = make(map[*gokeepasslib.Entry]map[string]string)
 	k.binaryCache = nil
@@ -153,13 +164,15 @@ func (k *KeePassProvider) unlock(vaultPath string, password string) error {
 	defer file.Close()
 
 	k.db = gokeepasslib.NewDatabase()
-	k.db.Credentials = gokeepasslib.NewPasswordCredentials(password)
+	k.db.Credentials = gokeepasslib.NewPasswordCredentials(string(password))
 
 	if err := gokeepasslib.NewDecoder(file).Decode(k.db); err != nil {
+		k.db.Credentials = nil
 		return fmt.Errorf("keepass provider: decoding failed (check master key): %w", err)
 	}
 
 	if err := k.db.UnlockProtectedEntries(); err != nil {
+		k.db.Credentials = nil
 		return fmt.Errorf("keepass provider: failed to unlock protected entries: %w", err)
 	}
 
