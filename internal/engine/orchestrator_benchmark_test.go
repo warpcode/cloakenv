@@ -49,8 +49,8 @@ func BenchmarkBuildEnv(b *testing.B) {
 	// Inject slow provider. Direct field access to builtins and initializedBuiltins
 	// is intentional as this is a same-package test.
 	sp := &slowProvider{delay: 1 * time.Millisecond}
-	o.builtins["slow"] = sp
-	o.initializedBuiltins["slow"] = true
+	o.providerManager.builtins["slow"] = sp
+	o.providerManager.initializedBuiltins["slow"] = true
 
 	explicit := make(map[string]string)
 	for i := 0; i < 10; i++ {
@@ -131,8 +131,8 @@ func BenchmarkResolveArrayAttr(b *testing.B) {
 	}
 
 	sp := &slowProvider{delay: 1 * time.Microsecond}
-	o.builtins["slow"] = sp
-	o.initializedBuiltins["slow"] = true
+	o.providerManager.builtins["slow"] = sp
+	o.providerManager.initializedBuiltins["slow"] = true
 
 	var arr []string
 	for i := 0; i < 1000; i++ {
@@ -141,7 +141,7 @@ func BenchmarkResolveArrayAttr(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := o.resolveAttrRecursive(ctx, arr, 0, "")
+		_, err := o.resolver.ResolveAttrRecursive(ctx, arr, 0, "")
 		if err != nil {
 			b.Fatal(err)
 		}

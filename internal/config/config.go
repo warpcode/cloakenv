@@ -3,6 +3,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -157,4 +159,34 @@ func expandHome(path string) string {
 	}
 
 	return filepath.Join(home, path[2:])
+}
+
+// KeyringPrefix returns the active keyring prefix. If using a custom config file,
+// it computes a 10-character SHA-256 hash of its absolute path and appends it.
+func (c *Config) KeyringPrefix() string {
+	if c == nil {
+		return "cloakenv"
+	}
+	prefix := c.Keyring.Prefix
+	if prefix == "" {
+		prefix = "cloakenv"
+	}
+
+	if c.ConfigPath == "" {
+		return prefix
+	}
+
+	defaultPath, err := DefaultConfigPath()
+	if err != nil {
+		return prefix
+	}
+
+	defaultAbs, err := filepath.Abs(defaultPath)
+	if err != nil || c.ConfigPath == defaultAbs {
+		return prefix
+	}
+
+	h := sha256.Sum256([]byte(c.ConfigPath))
+	hashStr := hex.EncodeToString(h[:])[:10]
+	return fmt.Sprintf("%s_%s", prefix, hashStr)
 }

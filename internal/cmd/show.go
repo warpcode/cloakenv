@@ -261,7 +261,6 @@ func shouldQuoteDotenvValue(s string) bool {
 	return strings.ContainsAny(s, " \n\r#\"")
 }
 
-
 func printKeysFormat(attributes map[string]any) {
 	for k := range attributes {
 		kLower := strings.ToLower(k)
