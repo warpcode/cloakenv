@@ -35,3 +35,20 @@ var nonAlphanumericRun = regexp.MustCompile(`[^a-zA-Z0-9]+`)
 func FormatKey(key string) string {
 	return strings.ToUpper(nonAlphanumericRun.ReplaceAllString(key, "_"))
 }
+
+// SerializeAttrValue converts an attribute value into a string representation for environment usage.
+// Strings are returned as-is, slices and maps are serialized as YAML, and other types are formatted using %v.
+func SerializeAttrValue(val any) (string, error) {
+	switch v := val.(type) {
+	case string:
+		return v, nil
+	case []any, map[string]any, map[any]any, []string:
+		data, err := yaml.Marshal(v)
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimSuffix(string(data), "\n"), nil
+	default:
+		return fmt.Sprintf("%v", v), nil
+	}
+}

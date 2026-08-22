@@ -23,7 +23,6 @@ import (
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
-	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 // Orchestrator resolves secret URIs by dispatching to the appropriate
@@ -1042,7 +1041,7 @@ func (o *Orchestrator) resolveMergeSources(ctx context.Context, merges []string,
 				if hasWhitelist && !whitelistSet[formattedKey] {
 					continue
 				}
-				strVal, err := serializeValHelper(v)
+				strVal, err := utils.SerializeAttrValue(v)
 				if err != nil {
 					errOnce.Do(func() {
 						firstErr = fmt.Errorf("failed to serialize attribute %q in entry %s: %w", k, uri, err)
@@ -1208,21 +1207,6 @@ func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cmdArgs []string,
 	}
 
 	return resolvedCmdArgs, result, nil
-}
-
-func serializeValHelper(val any) (string, error) {
-	switch v := val.(type) {
-	case string:
-		return v, nil
-	case []any, map[string]any, map[any]any, []string:
-		data, err := yaml.Marshal(v)
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSuffix(string(data), "\n"), nil
-	default:
-		return fmt.Sprintf("%v", v), nil
-	}
 }
 
 // Keyring returns the built-in keyring provider for direct access

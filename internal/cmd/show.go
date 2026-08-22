@@ -11,7 +11,6 @@ import (
 	"github.com/warpcode/cloakenv/internal/engine"
 	"github.com/warpcode/cloakenv/internal/provider"
 	"github.com/warpcode/cloakenv/internal/utils"
-	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 type showOptions struct {
@@ -248,7 +247,7 @@ func printEnvFormat(attributes map[string]any) {
 		if kLower == "title" || kLower == "tags" {
 			continue
 		}
-		strVal, _ := serializeEntryAttrValue(v)
+		strVal, _ := utils.SerializeAttrValue(v)
 		if shouldQuoteDotenvValue(strVal) {
 			escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(strVal)
 			fmt.Printf("%s=\"%s\"\n", k, escaped)
@@ -260,21 +259,6 @@ func printEnvFormat(attributes map[string]any) {
 
 func shouldQuoteDotenvValue(s string) bool {
 	return strings.ContainsAny(s, " \n\r#\"")
-}
-
-func serializeEntryAttrValue(val any) (string, error) {
-	switch v := val.(type) {
-	case string:
-		return v, nil
-	case []any, map[string]any, map[any]any, []string:
-		data, err := yaml.Marshal(v)
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSuffix(string(data), "\n"), nil
-	default:
-		return fmt.Sprintf("%v", v), nil
-	}
 }
 
 func printKeysFormat(attributes map[string]any) {

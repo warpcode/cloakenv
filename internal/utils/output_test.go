@@ -26,3 +26,65 @@ func TestFormatKey(t *testing.T) {
 		}
 	}
 }
+
+func TestSerializeAttrValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    any
+		expected string
+		wantErr  bool
+	}{
+		{
+			name:     "string value",
+			input:    "secret_value",
+			expected: "secret_value",
+		},
+		{
+			name:     "slice of string",
+			input:    []string{"item1", "item2"},
+			expected: "- item1\n- item2",
+		},
+		{
+			name:     "slice of any",
+			input:    []any{"alpha", 100, true},
+			expected: "- alpha\n- 100\n- true",
+		},
+		{
+			name:     "map of string to any",
+			input:    map[string]any{"port": 8080, "host": "localhost"},
+			expected: "host: localhost\nport: 8080",
+		},
+		{
+			name:     "map of any to any",
+			input:    map[any]any{"key": "val"},
+			expected: "key: val",
+		},
+		{
+			name:     "integer primitive",
+			input:    42,
+			expected: "42",
+		},
+		{
+			name:     "boolean primitive",
+			input:    true,
+			expected: "true",
+		},
+		{
+			name:     "nil value",
+			input:    nil,
+			expected: "<nil>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := SerializeAttrValue(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("SerializeAttrValue(%v) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+			if got != tt.expected {
+				t.Errorf("SerializeAttrValue(%v) = %q; want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
