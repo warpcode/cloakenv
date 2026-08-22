@@ -42,7 +42,8 @@ formatters:
     goimports:
       # Codifies the existing import grouping: stdlib, external, then
       # github.com/warpcode/cloakenv internal packages.
-      local-prefixes: github.com/warpcode/cloakenv
+      local-prefixes:
+        - github.com/warpcode/cloakenv
 
 issues:
   # Report every finding. The defaults (max-same-issues=3,
