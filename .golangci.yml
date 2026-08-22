@@ -9,3 +9,10 @@ linters:
         - fmt.Fprint
         - fmt.Fprintf
         - fmt.Fprintln
+
+issues:
+  # Report every finding. The defaults (max-same-issues=3,
+  # max-issues-per-linter=50) silently hide duplicates and let real issues
+  # slip through CI unnoticed.
+  max-issues-per-linter: 0
+  max-same-issues: 0
