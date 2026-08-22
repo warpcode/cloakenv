@@ -181,7 +181,10 @@ func TestMatchRunAlias(t *testing.T) {
 	t.Run("Match regex rule", func(t *testing.T) {
 		cmdArgs := []string{"litellm", "--config", "config.yaml"}
 
-		rule, matched := MatchRunAlias(cfg, cmdArgs)
+		rule, matched, err := MatchRunAlias(cfg, cmdArgs)
+		if err != nil {
+			t.Fatalf("MatchRunAlias returned unexpected error: %v", err)
+		}
 		if !matched {
 			t.Fatalf("expected MatchRunAlias to return true")
 		}
@@ -189,7 +192,10 @@ func TestMatchRunAlias(t *testing.T) {
 			t.Errorf("expected match ^litellm\\s+(.*)$, got %q", rule.Match)
 		}
 
-		ruleOrch, matchedOrch := orch.MatchRunAlias(cmdArgs)
+		ruleOrch, matchedOrch, errOrch := orch.MatchRunAlias(cmdArgs)
+		if errOrch != nil {
+			t.Fatalf("orchestrator MatchRunAlias returned unexpected error: %v", errOrch)
+		}
 		if !matchedOrch || ruleOrch.Match != rule.Match {
 			t.Errorf("orchestrator method mismatch: got (%v, %t)", ruleOrch, matchedOrch)
 		}
@@ -202,7 +208,10 @@ func TestMatchRunAlias(t *testing.T) {
 	t.Run("Match simple rule", func(t *testing.T) {
 		cmdArgs := []string{"aws", "s3", "ls"}
 
-		rule, matched := MatchRunAlias(cfg, cmdArgs)
+		rule, matched, err := MatchRunAlias(cfg, cmdArgs)
+		if err != nil {
+			t.Fatalf("MatchRunAlias returned unexpected error: %v", err)
+		}
 		if !matched {
 			t.Fatalf("expected MatchRunAlias to return true")
 		}
@@ -214,7 +223,7 @@ func TestMatchRunAlias(t *testing.T) {
 	t.Run("No match", func(t *testing.T) {
 		cmdArgs := []string{"helm", "status"}
 
-		_, matched := MatchRunAlias(cfg, cmdArgs)
+		_, matched, _ := MatchRunAlias(cfg, cmdArgs)
 		if matched {
 			t.Errorf("expected MatchRunAlias to return false for unmatched command")
 		}

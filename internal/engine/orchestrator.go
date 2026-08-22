@@ -195,9 +195,9 @@ func (o *Orchestrator) CheckAccess(ctx context.Context, vaultName string) error 
 }
 
 // MatchRunAlias evaluates configured autoload/run alias rules against command arguments.
-func (o *Orchestrator) MatchRunAlias(cmdArgs []string) (config.AutoloadRule, bool) {
+func (o *Orchestrator) MatchRunAlias(cmdArgs []string) (config.AutoloadRule, bool, error) {
 	if o == nil {
-		return config.AutoloadRule{}, false
+		return config.AutoloadRule{}, false, nil
 	}
 	return MatchRunAlias(o.config, cmdArgs)
 }

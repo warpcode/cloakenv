@@ -280,7 +280,7 @@ func (pm *ProviderManager) EnsureInitialized(ctx context.Context, scheme string,
 	pm.mu.Unlock()
 
 	if err := p.Initialize(ctx, provider.ProviderConfig{Settings: settings}); err != nil {
-		return err
+		return fmt.Errorf("failed to initialize built-in provider %q: %w", scheme, err)
 	}
 
 	pm.mu.Lock()

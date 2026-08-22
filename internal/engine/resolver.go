@@ -122,7 +122,7 @@ func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, 
 
 	val, err := p.GetSecret(ctx, location)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get secret from %q: %w", scheme, err)
 	}
 
 	shouldResolve := true
@@ -217,7 +217,6 @@ func resolveSliceRecursive[T any](ctx context.Context, r *Resolver, typedVal []T
 	defer cancel()
 
 	numWorkers := len(typedVal)
-	const maxConcurrency = 16
 	if numWorkers > maxConcurrency {
 		numWorkers = maxConcurrency
 	}

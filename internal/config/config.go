@@ -55,7 +55,8 @@ type CacheConfig struct {
 
 // KeyringConfig holds keyring-related configuration settings.
 type KeyringConfig struct {
-	Prefix string `yaml:"prefix"`
+	Prefix  string `yaml:"prefix"`
+	Isolate bool   `yaml:"isolate"`
 }
 
 // VaultConfig defines a named secret vault backend and its configuration options.
@@ -172,7 +173,7 @@ func (c *Config) KeyringPrefix() string {
 		prefix = "cloakenv"
 	}
 
-	if c.ConfigPath == "" {
+	if !c.Keyring.Isolate || c.ConfigPath == "" {
 		return prefix
 	}
 

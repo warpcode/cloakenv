@@ -78,7 +78,10 @@ Description:
 		return 1
 	}
 
-	rule, matched := engine.MatchRunAlias(cfg, cmdArgs)
+	rule, matched, matchErr := engine.MatchRunAlias(cfg, cmdArgs)
+	if matchErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: autoload rule %q matched but command substitution failed: %v\n", rule.Match, matchErr)
+	}
 
 	if jsonOutput {
 		res := MatchAliasResult{

@@ -258,16 +258,24 @@ func TestKeyringPrefix(t *testing.T) {
 			want: "cloakenv",
 		},
 		{
-			name: "custom path with hash",
+			name: "custom path no isolate no hash",
 			cfg: &Config{
+				ConfigPath: "/custom/path/config.yaml",
+			},
+			want: "cloakenv",
+		},
+		{
+			name: "custom path with isolate and hash",
+			cfg: &Config{
+				Keyring:    KeyringConfig{Isolate: true},
 				ConfigPath: "/custom/path/config.yaml",
 			},
 			want: fmt.Sprintf("cloakenv_%s", hashFunc("/custom/path/config.yaml")),
 		},
 		{
-			name: "custom prefix and custom path with hash",
+			name: "custom prefix and custom path with isolate and hash",
 			cfg: &Config{
-				Keyring:    KeyringConfig{Prefix: "myprefix"},
+				Keyring:    KeyringConfig{Prefix: "myprefix", Isolate: true},
 				ConfigPath: "/custom/path/config.yaml",
 			},
 			want: fmt.Sprintf("myprefix_%s", hashFunc("/custom/path/config.yaml")),

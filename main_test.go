@@ -93,7 +93,7 @@ func TestMainArgsParsing(t *testing.T) {
 
 			var exitCode int
 			if err != nil {
-				exitError := &exec.ExitError{}
+				var exitError *exec.ExitError
 				if errors.As(err, &exitError) {
 					exitCode = exitError.ExitCode()
 				} else {

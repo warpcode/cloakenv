@@ -82,6 +82,11 @@ func (s *Searcher) getSearchableProviders(ctx context.Context, repoScopes []stri
 }
 
 func (s *Searcher) resolveSearchResultAttributes(ctx context.Context, r provider.SearchResult, depth int) provider.SearchResult {
+	if s.providers.Config() != nil {
+		if vaultConfig, hasVault := s.providers.Config().Vaults[r.Vault]; hasVault && !vaultConfig.ResolveValues {
+			return r
+		}
+	}
 	// Recursively resolve attributes
 	resolvedAttrs := make(map[string]any)
 	for k, v := range r.Entry.Attributes {
@@ -143,7 +148,9 @@ func (s *Searcher) filterResultsByExpression(expressionStr string, allResults []
 			"path":  r.Path,
 		}
 		for k, v := range r.Entry.Attributes {
-			env[k] = v
+			if _, reserved := env[k]; !reserved {
+				env[k] = v
+			}
 		}
 
 		output, err := expr.Run(program, env)
@@ -294,6 +301,8 @@ func parseSearchURI(location string) (string, string, error) {
 			if v != "" {
 				conditions = append(conditions, fmt.Sprintf("path contains %q", v))
 			}
+		default:
+			return "", "", fmt.Errorf("unsupported search parameter: %q", k)
 		}
 	}
 

@@ -30,6 +30,13 @@ func TestParseURI(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:     "empty location allowed for single entity",
+			uri:      "scheme://",
+			scheme:   "scheme",
+			location: "",
+			wantErr:  false,
+		},
+		{
 			name:    "missing separator",
 			uri:     "keyring-location",
 			wantErr: true,

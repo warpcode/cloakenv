@@ -228,10 +228,7 @@ func (c *CacheProvider) SetSecret(ctx context.Context, location string, value st
 	if _, err := f.Write(fileData); err != nil {
 		// Best-effort cleanup; join cleanup failures with the primary error
 		// so nothing is silently discarded.
-		if err := errors.Join(err, f.Close(), os.Remove(tmpFile)); err != nil {
-			return fmt.Errorf("cache provider: failed to write temp cache file: %w", err)
-		}
-		return fmt.Errorf("cache provider: failed to write temp cache file")
+		return fmt.Errorf("cache provider: failed to write temp cache file: %w", errors.Join(err, f.Close(), os.Remove(tmpFile)))
 	}
 
 	if err := f.Close(); err != nil {

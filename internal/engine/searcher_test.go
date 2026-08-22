@@ -155,18 +155,29 @@ entries:
 }
 
 func TestSearchURIEncoding(t *testing.T) {
-	// Test parseSearchURI helper logic via a mock check
-	exprQuery, attr, err := parseSearchURI("tags=auth:ssh,env:prod&title=bastion/Password")
-	if err != nil {
-		t.Fatalf("failed to parse: %v", err)
-	}
-	expectedExpr := `"auth:ssh" in tags and "env:prod" in tags and title contains "bastion"`
-	if exprQuery != expectedExpr {
-		t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
-	}
-	if attr != "Password" {
-		t.Errorf("expected attribute 'Password', got %q", attr)
-	}
+	t.Run("Valid", func(t *testing.T) {
+		exprQuery, attr, err := parseSearchURI("tags=auth:ssh,env:prod&title=bastion/Password")
+		if err != nil {
+			t.Fatalf("failed to parse: %v", err)
+		}
+		expectedExpr := `"auth:ssh" in tags and "env:prod" in tags and title contains "bastion"`
+		if exprQuery != expectedExpr {
+			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
+		}
+		if attr != "Password" {
+			t.Errorf("expected attribute 'Password', got %q", attr)
+		}
+	})
+
+	t.Run("UnsupportedParam", func(t *testing.T) {
+		_, _, err := parseSearchURI("unknown=value/Password")
+		if err == nil {
+			t.Fatal("expected error for unsupported parameter")
+		}
+		if !strings.Contains(err.Error(), "unsupported search parameter") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
 }
 
 func TestOrchestratorVaultsAndSearch(t *testing.T) {

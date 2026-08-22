@@ -176,7 +176,10 @@ func TestOrchestratorFacade(t *testing.T) {
 	})
 
 	t.Run("AutoloadAliasCheckers", func(t *testing.T) {
-		rule, matched := orch.MatchRunAlias([]string{"deploy"})
+		rule, matched, err := orch.MatchRunAlias([]string{"deploy"})
+		if err != nil {
+			t.Fatalf("MatchRunAlias returned unexpected error: %v", err)
+		}
 		if !matched || rule.Match != "deploy" {
 			t.Errorf("MatchRunAlias(deploy) = (%v, %v), want rule with match 'deploy'", rule, matched)
 		}
@@ -185,7 +188,7 @@ func TestOrchestratorFacade(t *testing.T) {
 		}
 
 		var nilOrch *Orchestrator
-		if _, nilMatched := nilOrch.MatchRunAlias([]string{"deploy"}); nilMatched {
+		if _, nilMatched, _ := nilOrch.MatchRunAlias([]string{"deploy"}); nilMatched {
 			t.Errorf("nilOrch.MatchRunAlias should return false")
 		}
 		if nilOrch.IsRunAlias([]string{"deploy"}) {
