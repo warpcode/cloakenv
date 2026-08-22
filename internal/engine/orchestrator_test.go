@@ -6,9 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zalando/go-keyring"
+
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/provider"
-	"github.com/zalando/go-keyring"
 )
 
 type failInitProvider struct{}

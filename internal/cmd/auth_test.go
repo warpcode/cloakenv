@@ -8,8 +8,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/zalando/go-keyring"
+
+	"github.com/warpcode/cloakenv/internal/config"
 )
 
 func captureOutput(t *testing.T, f func()) (string, string) {

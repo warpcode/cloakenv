@@ -15,8 +15,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/warpcode/cloakenv/internal/utils"
 	"github.com/zalando/go-keyring"
+
+	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 const (

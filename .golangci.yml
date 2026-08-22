@@ -10,6 +10,16 @@ linters:
         - fmt.Fprintf
         - fmt.Fprintln
 
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      # Codifies the existing import grouping: stdlib, external, then
+      # github.com/warpcode/cloakenv internal packages.
+      local-prefixes: github.com/warpcode/cloakenv
+
 issues:
   # Report every finding. The defaults (max-same-issues=3,
   # max-issues-per-linter=50) silently hide duplicates and let real issues
