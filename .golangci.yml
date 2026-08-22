@@ -12,7 +12,13 @@ linters:
     - unparam
     - copyloopvar  # redundant since Go 1.22 per-iteration loop variables
     - intrange     # modernize numeric for-loops
+    - gosec        # security scanning; mandatory for a credentials orchestrator
   settings:
+    gosec:
+      excludes:
+        # Reading user-configured vault paths from disk is the product's core
+        # function; path provenance is validated by the config layer.
+        - G304
     errcheck:
       # CLI print helpers writing to stdout/stderr cannot meaningfully handle
       # write errors; all other error returns remain enforced.
@@ -20,6 +26,13 @@ linters:
         - fmt.Fprint
         - fmt.Fprintf
         - fmt.Fprintln
+  exclusions:
+    rules:
+      # Test fixtures intentionally contain fake credentials (e.g. the
+      # testDB.kdbx master password) and weak crypto is never used in tests.
+      - path: _test\.go
+        linters:
+          - gosec
 
 formatters:
   enable:
