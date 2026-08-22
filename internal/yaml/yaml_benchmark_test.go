@@ -15,35 +15,35 @@ func BenchmarkSerializeValue(b *testing.B) {
 
 	b.Run("StringScalar", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_, _ = SerializeValue(strVal)
 		}
 	})
 
 	b.Run("IntScalar", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_, _ = SerializeValue(intVal)
 		}
 	})
 
 	b.Run("BoolScalar", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_, _ = SerializeValue(boolVal)
 		}
 	})
 
 	b.Run("SliceValue", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_, _ = SerializeValue(sliceVal)
 		}
 	})
 
 	b.Run("MapValue", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_, _ = SerializeValue(mapVal)
 		}
 	})

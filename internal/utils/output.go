@@ -35,7 +35,7 @@ func FormatKey(key string) string {
 
 	needsTransform := false
 	inNonAlpha := false
-	for i := 0; i < len(key); i++ {
+	for i := range len(key) {
 		c := key[i]
 		if ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9') {
 			inNonAlpha = false
@@ -61,7 +61,7 @@ func FormatKey(key string) string {
 
 	b := make([]byte, 0, len(key))
 	inNonAlpha = false
-	for i := 0; i < len(key); i++ {
+	for i := range len(key) {
 		c := key[i]
 		if ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9') {
 			if 'a' <= c && c <= 'z' {

@@ -18,9 +18,9 @@ func BenchmarkYamlProviderInitialize(b *testing.B) {
 	}
 
 	data := make(map[string]any)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		entry := make(map[any]any)
-		for j := 0; j < 50; j++ {
+		for j := range 50 {
 			entry[fmt.Sprintf("key%d", j)] = j
 		}
 		data[fmt.Sprintf("entry%d", i)] = entry
@@ -44,7 +44,7 @@ func BenchmarkYamlProviderInitialize(b *testing.B) {
 	ctx := context.Background()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		p := NewYamlProvider()
 		_ = p.Initialize(ctx, cfg)
 	}
@@ -53,7 +53,7 @@ func BenchmarkYamlProviderInitialize(b *testing.B) {
 var dummy = make(map[any]any)
 
 func init() {
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		dummy[fmt.Sprintf("key%d", i)] = i
 	}
 	// Add some int and bool keys for testing
@@ -62,7 +62,7 @@ func init() {
 }
 
 func BenchmarkFmtSprintf(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		converted := make(map[string]any)
 		for k, v := range dummy {
 			converted[fmt.Sprintf("%v", k)] = v
@@ -71,7 +71,7 @@ func BenchmarkFmtSprintf(b *testing.B) {
 }
 
 func BenchmarkAnyToString(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		converted := make(map[string]any)
 		for k, v := range dummy {
 			converted[anyToString(k)] = v
@@ -82,7 +82,7 @@ func BenchmarkAnyToString(b *testing.B) {
 func BenchmarkYamlProvider_Search(b *testing.B) {
 	// Create a large number of dummy entries
 	entries := make(map[string]Entry)
-	for i := 0; i < 10000; i++ {
+	for i := range 10000 {
 		entries[fmt.Sprintf("entry_%d", i)] = Entry{
 			Title: fmt.Sprintf("Entry %d", i),
 			Tags:  []string{"tagA", "tagB", "tagC", "tagD"},
@@ -101,7 +101,7 @@ func BenchmarkYamlProvider_Search(b *testing.B) {
 	ctx := context.Background()
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := provider.Search(ctx, query)
 		if err != nil {
 			b.Fatal(err)
@@ -111,7 +111,7 @@ func BenchmarkYamlProvider_Search(b *testing.B) {
 
 func BenchmarkYamlSearchTags(b *testing.B) {
 	y := NewYamlProvider()
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		y.entries[strconv.Itoa(i)] = Entry{
 			Title: "Test",
 			Tags:  []string{"tag1", "tag2", "tag3"},
@@ -125,7 +125,7 @@ func BenchmarkYamlSearchTags(b *testing.B) {
 	ctx := context.Background()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = y.Search(ctx, query)
 	}
 }

@@ -10,11 +10,7 @@ import (
 
 func TestYamlProvider(t *testing.T) {
 	// Create a temporary entries.yaml file
-	tempDir, err := os.MkdirTemp("", "cloakenv-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	yamlContent := `
 entries:
@@ -108,11 +104,7 @@ entries:
 }
 
 func TestYamlProviderCustomEntriesKey(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "cloakenv-test-custom")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	// 1. Custom key: "hosts"
 	hostsContent := `
@@ -200,11 +192,7 @@ ssh_root:
 }
 
 func TestYamlProviderSingleEntity(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "cloakenv-yaml-single")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	yamlContent := `
 title: "My Single YAML Vault"

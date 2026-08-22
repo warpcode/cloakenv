@@ -1,0 +1,53 @@
+version: "2"
+
+linters:
+  enable:
+    # Enforce repo conventions from AGENTS.md:
+    - errorlint    # %w wrapping + errors.Is/As instead of %v / type asserts
+    - errname      # sentinel errors must be named ErrXxx
+    - usetesting   # t.TempDir()/t.Setenv instead of os.MkdirTemp/os.Setenv
+    - nolintlint   # //nolint directives must be justified and used
+    - misspell
+    - unconvert
+    - unparam
+    - copyloopvar  # redundant since Go 1.22 per-iteration loop variables
+    - intrange     # modernize numeric for-loops
+    - gosec        # security scanning; mandatory for a credentials orchestrator
+  settings:
+    gosec:
+      excludes:
+        # Reading user-configured vault paths from disk is the product's core
+        # function; path provenance is validated by the config layer.
+        - G304
+    errcheck:
+      # CLI print helpers writing to stdout/stderr cannot meaningfully handle
+      # write errors; all other error returns remain enforced.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+  exclusions:
+    rules:
+      # Test fixtures intentionally contain fake credentials (e.g. the
+      # testDB.kdbx master password) and weak crypto is never used in tests.
+      - path: _test\.go
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      # Codifies the existing import grouping: stdlib, external, then
+      # github.com/warpcode/cloakenv internal packages.
+      local-prefixes:
+        - github.com/warpcode/cloakenv
+
+issues:
+  # Report every finding. The defaults (max-same-issues=3,
+  # max-issues-per-linter=50) silently hide duplicates and let real issues
+  # slip through CI unnoticed.
+  max-issues-per-linter: 0
+  max-same-issues: 0

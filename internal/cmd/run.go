@@ -34,7 +34,7 @@ func Run(args []string, cfg *config.Config) int {
 	parser.Var([]string{"-e"}, true, "", func(name, val string) error {
 		key, uri, ok := strings.Cut(val, "=")
 		if !ok || key == "" || uri == "" {
-			return fmt.Errorf("Invalid -e format: %q (expected KEY=uri)", val)
+			return fmt.Errorf("invalid -e format: %q (expected KEY=uri)", val)
 		}
 		explicitEnv[key] = uri
 		return nil
@@ -42,7 +42,7 @@ func Run(args []string, cfg *config.Config) int {
 	parser.Var([]string{"-t"}, true, "", func(name, val string) error {
 		envs, err := utils.ParseTemplateFile(val)
 		if err != nil {
-			return fmt.Errorf("Error parsing template file %s: %v", val, err)
+			return fmt.Errorf("error parsing template file %s: %w", val, err)
 		}
 		for k, v := range envs {
 			explicitEnv[k] = v

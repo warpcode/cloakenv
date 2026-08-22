@@ -49,16 +49,16 @@ func BenchmarkBuildEnv(b *testing.B) {
 	// Inject slow provider. Direct field access to builtins and initializedBuiltins
 	// is intentional as this is a same-package test.
 	sp := &slowProvider{delay: 1 * time.Millisecond}
-	o.builtins["slow"] = sp
-	o.initializedBuiltins["slow"] = true
+	o.providerManager.builtins["slow"] = sp
+	o.providerManager.initializedBuiltins["slow"] = true
 
 	explicit := make(map[string]string)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		explicit[fmt.Sprintf("KEY_%d", i)] = fmt.Sprintf("slow://loc_%d", i)
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := o.BuildEnv(ctx, explicit, nil, nil, false)
 		if err != nil {
 			b.Fatal(err)
@@ -68,16 +68,12 @@ func BenchmarkBuildEnv(b *testing.B) {
 
 func BenchmarkSearch(b *testing.B) {
 	// Create temp dir
-	tempDir, err := os.MkdirTemp("", "cloakenv-bench")
-	if err != nil {
-		b.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := b.TempDir()
 
 	// Create a large entries.yaml
 	entriesCount := 1000
 	yamlContent := "entries:\n"
-	for i := 0; i < entriesCount; i++ {
+	for i := range entriesCount {
 		yamlContent += fmt.Sprintf(`  entry_%d:
     tags:
       - tag_%d
@@ -111,7 +107,7 @@ func BenchmarkSearch(b *testing.B) {
 	query := `attr2 > 500 and "common" in tags`
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := orch.Search(ctx, query, nil)
 		if err != nil {
 			b.Fatalf("Search failed: %v", err)
@@ -131,17 +127,17 @@ func BenchmarkResolveArrayAttr(b *testing.B) {
 	}
 
 	sp := &slowProvider{delay: 1 * time.Microsecond}
-	o.builtins["slow"] = sp
-	o.initializedBuiltins["slow"] = true
+	o.providerManager.builtins["slow"] = sp
+	o.providerManager.initializedBuiltins["slow"] = true
 
 	var arr []string
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		arr = append(arr, fmt.Sprintf("slow://loc_%d", i))
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, err := o.resolveAttrRecursive(ctx, arr, 0, "")
+	for range b.N {
+		_, err := o.resolver.ResolveAttrRecursive(ctx, arr, 0, "")
 		if err != nil {
 			b.Fatal(err)
 		}

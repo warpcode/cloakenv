@@ -16,7 +16,7 @@ func BenchmarkKeePassProvider_Search_Binaries(b *testing.B) {
 
 	// Create many binaries in metadata
 	numBinaries := 5000
-	for i := 0; i < numBinaries; i++ {
+	for i := range numBinaries {
 		k.db.Content.Meta.Binaries = append(k.db.Content.Meta.Binaries, gokeepasslib.Binary{
 			ID:      i,
 			Content: []byte("test content"),
@@ -29,7 +29,7 @@ func BenchmarkKeePassProvider_Search_Binaries(b *testing.B) {
 	}
 
 	numEntries := 100
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		entry := gokeepasslib.Entry{
 			Values: []gokeepasslib.ValueData{
 				{Key: "Title", Value: gokeepasslib.V{Content: "Test Entry"}},
@@ -37,7 +37,7 @@ func BenchmarkKeePassProvider_Search_Binaries(b *testing.B) {
 		}
 
 		// Add some binary references
-		for j := 0; j < 5; j++ {
+		for j := range 5 {
 			entry.Binaries = append(entry.Binaries, gokeepasslib.BinaryReference{
 				Name: "Attachment",
 				Value: struct {
@@ -56,7 +56,7 @@ func BenchmarkKeePassProvider_Search_Binaries(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		res, err := k.Search(ctx, query)
 		if err != nil {
 			b.Fatal(err)
@@ -87,7 +87,7 @@ func BenchmarkKeePassProviderSearch(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		res, err := kp.Search(ctx, SearchQuery{Title: "Test Website"})
 		if err != nil {
 			b.Fatalf("Search failed: %v", err)

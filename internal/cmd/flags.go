@@ -93,7 +93,7 @@ func (fp *FlagParser) Parse(args []string) (remaining []string, err error) {
 				if fp.UnknownFlagErr != nil {
 					return nil, fp.UnknownFlagErr(arg)
 				}
-				return nil, fmt.Errorf("Unknown flag: %s", arg)
+				return nil, fmt.Errorf("unknown flag: %s", arg)
 			}
 
 			val := ""

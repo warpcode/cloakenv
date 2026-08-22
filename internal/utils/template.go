@@ -15,7 +15,9 @@ func ParseTemplateFile(fpath string) (map[string]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open template file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close() // read-only handle; close errors carry no actionable signal here
+	}()
 
 	envs := make(map[string]string)
 	scanner := bufio.NewScanner(file)
