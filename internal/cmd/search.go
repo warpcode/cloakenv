@@ -51,42 +51,32 @@ func Search(args []string, cfg *config.Config) int {
 
 func parseSearchArgs(args []string) (query string, repoScopes []string, selectedKeys []string, outputFormat string, err error) {
 	outputFormat = "yaml" // default
-	i := 0
-	for i < len(args) {
-		switch args[i] {
-		case "-o", "--output":
-			if i+1 >= len(args) {
-				return "", nil, nil, "", fmt.Errorf("flag -o/--output requires an argument")
-			}
-			format := args[i+1]
-			if format != "yaml" && format != "json" {
-				return "", nil, nil, "", fmt.Errorf("invalid output format %q (expected yaml or json)", format)
-			}
-			outputFormat = format
-			i += 2
-		case "--vault":
-			if i+1 >= len(args) {
-				return "", nil, nil, "", fmt.Errorf("flag --vault requires an argument")
-			}
-			repoScopes = append(repoScopes, args[i+1])
-			i += 2
-		case "-i":
-			if i+1 >= len(args) {
-				return "", nil, nil, "", fmt.Errorf("flag -i requires an argument")
-			}
-			selectedKeys = append(selectedKeys, args[i+1])
-			i += 2
-		default:
-			if strings.HasPrefix(args[i], "-") {
-				return "", nil, nil, "", fmt.Errorf("unknown flag: %s", args[i])
-			}
-			if query != "" {
-				return "", nil, nil, "", fmt.Errorf("usage: cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]")
-			}
-			query = args[i]
-			i++
+
+	parser := NewFlagParser()
+	parser.Var([]string{"-o", "--output"}, true, "flag -o/--output requires an argument", func(name, val string) error {
+		if val != "yaml" && val != "json" {
+			return fmt.Errorf("invalid output format %q (expected yaml or json)", val)
 		}
+		outputFormat = val
+		return nil
+	})
+	parser.StringSlice([]string{"--vault"}, &repoScopes, "flag --vault requires an argument")
+	parser.StringSlice([]string{"-i"}, &selectedKeys, "flag -i requires an argument")
+	parser.UnknownFlagErr = func(flag string) error {
+		return fmt.Errorf("unknown flag: %s", flag)
 	}
+	parser.PositionalHandler = func(arg string) error {
+		if query != "" {
+			return fmt.Errorf("usage: cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]")
+		}
+		query = arg
+		return nil
+	}
+
+	if _, err := parser.Parse(args); err != nil {
+		return "", nil, nil, "", err
+	}
+
 	return query, repoScopes, selectedKeys, outputFormat, nil
 }
 
