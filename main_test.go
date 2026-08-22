@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +11,9 @@ import (
 )
 
 // TestHelperProcess runs main() if invoked as a helper process.
-func TestHelperProcess(t *testing.T) {
+// The t parameter is required by the `go test` helper-process convention and
+// is intentionally unused.
+func TestHelperProcess(t *testing.T) { //nolint:unparam // fixed signature required for subprocess test helpers
 	if os.Getenv("GO_WANT_MAIN_PROCESS") != "1" {
 		return
 	}
@@ -90,7 +93,8 @@ func TestMainArgsParsing(t *testing.T) {
 
 			var exitCode int
 			if err != nil {
-				if exitError, ok := err.(*exec.ExitError); ok {
+				exitError := &exec.ExitError{}
+				if errors.As(err, &exitError) {
 					exitCode = exitError.ExitCode()
 				} else {
 					t.Fatalf("failed to run command: %v", err)

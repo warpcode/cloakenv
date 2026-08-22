@@ -136,7 +136,7 @@ func splitCommand(s string) ([]string, error) {
 	inDouble := false
 	escaped := false
 
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		ch := s[i]
 
 		if escaped {

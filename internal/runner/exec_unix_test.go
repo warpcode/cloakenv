@@ -138,7 +138,7 @@ func TestRunCommand_NotFound(t *testing.T) {
 func TestRunCommand_ExecFailure(t *testing.T) {
 	// Create a temporary file that is executable but not a valid executable
 	// This will pass exec.LookPath but fail syscall.Exec with ENOEXEC
-	tmpFile, err := os.CreateTemp("", "invalid-exec-*")
+	tmpFile, err := os.CreateTemp(t.TempDir(), "invalid-exec-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}

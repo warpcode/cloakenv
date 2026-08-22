@@ -1,6 +1,17 @@
 version: "2"
 
 linters:
+  enable:
+    # Enforce repo conventions from AGENTS.md:
+    - errorlint    # %w wrapping + errors.Is/As instead of %v / type asserts
+    - errname      # sentinel errors must be named ErrXxx
+    - usetesting   # t.TempDir()/t.Setenv instead of os.MkdirTemp/os.Setenv
+    - nolintlint   # //nolint directives must be justified and used
+    - misspell
+    - unconvert
+    - unparam
+    - copyloopvar  # redundant since Go 1.22 per-iteration loop variables
+    - intrange     # modernize numeric for-loops
   settings:
     errcheck:
       # CLI print helpers writing to stdout/stderr cannot meaningfully handle

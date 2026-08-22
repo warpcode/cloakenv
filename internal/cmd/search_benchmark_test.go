@@ -12,7 +12,7 @@ var benchmarkRes []map[string]any
 func BenchmarkFlattenSearchResults(b *testing.B) {
 	// Setup dummy search results
 	var results []provider.SearchResult
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		results = append(results, provider.SearchResult{
 			Provider: "dummy",
 			Vault:    "test-vault",
@@ -33,7 +33,7 @@ func BenchmarkFlattenSearchResults(b *testing.B) {
 	selectedKeys := []string{"provider", "vault", "path", "Title", "TAGS", "username", "PASSWORD"}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		benchmarkRes = flattenSearchResults(results, selectedKeys)
 	}
 }

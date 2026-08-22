@@ -13,11 +13,7 @@ import (
 
 func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 	// Create temp dir
-	tempDir, err := os.MkdirTemp("", "cloakenv-orch-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tempDir) }()
+	tempDir := t.TempDir()
 
 	// Set up environment variable for testing env:// resolution
 	t.Setenv("ORCH_TEST_USER", "env_user")
@@ -174,11 +170,7 @@ func TestSearchURIEncoding(t *testing.T) {
 }
 
 func TestOrchestratorVaultsAndSearch(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "cloakenv-vaults-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(tempDir) }()
+	tempDir := t.TempDir()
 
 	// Write single_db.yaml content
 	singleDbContent := `
@@ -433,7 +425,7 @@ func TestSearchConcurrentCompilation(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
 
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		go func() {
 			defer wg.Done()
 			results, err := orch.Search(ctx, `Password == "pass"`, nil)

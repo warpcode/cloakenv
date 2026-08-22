@@ -125,7 +125,7 @@ func TestRunCommandExecution(t *testing.T) {
 	}
 
 	// Create a temporary template file instead of depending on the external one
-	tmpFile, err := os.CreateTemp("", "test_template_*.env")
+	tmpFile, err := os.CreateTemp(t.TempDir(), "test_template_*.env")
 	if err != nil {
 		t.Fatalf("Failed to create temp template file: %v", err)
 	}
