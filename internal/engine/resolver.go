@@ -158,7 +158,7 @@ func (r *Resolver) GetEntryRecursive(ctx context.Context, uri string, depth int)
 	if attrIdx := strings.LastIndex(location, ":"); attrIdx >= 0 {
 		attrName := location[attrIdx+1:]
 		if attrName != "" {
-			val, err := r.resolveSingleURI(ctx, uri, 0, "")
+			val, err := r.resolveSingleURI(ctx, uri, depth, "")
 			if err != nil {
 				return provider.Entry{}, err
 			}

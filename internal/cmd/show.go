@@ -32,7 +32,7 @@ func parseShowFlags(args []string) (*showOptions, error) {
 	parser := NewFlagParser()
 	parser.Var([]string{"-o", "--output"}, true, "", func(name, val string) error {
 		if val != "yaml" && val != "json" && val != "env" && val != "keys" {
-			return fmt.Errorf("Invalid output format %q (expected yaml, json, env, or keys)", val)
+			return fmt.Errorf("invalid output format %q (expected yaml, json, env, or keys)", val)
 		}
 		opts.outputFormat = val
 		return nil
@@ -41,7 +41,7 @@ func parseShowFlags(args []string) (*showOptions, error) {
 	parser.Var([]string{"-e"}, true, "", func(name, val string) error {
 		key, uri, ok := strings.Cut(val, "=")
 		if !ok || key == "" || uri == "" {
-			return fmt.Errorf("Invalid -e format: %q (expected KEY=uri)", val)
+			return fmt.Errorf("invalid -e format: %q (expected KEY=uri)", val)
 		}
 		opts.explicit[key] = uri
 		return nil
@@ -49,7 +49,7 @@ func parseShowFlags(args []string) (*showOptions, error) {
 	parser.Var([]string{"-t"}, true, "", func(name, val string) error {
 		envs, err := utils.ParseTemplateFile(val)
 		if err != nil {
-			return fmt.Errorf("Error parsing template file %s: %v", val, err)
+			return fmt.Errorf("error parsing template file %s: %w", val, err)
 		}
 		for k, v := range envs {
 			opts.explicit[k] = v
@@ -113,7 +113,7 @@ func buildMergedEntry(ctx context.Context, orch *engine.Orchestrator, merges []s
 	// Check if any merge failed
 	for _, lm := range loadedMerges {
 		if lm.err != nil {
-			return provider.Entry{}, fmt.Errorf("Failed to retrieve entry: %v", lm.err)
+			return provider.Entry{}, fmt.Errorf("failed to retrieve entry: %w", lm.err)
 		}
 	}
 
@@ -166,7 +166,7 @@ func buildMergedEntry(ctx context.Context, orch *engine.Orchestrator, merges []s
 
 		for _, rm := range resolvedList {
 			if rm.err != nil {
-				return provider.Entry{}, fmt.Errorf("Failed to resolve mapping %s=%s: %v", rm.key, explicit[rm.key], rm.err)
+				return provider.Entry{}, fmt.Errorf("failed to resolve mapping %s=%s: %w", rm.key, explicit[rm.key], rm.err)
 			}
 			entry.Attributes[rm.key] = rm.val
 		}

@@ -19,5 +19,6 @@ entries:
       - staging
     # Example of a nested schema reference resolving from environment variables
     username: "env://DB_USER"
-    password: "staging-password-456"
+    # Static plaintext attributes are supported; use a placeholder, never a real credential
+    password: "<your-password>"
     port: 5432

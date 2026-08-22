@@ -32,7 +32,7 @@ func TestShow_KeysFormat(t *testing.T) {
 	}
 
 	exitCode := Show(args, cfg)
-	w.Close()
+	_ = w.Close()
 
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, r); err != nil {
@@ -89,7 +89,7 @@ func TestShow_KeysFormattingBehavior(t *testing.T) {
 	}
 
 	exitCode := Show(args, cfg)
-	w.Close()
+	_ = w.Close()
 
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, r); err != nil {
@@ -143,7 +143,7 @@ func TestShow_TemplateFlag(t *testing.T) {
 	}
 
 	exitCode := Show(args, cfg)
-	w.Close()
+	_ = w.Close()
 
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, r); err != nil {

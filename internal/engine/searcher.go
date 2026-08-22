@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -109,23 +110,28 @@ func (s *Searcher) filterResultsByExpression(expressionStr string, allResults []
 	s.cacheMu.RUnlock()
 
 	if !ok {
-		if err = validateExpression(expressionStr); err != nil {
-			return nil, err
-		}
-
-		sampleEnv := map[string]any{
-			"title": "",
-			"tags":  []string{},
-			"path":  "",
-		}
-
-		program, err = expr.Compile(expressionStr, expr.Env(sampleEnv), expr.AllowUndefinedVariables())
-		if err != nil {
-			return nil, fmt.Errorf("invalid query expression: %w", err)
-		}
-
 		s.cacheMu.Lock()
-		s.programCache[expressionStr] = program
+		program, ok = s.programCache[expressionStr]
+		if !ok {
+			if err = validateExpression(expressionStr); err != nil {
+				s.cacheMu.Unlock()
+				return nil, err
+			}
+
+			sampleEnv := map[string]any{
+				"title": "",
+				"tags":  []string{},
+				"path":  "",
+			}
+
+			program, err = expr.Compile(expressionStr, expr.Env(sampleEnv), expr.AllowUndefinedVariables())
+			if err != nil {
+				s.cacheMu.Unlock()
+				return nil, fmt.Errorf("invalid query expression: %w", err)
+			}
+
+			s.programCache[expressionStr] = program
+		}
 		s.cacheMu.Unlock()
 	}
 
@@ -182,6 +188,17 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 			allResults = append(allResults, s.resolveSearchResultAttributes(ctx, r, depth))
 		}
 	}
+
+	// Sort deterministically so consumers selecting the first match (e.g.
+	// search:// URIs resolving results[0]) get stable, reproducible results
+	// regardless of Go's randomized map iteration order over vaults and
+	// provider-internal entity maps.
+	sort.Slice(allResults, func(i, j int) bool {
+		if allResults[i].Vault != allResults[j].Vault {
+			return allResults[i].Vault < allResults[j].Vault
+		}
+		return allResults[i].Path < allResults[j].Path
+	})
 
 	return s.filterResultsByExpression(expressionStr, allResults)
 }

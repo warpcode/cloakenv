@@ -14,7 +14,7 @@ func TestYamlProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	yamlContent := `
 entries:
@@ -112,7 +112,7 @@ func TestYamlProviderCustomEntriesKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// 1. Custom key: "hosts"
 	hostsContent := `
@@ -204,7 +204,7 @@ func TestYamlProviderSingleEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	yamlContent := `
 title: "My Single YAML Vault"

@@ -51,13 +51,13 @@ func TestRun_Errors(t *testing.T) {
 			name:     "Invalid -e Format",
 			args:     []string{"-e", "INVALID_FORMAT", "--", "echo", "1"},
 			wantExit: 1,
-			wantErr:  "Invalid -e format",
+			wantErr:  "invalid -e format",
 		},
 		{
 			name:     "Invalid -t Template File",
 			args:     []string{"-t", "nonexistent_file.yaml", "--", "echo", "1"},
 			wantExit: 1,
-			wantErr:  "Error parsing template file",
+			wantErr:  "error parsing template file",
 		},
 		{
 			name:     "Non-existent Command",
@@ -77,8 +77,8 @@ func TestRun_Errors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create pipe: %v", err)
 			}
-			defer r.Close()
-			defer w.Close()
+			defer func() { _ = r.Close() }()
+			defer func() { _ = w.Close() }()
 
 			os.Stderr = w
 
@@ -88,7 +88,7 @@ func TestRun_Errors(t *testing.T) {
 
 			exitCode := Run(tc.args, cfg)
 
-			w.Close() // Close write end so read can finish
+			_ = w.Close() // Close write end so read can finish
 			var buf bytes.Buffer
 			if _, err := io.Copy(&buf, r); err != nil {
 				t.Errorf("failed to read from pipe: %v", err)
@@ -129,7 +129,7 @@ func TestRunCommandExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp template file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	templateContent := `
 TEST_TEMPLATE_A=${env://SHOW_TEST_VAR_A}
@@ -139,7 +139,7 @@ TEST_LITERAL_VAL=literal_value_here
 	if _, err := tmpFile.WriteString(templateContent); err != nil {
 		t.Fatalf("Failed to write to temp template file: %v", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	tests := []struct {
 		name             string

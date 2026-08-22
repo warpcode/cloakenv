@@ -36,8 +36,8 @@ func TestInternalMatchAlias(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create stdout pipe: %v", err)
 		}
-		defer r.Close()
-		defer w.Close()
+		defer func() { _ = r.Close() }()
+		defer func() { _ = w.Close() }()
 
 		os.Stdout = w
 		defer func() {

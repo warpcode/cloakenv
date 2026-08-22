@@ -1,0 +1,11 @@
+version: "2"
+
+linters:
+  settings:
+    errcheck:
+      # CLI print helpers writing to stdout/stderr cannot meaningfully handle
+      # write errors; all other error returns remain enforced.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln

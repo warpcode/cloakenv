@@ -56,11 +56,11 @@ Description:
 
 	i := 0
 	for i < len(args) {
-		switch {
-		case args[i] == "--":
+		switch args[i] {
+		case "--":
 			cmdArgs = args[i+1:]
 			i = len(args)
-		case args[i] == "--json":
+		case "--json":
 			jsonOutput = true
 			i++
 		default:

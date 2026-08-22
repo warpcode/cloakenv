@@ -19,10 +19,19 @@ type EnvResolver interface {
 	GetEntry(ctx context.Context, uri string) (provider.Entry, error)
 }
 
+// maxResolveConcurrency bounds concurrent source resolutions spawned by the
+// EnvBuilder. It is deliberately independent from the Resolver's shared
+// semaphore: merge-source goroutines can nest into Resolver slice resolution,
+// which acquires additional slots — sharing one pool across nesting levels
+// could otherwise deadlock when all slots are held by parents waiting on
+// children.
+const maxResolveConcurrency = 16
+
 // EnvBuilder handles the construction of the environment block.
 type EnvBuilder struct {
 	config   *config.Config
 	resolver EnvResolver
+	sem      chan struct{}
 }
 
 // NewEnvBuilder creates a new EnvBuilder.
@@ -30,7 +39,17 @@ func NewEnvBuilder(cfg *config.Config, r EnvResolver) *EnvBuilder {
 	return &EnvBuilder{
 		config:   cfg,
 		resolver: r,
+		sem:      make(chan struct{}, maxResolveConcurrency),
 	}
+}
+
+// acquireSem acquires a concurrency slot and returns the release function.
+func (eb *EnvBuilder) acquireSem() func() {
+	if eb.sem == nil {
+		return func() {}
+	}
+	eb.sem <- struct{}{}
+	return func() { <-eb.sem }
 }
 
 func getParentEnv() map[string]string {
@@ -57,9 +76,11 @@ func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, 
 	var firstErr error
 
 	for i, m := range merges {
+		release := eb.acquireSem()
 		wg.Add(1)
 		go func(idx int, uri string) {
 			defer wg.Done()
+			defer release()
 			keys := make(map[string]string)
 			entry, err := eb.resolver.GetEntry(ctx, uri)
 			if err != nil {
@@ -107,9 +128,11 @@ func (eb *EnvBuilder) resolveExplicitMappings(ctx context.Context, explicit map[
 	var mu sync.Mutex
 
 	for k, uri := range explicit {
+		release := eb.acquireSem()
 		wg.Add(1)
 		go func(k, uri string) {
 			defer wg.Done()
+			defer release()
 			val, err := eb.resolver.ResolveWithKey(ctx, uri, k)
 			if err != nil {
 				errOnce.Do(func() {
@@ -146,7 +169,7 @@ func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cmdArgs []string, 
 		for _, rule := range eb.config.Autoload {
 			matched, newCmdArgs, err := MatchCommandRule(rule, currentCmdArgs)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, fmt.Errorf("autoload rule %q: %w", rule.Match, err)
 			}
 			if matched {
 				currentCmdArgs = newCmdArgs

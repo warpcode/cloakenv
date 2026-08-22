@@ -344,6 +344,9 @@ func TestGetEntry(t *testing.T) {
 					"error_attr": {
 						"Password": "${vault_missing://nonexistent}",
 					},
+					"recursive_attr": {
+						"Password": "${vault_x://recursive_attr:Password}",
+					},
 				},
 				ResolveValues: true,
 			},
@@ -421,6 +424,17 @@ func TestGetEntry(t *testing.T) {
 			name:      "attribute_selector_success",
 			uri:       "vault_y://target:Password",
 			wantAttrs: map[string]string{"Password": "pass"},
+		},
+		{
+			name:    "attribute_selector_recursion_detected",
+			uri:     "vault_x://recursive_attr:Password",
+			wantErr: "infinite secret resolution recursion detected",
+		},
+		{
+			name:    "attribute_selector_with_initial_depth",
+			uri:     "vault_y://target:Password",
+			depth:   6,
+			wantErr: "infinite secret resolution recursion detected",
 		},
 		{
 			name:      "no_resolve_values",

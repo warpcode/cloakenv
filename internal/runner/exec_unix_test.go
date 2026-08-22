@@ -73,8 +73,8 @@ func TestRunCommand_InvalidArgs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create pipe: %v", err)
 			}
-			defer r.Close()
-			defer w.Close()
+			defer func() { _ = r.Close() }()
+			defer func() { _ = w.Close() }()
 
 			os.Stderr = w
 			t.Cleanup(func() {
@@ -83,7 +83,7 @@ func TestRunCommand_InvalidArgs(t *testing.T) {
 
 			exitCode := RunCommand(tt.args, os.Environ())
 
-			w.Close()
+			_ = w.Close()
 			os.Stderr = oldStderr
 			_, err = stderr.ReadFrom(r)
 			if err != nil {
@@ -109,8 +109,8 @@ func TestRunCommand_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create pipe: %v", err)
 	}
-	defer r.Close()
-	defer w.Close()
+	defer func() { _ = r.Close() }()
+	defer func() { _ = w.Close() }()
 
 	os.Stderr = w
 	t.Cleanup(func() {
@@ -119,7 +119,7 @@ func TestRunCommand_NotFound(t *testing.T) {
 
 	exitCode := RunCommand([]string{"this-command-definitely-does-not-exist"}, os.Environ())
 
-	w.Close()
+	_ = w.Close()
 	os.Stderr = oldStderr
 	_, err = stderr.ReadFrom(r)
 	if err != nil {
@@ -142,13 +142,13 @@ func TestRunCommand_ExecFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	// Write some garbage
 	if _, err := tmpFile.WriteString("not a binary"); err != nil {
 		t.Fatalf("Failed to write to temp file: %v", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	// Make it executable
 	if err := os.Chmod(tmpFile.Name(), 0755); err != nil {
@@ -161,8 +161,8 @@ func TestRunCommand_ExecFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create pipe: %v", err)
 	}
-	defer r.Close()
-	defer w.Close()
+	defer func() { _ = r.Close() }()
+	defer func() { _ = w.Close() }()
 
 	os.Stderr = w
 	t.Cleanup(func() {
@@ -171,9 +171,9 @@ func TestRunCommand_ExecFailure(t *testing.T) {
 
 	exitCode := RunCommand([]string{tmpFile.Name()}, os.Environ())
 
-	w.Close()
+	_ = w.Close()
 	os.Stderr = oldStderr
-	stderr.ReadFrom(r)
+	_, _ = stderr.ReadFrom(r)
 
 	if exitCode != 1 {
 		t.Errorf("Expected exit code 1, got %d", exitCode)

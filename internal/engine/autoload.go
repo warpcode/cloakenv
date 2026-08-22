@@ -16,8 +16,14 @@ func MatchRunAlias(cfg *config.Config, cmdArgs []string) (config.AutoloadRule, b
 		return config.AutoloadRule{}, false
 	}
 	for _, rule := range cfg.Autoload {
-		matched, _, _ := MatchCommandRule(rule, cmdArgs)
+		matched, _, err := MatchCommandRule(rule, cmdArgs)
 		if matched {
+			// Alias detection only reports match status; a malformed command
+			// template intentionally does not fail detection here. The error
+			// resurfaces with the rule's match pattern during
+			// BuildEnvForCommand, keeping alias reporting consistent with
+			// run-time behavior.
+			_ = err
 			return rule, true
 		}
 	}
@@ -32,7 +38,10 @@ func IsRunAlias(cfg *config.Config, cmdArgs []string) bool {
 
 // MatchCommand reports whether a command argument slice matches an autoload rule match pattern.
 func MatchCommand(ruleMatch string, cmdArgs []string) bool {
-	matched, _, _ := MatchCommandRule(config.AutoloadRule{Match: ruleMatch}, cmdArgs)
+	matched, _, err := MatchCommandRule(config.AutoloadRule{Match: ruleMatch}, cmdArgs)
+	// Substitution errors do not affect match status for this predicate; the
+	// error surfaces with rule context during BuildEnvForCommand.
+	_ = err
 	return matched
 }
 
@@ -61,22 +70,16 @@ func MatchCommandRule(rule config.AutoloadRule, cmdArgs []string) (bool, []strin
 	var matchIndices []int
 
 	// 1. Attempt Regex compilation & match
-	compiled, err := regexp.Compile(pattern)
-	if err == nil {
-		indices := compiled.FindStringSubmatchIndex(fullCmd)
-		if indices != nil {
+	if compiled, err := regexp.Compile(pattern); err == nil {
+		if indices := compiled.FindStringSubmatchIndex(fullCmd); indices != nil {
 			re = compiled
 			matchIndices = indices
 		}
-	} else {
-		if compiledCi, errCi := regexp.Compile("(?i)" + pattern); errCi == nil {
-			indices := compiledCi.FindStringSubmatchIndex(fullCmd)
-			if indices != nil {
-				re = compiledCi
-				matchIndices = indices
-			}
-		}
 	}
+	// Note: invalid regex patterns are not retried with a case-insensitive
+	// flag — prefixing (?i) cannot repair a syntax error. Non-regex patterns
+	// fall through to the basename/glob/prefix matching below, which is
+	// case-insensitive by construction.
 
 	isMatched := matchIndices != nil
 

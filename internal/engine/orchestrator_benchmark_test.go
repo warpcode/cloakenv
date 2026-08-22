@@ -72,7 +72,7 @@ func BenchmarkSearch(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Create a large entries.yaml
 	entriesCount := 1000

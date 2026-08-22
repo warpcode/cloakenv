@@ -11,7 +11,7 @@
       "title": "Staging Database Server",
       "tags": ["db", "staging"],
       "username": "env://DB_USER",
-      "password": "staging-password-456",
+      "password": "<your-password>",
       "port": 5432
     }
   }

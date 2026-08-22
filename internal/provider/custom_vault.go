@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/warpcode/cloakenv/internal/utils"
@@ -129,6 +130,12 @@ func (c *CustomVaultProvider) Search(_ context.Context, query SearchQuery) ([]Se
 			Entry: entry,
 		})
 	}
+
+	// Sort deterministically by path so results are stable across runs
+	// despite Go's randomized map iteration order.
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Path < results[j].Path
+	})
 
 	return results, nil
 }

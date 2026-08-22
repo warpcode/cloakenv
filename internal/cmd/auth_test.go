@@ -24,13 +24,13 @@ func captureOutput(t *testing.T, f func()) (string, string) {
 	if err != nil {
 		t.Fatalf("failed to create stdout pipe: %v", err)
 	}
-	defer wOut.Close()
+	defer func() { _ = wOut.Close() }()
 
 	rErr, wErr, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("failed to create stderr pipe: %v", err)
 	}
-	defer wErr.Close()
+	defer func() { _ = wErr.Close() }()
 
 	os.Stdout = wOut
 	os.Stderr = wErr
@@ -56,12 +56,12 @@ func captureOutput(t *testing.T, f func()) (string, string) {
 	// wOut and wErr will be closed by deferred calls above when captureOutput returns.
 	// We need to close them here to unblock the readers in the goroutines.
 	// The deferred calls will be no-ops if they are already closed.
-	wOut.Close()
-	wErr.Close()
+	_ = wOut.Close()
+	_ = wErr.Close()
 
 	wg.Wait()
-	rOut.Close()
-	rErr.Close()
+	_ = rOut.Close()
+	_ = rErr.Close()
 
 	if errOut != nil {
 		t.Errorf("failed to copy stdout: %v", errOut)

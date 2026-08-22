@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
@@ -16,7 +17,7 @@ func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Set up environment variable for testing env:// resolution
 	t.Setenv("ORCH_TEST_USER", "env_user")
@@ -177,7 +178,7 @@ func TestOrchestratorVaultsAndSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() { _ = os.RemoveAll(tempDir) }()
 
 	// Write single_db.yaml content
 	singleDbContent := `
@@ -406,4 +407,45 @@ func TestBuiltinsNonSearchable(t *testing.T) {
 			t.Errorf("expected 'does not support searching' error, got: %v", err)
 		}
 	})
+}
+
+func TestSearchConcurrentCompilation(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"vault1": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"item1": {
+						"Password": "pass",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	const numGoroutines = 30
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			results, err := orch.Search(ctx, `Password == "pass"`, nil)
+			if err != nil {
+				t.Errorf("concurrent search failed: %v", err)
+				return
+			}
+			if len(results) != 1 {
+				t.Errorf("expected 1 result, got %d", len(results))
+			}
+		}()
+	}
+
+	wg.Wait()
 }

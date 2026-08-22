@@ -16,6 +16,7 @@ type ProviderManager struct {
 	builtins            map[string]provider.SecretProvider
 	initializedBuiltins map[string]bool
 	vaultCache          map[string]provider.SecretProvider
+	initLocks           map[string]*sync.Mutex
 	keyring             *provider.OSKeyringProvider
 	mu                  sync.Mutex
 }
@@ -26,6 +27,7 @@ func NewProviderManager(cfg *config.Config, builtins map[string]provider.SecretP
 		builtins:            builtins,
 		initializedBuiltins: make(map[string]bool),
 		vaultCache:          make(map[string]provider.SecretProvider),
+		initLocks:           make(map[string]*sync.Mutex),
 		keyring:             keyring,
 	}
 }
@@ -69,30 +71,65 @@ func (pm *ProviderManager) GetProvider(ctx context.Context, scheme string) (prov
 	return p, false, nil
 }
 
-// getVaultProvider retrieves and initializes a vault provider, caching it for subsequent calls.
-func (pm *ProviderManager) getVaultProvider(ctx context.Context, vaultName string) (provider.SecretProvider, error) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
+// initLock returns the per-key initialization mutex for the given vault or
+// builtin scheme, creating it if necessary. Callers must hold pm.mu.
+func (pm *ProviderManager) initLock(key string) *sync.Mutex {
+	lk, ok := pm.initLocks[key]
+	if !ok {
+		lk = &sync.Mutex{}
+		pm.initLocks[key] = lk
+	}
+	return lk
+}
 
-	// Check the cache first
+// getVaultProvider retrieves and initializes a vault provider, caching it for subsequent calls.
+//
+// Initialization performs blocking work (file I/O, keyring access, and for
+// KeePass possibly an interactive master-password prompt), so it runs under a
+// per-vault lock instead of the global mutex. This keeps unrelated provider
+// lookups responsive while one vault is being initialized, while still
+// guaranteeing each vault is initialized exactly once.
+func (pm *ProviderManager) getVaultProvider(ctx context.Context, vaultName string) (provider.SecretProvider, error) {
+	// Fast path: check the cache under the global lock.
+	pm.mu.Lock()
 	if p, ok := pm.vaultCache[vaultName]; ok {
+		pm.mu.Unlock()
 		return p, nil
 	}
+	initMu := pm.initLock(vaultName)
+	pm.mu.Unlock()
 
-	// Look up the vault in config
+	// Serialize only identical vaults during blocking initialization.
+	initMu.Lock()
+	defer initMu.Unlock()
+
+	// Double-check: another goroutine may have initialized this vault while we
+	// waited on the per-vault lock.
+	pm.mu.Lock()
+	if p, ok := pm.vaultCache[vaultName]; ok {
+		pm.mu.Unlock()
+		return p, nil
+	}
+	if pm.config == nil {
+		pm.mu.Unlock()
+		return nil, fmt.Errorf("no configuration loaded")
+	}
 	vault, ok := pm.config.Vaults[vaultName]
+	pm.mu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("unknown scheme or vault: %q (not a built-in and not defined in config)", vaultName)
 	}
 
-	// Initialize the provider for this vault type
+	// Initialize the provider for this vault type (blocking; outside pm.mu).
 	p, err := pm.initVaultProvider(ctx, vaultName, vault)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize vault %q: %w", vaultName, err)
 	}
 
 	// Cache for subsequent lookups within the same run
+	pm.mu.Lock()
 	pm.vaultCache[vaultName] = p
+	pm.mu.Unlock()
 	return p, nil
 }
 
@@ -214,22 +251,41 @@ func (pm *ProviderManager) initCustomVault(ctx context.Context, vaultName string
 }
 
 // EnsureInitialized initializes a built-in provider if it hasn't been already.
+//
+// Like getVaultProvider, initialization runs under a per-scheme lock so that
+// blocking work (e.g. cache key generation with keyring I/O) does not hold the
+// global mutex and stall unrelated lookups.
 func (pm *ProviderManager) EnsureInitialized(ctx context.Context, scheme string, p provider.SecretProvider) error {
 	pm.mu.Lock()
-	defer pm.mu.Unlock()
 	if pm.initializedBuiltins[scheme] {
+		pm.mu.Unlock()
 		return nil
 	}
+	initMu := pm.initLock("builtin:" + scheme)
+	pm.mu.Unlock()
 
+	initMu.Lock()
+	defer initMu.Unlock()
+
+	// Double-check after acquiring the per-scheme lock.
+	pm.mu.Lock()
+	if pm.initializedBuiltins[scheme] {
+		pm.mu.Unlock()
+		return nil
+	}
 	settings := make(map[string]string)
 	if scheme == "cache" {
 		settings["keyring_prefix"] = pm.config.KeyringPrefix()
 	}
+	pm.mu.Unlock()
 
 	if err := p.Initialize(ctx, provider.ProviderConfig{Settings: settings}); err != nil {
 		return err
 	}
+
+	pm.mu.Lock()
 	pm.initializedBuiltins[scheme] = true
+	pm.mu.Unlock()
 	return nil
 }
 
@@ -288,6 +344,10 @@ func (pm *ProviderManager) ClearCache(ctx context.Context) error {
 
 // Login triggers authentication setup for a vault/scheme.
 func (pm *ProviderManager) Login(ctx context.Context, vaultName string) error {
+	if pm.config == nil {
+		return fmt.Errorf("no configuration loaded")
+	}
+
 	vault, ok := pm.config.Vaults[vaultName]
 	if !ok {
 		return fmt.Errorf("unknown vault/scheme: %q", vaultName)
@@ -315,6 +375,10 @@ func (pm *ProviderManager) Login(ctx context.Context, vaultName string) error {
 
 // Forget clears stored keyring credentials for a vault/scheme.
 func (pm *ProviderManager) Forget(ctx context.Context, vaultName string) error {
+	if pm.config == nil {
+		return fmt.Errorf("no configuration loaded")
+	}
+
 	vault, ok := pm.config.Vaults[vaultName]
 	if !ok {
 		return fmt.Errorf("unknown vault/scheme: %q", vaultName)
