@@ -38,6 +38,25 @@ func TestExpandString(t *testing.T) {
 			want:  "cost is $10",
 		},
 		{
+			name:  "escaped expansion placeholder produces literal expansion",
+			input: "literal $${world}",
+			resolve: func(u string) (string, error) {
+				return "SHOULD_NOT_BE_CALLED", nil
+			},
+			want: "literal ${world}",
+		},
+		{
+			name:  "escaped dollar preceding valid expansion",
+			input: "prefix $$${world}",
+			resolve: func(u string) (string, error) {
+				if u == "world" {
+					return "earth", nil
+				}
+				return "", errors.New("not found")
+			},
+			want: "prefix $earth",
+		},
+		{
 			name:    "unclosed brace",
 			input:   "hello ${world",
 			wantErr: true,

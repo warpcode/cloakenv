@@ -7,6 +7,8 @@ import (
 
 // ExpandString parses a string for `${...}` placeholders and replaces them
 // by invoking resolveFunc on the inner text. It supports escaping `$` as `$$`.
+// For example, `$$10` becomes `$10`, `$${foo}` produces the literal string `${foo}`
+// without resolving it, and `$$${foo}` produces `$` followed by the resolved value.
 // If configKey is provided, it is included in error messages.
 func ExpandString(s string, configKey string, resolveFunc func(uri string) (string, error)) (string, error) {
 	var sb strings.Builder
