@@ -468,3 +468,27 @@ func TestSearchConcurrentCompilation(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestSearchNilConfig(t *testing.T) {
+	orch, err := NewOrchestrator(nil)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator with nil config: %v", err)
+	}
+
+	ctx := context.Background()
+	_, err = orch.Search(ctx, `title == "test"`, nil)
+	if err == nil {
+		t.Fatal("expected error searching with nil config, got nil")
+	}
+	if !strings.Contains(err.Error(), "no configuration loaded") {
+		t.Errorf("expected 'no configuration loaded' error, got %v", err)
+	}
+
+	_, err = orch.Search(ctx, `title == "test"`, []string{"keyring"})
+	if err == nil {
+		t.Fatal("expected error searching with nil config and builtin scope, got nil")
+	}
+	if !strings.Contains(err.Error(), "no configuration loaded") {
+		t.Errorf("expected 'no configuration loaded' error, got %v", err)
+	}
+}

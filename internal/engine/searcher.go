@@ -38,6 +38,11 @@ func NewSearcher(pm *ProviderManager, attrResolver AttributeResolver) *Searcher 
 }
 
 func (s *Searcher) getSearchableProviders(ctx context.Context, repoScopes []string) (map[string]provider.SearchableProvider, error) {
+	cfg := s.providers.Config()
+	if cfg == nil {
+		return nil, fmt.Errorf("no configuration loaded")
+	}
+
 	providersToSearch := make(map[string]provider.SearchableProvider)
 
 	if len(repoScopes) > 0 {
@@ -51,7 +56,7 @@ func (s *Searcher) getSearchableProviders(ctx context.Context, repoScopes []stri
 				return nil, err
 			}
 
-			if vaultConfig, hasVault := s.providers.Config().Vaults[repoScope]; hasVault {
+			if vaultConfig, hasVault := cfg.Vaults[repoScope]; hasVault {
 				if vaultConfig.Searchable != nil && !*vaultConfig.Searchable {
 					return nil, fmt.Errorf("vault %q is not searchable", repoScope)
 				}
@@ -64,7 +69,7 @@ func (s *Searcher) getSearchableProviders(ctx context.Context, repoScopes []stri
 			}
 		}
 	} else {
-		for vaultName, vaultConfig := range s.providers.Config().Vaults {
+		for vaultName, vaultConfig := range cfg.Vaults {
 			if vaultConfig.Searchable != nil && !*vaultConfig.Searchable {
 				continue
 			}
@@ -182,6 +187,7 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 		return nil, err
 	}
 
+	cfg := s.providers.Config()
 	var allResults []provider.SearchResult
 	for name, searchable := range providersToSearch {
 		results, err := searchable.Search(ctx, provider.SearchQuery{})
@@ -190,7 +196,11 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 		}
 
 		for _, r := range results {
-			r.Provider = s.providers.Config().Vaults[name].Provider
+			if cfg != nil {
+				if vc, ok := cfg.Vaults[name]; ok {
+					r.Provider = vc.Provider
+				}
+			}
 			r.Vault = name
 			allResults = append(allResults, s.resolveSearchResultAttributes(ctx, r, depth))
 		}
