@@ -9,9 +9,8 @@ import (
 	"github.com/warpcode/cloakenv/internal/provider"
 )
 
-// Orchestrator resolves secret URIs by dispatching to the appropriate
-// SecretProvider based on the URI scheme. Built-in schemes (keyring://,
-// env://) are always available. User-defined remote names from config
+// Orchestrator coordinates secret resolution across multiple vaults and providers.
+// Built-in schemes ("keyring", "env", "cache") are always available; configured vaults
 // become additional schemes at runtime.
 type Orchestrator struct {
 	config          *config.Config
@@ -20,8 +19,6 @@ type Orchestrator struct {
 	searcher        *Searcher
 	envBuilder      *EnvBuilder
 }
-
-const maxConcurrency = 16
 
 // NewOrchestrator creates a new orchestrator with the given config,
 // registers built-in providers, and validates all remote configurations.

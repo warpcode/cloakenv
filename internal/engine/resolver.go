@@ -15,6 +15,12 @@ import (
 // SearchFunc defines the signature for searching across repositories.
 type SearchFunc func(ctx context.Context, expressionStr string, depth int) ([]provider.SearchResult, error)
 
+// maxConcurrency bounds concurrent secret resolutions across array and nested
+// attribute expansions within the Resolver. It is deliberately independent from
+// the EnvBuilder's maxResolveConcurrency to prevent deadlock when EnvBuilder merges
+// nest into Resolver slice expansions.
+const maxConcurrency = 16
+
 // Resolver handles secret resolution logic and URI routing.
 type Resolver struct {
 	providers      *ProviderManager
