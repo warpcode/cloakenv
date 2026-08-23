@@ -420,3 +420,44 @@ func TestOrchestratorBuildEnvEmptyEnv(t *testing.T) {
 		t.Errorf("expected TEST_ENV_VAR to not be present")
 	}
 }
+
+func TestBuildEnvDeterministicOrder(t *testing.T) {
+	cfg := &config.Config{}
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	explicit := map[string]string{
+		"ZEBRA":  "1",
+		"ALPHA":  "2",
+		"MANGO":  "3",
+		"BETA":   "4",
+		"DELTA":  "5",
+		"CHARLIE": "6",
+	}
+
+	expected := []string{
+		"ALPHA=2",
+		"BETA=4",
+		"CHARLIE=6",
+		"DELTA=5",
+		"MANGO=3",
+		"ZEBRA=1",
+	}
+
+	for i := 0; i < 10; i++ {
+		res, err := orch.BuildEnv(context.Background(), explicit, nil, nil, true)
+		if err != nil {
+			t.Fatalf("failed to build env: %v", err)
+		}
+		if len(res) != len(expected) {
+			t.Fatalf("expected %d items, got %d", len(expected), len(res))
+		}
+		for j, item := range res {
+			if item != expected[j] {
+				t.Fatalf("run %d index %d: expected %q, got %q", i, j, expected[j], item)
+			}
+		}
+	}
+}

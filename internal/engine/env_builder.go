@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -244,10 +245,16 @@ func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cmdArgs []string, 
 		finalEnv[k] = v
 	}
 
-	// Convert finalEnv map to []string slice in "KEY=VALUE" format
+	// Convert finalEnv map to []string slice in "KEY=VALUE" format with deterministic sorting
+	keys := make([]string, 0, len(finalEnv))
+	for k := range finalEnv {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	var result []string
-	for k, v := range finalEnv {
-		result = append(result, fmt.Sprintf("%s=%s", k, v))
+	for _, k := range keys {
+		result = append(result, fmt.Sprintf("%s=%s", k, finalEnv[k]))
 	}
 
 	if len(currentCmdArgs) == 0 {
