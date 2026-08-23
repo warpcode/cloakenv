@@ -429,11 +429,11 @@ func TestBuildEnvDeterministicOrder(t *testing.T) {
 	}
 
 	explicit := map[string]string{
-		"ZEBRA":  "1",
-		"ALPHA":  "2",
-		"MANGO":  "3",
-		"BETA":   "4",
-		"DELTA":  "5",
+		"ZEBRA":   "1",
+		"ALPHA":   "2",
+		"MANGO":   "3",
+		"BETA":    "4",
+		"DELTA":   "5",
 		"CHARLIE": "6",
 	}
 
@@ -446,7 +446,7 @@ func TestBuildEnvDeterministicOrder(t *testing.T) {
 		"ZEBRA=1",
 	}
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		res, err := orch.BuildEnv(context.Background(), explicit, nil, nil, true)
 		if err != nil {
 			t.Fatalf("failed to build env: %v", err)

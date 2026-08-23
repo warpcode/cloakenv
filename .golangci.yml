@@ -14,11 +14,6 @@ linters:
     - intrange     # modernize numeric for-loops
     - gosec        # security scanning; mandatory for a credentials orchestrator
   settings:
-    gosec:
-      excludes:
-        # Reading user-configured vault paths from disk is the product's core
-        # function; path provenance is validated by the config layer.
-        - G304
     errcheck:
       # CLI print helpers writing to stdout/stderr cannot meaningfully handle
       # write errors; all other error returns remain enforced.

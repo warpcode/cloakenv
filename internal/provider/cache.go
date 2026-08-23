@@ -111,7 +111,7 @@ func (c *CacheProvider) GetSecret(ctx context.Context, location string) (string,
 	}
 
 	filePath := c.getCacheFilePath(location)
-	data, err := os.ReadFile(filePath)
+	data, err := os.ReadFile(filePath) //nolint:gosec // deterministic cache path derived from sanitized key
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", fmt.Errorf("cache provider: secret %q not found in cache", location)
