@@ -41,6 +41,9 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 			if _, isBuiltin := builtins[vaultName]; isBuiltin {
 				return nil, fmt.Errorf("invalid config: vault name %q conflicts with built-in scheme", vaultName)
 			}
+			if vaultName == "search" {
+				return nil, fmt.Errorf("invalid config: vault name %q conflicts with reserved scheme", vaultName)
+			}
 
 			// If resolve_values is set, ask the provider whether it supports it.
 			if vault.ResolveValues {

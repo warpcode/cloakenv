@@ -380,6 +380,22 @@ func TestBuiltinsNonSearchable(t *testing.T) {
 		if !strings.Contains(err.Error(), "conflicts with built-in scheme") {
 			t.Errorf("expected conflict error, got: %v", err)
 		}
+
+		// Vault configuration trying to use reserved scheme "search"
+		cfgSearch := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"search": {
+					Provider: "custom_vault",
+				},
+			},
+		}
+		_, err = NewOrchestrator(cfgSearch)
+		if err == nil {
+			t.Fatal("expected error when vault name conflicts with reserved scheme, got nil")
+		}
+		if !strings.Contains(err.Error(), "conflicts with reserved scheme") {
+			t.Errorf("expected reserved scheme conflict error, got: %v", err)
+		}
 	})
 
 	t.Run("SearchErrorOnBuiltins", func(t *testing.T) {

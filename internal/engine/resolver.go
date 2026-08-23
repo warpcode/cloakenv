@@ -59,6 +59,9 @@ func (r *Resolver) ResolveWithKey(ctx context.Context, uri string, configKey str
 }
 
 func (r *Resolver) isKnownScheme(scheme string) bool {
+	if scheme == "search" {
+		return true
+	}
 	if r.providers.HasBuiltin(scheme) {
 		return true
 	}
