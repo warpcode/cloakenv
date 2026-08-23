@@ -96,6 +96,15 @@ func (pm *ProviderManager) getVaultProvider(ctx context.Context, vaultName strin
 		pm.mu.Unlock()
 		return p, nil
 	}
+	if pm.config == nil {
+		pm.mu.Unlock()
+		return nil, fmt.Errorf("no configuration loaded")
+	}
+	vault, ok := pm.config.Vaults[vaultName]
+	if !ok {
+		pm.mu.Unlock()
+		return nil, fmt.Errorf("unknown scheme or vault: %q (not a built-in and not defined in config)", vaultName)
+	}
 	initMu := pm.initLock(vaultName)
 	pm.mu.Unlock()
 
@@ -110,15 +119,7 @@ func (pm *ProviderManager) getVaultProvider(ctx context.Context, vaultName strin
 		pm.mu.Unlock()
 		return p, nil
 	}
-	if pm.config == nil {
-		pm.mu.Unlock()
-		return nil, fmt.Errorf("no configuration loaded")
-	}
-	vault, ok := pm.config.Vaults[vaultName]
 	pm.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("unknown scheme or vault: %q (not a built-in and not defined in config)", vaultName)
-	}
 
 	// Initialize the provider for this vault type (blocking; outside pm.mu).
 	p, err := pm.initVaultProvider(ctx, vaultName, vault)
@@ -260,6 +261,10 @@ func (pm *ProviderManager) EnsureInitialized(ctx context.Context, scheme string,
 	if pm.initializedBuiltins[scheme] {
 		pm.mu.Unlock()
 		return nil
+	}
+	if _, ok := pm.builtins[scheme]; !ok {
+		pm.mu.Unlock()
+		return fmt.Errorf("unknown built-in provider: %q", scheme)
 	}
 	initMu := pm.initLock("builtin:" + scheme)
 	pm.mu.Unlock()

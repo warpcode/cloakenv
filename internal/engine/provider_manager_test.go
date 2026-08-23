@@ -146,3 +146,31 @@ func TestClearCache(t *testing.T) {
 		}
 	})
 }
+
+func TestProviderManagerUnknownSchemeDoesNotAllocateLock(t *testing.T) {
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"known_vault": {
+				Provider: "custom_vault",
+			},
+		},
+	}
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	ctx := context.Background()
+	_, _, err = orch.providerManager.GetProvider(ctx, "nonexistent_vault")
+	if err == nil {
+		t.Fatal("expected error for nonexistent vault, got nil")
+	}
+
+	orch.providerManager.mu.Lock()
+	lockCount := len(orch.providerManager.initLocks)
+	orch.providerManager.mu.Unlock()
+
+	if lockCount != 0 {
+		t.Errorf("expected 0 initLocks allocated for unknown vault, got %d", lockCount)
+	}
+}
