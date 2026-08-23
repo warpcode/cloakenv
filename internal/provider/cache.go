@@ -15,8 +15,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/warpcode/cloakenv/internal/utils"
 	"github.com/zalando/go-keyring"
+
+	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 const (
@@ -64,7 +65,14 @@ func (c *CacheProvider) Initialize(_ context.Context, cfg ProviderConfig) error 
 	// Fetch or generate the AES-256 key from OS keyring
 	hexKey, err := keyring.Get(prefix, keyringAccount)
 	if err != nil {
-		// Key does not exist, let's generate it
+		// Only generate a new key when the keyring confirms the key is absent.
+		// Any other failure (locked keyring, D-Bus down, permissions) must abort
+		// initialization: regenerating here would silently orphan every existing
+		// cache file encrypted under the previous key.
+		if !errors.Is(err, keyring.ErrNotFound) {
+			return fmt.Errorf("cache provider: failed to read key from OS keyring: %w", err)
+		}
+
 		keyBytes := make([]byte, 32) // AES-256 key size
 		if _, err := io.ReadFull(rand.Reader, keyBytes); err != nil {
 			return fmt.Errorf("cache provider: failed to generate key: %w", err)
@@ -79,8 +87,11 @@ func (c *CacheProvider) Initialize(_ context.Context, cfg ProviderConfig) error 
 	} else {
 		// Key exists, decode it
 		keyBytes, err := hex.DecodeString(hexKey)
-		if err != nil || len(keyBytes) != 32 {
+		if err != nil {
 			return fmt.Errorf("cache provider: malformed key in OS keyring: %w", err)
+		}
+		if len(keyBytes) != 32 {
+			return fmt.Errorf("cache provider: key in OS keyring has wrong length: %d bytes, expected 32", len(keyBytes))
 		}
 		c.aesKey = keyBytes
 	}
@@ -90,13 +101,17 @@ func (c *CacheProvider) Initialize(_ context.Context, cfg ProviderConfig) error 
 
 // GetSecret reads, decrypts, and returns a cached secret.
 // Location format: the bare identifier/cache key name (e.g. "openai_key").
+//
+// Note: the returned value is an immutable Go string; only intermediate
+// decryption buffers are zeroized. The returned copy lives on the heap until
+// garbage collection and cannot be actively scrubbed.
 func (c *CacheProvider) GetSecret(ctx context.Context, location string) (string, error) {
 	if len(c.aesKey) == 0 {
 		return "", errors.New("cache provider: not initialized")
 	}
 
 	filePath := c.getCacheFilePath(location)
-	data, err := os.ReadFile(filePath)
+	data, err := os.ReadFile(filePath) //nolint:gosec // deterministic cache path derived from sanitized key
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", fmt.Errorf("cache provider: secret %q not found in cache", location)
@@ -132,16 +147,22 @@ func (c *CacheProvider) GetSecret(ctx context.Context, location string) (string,
 		return "", errors.New("cache provider: malformed plaintext metadata")
 	}
 
-	writeTime := int64(binary.BigEndian.Uint64(plaintext[0:8]))
-	ttl := int64(binary.BigEndian.Uint64(plaintext[8:16]))
+	// Fixed-width 8-byte encoding: the uint64->int64 reinterpretation is the
+	// inverse of the PutUint64(uint64(t)) performed at write time.
+	writeTime := int64(binary.BigEndian.Uint64(plaintext[0:8])) //nolint:gosec // intentional round-trip of a fixed-width timestamp encoding
+	ttl := int64(binary.BigEndian.Uint64(plaintext[8:16]))      //nolint:gosec // intentional round-trip of a fixed-width duration encoding
 
 	// Check TTL expiration
 	if ttl > 0 {
 		now := time.Now().UnixNano()
 		if now > writeTime+ttl {
-			// Cache expired! Clean it up immediately.
-			_ = c.DeleteSecret(ctx, location)
-			return "", fmt.Errorf("cache provider: secret %q has expired", location)
+			// Cache expired! Clean it up immediately, surfacing any cleanup
+			// failure alongside the primary expiration error.
+			expiredErr := fmt.Errorf("cache provider: secret %q has expired", location)
+			if delErr := c.DeleteSecret(ctx, location); delErr != nil {
+				return "", errors.Join(expiredErr, delErr)
+			}
+			return "", expiredErr
 		}
 	}
 
@@ -166,7 +187,7 @@ func (c *CacheProvider) SetSecret(ctx context.Context, location string, value st
 	writeTime := time.Now().UnixNano()
 	metadata := make([]byte, 16)
 	binary.BigEndian.PutUint64(metadata[0:8], uint64(writeTime))
-	binary.BigEndian.PutUint64(metadata[8:16], uint64(ttl.Nanoseconds()))
+	binary.BigEndian.PutUint64(metadata[8:16], uint64(ttl.Nanoseconds())) //nolint:gosec // fixed-width wire encoding; decoded symmetrically on read
 
 	valBytes := []byte(value)
 	plaintext := append(metadata, valBytes...)
@@ -205,18 +226,22 @@ func (c *CacheProvider) SetSecret(ctx context.Context, location string, value st
 	tmpFile := f.Name()
 
 	if _, err := f.Write(fileData); err != nil {
-		f.Close()
-		os.Remove(tmpFile)
-		return fmt.Errorf("cache provider: failed to write temp cache file: %w", err)
+		// Best-effort cleanup; join cleanup failures with the primary error
+		// so nothing is silently discarded.
+		return fmt.Errorf("cache provider: failed to write temp cache file: %w", errors.Join(err, f.Close(), os.Remove(tmpFile)))
 	}
 
 	if err := f.Close(); err != nil {
-		os.Remove(tmpFile)
+		if rmErr := os.Remove(tmpFile); rmErr != nil {
+			return fmt.Errorf("cache provider: failed to close temp cache file: %w", errors.Join(err, rmErr))
+		}
 		return fmt.Errorf("cache provider: failed to close temp cache file: %w", err)
 	}
 
 	if err := os.Rename(tmpFile, filePath); err != nil {
-		os.Remove(tmpFile)
+		if rmErr := os.Remove(tmpFile); rmErr != nil {
+			return fmt.Errorf("cache provider: failed to commit cache file: %w", errors.Join(err, rmErr))
+		}
 		return fmt.Errorf("cache provider: failed to commit cache file: %w", err)
 	}
 

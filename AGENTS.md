@@ -14,7 +14,7 @@
 
 - **Zero-persistence**: Secrets are resolved at runtime and never written to plaintext files.
 - **URI-addressed secrets**: Every secret is referenced by a typed URI (e.g., `keepass://group/entry:attr`, `keyring://service/account`).
-- **Pluggable providers**: Adding a new backend means implementing the `provider.Provider` interface only.
+- **Pluggable providers**: Adding a new backend means implementing the `provider.SecretProvider` interface only.
 - **Cross-platform**: CI runs on Linux, macOS, and Windows. All code must compile and pass tests on all three.
 
 ---
@@ -74,12 +74,16 @@ make test-all         # Run formatting, vetting, unit tests, and benchmarks (run
 ```bash
 make fmt              # go fmt ./...
 make vet              # go vet ./...
-go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 run  # Full lint (mirrors CI)
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run  # Full lint (mirrors CI)
 ```
 
 > [!WARNING]
 > **All CI checks must pass before any merge.** CI runs lint, and tests on
 > `ubuntu-latest`, `macos-latest`, and `windows-latest`.
+>
+> Lint configuration lives in `.golangci.yml` (golangci-lint v2 format). The
+> pinned golangci-lint version must be built with the same Go major version as
+> `go.mod` — older binaries fail with "export data version" typecheck errors.
 
 ---
 
@@ -97,7 +101,7 @@ go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 run  # Full l
 
 ### Interfaces & Extensibility
 
-- The `provider.Provider` interface is the **core extension point**. Adding a new backend = new file in `internal/provider/`, implementing the interface. Do not modify the interface signature without a plan review.
+- The `provider.SecretProvider` interface is the **core extension point**. Adding a new backend = new file in `internal/provider/`, implementing the interface. Do not modify the interface signature without a plan review.
 - URI scheme registration happens in the engine; new providers must be registered there explicitly.
 
 ### File Naming

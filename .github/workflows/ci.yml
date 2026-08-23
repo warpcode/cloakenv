@@ -27,7 +27,7 @@ jobs:
           cache: true
 
       - name: golangci-lint
-        run: go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 run
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run
 
   test:
     name: Run Tests

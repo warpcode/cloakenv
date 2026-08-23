@@ -56,11 +56,11 @@ Description:
 
 	i := 0
 	for i < len(args) {
-		switch {
-		case args[i] == "--":
+		switch args[i] {
+		case "--":
 			cmdArgs = args[i+1:]
 			i = len(args)
-		case args[i] == "--json":
+		case "--json":
 			jsonOutput = true
 			i++
 		default:
@@ -78,7 +78,10 @@ Description:
 		return 1
 	}
 
-	rule, matched := engine.MatchRunAlias(cfg, cmdArgs)
+	rule, matched, matchErr := engine.MatchRunAlias(cfg, cmdArgs)
+	if matchErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: autoload rule %q matched but command substitution failed: %v\n", rule.Match, matchErr)
+	}
 
 	if jsonOutput {
 		res := MatchAliasResult{

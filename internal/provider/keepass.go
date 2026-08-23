@@ -157,11 +157,13 @@ func (k *KeePassProvider) unlock(vaultPath string, password []byte) error {
 		vaultPath = home + vaultPath[1:]
 	}
 
-	file, err := os.Open(vaultPath)
+	file, err := os.Open(vaultPath) //nolint:gosec // operator-configured vault path; validated by internal/config
 	if err != nil {
 		return fmt.Errorf("keepass provider: failed to open database %s: %w", vaultPath, err)
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close() // read-only handle; close errors carry no actionable signal here
+	}()
 
 	k.db = gokeepasslib.NewDatabase()
 	k.db.Credentials = gokeepasslib.NewPasswordCredentials(string(password))

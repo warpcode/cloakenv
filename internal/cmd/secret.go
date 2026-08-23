@@ -76,7 +76,7 @@ func Set(args []string, cfg *config.Config) int {
 	parser.Var([]string{"--ttl"}, true, "Error: missing value for --ttl flag", func(name, val string) error {
 		d, err := time.ParseDuration(val)
 		if err != nil {
-			return fmt.Errorf("Invalid TTL duration format: %v (examples: 5m, 1h)", err)
+			return fmt.Errorf("invalid TTL duration format: %w (examples: 5m, 1h)", err)
 		}
 		ttl = d
 		return nil

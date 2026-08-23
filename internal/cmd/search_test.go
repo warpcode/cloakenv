@@ -299,7 +299,7 @@ func TestSearch(t *testing.T) {
 			t.Fatalf("failed to create pipe: %v", err)
 		}
 		defer func() { os.Stdout = oldStdout }()
-		defer w.Close()
+		defer func() { _ = w.Close() }()
 		os.Stdout = w
 
 		args := []string{"--help"}
@@ -311,7 +311,7 @@ func TestSearch(t *testing.T) {
 		}
 
 		var buf bytes.Buffer
-		w.Close()
+		_ = w.Close()
 		if _, err := io.Copy(&buf, r); err != nil {
 			t.Fatalf("failed to copy: %v", err)
 		}
@@ -329,7 +329,7 @@ func TestSearch(t *testing.T) {
 			t.Fatalf("failed to create pipe: %v", err)
 		}
 		defer func() { os.Stderr = oldStderr }()
-		defer w.Close()
+		defer func() { _ = w.Close() }()
 		os.Stderr = w
 
 		args := []string{"-o"}
@@ -341,7 +341,7 @@ func TestSearch(t *testing.T) {
 		}
 
 		var buf bytes.Buffer
-		w.Close()
+		_ = w.Close()
 		if _, err := io.Copy(&buf, r); err != nil {
 			t.Fatalf("failed to copy: %v", err)
 		}
@@ -359,7 +359,7 @@ func TestSearch(t *testing.T) {
 			t.Fatalf("failed to create pipe: %v", err)
 		}
 		defer func() { os.Stderr = oldStderr }()
-		defer w.Close()
+		defer func() { _ = w.Close() }()
 		os.Stderr = w
 
 		args := []string{}
@@ -377,7 +377,7 @@ func TestSearch(t *testing.T) {
 		}
 
 		var buf bytes.Buffer
-		w.Close()
+		_ = w.Close()
 		if _, err := io.Copy(&buf, r); err != nil {
 			t.Fatalf("failed to copy: %v", err)
 		}
@@ -395,7 +395,7 @@ func TestSearch(t *testing.T) {
 			t.Fatalf("failed to create pipe: %v", err)
 		}
 		defer func() { os.Stderr = oldStderr }()
-		defer w.Close()
+		defer func() { _ = w.Close() }()
 		os.Stderr = w
 
 		args := []string{"invalid syntax === "}
@@ -414,7 +414,7 @@ func TestSearch(t *testing.T) {
 		}
 
 		var buf bytes.Buffer
-		w.Close()
+		_ = w.Close()
 		if _, err := io.Copy(&buf, r); err != nil {
 			t.Fatalf("failed to copy: %v", err)
 		}
@@ -432,7 +432,7 @@ func TestSearch(t *testing.T) {
 			t.Fatalf("failed to create pipe: %v", err)
 		}
 		defer func() { os.Stdout = oldStdout }()
-		defer w.Close()
+		defer func() { _ = w.Close() }()
 		os.Stdout = w
 
 		args := []string{"title == 'Production SSH Key'", "-o", "json"}
@@ -451,7 +451,7 @@ func TestSearch(t *testing.T) {
 		}
 
 		var buf bytes.Buffer
-		w.Close()
+		_ = w.Close()
 		if _, err := io.Copy(&buf, r); err != nil {
 			t.Fatalf("failed to copy: %v", err)
 		}
@@ -469,7 +469,7 @@ func TestSearch(t *testing.T) {
 			t.Fatalf("failed to create pipe: %v", err)
 		}
 		defer func() { os.Stdout = oldStdout }()
-		defer w.Close()
+		defer func() { _ = w.Close() }()
 		os.Stdout = w
 
 		args := []string{"-i", "title", "-i", "USERNAME", "-o", "json"}
@@ -488,7 +488,7 @@ func TestSearch(t *testing.T) {
 		}
 
 		var buf bytes.Buffer
-		w.Close()
+		_ = w.Close()
 		if _, err := io.Copy(&buf, r); err != nil {
 			t.Fatalf("failed to copy: %v", err)
 		}
@@ -509,7 +509,7 @@ func TestSearch(t *testing.T) {
 			t.Fatalf("failed to create pipe: %v", err)
 		}
 		defer func() { os.Stdout = oldStdout }()
-		defer w.Close()
+		defer func() { _ = w.Close() }()
 		os.Stdout = w
 
 		args := []string{"title == 'Production SSH Key'", "-o", "yaml"}
@@ -528,7 +528,7 @@ func TestSearch(t *testing.T) {
 		}
 
 		var buf bytes.Buffer
-		w.Close()
+		_ = w.Close()
 		if _, err := io.Copy(&buf, r); err != nil {
 			t.Fatalf("failed to copy: %v", err)
 		}
