@@ -1057,6 +1057,20 @@ func (o *Orchestrator) resolveExplicitMappings(ctx context.Context, explicit map
 	return resolved, nil
 }
 
+func normalizeURIs(uris []string) []string {
+	var result []string
+	for _, u := range uris {
+		u = strings.TrimSpace(u)
+		if u != "" {
+			if !strings.Contains(u, "://") {
+				u = u + "://"
+			}
+			result = append(result, u)
+		}
+	}
+	return result
+}
+
 // BuildEnv constructs the full environment block without command autoloading.
 func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, merges []string, whitelist []string, emptyEnv bool) ([]string, error) {
 	_, env, err := o.BuildEnvForCommand(ctx, nil, explicit, merges, whitelist, emptyEnv)
@@ -1079,24 +1093,8 @@ func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cmdArgs []string,
 			}
 			if matched {
 				currentCmdArgs = newCmdArgs
-				for _, v := range rule.Vaults {
-					v = strings.TrimSpace(v)
-					if v != "" {
-						if !strings.Contains(v, "://") {
-							v = v + "://"
-						}
-						autoMerges = append(autoMerges, v)
-					}
-				}
-				for _, m := range rule.Merge {
-					m = strings.TrimSpace(m)
-					if m != "" {
-						if !strings.Contains(m, "://") {
-							m = m + "://"
-						}
-						autoMerges = append(autoMerges, m)
-					}
-				}
+				autoMerges = append(autoMerges, normalizeURIs(rule.Vaults)...)
+				autoMerges = append(autoMerges, normalizeURIs(rule.Merge)...)
 				for k, uri := range rule.Env {
 					if k != "" && uri != "" {
 						autoExplicit[k] = uri
