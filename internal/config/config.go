@@ -63,6 +63,8 @@ func (c *Config) CompileAutoloadRules() {
 }
 
 // Compile precompiles the regular expression pattern for the autoload rule if Match is non-empty.
+// If Match is a non-regex glob or invalid regex syntax, CompiledRegex remains nil and matching
+// falls back to basename/glob/prefix matching.
 func (r *AutoloadRule) Compile() {
 	pattern := strings.TrimSpace(r.Match)
 	if pattern != "" && r.CompiledRegex == nil {

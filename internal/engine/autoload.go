@@ -16,7 +16,6 @@ func MatchRunAlias(cfg *config.Config, cmdArgs []string) (config.AutoloadRule, b
 	if cfg == nil || len(cfg.Autoload) == 0 || len(cmdArgs) == 0 {
 		return config.AutoloadRule{}, false, nil
 	}
-	cfg.CompileAutoloadRules()
 	for _, rule := range cfg.Autoload {
 		matched, _, err := MatchCommandRule(rule, cmdArgs)
 		if matched {
@@ -69,7 +68,11 @@ func MatchCommandRule(rule config.AutoloadRule, cmdArgs []string) (bool, []strin
 	// 1. Attempt Regex match (precompiled)
 	compiled := rule.CompiledRegex
 	if compiled == nil && pattern != "" {
-		compiled, _ = regexp.Compile(pattern)
+		var err error
+		compiled, err = regexp.Compile(pattern)
+		if err != nil {
+			compiled = nil
+		}
 	}
 	if compiled != nil {
 		if indices := compiled.FindStringSubmatchIndex(fullCmd); indices != nil {
