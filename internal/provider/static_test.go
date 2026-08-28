@@ -217,3 +217,153 @@ func TestStaticProvider_Validate(t *testing.T) {
 		})
 	}
 }
+
+func TestStaticProvider_Search(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("single entity search", func(t *testing.T) {
+		t.Parallel()
+		sp := &staticProvider{
+			scheme:       "json",
+			singleEntity: true,
+			entries: map[string]Entry{
+				"": {
+					Title: "Production Vault",
+					Tags:  []string{"env:prod", "role:db"},
+					Attributes: map[string]any{
+						"host": "localhost",
+					},
+				},
+			},
+		}
+
+		tests := []struct {
+			name      string
+			query     SearchQuery
+			wantCount int
+			wantErr   bool
+		}{
+			{
+				name:      "empty query matches single entity",
+				query:     SearchQuery{},
+				wantCount: 1,
+			},
+			{
+				name:      "matching title substring",
+				query:     SearchQuery{Title: "prod"},
+				wantCount: 1,
+			},
+			{
+				name:      "non-matching title substring",
+				query:     SearchQuery{Title: "staging"},
+				wantCount: 0,
+			},
+			{
+				name:      "matching tags case-insensitive",
+				query:     SearchQuery{Tags: []string{"ENV:PROD", "ROLE:DB"}},
+				wantCount: 1,
+			},
+			{
+				name:      "partially non-matching tags",
+				query:     SearchQuery{Tags: []string{"env:prod", "role:web"}},
+				wantCount: 0,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				results, err := sp.Search(ctx, tt.query)
+				if (err != nil) != tt.wantErr {
+					t.Fatalf("Search() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				if len(results) != tt.wantCount {
+					t.Errorf("Search() got %d results, want %d", len(results), tt.wantCount)
+				}
+			})
+		}
+	})
+
+	t.Run("single entity missing entry error", func(t *testing.T) {
+		t.Parallel()
+		sp := &staticProvider{
+			scheme:       "json",
+			singleEntity: true,
+			entries:      map[string]Entry{},
+		}
+		_, err := sp.Search(ctx, SearchQuery{})
+		if err == nil {
+			t.Error("expected error when single entity entry is missing, got nil")
+		}
+	})
+
+	t.Run("multi entity search", func(t *testing.T) {
+		t.Parallel()
+		sp := &staticProvider{
+			scheme:       "json",
+			singleEntity: false,
+			entries: map[string]Entry{
+				"app/prod": {
+					Title: "App Prod",
+					Tags:  []string{"env:prod", "team:backend"},
+				},
+				"app/staging": {
+					Title: "App Staging",
+					Tags:  []string{"env:staging", "team:backend"},
+				},
+				"db/prod": {
+					Title: "Database Prod",
+					Tags:  []string{"env:prod", "team:dba"},
+				},
+			},
+		}
+
+		tests := []struct {
+			name      string
+			query     SearchQuery
+			wantCount int
+		}{
+			{
+				name:      "empty query returns all",
+				query:     SearchQuery{},
+				wantCount: 3,
+			},
+			{
+				name:      "title filter",
+				query:     SearchQuery{Title: "database"},
+				wantCount: 1,
+			},
+			{
+				name:      "path filter",
+				query:     SearchQuery{Path: "app/"},
+				wantCount: 2,
+			},
+			{
+				name:      "tags filter",
+				query:     SearchQuery{Tags: []string{"env:prod"}},
+				wantCount: 2,
+			},
+			{
+				name:      "combined filter",
+				query:     SearchQuery{Path: "app/", Tags: []string{"env:prod", "team:backend"}},
+				wantCount: 1,
+			},
+			{
+				name:      "no match",
+				query:     SearchQuery{Title: "nonexistent"},
+				wantCount: 0,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				results, err := sp.Search(ctx, tt.query)
+				if err != nil {
+					t.Fatalf("Search() unexpected error = %v", err)
+				}
+				if len(results) != tt.wantCount {
+					t.Errorf("Search() got %d results, want %d", len(results), tt.wantCount)
+				}
+			})
+		}
+	})
+}

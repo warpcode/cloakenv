@@ -269,74 +269,54 @@ func (p *staticProvider) Search(_ context.Context, query SearchQuery) ([]SearchR
 			return nil, fmt.Errorf("%s provider: single entity not found", p.scheme)
 		}
 
-		if query.Title != "" {
-			if !strings.Contains(strings.ToLower(entry.Title), queryTitleLower) {
-				return results, nil
-			}
+		if matchEntry(entry, "", query, queryTitleLower, queryPathLower) {
+			results = append(results, SearchResult{
+				Path:  "",
+				Entry: entry,
+			})
 		}
-
-		if len(query.Tags) > 0 {
-			for _, qt := range query.Tags {
-				found := false
-				for _, t := range entry.Tags {
-					if strings.EqualFold(t, qt) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					return results, nil
-				}
-			}
-		}
-
-		results = append(results, SearchResult{
-			Path:  "",
-			Entry: entry,
-		})
 		return results, nil
 	}
 
 	for name, entry := range p.entries {
-		if query.Title != "" {
-			if !strings.Contains(strings.ToLower(entry.Title), queryTitleLower) {
-				continue
-			}
+		if matchEntry(entry, name, query, queryTitleLower, queryPathLower) {
+			results = append(results, SearchResult{
+				Path:  name,
+				Entry: entry,
+			})
 		}
-
-		if query.Path != "" {
-			if !strings.Contains(strings.ToLower(name), queryPathLower) {
-				continue
-			}
-		}
-
-		if len(query.Tags) > 0 {
-			match := true
-			for _, qt := range query.Tags {
-				found := false
-				for _, t := range entry.Tags {
-					if strings.EqualFold(t, qt) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					match = false
-					break
-				}
-			}
-			if !match {
-				continue
-			}
-		}
-
-		results = append(results, SearchResult{
-			Path:  name,
-			Entry: entry,
-		})
 	}
 
 	return results, nil
+}
+
+func matchTags(entryTags, queryTags []string) bool {
+	for _, qt := range queryTags {
+		found := false
+		for _, t := range entryTags {
+			if strings.EqualFold(t, qt) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func matchEntry(entry Entry, path string, query SearchQuery, queryTitleLower, queryPathLower string) bool {
+	if query.Title != "" && !strings.Contains(strings.ToLower(entry.Title), queryTitleLower) {
+		return false
+	}
+	if query.Path != "" && !strings.Contains(strings.ToLower(path), queryPathLower) {
+		return false
+	}
+	if len(query.Tags) > 0 && !matchTags(entry.Tags, query.Tags) {
+		return false
+	}
+	return true
 }
 
 func anyToString(v any) string {
