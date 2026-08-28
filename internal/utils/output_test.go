@@ -35,18 +35,18 @@ func TestRenderOutput(t *testing.T) {
 		errContains    string
 	}{
 		{
-			name:       "render JSON successfully",
-			data:       sampleData{Key: "foo", Count: 42},
-			asJSON:     true,
-			errorLabel: "sample data",
+			name:           "render JSON successfully",
+			data:           sampleData{Key: "foo", Count: 42},
+			asJSON:         true,
+			errorLabel:     "sample data",
 			expectedOutput: "{\n  \"key\": \"foo\",\n  \"count\": 42\n}\n",
 			wantErr:        false,
 		},
 		{
-			name:       "render YAML successfully",
-			data:       sampleData{Key: "bar", Count: 100},
-			asJSON:     false,
-			errorLabel: "sample data",
+			name:           "render YAML successfully",
+			data:           sampleData{Key: "bar", Count: 100},
+			asJSON:         false,
+			errorLabel:     "sample data",
 			expectedOutput: "key: bar\ncount: 100\n",
 			wantErr:        false,
 		},
