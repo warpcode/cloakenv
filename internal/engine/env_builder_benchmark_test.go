@@ -100,6 +100,7 @@ func BenchmarkEnvFormattingOnlyOptimized(b *testing.B) {
 }
 
 func BenchmarkBuildEnvMerges(b *testing.B) {
+	b.ReportAllocs()
 	ctx := context.Background()
 
 	entities := make(map[string]map[string]any)
