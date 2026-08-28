@@ -1,6 +1,110 @@
 package utils
 
-import "testing"
+import (
+	"bytes"
+	"errors"
+	"io"
+	"os"
+	"strings"
+	"testing"
+)
+
+type errMarshaler struct{}
+
+func (errMarshaler) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("marshal json error")
+}
+
+func (errMarshaler) MarshalYAML() (any, error) {
+	return nil, errors.New("marshal yaml error")
+}
+
+func TestRenderOutput(t *testing.T) {
+	type sampleData struct {
+		Key   string `json:"key" yaml:"key"`
+		Count int    `json:"count" yaml:"count"`
+	}
+
+	tests := []struct {
+		name           string
+		data           any
+		asJSON         bool
+		errorLabel     string
+		expectedOutput string
+		wantErr        bool
+		errContains    string
+	}{
+		{
+			name:           "render JSON successfully",
+			data:           sampleData{Key: "foo", Count: 42},
+			asJSON:         true,
+			errorLabel:     "sample data",
+			expectedOutput: "{\n  \"key\": \"foo\",\n  \"count\": 42\n}\n",
+			wantErr:        false,
+		},
+		{
+			name:           "render YAML successfully",
+			data:           sampleData{Key: "bar", Count: 100},
+			asJSON:         false,
+			errorLabel:     "sample data",
+			expectedOutput: "key: bar\ncount: 100\n",
+			wantErr:        false,
+		},
+		{
+			name:        "JSON serialization error",
+			data:        errMarshaler{},
+			asJSON:      true,
+			errorLabel:  "invalid JSON data",
+			wantErr:     true,
+			errContains: "failed to serialize invalid JSON data to JSON",
+		},
+		{
+			name:        "YAML serialization error",
+			data:        errMarshaler{},
+			asJSON:      false,
+			errorLabel:  "invalid YAML data",
+			wantErr:     true,
+			errContains: "failed to serialize invalid YAML data to YAML",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldStdout := os.Stdout
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("failed to create pipe: %v", err)
+			}
+			os.Stdout = w
+
+			renderErr := RenderOutput(tt.data, tt.asJSON, tt.errorLabel)
+
+			_ = w.Close()
+			os.Stdout = oldStdout
+
+			var buf bytes.Buffer
+			if _, err := io.Copy(&buf, r); err != nil {
+				t.Fatalf("failed to read captured stdout: %v", err)
+			}
+			_ = r.Close()
+
+			if (renderErr != nil) != tt.wantErr {
+				t.Fatalf("RenderOutput() error = %v, wantErr %v", renderErr, tt.wantErr)
+			}
+
+			if tt.wantErr {
+				if !strings.Contains(renderErr.Error(), tt.errContains) {
+					t.Errorf("RenderOutput() error = %q, want containing %q", renderErr.Error(), tt.errContains)
+				}
+			} else {
+				gotOutput := strings.ReplaceAll(buf.String(), "\r\n", "\n")
+				if gotOutput != tt.expectedOutput {
+					t.Errorf("RenderOutput() output = %q, want %q", gotOutput, tt.expectedOutput)
+				}
+			}
+		})
+	}
+}
 
 func TestFormatKey(t *testing.T) {
 	tests := []struct {
