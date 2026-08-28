@@ -353,16 +353,18 @@ func anyToString(v any) string {
 }
 
 func normalizeEntryMap(v any) (map[string]any, bool) {
-	if entryMap, ok := v.(map[string]any); ok {
-		return entryMap, true
-	} else if entryMap2, ok := v.(map[any]any); ok {
-		converted := make(map[string]any)
-		for ek, ev := range entryMap2 {
+	switch m := v.(type) {
+	case map[string]any:
+		return m, true
+	case map[any]any:
+		converted := make(map[string]any, len(m))
+		for ek, ev := range m {
 			converted[anyToString(ek)] = ev
 		}
 		return converted, true
+	default:
+		return nil, false
 	}
-	return nil, false
 }
 
 func convertToEntriesMap(val any) (map[string]map[string]any, error) {
