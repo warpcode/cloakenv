@@ -87,10 +87,10 @@ func TestEnvProvider_SetSecret(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name     string
-		key      string
-		val      string
-		preset   bool
+		name      string
+		key       string
+		val       string
+		preset    bool
 		presetVal string
 	}{
 		{

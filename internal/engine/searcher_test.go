@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -485,7 +486,7 @@ func TestVisitorVisit(t *testing.T) {
 		var callNode ast.Node = &ast.CallNode{}
 		v.Visit(&callNode)
 
-		if vErr != origErr {
+		if !errors.Is(vErr, origErr) {
 			t.Errorf("expected vErr to remain %v, got %v", origErr, vErr)
 		}
 	})
