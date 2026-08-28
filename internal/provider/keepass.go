@@ -320,38 +320,8 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 				entryPath = groupPath + "/" + title
 			}
 
-			// Filter by title substring if specified
-			if query.Title != "" {
-				if !strings.Contains(strings.ToLower(title), queryTitleLower) {
-					continue
-				}
-			}
-
-			// Filter by path substring if specified
-			if query.Path != "" {
-				if !strings.Contains(strings.ToLower(entryPath), queryPathLower) {
-					continue
-				}
-			}
-
-			entryTags := utils.ParseTagString(entry.Tags)
-
-			// Filter by tags if specified
-			if len(query.Tags) > 0 {
-				tagMap := make(map[string]bool)
-				for _, t := range entryTags {
-					tagMap[strings.ToLower(t)] = true
-				}
-				match := true
-				for _, qt := range queryTagsLower {
-					if !tagMap[qt] {
-						match = false
-						break
-					}
-				}
-				if !match {
-					continue
-				}
+			if !k.matchSearchEntry(entry, title, entryPath, query, queryTitleLower, queryPathLower, queryTagsLower) {
+				continue
 			}
 
 			results = append(results, SearchResult{
@@ -367,6 +337,40 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 
 	traverse(rootGroup, "")
 	return results, nil
+}
+
+// matchSearchEntry evaluates whether a KeePass entry satisfies title, path, and tag search filters.
+func (k *KeePassProvider) matchSearchEntry(entry *gokeepasslib.Entry, title, entryPath string, query SearchQuery, queryTitleLower, queryPathLower string, queryTagsLower []string) bool {
+	if query.Title != "" && !strings.Contains(strings.ToLower(title), queryTitleLower) {
+		return false
+	}
+
+	if query.Path != "" && !strings.Contains(strings.ToLower(entryPath), queryPathLower) {
+		return false
+	}
+
+	return matchEntryTags(entry.Tags, queryTagsLower)
+}
+
+// matchEntryTags checks whether all required query tags exist on the entry's tag string.
+func matchEntryTags(tagString string, queryTagsLower []string) bool {
+	if len(queryTagsLower) == 0 {
+		return true
+	}
+
+	entryTags := utils.ParseTagString(tagString)
+	tagMap := make(map[string]bool, len(entryTags))
+	for _, t := range entryTags {
+		tagMap[strings.ToLower(t)] = true
+	}
+
+	for _, qt := range queryTagsLower {
+		if !tagMap[qt] {
+			return false
+		}
+	}
+
+	return true
 }
 
 // toEntry converts a gokeepasslib.Entry into provider.Entry.
