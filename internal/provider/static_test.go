@@ -164,3 +164,56 @@ func TestStaticProvider_SetAndDeleteSecret(t *testing.T) {
 		})
 	}
 }
+
+func TestStaticProvider_Validate(t *testing.T) {
+	p := &staticProvider{scheme: "json"}
+
+	tests := []struct {
+		name       string
+		settings   map[string]string
+		wantErr    bool
+		wantErrMsg string
+	}{
+		{
+			name: "valid vault_path",
+			settings: map[string]string{
+				"vault_path": "/path/to/vault.json",
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty vault_path",
+			settings: map[string]string{
+				"vault_path": "",
+			},
+			wantErr:    true,
+			wantErrMsg: "json provider: vault_path is required",
+		},
+		{
+			name:       "missing vault_path",
+			settings:   map[string]string{},
+			wantErr:    true,
+			wantErrMsg: "json provider: vault_path is required",
+		},
+		{
+			name:       "nil settings",
+			settings:   nil,
+			wantErr:    true,
+			wantErrMsg: "json provider: vault_path is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := p.Validate(tt.settings)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && err != nil && tt.wantErrMsg != "" && err.Error() != tt.wantErrMsg {
+				t.Errorf("Validate() error = %q, wantErrMsg %q", err.Error(), tt.wantErrMsg)
+			}
+		})
+	}
+}
