@@ -148,16 +148,41 @@ func matchPreparedCommandRule(rule config.AutoloadRule, cmdArgs []string, parsed
 	return true, cmdArgs, nil
 }
 
-func escapeSubmatch(s string) string {
+type quoteContext int
+
+const (
+	quoteUnquoted quoteContext = iota
+	quoteSingle
+	quoteDouble
+)
+
+func escapeSubmatch(s string, ctx quoteContext) string {
 	var sb strings.Builder
-	for i := range s {
+	for i := range len(s) {
 		ch := s[i]
-		switch ch {
-		case '\\', '"', '\'':
-			sb.WriteByte('\\')
-			sb.WriteByte(ch)
-		default:
-			sb.WriteByte(ch)
+		switch ctx {
+		case quoteSingle:
+			if ch == '\'' {
+				sb.WriteString(`'\''`)
+			} else {
+				sb.WriteByte(ch)
+			}
+		case quoteDouble:
+			switch ch {
+			case '\\', '"', '$', '`':
+				sb.WriteByte('\\')
+				sb.WriteByte(ch)
+			default:
+				sb.WriteByte(ch)
+			}
+		default: // quoteUnquoted
+			switch ch {
+			case '\\', '"', '\'':
+				sb.WriteByte('\\')
+				sb.WriteByte(ch)
+			default:
+				sb.WriteByte(ch)
+			}
 		}
 	}
 	return sb.String()
@@ -166,9 +191,37 @@ func escapeSubmatch(s string) string {
 func expandTemplate(re *regexp.Regexp, template string, src string, matchIndices []int) string {
 	names := re.SubexpNames()
 	var sb strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
 
 	for i := 0; i < len(template); i++ {
 		ch := template[i]
+
+		if escaped {
+			sb.WriteByte(ch)
+			escaped = false
+			continue
+		}
+
+		if ch == '\\' && !inSingle {
+			sb.WriteByte(ch)
+			escaped = true
+			continue
+		}
+
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+			sb.WriteByte(ch)
+			continue
+		}
+
+		if ch == '"' && !inSingle {
+			inDouble = !inDouble
+			sb.WriteByte(ch)
+			continue
+		}
+
 		if ch != '$' {
 			sb.WriteByte(ch)
 			continue
@@ -186,6 +239,13 @@ func expandTemplate(re *regexp.Regexp, template string, src string, matchIndices
 			continue
 		}
 
+		ctx := quoteUnquoted
+		if inSingle {
+			ctx = quoteSingle
+		} else if inDouble {
+			ctx = quoteDouble
+		}
+
 		if next == '{' {
 			closeIdx := strings.IndexByte(template[i+2:], '}')
 			if closeIdx != -1 {
@@ -197,7 +257,7 @@ func expandTemplate(re *regexp.Regexp, template string, src string, matchIndices
 						gEnd := matchIndices[2*group+1]
 						if gStart >= 0 && gEnd >= gStart && gEnd <= len(src) {
 							val := src[gStart:gEnd]
-							val = escapeSubmatch(val)
+							val = escapeSubmatch(val, ctx)
 							sb.WriteString(val)
 						}
 						i += 2 + closeIdx
@@ -213,7 +273,7 @@ func expandTemplate(re *regexp.Regexp, template string, src string, matchIndices
 			gEnd := matchIndices[2*group+1]
 			if gStart >= 0 && gEnd >= gStart && gEnd <= len(src) {
 				val := src[gStart:gEnd]
-				val = escapeSubmatch(val)
+				val = escapeSubmatch(val, ctx)
 				sb.WriteString(val)
 			}
 			i += consumed
@@ -230,7 +290,7 @@ func isValidGroupNameOrNum(s string) bool {
 	if len(s) == 0 {
 		return false
 	}
-	for i := range s {
+	for i := range len(s) {
 		c := s[i]
 		if !isAlphaNum(c) && c != '_' {
 			return false
