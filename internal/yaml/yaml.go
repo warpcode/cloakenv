@@ -32,9 +32,12 @@ func Marshal(in any) ([]byte, error) {
 
 	enc := goyaml.NewEncoder(buf)
 	if err := enc.Encode(in); err != nil {
+		_ = enc.Close()
 		return nil, fmt.Errorf("yaml marshal failed: %w", err)
 	}
-	_ = enc.Close()
+	if err := enc.Close(); err != nil {
+		return nil, fmt.Errorf("yaml marshal failed: %w", err)
+	}
 
 	res := make([]byte, buf.Len())
 	copy(res, buf.Bytes())
@@ -50,9 +53,12 @@ func MarshalString(in any) (string, error) {
 
 	enc := goyaml.NewEncoder(buf)
 	if err := enc.Encode(in); err != nil {
+		_ = enc.Close()
 		return "", fmt.Errorf("yaml marshal failed: %w", err)
 	}
-	_ = enc.Close()
+	if err := enc.Close(); err != nil {
+		return "", fmt.Errorf("yaml marshal failed: %w", err)
+	}
 
 	b := buf.Bytes()
 	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r') {

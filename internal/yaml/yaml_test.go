@@ -2,8 +2,15 @@ package yaml
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 )
+
+type failMarshaler struct{}
+
+func (failMarshaler) MarshalYAML() (any, error) {
+	return nil, errors.New("marshal error")
+}
 
 func TestUnmarshal(t *testing.T) {
 	data := []byte("key: value")
@@ -30,6 +37,12 @@ func TestMarshal(t *testing.T) {
 	if string(data) != "key: value\n" {
 		t.Errorf("unexpected output: %q", data)
 	}
+
+	// Test error case with custom Marshaler returning an error
+	errVal := failMarshaler{}
+	if _, err := Marshal(errVal); err == nil {
+		t.Error("expected error for failing marshaler, got nil")
+	}
 }
 
 func TestMarshalString(t *testing.T) {
@@ -40,6 +53,12 @@ func TestMarshalString(t *testing.T) {
 	}
 	if str != "key: value" {
 		t.Errorf("expected 'key: value', got %q", str)
+	}
+
+	// Test error case with custom Marshaler returning an error
+	errVal := failMarshaler{}
+	if _, err := MarshalString(errVal); err == nil {
+		t.Error("expected error for failing marshaler, got nil")
 	}
 }
 

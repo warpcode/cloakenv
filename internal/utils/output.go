@@ -20,6 +20,10 @@ func RenderOutput(data any, asJSON bool, errorLabel string) error {
 		enc := yaml.NewEncoder(os.Stdout)
 		enc.SetIndent(2)
 		if err := enc.Encode(data); err != nil {
+			_ = enc.Close()
+			return fmt.Errorf("failed to serialize %s to YAML: %w", errorLabel, err)
+		}
+		if err := enc.Close(); err != nil {
 			return fmt.Errorf("failed to serialize %s to YAML: %w", errorLabel, err)
 		}
 	}
