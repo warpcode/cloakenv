@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -109,6 +110,57 @@ func TestResolveDotPath(t *testing.T) {
 			if !tt.wantErr && !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("resolveDotPath() got = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestStaticProvider_SetAndDeleteSecret(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		scheme     string
+		wantSubstr string
+	}{
+		{
+			name:       "json provider",
+			scheme:     "json",
+			wantSubstr: "json provider is read-only",
+		},
+		{
+			name:       "yaml provider",
+			scheme:     "yaml",
+			wantSubstr: "yaml provider is read-only",
+		},
+		{
+			name:       "custom static scheme",
+			scheme:     "static-custom",
+			wantSubstr: "static-custom provider is read-only",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := &staticProvider{scheme: tt.scheme}
+
+			t.Run("SetSecret", func(t *testing.T) {
+				err := p.SetSecret(ctx, "key", "val")
+				if err == nil {
+					t.Error("SetSecret() expected error, got nil")
+				} else if !strings.Contains(err.Error(), tt.wantSubstr) {
+					t.Errorf("SetSecret() error = %q, want substring %q", err.Error(), tt.wantSubstr)
+				}
+			})
+
+			t.Run("DeleteSecret", func(t *testing.T) {
+				err := p.DeleteSecret(ctx, "key")
+				if err == nil {
+					t.Error("DeleteSecret() expected error, got nil")
+				} else if !strings.Contains(err.Error(), tt.wantSubstr) {
+					t.Errorf("DeleteSecret() error = %q, want substring %q", err.Error(), tt.wantSubstr)
+				}
+			})
 		})
 	}
 }
