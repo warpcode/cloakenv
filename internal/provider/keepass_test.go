@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/zalando/go-keyring"
@@ -114,11 +115,40 @@ func TestKeePassProvider(t *testing.T) {
 	})
 
 	t.Run("ReadOnly", func(t *testing.T) {
-		if err := kp.SetSecret(ctx, "a", "b"); err == nil {
-			t.Errorf("expected SetSecret to fail")
+		err := kp.SetSecret(ctx, "a", "b")
+		if err == nil {
+			t.Error("expected SetSecret to fail")
+		} else if !strings.Contains(err.Error(), "read-only") {
+			t.Errorf("expected SetSecret error to contain 'read-only', got %q", err.Error())
 		}
-		if err := kp.DeleteSecret(ctx, "a"); err == nil {
-			t.Errorf("expected DeleteSecret to fail")
+
+		err = kp.DeleteSecret(ctx, "a")
+		if err == nil {
+			t.Error("expected DeleteSecret to fail")
+		} else if !strings.Contains(err.Error(), "read-only") {
+			t.Errorf("expected DeleteSecret error to contain 'read-only', got %q", err.Error())
 		}
 	})
+}
+
+func TestKeePassProvider_SetSecret(t *testing.T) {
+	kp := NewKeePassProvider()
+	err := kp.SetSecret(context.Background(), "a", "b")
+	if err == nil {
+		t.Error("expected error for SetSecret, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
+	}
+}
+
+func TestKeePassProvider_DeleteSecret(t *testing.T) {
+	kp := NewKeePassProvider()
+	err := kp.DeleteSecret(context.Background(), "a")
+	if err == nil {
+		t.Error("expected error for DeleteSecret, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
+	}
 }
