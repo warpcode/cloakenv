@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/zalando/go-keyring"
@@ -73,56 +75,22 @@ func TestCacheRouting(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			oldStdout := os.Stdout
-			oldStderr := os.Stderr
-
-			rOut, wOut, errOut := os.Pipe()
-			if errOut != nil {
-				t.Fatalf("failed to create stdout pipe: %v", errOut)
-			}
-			defer func() { _ = rOut.Close() }()
-			defer func() { _ = wOut.Close() }()
-
-			rErr, wErr, errErr := os.Pipe()
-			if errErr != nil {
-				t.Fatalf("failed to create stderr pipe: %v", errErr)
-			}
-			defer func() { _ = rErr.Close() }()
-			defer func() { _ = wErr.Close() }()
-
-			os.Stdout = wOut
-			os.Stderr = wErr
-
-			defer func() {
-				os.Stdout = oldStdout
-				os.Stderr = oldStderr
-			}()
-
 			cfg := &config.Config{}
 
-			exitCode := Cache(tt.args, cfg)
-
-			_ = wOut.Close()
-			_ = wErr.Close()
-
-			var bufOut, bufErr bytes.Buffer
-			if _, err := io.Copy(&bufOut, rOut); err != nil {
-				t.Fatalf("failed to read from stdout pipe: %v", err)
-			}
-			if _, err := io.Copy(&bufErr, rErr); err != nil {
-				t.Fatalf("failed to read from stderr pipe: %v", err)
-			}
+			exitCode, stdout, stderr := captureOutputWithExitCode(t, func() int {
+				return Cache(tt.args, cfg)
+			})
 
 			if exitCode != tt.expectedCode {
 				t.Errorf("Cache() exit code = %d, want %d", exitCode, tt.expectedCode)
 			}
 
-			if tt.expectedStdout != "" && !strings.Contains(bufOut.String(), tt.expectedStdout) {
-				t.Errorf("Cache() stdout = %q, want substring %q", bufOut.String(), tt.expectedStdout)
+			if tt.expectedStdout != "" && !strings.Contains(stdout, tt.expectedStdout) {
+				t.Errorf("Cache() stdout = %q, want substring %q", stdout, tt.expectedStdout)
 			}
 
-			if tt.expectedStderr != "" && !strings.Contains(bufErr.String(), tt.expectedStderr) {
-				t.Errorf("Cache() stderr = %q, want substring %q", bufErr.String(), tt.expectedStderr)
+			if tt.expectedStderr != "" && !strings.Contains(stderr, tt.expectedStderr) {
+				t.Errorf("Cache() stderr = %q, want substring %q", stderr, tt.expectedStderr)
 			}
 		})
 	}
@@ -132,36 +100,21 @@ func TestGet_Help(t *testing.T) {
 	args := []string{"--help"}
 	cfg := &config.Config{}
 
-	oldStdout := os.Stdout
-	defer func() { os.Stdout = oldStdout }()
-
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = r.Close() }()
-	os.Stdout = w
-
-	exitCode := Get(args, cfg)
-	_ = w.Close()
+	exitCode, stdout, _ := captureOutputWithExitCode(t, func() int {
+		return Get(args, cfg)
+	})
 
 	if exitCode != 0 {
 		t.Errorf("expected exit code 0, got %d", exitCode)
 	}
 
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r); err != nil {
-		t.Fatalf("failed to read from pipe: %v", err)
-	}
-	if !strings.Contains(buf.String(), "Usage:") {
-		t.Errorf("expected help output, got %q", buf.String())
+	if !strings.Contains(stdout, "Usage:") {
+		t.Errorf("expected help output, got %q", stdout)
 	}
 }
 
 func TestGet_InvalidArgs(t *testing.T) {
 	cfg := &config.Config{}
-	oldStderr := os.Stderr
-	defer func() { os.Stderr = oldStderr }()
 
 	tests := []struct {
 		name string
@@ -174,94 +127,82 @@ func TestGet_InvalidArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r, w, err := os.Pipe()
-			if err != nil {
-				t.Fatalf("failed to create pipe: %v", err)
-			}
-			defer func() { _ = r.Close() }()
-			os.Stderr = w
-			defer func() { os.Stderr = oldStderr }()
-
-			exitCode := Get(tt.args, cfg)
-
-			_ = w.Close()
-			var buf bytes.Buffer
-			if _, err := io.Copy(&buf, r); err != nil {
-				t.Fatalf("failed to read from pipe: %v", err)
-			}
+			exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+				return Get(tt.args, cfg)
+			})
 
 			if exitCode != 1 {
 				t.Errorf("expected exit code 1, got %d", exitCode)
 			}
-			if !strings.Contains(buf.String(), "Usage: cloakenv get <uri>") {
-				t.Errorf("expected usage output, got %q", buf.String())
+			if !strings.Contains(stderr, "Usage: cloakenv get <uri>") {
+				t.Errorf("expected usage output, got %q", stderr)
 			}
 		})
 	}
 }
 
 func TestGet_Success(t *testing.T) {
-	oldStdout := os.Stdout
-	defer func() { os.Stdout = oldStdout }()
-
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("failed to create pipe: %v", err)
-	}
-	defer func() { _ = r.Close() }()
-	os.Stdout = w
-
 	t.Setenv("GET_TEST_VAR", "test_value")
 
 	args := []string{"env://GET_TEST_VAR"}
 	cfg := &config.Config{}
 
-	exitCode := Get(args, cfg)
-	_ = w.Close()
-
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r); err != nil {
-		t.Fatalf("failed to read from pipe: %v", err)
-	}
+	exitCode, stdout, _ := captureOutputWithExitCode(t, func() int {
+		return Get(args, cfg)
+	})
 
 	if exitCode != 0 {
 		t.Errorf("expected exit code 0, got %d", exitCode)
 	}
 
-	actualOutput := buf.String()
-	if actualOutput != "test_value" {
-		t.Errorf("expected %q, got %q", "test_value", actualOutput)
+	if stdout != "test_value" {
+		t.Errorf("expected %q, got %q", "test_value", stdout)
 	}
 }
 
 func TestGet_ResolutionError(t *testing.T) {
-	oldStderr := os.Stderr
-	defer func() { os.Stderr = oldStderr }()
-
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("failed to create pipe: %v", err)
-	}
-	defer func() { _ = r.Close() }()
-	os.Stderr = w
-
 	args := []string{"env://NON_EXISTENT_VAR_FOR_TEST"}
 	cfg := &config.Config{}
 
-	exitCode := Get(args, cfg)
-	_ = w.Close()
-
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, r); err != nil {
-		t.Fatalf("failed to read from pipe: %v", err)
-	}
+	exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+		return Get(args, cfg)
+	})
 
 	if exitCode != 1 {
 		t.Errorf("expected exit code 1, got %d", exitCode)
 	}
 
-	if !strings.Contains(buf.String(), "Resolution failed:") {
-		t.Errorf("expected resolution failure message, got %q", buf.String())
+	if !strings.Contains(stderr, "Resolution failed:") {
+		t.Errorf("expected resolution failure message, got %q", stderr)
+	}
+}
+
+func mockStdin(t *testing.T, content string) {
+	t.Helper()
+	oldStdin := os.Stdin
+	rIn, wIn, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stdin pipe: %v", err)
+	}
+
+	os.Stdin = rIn
+
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+		if closeErr := rIn.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+			t.Errorf("failed to close stdin reader pipe: %v", closeErr)
+		}
+	})
+
+	if _, writeErr := wIn.Write([]byte(content)); writeErr != nil {
+		if closeErr := wIn.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+			t.Errorf("failed to close stdin writer pipe after write error: %v", closeErr)
+		}
+		t.Fatalf("failed to write to stdin pipe: %v", writeErr)
+	}
+
+	if closeErr := wIn.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+		t.Fatalf("failed to close stdin writer pipe: %v", closeErr)
 	}
 }
 
@@ -270,54 +211,74 @@ func captureOutputWithExitCode(t *testing.T, f func() int) (int, string, string)
 	t.Helper()
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
-	defer func() {
+	t.Cleanup(func() {
 		os.Stdout = oldStdout
 		os.Stderr = oldStderr
-	}()
+	})
 
 	rOut, wOut, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("failed to create stdout pipe: %v", err)
 	}
-	defer func() { _ = wOut.Close() }()
+	defer func() {
+		if closeErr := wOut.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+			t.Errorf("failed to close stdout write pipe: %v", closeErr)
+		}
+	}()
 
 	rErr, wErr, err := os.Pipe()
 	if err != nil {
+		if closeErr := rOut.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+			t.Errorf("failed to close stdout read pipe: %v", closeErr)
+		}
 		t.Fatalf("failed to create stderr pipe: %v", err)
 	}
-	defer func() { _ = wErr.Close() }()
+	defer func() {
+		if closeErr := wErr.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+			t.Errorf("failed to close stderr write pipe: %v", closeErr)
+		}
+	}()
 
 	os.Stdout = wOut
 	os.Stderr = wErr
 
-	outC := make(chan string)
-	errC := make(chan string)
+	var outBuf, errBuf bytes.Buffer
+	var wg sync.WaitGroup
 
+	wg.Add(1)
 	go func() {
-		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, rOut); err != nil {
-			t.Errorf("failed to read from stdout pipe: %v", err)
+		defer wg.Done()
+		if _, copyErr := io.Copy(&outBuf, rOut); copyErr != nil {
+			t.Errorf("failed to read from stdout pipe: %v", copyErr)
 		}
-		outC <- buf.String()
+		if closeErr := rOut.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+			t.Errorf("failed to close stdout read pipe: %v", closeErr)
+		}
 	}()
 
+	wg.Add(1)
 	go func() {
-		var buf bytes.Buffer
-		if _, err := io.Copy(&buf, rErr); err != nil {
-			t.Errorf("failed to read from stderr pipe: %v", err)
+		defer wg.Done()
+		if _, copyErr := io.Copy(&errBuf, rErr); copyErr != nil {
+			t.Errorf("failed to read from stderr pipe: %v", copyErr)
 		}
-		errC <- buf.String()
+		if closeErr := rErr.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+			t.Errorf("failed to close stderr read pipe: %v", closeErr)
+		}
 	}()
 
 	exitCode := f()
 
-	// wOut and wErr will be closed by deferred calls above when captureOutput returns.
-	// We need to close them here to unblock the readers in the goroutines.
-	// The deferred calls will be no-ops if they are already closed.
-	_ = wOut.Close()
-	_ = wErr.Close()
+	if closeErr := wOut.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+		t.Errorf("failed to close stdout write pipe: %v", closeErr)
+	}
+	if closeErr := wErr.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+		t.Errorf("failed to close stderr write pipe: %v", closeErr)
+	}
 
-	return exitCode, <-outC, <-errC
+	wg.Wait()
+
+	return exitCode, outBuf.String(), errBuf.String()
 }
 
 func TestSet(t *testing.T) {
@@ -392,20 +353,7 @@ func TestSet(t *testing.T) {
 	})
 
 	t.Run("InvalidURI", func(t *testing.T) {
-		oldStdin := os.Stdin
-		rIn, wIn, err := os.Pipe()
-		if err != nil {
-			t.Fatalf("failed to create pipe: %v", err)
-		}
-		os.Stdin = rIn
-		defer func() {
-			os.Stdin = oldStdin
-			_ = rIn.Close()
-		}()
-		if _, err := wIn.Write([]byte("value")); err != nil {
-			t.Fatalf("failed to write to pipe: %v", err)
-		}
-		_ = wIn.Close()
+		mockStdin(t, "value")
 
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
 			return Set([]string{"invalid-uri"}, &config.Config{})
@@ -421,20 +369,7 @@ func TestSet(t *testing.T) {
 	})
 
 	t.Run("TTLNotSupported", func(t *testing.T) {
-		oldStdin := os.Stdin
-		rIn, wIn, err := os.Pipe()
-		if err != nil {
-			t.Fatalf("failed to create pipe: %v", err)
-		}
-		os.Stdin = rIn
-		defer func() {
-			os.Stdin = oldStdin
-			_ = rIn.Close()
-		}()
-		if _, err := wIn.Write([]byte("value")); err != nil {
-			t.Fatalf("failed to write to pipe: %v", err)
-		}
-		_ = wIn.Close()
+		mockStdin(t, "value")
 
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
 			return Set([]string{"env://test", "--ttl", "1h"}, &config.Config{})
@@ -453,20 +388,7 @@ func TestSet(t *testing.T) {
 		cfg := &config.Config{
 			Cache: config.CacheConfig{DefaultTTL: "invalid"},
 		}
-		oldStdin := os.Stdin
-		rIn, wIn, err := os.Pipe()
-		if err != nil {
-			t.Fatalf("failed to create pipe: %v", err)
-		}
-		os.Stdin = rIn
-		defer func() {
-			os.Stdin = oldStdin
-			_ = rIn.Close()
-		}()
-		if _, err := wIn.Write([]byte("value")); err != nil {
-			t.Fatalf("failed to write to pipe: %v", err)
-		}
-		_ = wIn.Close()
+		mockStdin(t, "value")
 
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
 			return Set([]string{"cache://test"}, cfg)
@@ -487,20 +409,7 @@ func TestSet(t *testing.T) {
 				"bad": {Provider: "invalid_provider"},
 			},
 		}
-		oldStdin := os.Stdin
-		rIn, wIn, err := os.Pipe()
-		if err != nil {
-			t.Fatalf("failed to create pipe: %v", err)
-		}
-		os.Stdin = rIn
-		defer func() {
-			os.Stdin = oldStdin
-			_ = rIn.Close()
-		}()
-		if _, err := wIn.Write([]byte("value")); err != nil {
-			t.Fatalf("failed to write to pipe: %v", err)
-		}
-		_ = wIn.Close()
+		mockStdin(t, "value")
 
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
 			return Set([]string{"cache://test"}, cfg)
@@ -525,21 +434,7 @@ func TestSet(t *testing.T) {
 		t.Setenv("XDG_CACHE_HOME", cacheDir)
 		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
 
-		oldStdin := os.Stdin
-		rIn, wIn, err := os.Pipe()
-		if err != nil {
-			t.Fatalf("failed to create pipe: %v", err)
-		}
-		os.Stdin = rIn
-		defer func() {
-			os.Stdin = oldStdin
-			_ = rIn.Close()
-		}()
-
-		if _, err := wIn.Write([]byte("stdin_value\n")); err != nil {
-			t.Fatalf("failed to write to pipe: %v", err)
-		}
-		_ = wIn.Close()
+		mockStdin(t, "stdin_value\n")
 
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
 			return Set([]string{"cache://test"}, cfg)
@@ -567,21 +462,7 @@ func TestSet(t *testing.T) {
 		t.Setenv("XDG_CACHE_HOME", cacheDir)
 		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
 
-		oldStdin := os.Stdin
-		rIn, wIn, err := os.Pipe()
-		if err != nil {
-			t.Fatalf("failed to create pipe: %v", err)
-		}
-		os.Stdin = rIn
-		defer func() {
-			os.Stdin = oldStdin
-			_ = rIn.Close()
-		}()
-
-		if _, err := wIn.Write([]byte("crlf_value\r\n")); err != nil {
-			t.Fatalf("failed to write to pipe: %v", err)
-		}
-		_ = wIn.Close()
+		mockStdin(t, "crlf_value\r\n")
 
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
 			return Set([]string{"cache://test_crlf"}, cfg)
@@ -655,20 +536,7 @@ func TestDelete(t *testing.T) {
 		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
 
 		// Set secret
-		oldStdin := os.Stdin
-		rIn, wIn, err := os.Pipe()
-		if err != nil {
-			t.Fatalf("failed to create pipe: %v", err)
-		}
-		os.Stdin = rIn
-		defer func() {
-			os.Stdin = oldStdin
-			_ = rIn.Close()
-		}()
-		if _, err := wIn.Write([]byte("testvalue")); err != nil {
-			t.Fatalf("failed to write to pipe: %v", err)
-		}
-		_ = wIn.Close()
+		mockStdin(t, "testvalue")
 
 		captureOutputWithExitCode(t, func() int {
 			return Set([]string{"cache://test"}, cfg)
