@@ -1058,7 +1058,7 @@ func (o *Orchestrator) resolveExplicitMappings(ctx context.Context, explicit map
 }
 
 func normalizeURIs(uris []string) []string {
-	var result []string
+	result := make([]string, 0, len(uris))
 	for _, u := range uris {
 		u = strings.TrimSpace(u)
 		if u != "" {

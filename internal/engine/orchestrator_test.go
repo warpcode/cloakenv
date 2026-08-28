@@ -1555,3 +1555,59 @@ func TestOrchestratorBuildEnvEmptyEnv(t *testing.T) {
 		t.Errorf("expected TEST_ENV_VAR to not be present")
 	}
 }
+
+func TestNormalizeURIs(t *testing.T) {
+	tests := []struct {
+		name string
+		uris []string
+		want []string
+	}{
+		{
+			name: "empty list",
+			uris: []string{},
+			want: []string{},
+		},
+		{
+			name: "list with empty strings and spaces",
+			uris: []string{"", "   ", "\t"},
+			want: []string{},
+		},
+		{
+			name: "list without schemes",
+			uris: []string{"my_vault", "another_vault"},
+			want: []string{"my_vault://", "another_vault://"},
+		},
+		{
+			name: "list with schemes",
+			uris: []string{"env://", "keyring://my-service"},
+			want: []string{"env://", "keyring://my-service"},
+		},
+		{
+			name: "mixed list",
+			uris: []string{"env://", "my_vault", "  ", "keyring://"},
+			want: []string{"env://", "my_vault://", "keyring://"},
+		},
+		{
+			name: "needs trimming",
+			uris: []string{"  env://  ", " my_vault\t"},
+			want: []string{"env://", "my_vault://"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeURIs(tt.uris)
+			if len(got) == 0 && len(tt.want) == 0 {
+				return
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("normalizeURIs() returned %d elements, want %d", len(got), len(tt.want))
+			}
+			for i, v := range got {
+				if v != tt.want[i] {
+					t.Errorf("normalizeURIs() element %d = %q, want %q", i, v, tt.want[i])
+				}
+			}
+		})
+	}
+}
