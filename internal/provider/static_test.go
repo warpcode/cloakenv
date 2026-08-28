@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -110,5 +111,29 @@ func TestResolveDotPath(t *testing.T) {
 				t.Errorf("resolveDotPath() got = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestStaticProvider_SetSecret(t *testing.T) {
+	p := &staticProvider{scheme: "json"}
+	err := p.SetSecret(context.Background(), "key", "value")
+	if err == nil {
+		t.Error("expected error for SetSecret, got nil")
+	}
+	expectedMsg := "json provider is read-only"
+	if err != nil && err.Error() != expectedMsg {
+		t.Errorf("expected error %q, got %q", expectedMsg, err.Error())
+	}
+}
+
+func TestStaticProvider_DeleteSecret(t *testing.T) {
+	p := &staticProvider{scheme: "yaml"}
+	err := p.DeleteSecret(context.Background(), "key")
+	if err == nil {
+		t.Error("expected error for DeleteSecret, got nil")
+	}
+	expectedMsg := "yaml provider is read-only"
+	if err != nil && err.Error() != expectedMsg {
+		t.Errorf("expected error %q, got %q", expectedMsg, err.Error())
 	}
 }
