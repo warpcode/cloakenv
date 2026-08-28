@@ -150,7 +150,7 @@ func matchPreparedCommandRule(rule config.AutoloadRule, cmdArgs []string, parsed
 
 func escapeSubmatch(s string) string {
 	var sb strings.Builder
-	for i := 0; i < len(s); i++ {
+	for i := range s {
 		ch := s[i]
 		switch ch {
 		case '\\', '"', '\'':
@@ -191,7 +191,7 @@ func expandTemplate(re *regexp.Regexp, template string, src string, matchIndices
 			if closeIdx != -1 {
 				nameOrNum := template[i+2 : i+2+closeIdx]
 				if isValidGroupNameOrNum(nameOrNum) {
-					group := findGroupIndex(re, names, nameOrNum)
+					group := findGroupIndex(names, nameOrNum)
 					if group >= 0 && group*2+1 < len(matchIndices) {
 						gStart := matchIndices[2*group]
 						gEnd := matchIndices[2*group+1]
@@ -230,7 +230,7 @@ func isValidGroupNameOrNum(s string) bool {
 	if len(s) == 0 {
 		return false
 	}
-	for i := 0; i < len(s); i++ {
+	for i := range s {
 		c := s[i]
 		if !isAlphaNum(c) && c != '_' {
 			return false
@@ -239,7 +239,7 @@ func isValidGroupNameOrNum(s string) bool {
 	return true
 }
 
-func findGroupIndex(re *regexp.Regexp, names []string, nameOrNum string) int {
+func findGroupIndex(names []string, nameOrNum string) int {
 	var num int
 	if _, err := fmt.Sscanf(nameOrNum, "%d", &num); err == nil && num >= 0 && num < len(names) {
 		return num
