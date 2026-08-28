@@ -32,6 +32,10 @@ func TestCustomVaultProvider_MultipleEntities(t *testing.T) {
 		t.Errorf("expected scheme custom_vault, got %q", p.Scheme())
 	}
 
+	if !p.SupportsValueResolution() {
+		t.Errorf("expected SupportsValueResolution() to be true, got false")
+	}
+
 	// 1. GetSecret
 	val, err := p.GetSecret(ctx, "entity1:username")
 	if err != nil {
@@ -199,5 +203,12 @@ func TestCustomVaultProvider_Search(t *testing.T) {
 				t.Errorf("expected %d results, got %d", tt.wantResults, len(results))
 			}
 		})
+	}
+}
+
+func TestCustomVaultProvider_SupportsValueResolution(t *testing.T) {
+	p := NewCustomVaultProvider()
+	if !p.SupportsValueResolution() {
+		t.Errorf("expected SupportsValueResolution() to be true, got false")
 	}
 }
