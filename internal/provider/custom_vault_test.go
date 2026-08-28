@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -199,5 +200,27 @@ func TestCustomVaultProvider_Search(t *testing.T) {
 				t.Errorf("expected %d results, got %d", tt.wantResults, len(results))
 			}
 		})
+	}
+}
+
+func TestCustomVaultProvider_SetSecret(t *testing.T) {
+	p := NewCustomVaultProvider()
+	err := p.SetSecret(context.Background(), "entity:attr", "value")
+	if err == nil {
+		t.Error("expected error for SetSecret, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
+	}
+}
+
+func TestCustomVaultProvider_DeleteSecret(t *testing.T) {
+	p := NewCustomVaultProvider()
+	err := p.DeleteSecret(context.Background(), "entity:attr")
+	if err == nil {
+		t.Error("expected error for DeleteSecret, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
 	}
 }
