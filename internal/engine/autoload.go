@@ -5,14 +5,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/warpcode/cloakenv/internal/config"
 )
-
-// regexCache stores compiled regular expressions to avoid recompilation on
-// every autoload rule evaluation.
-var regexCache sync.Map
 
 // MatchRunAlias evaluates configured autoload/run alias rules against command arguments
 // and returns the first matching AutoloadRule, a match indicator, and any
@@ -21,6 +16,7 @@ func MatchRunAlias(cfg *config.Config, cmdArgs []string) (config.AutoloadRule, b
 	if cfg == nil || len(cfg.Autoload) == 0 || len(cmdArgs) == 0 {
 		return config.AutoloadRule{}, false, nil
 	}
+	cfg.CompileAutoloadRules()
 	for _, rule := range cfg.Autoload {
 		matched, _, err := MatchCommandRule(rule, cmdArgs)
 		if matched {
@@ -40,7 +36,9 @@ func IsRunAlias(cfg *config.Config, cmdArgs []string) bool {
 // MatchCommand reports whether a command argument slice matches an autoload rule match pattern.
 // As a boolean predicate, substitution errors are intentionally not surfaced.
 func MatchCommand(ruleMatch string, cmdArgs []string) bool {
-	matched, _, _ := MatchCommandRule(config.AutoloadRule{Match: ruleMatch}, cmdArgs)
+	rule := config.AutoloadRule{Match: ruleMatch}
+	rule.Compile()
+	matched, _, _ := MatchCommandRule(rule, cmdArgs)
 	return matched
 }
 
@@ -68,15 +66,12 @@ func MatchCommandRule(rule config.AutoloadRule, cmdArgs []string) (bool, []strin
 	var re *regexp.Regexp
 	var matchIndices []int
 
-	// 1. Attempt Regex compilation & match (cached)
-	if cached, ok := regexCache.Load(pattern); ok {
-		compiled := cached.(*regexp.Regexp)
-		if indices := compiled.FindStringSubmatchIndex(fullCmd); indices != nil {
-			re = compiled
-			matchIndices = indices
-		}
-	} else if compiled, err := regexp.Compile(pattern); err == nil {
-		regexCache.Store(pattern, compiled)
+	// 1. Attempt Regex match (precompiled)
+	compiled := rule.CompiledRegex
+	if compiled == nil && pattern != "" {
+		compiled, _ = regexp.Compile(pattern)
+	}
+	if compiled != nil {
 		if indices := compiled.FindStringSubmatchIndex(fullCmd); indices != nil {
 			re = compiled
 			matchIndices = indices
