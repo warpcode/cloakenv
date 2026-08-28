@@ -52,13 +52,26 @@ func (p *staticProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 	}
 	p.rawContent = raw
 
+	entitiesRootKey, isSingleEntity := p.determineEntityConfig(cfg, raw)
+	p.singleEntity = isSingleEntity
+
+	if p.singleEntity {
+		p.parseSingleEntity(cfg, raw, entitiesRootKey)
+		return nil
+	}
+
+	return p.parseMultiEntities(raw, entitiesRootKey)
+}
+
+func (p *staticProvider) determineEntityConfig(cfg ProviderConfig, raw map[string]any) (string, bool) {
+	var singleEntity bool
 	if cfg.SingleEntity != nil {
-		p.singleEntity = *cfg.SingleEntity
+		singleEntity = *cfg.SingleEntity
 	} else {
 		_, hasEntities := raw["entities"]
 		_, hasEntries := raw["entries"]
 		hasRootKey := hasEntities || hasEntries
-		p.singleEntity = (cfg.EntitiesRootKey == "" && cfg.Settings["entities_root_key"] == "" && cfg.Settings["entries_key"] == "" && !hasRootKey)
+		singleEntity = (cfg.EntitiesRootKey == "" && cfg.Settings["entities_root_key"] == "" && cfg.Settings["entries_key"] == "" && !hasRootKey)
 	}
 
 	entitiesRootKey := cfg.EntitiesRootKey
@@ -69,7 +82,7 @@ func (p *staticProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 		entitiesRootKey = cfg.Settings["entries_key"]
 	}
 	if entitiesRootKey == "" {
-		if p.singleEntity {
+		if singleEntity {
 			entitiesRootKey = "."
 		} else {
 			if _, ok := raw["entities"]; ok {
@@ -82,64 +95,67 @@ func (p *staticProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 		}
 	}
 
-	if p.singleEntity {
-		var attributesMap map[string]any
-		if entitiesRootKey == "." {
-			attributesMap = raw
-		} else {
-			val, ok := raw[entitiesRootKey]
-			if ok {
-				if m, ok := val.(map[string]any); ok {
-					attributesMap = m
-				} else if m2, ok := val.(map[any]any); ok {
-					attributesMap = make(map[string]any)
-					for k, v := range m2 {
-						attributesMap[fmt.Sprintf("%v", k)] = v
-					}
+	return entitiesRootKey, singleEntity
+}
+
+func (p *staticProvider) parseSingleEntity(cfg ProviderConfig, raw map[string]any, entitiesRootKey string) {
+	var attributesMap map[string]any
+	if entitiesRootKey == "." {
+		attributesMap = raw
+	} else {
+		val, ok := raw[entitiesRootKey]
+		if ok {
+			if m, ok := val.(map[string]any); ok {
+				attributesMap = m
+			} else if m2, ok := val.(map[any]any); ok {
+				attributesMap = make(map[string]any)
+				for k, v := range m2 {
+					attributesMap[fmt.Sprintf("%v", k)] = v
 				}
 			}
 		}
-		if attributesMap == nil {
-			attributesMap = make(map[string]any)
-		}
-
-		title := cfg.EntityName
-		if title == "" {
-			if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
-				title = vaultName
-			} else {
-				title = filepath.Base(vaultPath)
-			}
-		}
-
-		tags := cfg.Tags
-		entry := Entry{
-			Title:      title,
-			Attributes: make(map[string]any),
-		}
-
-		for k, v := range attributesMap {
-			kLower := strings.ToLower(k)
-			switch kLower {
-			case "tags":
-				if len(tags) == 0 {
-					tags = utils.ParseTags(v)
-				}
-			case "title":
-				if cfg.EntityName == "" {
-					if str, ok := v.(string); ok {
-						entry.Title = str
-					}
-				}
-			default:
-				entry.Attributes[k] = v
-			}
-		}
-		entry.Tags = tags
-		p.entries[""] = entry
-		return nil
+	}
+	if attributesMap == nil {
+		attributesMap = make(map[string]any)
 	}
 
+	title := cfg.EntityName
+	if title == "" {
+		if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
+			title = vaultName
+		} else {
+			title = filepath.Base(p.filePath)
+		}
+	}
+
+	tags := cfg.Tags
+	entry := Entry{
+		Title:      title,
+		Attributes: make(map[string]any),
+	}
+
+	for k, v := range attributesMap {
+		kLower := strings.ToLower(k)
+		switch kLower {
+		case "tags":
+			if len(tags) == 0 {
+				tags = utils.ParseTags(v)
+			}
+		case "title":
+			if cfg.EntityName == "" {
+				if str, ok := v.(string); ok {
+					entry.Title = str
+				}
+			}
+		default:
+			entry.Attributes[k] = v
+		}
+	}
+	entry.Tags = tags
+	p.entries[""] = entry
+}
+
+func (p *staticProvider) parseMultiEntities(raw map[string]any, entitiesRootKey string) error {
 	var rawEntries map[string]map[string]any
 	if entitiesRootKey == "." {
 		var err error
