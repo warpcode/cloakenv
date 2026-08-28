@@ -167,17 +167,13 @@ func TestEnvProvider_GetEntry(t *testing.T) {
 	p := NewEnvProvider()
 	ctx := context.Background()
 
-	t.Run("SuccessAll", func(t *testing.T) {
-		t.Setenv("CLOAKENV_TEST_VAR", "entry-value")
-		entry, err := p.GetEntry(ctx, "")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
+	t.Run("LocationEmpty", func(t *testing.T) {
+		_, err := p.GetEntry(ctx, "")
+		if err == nil {
+			t.Error("expected error for empty location, got nil")
 		}
-		if entry.Title != "Environment Variables" {
-			t.Errorf("expected title 'Environment Variables', got %q", entry.Title)
-		}
-		if val, exists := entry.Attributes["CLOAKENV_TEST_VAR"]; !exists || val != "entry-value" {
-			t.Errorf("expected CLOAKENV_TEST_VAR to be 'entry-value', got %v", val)
+		if err != nil && !strings.Contains(err.Error(), "location cannot be empty") {
+			t.Errorf("expected error to contain 'location cannot be empty', got %q", err.Error())
 		}
 	})
 
