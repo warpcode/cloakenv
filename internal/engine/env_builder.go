@@ -254,9 +254,9 @@ func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cmdArgs []string, 
 	}
 	sort.Strings(keys)
 
-	var result []string
+	result := make([]string, 0, len(keys))
 	for _, k := range keys {
-		result = append(result, fmt.Sprintf("%s=%s", k, finalEnv[k]))
+		result = append(result, k+"="+finalEnv[k])
 	}
 
 	if len(currentCmdArgs) == 0 {
