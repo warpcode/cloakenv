@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 )
@@ -68,7 +69,7 @@ func (e *EnvProvider) Search(ctx context.Context, query SearchQuery) ([]SearchRe
 // Location cannot be empty as returning all environment variables is not supported for security reasons.
 func (e *EnvProvider) GetEntry(ctx context.Context, location string) (Entry, error) {
 	if location == "" {
-		return Entry{}, fmt.Errorf("location cannot be empty")
+		return Entry{}, errors.New("location cannot be empty")
 	}
 
 	attrs := make(map[string]any)
