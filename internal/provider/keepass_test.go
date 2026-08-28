@@ -178,6 +178,15 @@ func TestKeePassProvider(t *testing.T) {
 			if len(results) != 0 {
 				t.Errorf("expected 0 results for nonexistent tag, got %d", len(results))
 			}
+
+			// Test matching with empty tags query (should match all entries)
+			allResults, err := kp.Search(ctx, SearchQuery{Title: "Test Website", Tags: nil})
+			if err != nil {
+				t.Fatalf("Search failed: %v", err)
+			}
+			if len(allResults) != 1 {
+				t.Errorf("expected 1 result for empty tag filter, got %d", len(allResults))
+			}
 		})
 	})
 
