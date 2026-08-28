@@ -2,11 +2,14 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/expr-lang/expr/ast"
 
 	"github.com/warpcode/cloakenv/internal/config"
 )
@@ -467,6 +470,149 @@ func TestSearchConcurrentCompilation(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+type dummyNode struct {
+	ast.Node
+}
+
+func TestVisitorVisit(t *testing.T) {
+	t.Run("ExistingErrorShortCircuit", func(t *testing.T) {
+		origErr := fmt.Errorf("existing error")
+		vErr := origErr
+		v := &visitor{err: &vErr}
+
+		var callNode ast.Node = &ast.CallNode{}
+		v.Visit(&callNode)
+
+		if vErr != origErr {
+			t.Errorf("expected vErr to remain %v, got %v", origErr, vErr)
+		}
+	})
+
+	t.Run("AllowedNodes", func(t *testing.T) {
+		allowedNodes := []struct {
+			name string
+			node ast.Node
+		}{
+			{"IdentifierNode", &ast.IdentifierNode{}},
+			{"IntegerNode", &ast.IntegerNode{}},
+			{"FloatNode", &ast.FloatNode{}},
+			{"BoolNode", &ast.BoolNode{}},
+			{"StringNode", &ast.StringNode{}},
+			{"BytesNode", &ast.BytesNode{}},
+			{"ConstantNode", &ast.ConstantNode{}},
+			{"UnaryNode", &ast.UnaryNode{}},
+			{"BinaryNode", &ast.BinaryNode{}},
+			{"ArrayNode", &ast.ArrayNode{}},
+			{"MapNode", &ast.MapNode{}},
+			{"PairNode", &ast.PairNode{}},
+			{"NilNode", &ast.NilNode{}},
+			{"SliceNode", &ast.SliceNode{}},
+			{"BuiltinNode", &ast.BuiltinNode{}},
+			{"PredicateNode", &ast.PredicateNode{}},
+			{"PointerNode", &ast.PointerNode{}},
+			{"ConditionalNode", &ast.ConditionalNode{}},
+			{"ChainNode", &ast.ChainNode{}},
+			{"VariableDeclaratorNode", &ast.VariableDeclaratorNode{}},
+			{"SequenceNode", &ast.SequenceNode{}},
+			{"MemberNodeNonMethod", &ast.MemberNode{Method: false}},
+		}
+
+		for _, tc := range allowedNodes {
+			t.Run(tc.name, func(t *testing.T) {
+				var vErr error
+				v := &visitor{err: &vErr}
+				v.Visit(&tc.node)
+				if vErr != nil {
+					t.Errorf("expected no error for safe node type %s, got: %v", tc.name, vErr)
+				}
+			})
+		}
+	})
+
+	t.Run("DisallowedNodes", func(t *testing.T) {
+		disallowedNodes := []struct {
+			name        string
+			node        ast.Node
+			errContains string
+		}{
+			{
+				name:        "CallNode",
+				node:        &ast.CallNode{},
+				errContains: "function calls are not allowed in search expressions",
+			},
+			{
+				name:        "MemberNodeMethod",
+				node:        &ast.MemberNode{Method: true},
+				errContains: "method calls are not allowed in search expressions",
+			},
+			{
+				name:        "UnsupportedNode",
+				node:        &dummyNode{},
+				errContains: "expression node type *engine.dummyNode is not allowed",
+			},
+		}
+
+		for _, tc := range disallowedNodes {
+			t.Run(tc.name, func(t *testing.T) {
+				var vErr error
+				v := &visitor{err: &vErr}
+				v.Visit(&tc.node)
+				if vErr == nil {
+					t.Fatalf("expected error for node %s, got nil", tc.name)
+				}
+				if !strings.Contains(vErr.Error(), tc.errContains) {
+					t.Errorf("expected error containing %q, got: %v", tc.errContains, vErr)
+				}
+			})
+		}
+	})
+}
+
+func TestValidateExpression(t *testing.T) {
+	tests := []struct {
+		name        string
+		expr        string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "ValidExpression",
+			expr:    `title == "test" and "tag1" in tags`,
+			wantErr: false,
+		},
+		{
+			name:        "ParseError",
+			expr:        `1 +`,
+			wantErr:     true,
+			errContains: "failed to parse expression",
+		},
+		{
+			name:        "ForbiddenFunctionCall",
+			expr:        `foo()`,
+			wantErr:     true,
+			errContains: "function calls are not allowed in search expressions",
+		},
+		{
+			name:        "ForbiddenMethodCall",
+			expr:        `title.Upper()`,
+			wantErr:     true,
+			errContains: "method calls are not allowed in search expressions",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateExpression(tt.expr)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateExpression(%q) error = %v, wantErr = %v", tt.expr, err, tt.wantErr)
+			}
+			if tt.wantErr && !strings.Contains(err.Error(), tt.errContains) {
+				t.Errorf("expected error containing %q, got: %v", tt.errContains, err)
+			}
+		})
+	}
 }
 
 func TestSearchNilConfig(t *testing.T) {
