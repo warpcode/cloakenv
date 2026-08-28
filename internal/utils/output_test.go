@@ -4,26 +4,119 @@ import "testing"
 
 func TestFormatKey(t *testing.T) {
 	tests := []struct {
+		name     string
 		input    string
 		expected string
 	}{
-		{"my-key", "MY_KEY"},
-		{"my.key.name", "MY_KEY_NAME"},
-		{"my--key", "MY_KEY"},
-		{"__foo", "_FOO"},
-		{"foo__", "FOO_"},
-		{"multiple___underscores", "MULTIPLE_UNDERSCORES"},
-		{"api-v2-key", "API_V2_KEY"},
-		{"KEY_A", "KEY_A"},
-		{"already_Format_Key", "ALREADY_FORMAT_KEY"},
-		{"special$#@char", "SPECIAL_CHAR"},
+		{
+			name:     "hyphenated key",
+			input:    "my-key",
+			expected: "MY_KEY",
+		},
+		{
+			name:     "dot separated key",
+			input:    "my.key.name",
+			expected: "MY_KEY_NAME",
+		},
+		{
+			name:     "consecutive hyphens",
+			input:    "my--key",
+			expected: "MY_KEY",
+		},
+		{
+			name:     "leading double underscores",
+			input:    "__foo",
+			expected: "_FOO",
+		},
+		{
+			name:     "trailing double underscores",
+			input:    "foo__",
+			expected: "FOO_",
+		},
+		{
+			name:     "multiple consecutive underscores in middle",
+			input:    "multiple___underscores",
+			expected: "MULTIPLE_UNDERSCORES",
+		},
+		{
+			name:     "alphanumeric with hyphen",
+			input:    "api-v2-key",
+			expected: "API_V2_KEY",
+		},
+		{
+			name:     "already uppercase formatted key",
+			input:    "KEY_A",
+			expected: "KEY_A",
+		},
+		{
+			name:     "mixed case already formatted with underscore",
+			input:    "already_Format_Key",
+			expected: "ALREADY_FORMAT_KEY",
+		},
+		{
+			name:     "special characters",
+			input:    "special$#@char",
+			expected: "SPECIAL_CHAR",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "single lowercase char",
+			input:    "a",
+			expected: "A",
+		},
+		{
+			name:     "single uppercase char",
+			input:    "A",
+			expected: "A",
+		},
+		{
+			name:     "single digit char",
+			input:    "1",
+			expected: "1",
+		},
+		{
+			name:     "single non-alphanumeric char",
+			input:    "-",
+			expected: "_",
+		},
+		{
+			name:     "leading and trailing spaces",
+			input:    "  leading_and_trailing  ",
+			expected: "_LEADING_AND_TRAILING_",
+		},
+		{
+			name:     "only non-alphanumeric chars",
+			input:    "---",
+			expected: "_",
+		},
+		{
+			name:     "mixed spaces dots dashes and numbers",
+			input:    "foo.bar-baz_qux 123",
+			expected: "FOO_BAR_BAZ_QUX_123",
+		},
+		{
+			name:     "uppercase with digits and single underscores",
+			input:    "FOO_BAR_123",
+			expected: "FOO_BAR_123",
+		},
+		{
+			name:     "leading special characters",
+			input:    "!key",
+			expected: "_KEY",
+		},
 	}
 
 	for _, tc := range tests {
-		got := FormatKey(tc.input)
-		if got != tc.expected {
-			t.Errorf("FormatKey(%q) = %q; expected %q", tc.input, got, tc.expected)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			got := FormatKey(tc.input)
+			if got != tc.expected {
+				t.Errorf("FormatKey(%q) = %q; expected %q", tc.input, got, tc.expected)
+			}
+		})
 	}
 }
 
