@@ -94,13 +94,27 @@ func TestEnvProvider_SetSecret(t *testing.T) {
 
 func TestEnvProvider_DeleteSecret(t *testing.T) {
 	p := NewEnvProvider()
-	err := p.DeleteSecret(context.Background(), "KEY")
-	if err == nil {
-		t.Error("expected error for DeleteSecret, got nil")
-	}
-	if err != nil && !strings.Contains(err.Error(), "read-only") {
-		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
-	}
+	ctx := context.Background()
+
+	t.Run("StandardKey", func(t *testing.T) {
+		err := p.DeleteSecret(ctx, "KEY")
+		if err == nil {
+			t.Error("expected error for DeleteSecret, got nil")
+		}
+		if err != nil && !strings.Contains(err.Error(), "read-only") {
+			t.Errorf("expected error to contain 'read-only', got %q", err.Error())
+		}
+	})
+
+	t.Run("EmptyKey", func(t *testing.T) {
+		err := p.DeleteSecret(ctx, "")
+		if err == nil {
+			t.Error("expected error for DeleteSecret, got nil")
+		}
+		if err != nil && !strings.Contains(err.Error(), "read-only") {
+			t.Errorf("expected error to contain 'read-only', got %q", err.Error())
+		}
+	})
 }
 
 func TestEnvProvider_GetEntry(t *testing.T) {
