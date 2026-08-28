@@ -495,9 +495,9 @@ func TestSearchNilConfig(t *testing.T) {
 
 func TestValidateExpression(t *testing.T) {
 	tests := []struct {
-		name          string
-		expression    string
-		wantErr       bool
+		name           string
+		expression     string
+		wantErr        bool
 		expectedErrSub string
 	}{
 		{
@@ -526,33 +526,33 @@ func TestValidateExpression(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name:          "parse error invalid syntax",
-			expression:    `title ==`,
-			wantErr:       true,
+			name:           "parse error invalid syntax",
+			expression:     `title ==`,
+			wantErr:        true,
 			expectedErrSub: "failed to parse expression",
 		},
 		{
-			name:          "disallowed function call",
-			expression:    `print(tags)`,
-			wantErr:       true,
+			name:           "disallowed function call",
+			expression:     `print(tags)`,
+			wantErr:        true,
 			expectedErrSub: "function calls are not allowed",
 		},
 		{
-			name:          "disallowed custom function call",
-			expression:    `myFunc("arg")`,
-			wantErr:       true,
+			name:           "disallowed custom function call",
+			expression:     `myFunc("arg")`,
+			wantErr:        true,
 			expectedErrSub: "function calls are not allowed",
 		},
 		{
-			name:          "disallowed method call",
-			expression:    `title.ToUpper() == "TEST"`,
-			wantErr:       true,
+			name:           "disallowed method call",
+			expression:     `title.ToUpper() == "TEST"`,
+			wantErr:        true,
 			expectedErrSub: "method calls are not allowed",
 		},
 		{
-			name:          "disallowed string method call",
-			expression:    `"hello".Trim()`,
-			wantErr:       true,
+			name:           "disallowed string method call",
+			expression:     `"hello".Trim()`,
+			wantErr:        true,
 			expectedErrSub: "method calls are not allowed",
 		},
 	}
