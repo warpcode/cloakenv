@@ -492,3 +492,86 @@ func TestSearchNilConfig(t *testing.T) {
 		t.Errorf("expected 'no configuration loaded' error, got %v", err)
 	}
 }
+
+func TestValidateExpression(t *testing.T) {
+	tests := []struct {
+		name          string
+		expression    string
+		wantErr       bool
+		expectedErrSub string
+	}{
+		{
+			name:       "valid tag membership",
+			expression: `"auth:ssh" in tags`,
+			wantErr:    false,
+		},
+		{
+			name:       "valid attribute comparison and logical ops",
+			expression: `bit_strength == 2048 and not ("deprecated" in tags)`,
+			wantErr:    false,
+		},
+		{
+			name:       "valid member property access",
+			expression: `user.name == "admin"`,
+			wantErr:    false,
+		},
+		{
+			name:       "valid conditional and array literal",
+			expression: `true ? [1, 2, 3] : []`,
+			wantErr:    false,
+		},
+		{
+			name:       "valid unary op and float literal",
+			expression: `!false && score >= 3.14`,
+			wantErr:    false,
+		},
+		{
+			name:          "parse error invalid syntax",
+			expression:    `title ==`,
+			wantErr:       true,
+			expectedErrSub: "failed to parse expression",
+		},
+		{
+			name:          "disallowed function call",
+			expression:    `print(tags)`,
+			wantErr:       true,
+			expectedErrSub: "function calls are not allowed",
+		},
+		{
+			name:          "disallowed custom function call",
+			expression:    `myFunc("arg")`,
+			wantErr:       true,
+			expectedErrSub: "function calls are not allowed",
+		},
+		{
+			name:          "disallowed method call",
+			expression:    `title.ToUpper() == "TEST"`,
+			wantErr:       true,
+			expectedErrSub: "method calls are not allowed",
+		},
+		{
+			name:          "disallowed string method call",
+			expression:    `"hello".Trim()`,
+			wantErr:       true,
+			expectedErrSub: "method calls are not allowed",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateExpression(tc.expression)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("validateExpression(%q) expected error containing %q, got nil", tc.expression, tc.expectedErrSub)
+				}
+				if !strings.Contains(err.Error(), tc.expectedErrSub) {
+					t.Errorf("validateExpression(%q) error = %v, want error containing %q", tc.expression, err, tc.expectedErrSub)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("validateExpression(%q) unexpected error: %v", tc.expression, err)
+				}
+			}
+		})
+	}
+}
