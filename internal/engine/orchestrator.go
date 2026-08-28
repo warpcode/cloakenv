@@ -97,6 +97,7 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 				return nil, fmt.Errorf("invalid config: autoload rule #%d is missing 'match'", idx+1)
 			}
 		}
+		cfg.CompileAutoloadRules()
 	}
 
 	concurrencySem := make(chan struct{}, maxConcurrency)
