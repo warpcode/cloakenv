@@ -19,6 +19,7 @@ func ParseTemplateFile(fpath string) (envs map[string]string, err error) {
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil {
 			err = errors.Join(err, fmt.Errorf("failed to close template file: %w", closeErr))
+			envs = nil
 		}
 	}()
 
