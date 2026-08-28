@@ -362,6 +362,37 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		}
 	})
 
+	t.Run("Autoload command expansion escapes user input against argument injection", func(t *testing.T) {
+		secCfg := &config.Config{
+			Autoload: []config.AutoloadRule{
+				{
+					Match:   `^mytool\s+(.*)$`,
+					Command: `myrealtool $1`,
+				},
+			},
+		}
+		orchSec, err := NewOrchestrator(secCfg)
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		cmdArgs := []string{"mytool", "arg1; injected_cmd --flag"}
+		newCmdArgs, _, err := orchSec.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil, false)
+		if err != nil {
+			t.Fatalf("failed to build env for command: %v", err)
+		}
+
+		expectedArgs := []string{"myrealtool", "arg1;", "injected_cmd", "--flag"}
+		if len(newCmdArgs) != len(expectedArgs) {
+			t.Fatalf("expected %d args, got %d (%v)", len(expectedArgs), len(newCmdArgs), newCmdArgs)
+		}
+		for idx, arg := range newCmdArgs {
+			if arg != expectedArgs[idx] {
+				t.Errorf("arg[%d]: expected %q, got %q", idx, expectedArgs[idx], arg)
+			}
+		}
+	})
+
 	t.Run("Validation rejects autoload rule with empty match", func(t *testing.T) {
 		invalidCfg := &config.Config{
 			Autoload: []config.AutoloadRule{

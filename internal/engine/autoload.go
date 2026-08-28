@@ -134,7 +134,7 @@ func matchPreparedCommandRule(rule config.AutoloadRule, cmdArgs []string, parsed
 		template := convertBackslashGroups(rule.Command)
 		var expanded string
 		if re != nil && matchIndices != nil {
-			expanded = string(re.ExpandString(nil, template, parsed.fullCmd, matchIndices))
+			expanded = expandTemplate(re, template, parsed.fullCmd, matchIndices)
 		} else {
 			expanded = template
 		}
@@ -146,6 +146,145 @@ func matchPreparedCommandRule(rule config.AutoloadRule, cmdArgs []string, parsed
 	}
 
 	return true, cmdArgs, nil
+}
+
+func escapeSubmatch(s string) string {
+	var sb strings.Builder
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		switch ch {
+		case '\\', '"', '\'':
+			sb.WriteByte('\\')
+			sb.WriteByte(ch)
+		default:
+			sb.WriteByte(ch)
+		}
+	}
+	return sb.String()
+}
+
+func expandTemplate(re *regexp.Regexp, template string, src string, matchIndices []int) string {
+	names := re.SubexpNames()
+	var sb strings.Builder
+
+	for i := 0; i < len(template); i++ {
+		ch := template[i]
+		if ch != '$' {
+			sb.WriteByte(ch)
+			continue
+		}
+
+		if i+1 >= len(template) {
+			sb.WriteByte('$')
+			break
+		}
+
+		next := template[i+1]
+		if next == '$' {
+			sb.WriteByte('$')
+			i++
+			continue
+		}
+
+		if next == '{' {
+			closeIdx := strings.IndexByte(template[i+2:], '}')
+			if closeIdx != -1 {
+				nameOrNum := template[i+2 : i+2+closeIdx]
+				if isValidGroupNameOrNum(nameOrNum) {
+					group := findGroupIndex(re, names, nameOrNum)
+					if group >= 0 && group*2+1 < len(matchIndices) {
+						gStart := matchIndices[2*group]
+						gEnd := matchIndices[2*group+1]
+						if gStart >= 0 && gEnd >= gStart && gEnd <= len(src) {
+							val := src[gStart:gEnd]
+							val = escapeSubmatch(val)
+							sb.WriteString(val)
+						}
+						i += 2 + closeIdx
+						continue
+					}
+				}
+			}
+		}
+
+		_, group, consumed := parseSubmatchRef(names, template[i+1:])
+		if group >= 0 && group*2+1 < len(matchIndices) {
+			gStart := matchIndices[2*group]
+			gEnd := matchIndices[2*group+1]
+			if gStart >= 0 && gEnd >= gStart && gEnd <= len(src) {
+				val := src[gStart:gEnd]
+				val = escapeSubmatch(val)
+				sb.WriteString(val)
+			}
+			i += consumed
+			continue
+		}
+
+		sb.WriteByte('$')
+	}
+
+	return sb.String()
+}
+
+func isValidGroupNameOrNum(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !isAlphaNum(c) && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func findGroupIndex(re *regexp.Regexp, names []string, nameOrNum string) int {
+	var num int
+	if _, err := fmt.Sscanf(nameOrNum, "%d", &num); err == nil && num >= 0 && num < len(names) {
+		return num
+	}
+	for i, name := range names {
+		if name == nameOrNum && name != "" {
+			return i
+		}
+	}
+	return -1
+}
+
+func parseSubmatchRef(names []string, s string) (string, int, int) {
+	if len(s) == 0 {
+		return "", -1, 0
+	}
+	var digits int
+	for digits < len(s) && s[digits] >= '0' && s[digits] <= '9' {
+		digits++
+	}
+	if digits > 0 {
+		for d := digits; d > 0; d-- {
+			var num int
+			if _, err := fmt.Sscanf(s[:d], "%d", &num); err == nil && num < len(names) {
+				return "", num, d
+			}
+		}
+	}
+	var end int
+	for end < len(s) && (isAlphaNum(s[end]) || s[end] == '_') {
+		end++
+	}
+	if end > 0 {
+		name := s[0:end]
+		for i, n := range names {
+			if n == name && n != "" {
+				return name, i, end
+			}
+		}
+	}
+	return "", -1, 0
+}
+
+func isAlphaNum(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
 func convertBackslashGroups(template string) string {
