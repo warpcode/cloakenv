@@ -194,15 +194,14 @@ func mockStdin(t *testing.T, content string) {
 		}
 	})
 
-	if _, writeErr := wIn.Write([]byte(content)); writeErr != nil {
+	defer func() {
 		if closeErr := wIn.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
-			t.Errorf("failed to close stdin writer pipe after write error: %v", closeErr)
+			t.Errorf("failed to close stdin writer pipe: %v", closeErr)
 		}
-		t.Fatalf("failed to write to stdin pipe: %v", writeErr)
-	}
+	}()
 
-	if closeErr := wIn.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
-		t.Fatalf("failed to close stdin writer pipe: %v", closeErr)
+	if _, writeErr := wIn.Write([]byte(content)); writeErr != nil {
+		t.Fatalf("failed to write to stdin pipe: %v", writeErr)
 	}
 }
 
