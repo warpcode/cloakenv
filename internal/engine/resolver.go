@@ -240,12 +240,17 @@ func resolveSliceRecursive[T any](ctx context.Context, r *Resolver, typedVal []T
 		v := typedVal[i]
 		res, err := r.ResolveAttrRecursive(ctx, v, depth, configKey)
 		if err != nil {
+			var shouldCancel bool
 			mu.Lock()
 			if firstErr == nil {
 				firstErr = err
-				cancel()
+				shouldCancel = true
 			}
 			mu.Unlock()
+
+			if shouldCancel {
+				cancel()
+			}
 			return false
 		}
 		resolvedSlice[i] = formatFn(res)
