@@ -320,7 +320,7 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 				entryPath = groupPath + "/" + title
 			}
 
-			if !k.matchSearchEntry(entry, title, entryPath, queryTitleLower, queryPathLower, queryTagsLower) {
+			if !matchSearchEntry(entry, title, entryPath, queryTitleLower, queryPathLower, queryTagsLower) {
 				continue
 			}
 
@@ -340,7 +340,7 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 }
 
 // matchSearchEntry evaluates whether a KeePass entry satisfies title, path, and tag search filters.
-func (k *KeePassProvider) matchSearchEntry(entry *gokeepasslib.Entry, title, entryPath string, queryTitleLower, queryPathLower string, queryTagsLower []string) bool {
+func matchSearchEntry(entry *gokeepasslib.Entry, title, entryPath string, queryTitleLower, queryPathLower string, queryTagsLower []string) bool {
 	if queryTitleLower != "" && !strings.Contains(strings.ToLower(title), queryTitleLower) {
 		return false
 	}

@@ -136,58 +136,55 @@ func TestKeePassProvider(t *testing.T) {
 	})
 
 	t.Run("Search", func(t *testing.T) {
-		t.Run("ByTitle", func(t *testing.T) {
-			results, err := kp.Search(ctx, SearchQuery{Title: "Test Website"})
-			if err != nil {
-				t.Fatalf("Search failed: %v", err)
-			}
-			if len(results) != 1 {
-				t.Fatalf("expected 1 result, got %d", len(results))
-			}
-			if results[0].Path != "website/Test Website" {
-				t.Errorf("expected path 'website/Test Website', got %q", results[0].Path)
-			}
-		})
+		tests := []struct {
+			name          string
+			query         SearchQuery
+			wantCount     int
+			wantFirstPath string
+		}{
+			{
+				name:          "ByTitle",
+				query:         SearchQuery{Title: "Test Website"},
+				wantCount:     1,
+				wantFirstPath: "website/Test Website",
+			},
+			{
+				name:      "ByPath",
+				query:     SearchQuery{Path: "website/Test"},
+				wantCount: 1,
+			},
+			{
+				name:      "NoMatch",
+				query:     SearchQuery{Title: "NonExistentTitleItem12345"},
+				wantCount: 0,
+			},
+			{
+				name:      "NonExistentTag",
+				query:     SearchQuery{Tags: []string{"nonexistenttag"}},
+				wantCount: 0,
+			},
+			{
+				name:          "EmptyTagFilter",
+				query:         SearchQuery{Title: "Test Website", Tags: nil},
+				wantCount:     1,
+				wantFirstPath: "website/Test Website",
+			},
+		}
 
-		t.Run("ByPath", func(t *testing.T) {
-			results, err := kp.Search(ctx, SearchQuery{Path: "website/Test"})
-			if err != nil {
-				t.Fatalf("Search failed: %v", err)
-			}
-			if len(results) == 0 {
-				t.Fatalf("expected at least 1 result, got 0")
-			}
-		})
-
-		t.Run("NoMatch", func(t *testing.T) {
-			results, err := kp.Search(ctx, SearchQuery{Title: "NonExistentTitleItem12345"})
-			if err != nil {
-				t.Fatalf("Search failed: %v", err)
-			}
-			if len(results) != 0 {
-				t.Errorf("expected 0 results, got %d", len(results))
-			}
-		})
-
-		t.Run("ByTag", func(t *testing.T) {
-			// Search with a tag that doesn't match
-			results, err := kp.Search(ctx, SearchQuery{Tags: []string{"nonexistenttag"}})
-			if err != nil {
-				t.Fatalf("Search failed: %v", err)
-			}
-			if len(results) != 0 {
-				t.Errorf("expected 0 results for nonexistent tag, got %d", len(results))
-			}
-
-			// Test matching with empty tags query (should match all entries)
-			allResults, err := kp.Search(ctx, SearchQuery{Title: "Test Website", Tags: nil})
-			if err != nil {
-				t.Fatalf("Search failed: %v", err)
-			}
-			if len(allResults) != 1 {
-				t.Errorf("expected 1 result for empty tag filter, got %d", len(allResults))
-			}
-		})
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				results, err := kp.Search(ctx, tc.query)
+				if err != nil {
+					t.Fatalf("Search failed: %v", err)
+				}
+				if len(results) != tc.wantCount {
+					t.Fatalf("expected %d result(s), got %d", tc.wantCount, len(results))
+				}
+				if tc.wantFirstPath != "" && results[0].Path != tc.wantFirstPath {
+					t.Errorf("expected path %q, got %q", tc.wantFirstPath, results[0].Path)
+				}
+			})
+		}
 	})
 
 	t.Run("ReadOnly", func(t *testing.T) {
