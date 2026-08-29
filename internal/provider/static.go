@@ -352,6 +352,21 @@ func anyToString(v any) string {
 	}
 }
 
+func normalizeEntryMap(v any) (map[string]any, bool) {
+	switch m := v.(type) {
+	case map[string]any:
+		return m, true
+	case map[any]any:
+		converted := make(map[string]any, len(m))
+		for ek, ev := range m {
+			converted[anyToString(ek)] = ev
+		}
+		return converted, true
+	default:
+		return nil, false
+	}
+}
+
 func convertToEntriesMap(val any) (map[string]map[string]any, error) {
 	switch m := val.(type) {
 	case map[string]map[string]any:
@@ -359,14 +374,8 @@ func convertToEntriesMap(val any) (map[string]map[string]any, error) {
 	case map[string]any:
 		res := make(map[string]map[string]any)
 		for k, v := range m {
-			if entryMap, ok := v.(map[string]any); ok {
+			if entryMap, ok := normalizeEntryMap(v); ok {
 				res[k] = entryMap
-			} else if entryMap2, ok := v.(map[any]any); ok {
-				converted := make(map[string]any)
-				for ek, ev := range entryMap2 {
-					converted[anyToString(ek)] = ev
-				}
-				res[k] = converted
 			} else {
 				return nil, fmt.Errorf("entry %q is not a valid map", k)
 			}
@@ -376,14 +385,8 @@ func convertToEntriesMap(val any) (map[string]map[string]any, error) {
 		res := make(map[string]map[string]any)
 		for k, v := range m {
 			kStr := anyToString(k)
-			if entryMap, ok := v.(map[string]any); ok {
+			if entryMap, ok := normalizeEntryMap(v); ok {
 				res[kStr] = entryMap
-			} else if entryMap2, ok := v.(map[any]any); ok {
-				converted := make(map[string]any)
-				for ek, ev := range entryMap2 {
-					converted[anyToString(ek)] = ev
-				}
-				res[kStr] = converted
 			} else {
 				return nil, fmt.Errorf("entry %q is not a valid map", kStr)
 			}
