@@ -210,10 +210,10 @@ func captureOutputWithExitCode(t *testing.T, f func() int) (int, string, string)
 	t.Helper()
 	oldStdout := os.Stdout
 	oldStderr := os.Stderr
-	t.Cleanup(func() {
+	defer func() {
 		os.Stdout = oldStdout
 		os.Stderr = oldStderr
-	})
+	}()
 
 	rOut, wOut, err := os.Pipe()
 	if err != nil {
