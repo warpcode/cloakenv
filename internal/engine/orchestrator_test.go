@@ -7,6 +7,7 @@ import (
 	"github.com/warpcode/cloakenv/internal/provider"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1597,16 +1598,8 @@ func TestNormalizeURIs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := normalizeURIs(tt.uris)
-			if len(got) == 0 && len(tt.want) == 0 {
-				return
-			}
-			if len(got) != len(tt.want) {
-				t.Fatalf("normalizeURIs() returned %d elements, want %d", len(got), len(tt.want))
-			}
-			for i, v := range got {
-				if v != tt.want[i] {
-					t.Errorf("normalizeURIs() element %d = %q, want %q", i, v, tt.want[i])
-				}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("normalizeURIs() = %q, want %q", got, tt.want)
 			}
 		})
 	}
