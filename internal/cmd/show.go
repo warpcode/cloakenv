@@ -82,18 +82,21 @@ func parseShowFlags(args []string) (*showOptions, error) {
 }
 
 func buildMergedEntry(ctx context.Context, orch *engine.Orchestrator, merges []string, whitelist []string, explicit map[string]string) (provider.Entry, error) {
-	entry := provider.Entry{
-		Tags:       []string{},
-		Attributes: make(map[string]any),
+	entries, err := resolveMerges(ctx, orch, merges)
+	if err != nil {
+		return provider.Entry{}, err
 	}
 
-	whitelistSet := make(map[string]bool)
-	for _, k := range whitelist {
-		whitelistSet[utils.FormatKey(k)] = true
-	}
-	hasWhitelist := len(whitelist) > 0
+	entry := mergeEntries(entries, whitelist)
 
-	// Resolve the entries concurrently, then merge them in order
+	if err := resolveExplicitMappings(ctx, orch, explicit, &entry); err != nil {
+		return provider.Entry{}, err
+	}
+
+	return entry, nil
+}
+
+func resolveMerges(ctx context.Context, orch *engine.Orchestrator, merges []string) ([]provider.Entry, error) {
 	type loadedEntry struct {
 		entry provider.Entry
 		err   error
@@ -110,20 +113,34 @@ func buildMergedEntry(ctx context.Context, orch *engine.Orchestrator, merges []s
 	}
 	mWg.Wait()
 
-	// Check if any merge failed
-	for _, lm := range loadedMerges {
+	entries := make([]provider.Entry, len(merges))
+	for i, lm := range loadedMerges {
 		if lm.err != nil {
-			return provider.Entry{}, fmt.Errorf("failed to retrieve entry: %w", lm.err)
+			return nil, fmt.Errorf("failed to retrieve entry: %w", lm.err)
 		}
+		entries[i] = lm.entry
+	}
+	return entries, nil
+}
+
+func mergeEntries(entries []provider.Entry, whitelist []string) provider.Entry {
+	entry := provider.Entry{
+		Tags:       []string{},
+		Attributes: make(map[string]any),
 	}
 
-	// Merge tags and attributes in order
+	whitelistSet := make(map[string]bool)
+	for _, k := range whitelist {
+		whitelistSet[utils.FormatKey(k)] = true
+	}
+	hasWhitelist := len(whitelist) > 0
+
 	tagSet := make(map[string]bool)
-	for _, lm := range loadedMerges {
-		for _, tag := range lm.entry.Tags {
+	for _, e := range entries {
+		for _, tag := range e.Tags {
 			tagSet[tag] = true
 		}
-		for k, v := range lm.entry.Attributes {
+		for k, v := range e.Attributes {
 			kLower := strings.ToLower(k)
 			if kLower == "title" || kLower == "tags" {
 				continue
@@ -136,43 +153,45 @@ func buildMergedEntry(ctx context.Context, orch *engine.Orchestrator, merges []s
 		}
 	}
 
-	// Build the tags slice from tagSet
-	var uniqueTags []string
 	for tag := range tagSet {
-		uniqueTags = append(uniqueTags, tag)
-	}
-	entry.Tags = uniqueTags
-
-	// Resolve explicit -e mappings (highest priority, not subject to whitelist)
-	if len(explicit) > 0 {
-		type resolvedMapping struct {
-			key string
-			val string
-			err error
-		}
-		resolvedList := make([]resolvedMapping, len(explicit))
-		var eWg sync.WaitGroup
-		idx := 0
-		for k, uri := range explicit {
-			eWg.Add(1)
-			go func(i int, key, u string) {
-				defer eWg.Done()
-				val, err := orch.Resolve(ctx, u)
-				resolvedList[i] = resolvedMapping{key: key, val: val, err: err}
-			}(idx, k, uri)
-			idx++
-		}
-		eWg.Wait()
-
-		for _, rm := range resolvedList {
-			if rm.err != nil {
-				return provider.Entry{}, fmt.Errorf("failed to resolve mapping %s=%s: %w", rm.key, explicit[rm.key], rm.err)
-			}
-			entry.Attributes[rm.key] = rm.val
-		}
+		entry.Tags = append(entry.Tags, tag)
 	}
 
-	return entry, nil
+	return entry
+}
+
+func resolveExplicitMappings(ctx context.Context, orch *engine.Orchestrator, explicit map[string]string, entry *provider.Entry) error {
+	if len(explicit) == 0 {
+		return nil
+	}
+
+	type resolvedMapping struct {
+		key string
+		val string
+		err error
+	}
+	resolvedList := make([]resolvedMapping, len(explicit))
+	var eWg sync.WaitGroup
+	idx := 0
+	for k, uri := range explicit {
+		eWg.Add(1)
+		go func(i int, key, u string) {
+			defer eWg.Done()
+			val, err := orch.Resolve(ctx, u)
+			resolvedList[i] = resolvedMapping{key: key, val: val, err: err}
+		}(idx, k, uri)
+		idx++
+	}
+	eWg.Wait()
+
+	for _, rm := range resolvedList {
+		if rm.err != nil {
+			return fmt.Errorf("failed to resolve mapping %s=%s: %w", rm.key, explicit[rm.key], rm.err)
+		}
+		entry.Attributes[rm.key] = rm.val
+	}
+
+	return nil
 }
 
 // Show handles "cloakenv show <entry-uri> [--yaml | --json]"
