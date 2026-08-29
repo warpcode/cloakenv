@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -300,8 +301,7 @@ func isValidGroupNameOrNum(s string) bool {
 }
 
 func findGroupIndex(names []string, nameOrNum string) int {
-	var num int
-	if _, err := fmt.Sscanf(nameOrNum, "%d", &num); err == nil && num >= 0 && num < len(names) {
+	if num, err := strconv.Atoi(nameOrNum); err == nil && num >= 0 && num < len(names) {
 		return num
 	}
 	for i, name := range names {
@@ -322,8 +322,7 @@ func parseSubmatchRef(names []string, s string) (string, int, int) {
 	}
 	if digits > 0 {
 		for d := digits; d > 0; d-- {
-			var num int
-			if _, err := fmt.Sscanf(s[:d], "%d", &num); err == nil && num < len(names) {
+			if num, err := strconv.Atoi(s[:d]); err == nil && num < len(names) {
 				return "", num, d
 			}
 		}
