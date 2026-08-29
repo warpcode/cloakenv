@@ -159,54 +159,94 @@ func (eb *EnvBuilder) BuildEnv(ctx context.Context, explicit map[string]string, 
 	return env, err
 }
 
-// BuildEnvForCommand constructs the full environment block and evaluates config autoload rules.
-func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cmdArgs []string, explicit map[string]string, merges []string, whitelist []string, emptyEnv bool) ([]string, []string, error) {
+// formatEnvMap converts an environment map to a slice of "KEY=VALUE" strings with deterministic sorting.
+func formatEnvMap(envMap map[string]string) []string {
+	keys := make([]string, 0, len(envMap))
+	for k := range envMap {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	result := make([]string, 0, len(keys))
+	for _, k := range keys {
+		result = append(result, k+"="+envMap[k])
+	}
+	return result
+}
+
+// evalAutoloadRules evaluates configured autoload rules against command arguments.
+func (eb *EnvBuilder) evalAutoloadRules(cmdArgs []string) ([]string, map[string]string, []string, []string, error) {
 	var autoMerges []string
 	autoExplicit := make(map[string]string)
 	var autoWhitelist []string
 	currentCmdArgs := cmdArgs
 
-	if len(cmdArgs) > 0 && eb.config != nil {
-		parsed := parseCommandArgs(currentCmdArgs)
-		for _, rule := range eb.config.Autoload {
-			matched, newCmdArgs, err := matchPreparedCommandRule(rule, currentCmdArgs, parsed)
-			if err != nil {
-				return nil, nil, fmt.Errorf("autoload rule %q: %w", rule.Match, err)
+	if len(cmdArgs) == 0 || eb.config == nil {
+		return autoMerges, autoExplicit, autoWhitelist, currentCmdArgs, nil
+	}
+
+	parsed := parseCommandArgs(currentCmdArgs)
+	for _, rule := range eb.config.Autoload {
+		matched, newCmdArgs, err := matchPreparedCommandRule(rule, currentCmdArgs, parsed)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("autoload rule %q: %w", rule.Match, err)
+		}
+		if matched {
+			currentCmdArgs = newCmdArgs
+			parsed = parseCommandArgs(currentCmdArgs)
+			for _, v := range rule.Vaults {
+				v = strings.TrimSpace(v)
+				if v != "" {
+					if !strings.Contains(v, "://") {
+						v = v + "://"
+					}
+					autoMerges = append(autoMerges, v)
+				}
 			}
-			if matched {
-				currentCmdArgs = newCmdArgs
-				parsed = parseCommandArgs(currentCmdArgs)
-				for _, v := range rule.Vaults {
-					v = strings.TrimSpace(v)
-					if v != "" {
-						if !strings.Contains(v, "://") {
-							v = v + "://"
-						}
-						autoMerges = append(autoMerges, v)
+			for _, m := range rule.Merge {
+				m = strings.TrimSpace(m)
+				if m != "" {
+					if !strings.Contains(m, "://") {
+						m = m + "://"
 					}
+					autoMerges = append(autoMerges, m)
 				}
-				for _, m := range rule.Merge {
-					m = strings.TrimSpace(m)
-					if m != "" {
-						if !strings.Contains(m, "://") {
-							m = m + "://"
-						}
-						autoMerges = append(autoMerges, m)
-					}
+			}
+			for k, uri := range rule.Env {
+				if k != "" && uri != "" {
+					autoExplicit[k] = uri
 				}
-				for k, uri := range rule.Env {
-					if k != "" && uri != "" {
-						autoExplicit[k] = uri
-					}
-				}
-				for _, w := range rule.Whitelist {
-					w = strings.TrimSpace(w)
-					if w != "" {
-						autoWhitelist = append(autoWhitelist, w)
-					}
+			}
+			for _, w := range rule.Whitelist {
+				w = strings.TrimSpace(w)
+				if w != "" {
+					autoWhitelist = append(autoWhitelist, w)
 				}
 			}
 		}
+	}
+
+	return autoMerges, autoExplicit, autoWhitelist, currentCmdArgs, nil
+}
+
+// resolveCmdArgs resolves secret URIs in command arguments.
+func (eb *EnvBuilder) resolveCmdArgs(ctx context.Context, cmdArgs []string) ([]string, error) {
+	resolvedCmdArgs := make([]string, len(cmdArgs))
+	for i, arg := range cmdArgs {
+		resolvedArg, err := eb.resolver.Resolve(ctx, arg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve command argument %q: %w", arg, err)
+		}
+		resolvedCmdArgs[i] = resolvedArg
+	}
+	return resolvedCmdArgs, nil
+}
+
+// BuildEnvForCommand constructs the full environment block and evaluates config autoload rules.
+func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cmdArgs []string, explicit map[string]string, merges []string, whitelist []string, emptyEnv bool) ([]string, []string, error) {
+	autoMerges, autoExplicit, autoWhitelist, currentCmdArgs, err := eb.evalAutoloadRules(cmdArgs)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	combinedMerges := append(autoMerges, merges...)
@@ -247,29 +287,15 @@ func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cmdArgs []string, 
 		finalEnv[k] = v
 	}
 
-	// Convert finalEnv map to []string slice in "KEY=VALUE" format with deterministic sorting
-	keys := make([]string, 0, len(finalEnv))
-	for k := range finalEnv {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	result := make([]string, 0, len(keys))
-	for _, k := range keys {
-		result = append(result, k+"="+finalEnv[k])
-	}
+	result := formatEnvMap(finalEnv)
 
 	if len(currentCmdArgs) == 0 {
 		currentCmdArgs = cmdArgs
 	}
 
-	resolvedCmdArgs := make([]string, len(currentCmdArgs))
-	for i, arg := range currentCmdArgs {
-		resolvedArg, err := eb.resolver.Resolve(ctx, arg)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to resolve command argument %q: %w", arg, err)
-		}
-		resolvedCmdArgs[i] = resolvedArg
+	resolvedCmdArgs, err := eb.resolveCmdArgs(ctx, currentCmdArgs)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	return resolvedCmdArgs, result, nil
