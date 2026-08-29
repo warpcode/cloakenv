@@ -14,6 +14,32 @@ import (
 // every autoload rule evaluation.
 var regexCache sync.Map
 
+type parsedCmd struct {
+	fullCmd       string
+	execPath      string
+	execBase      string
+	execPathLower string
+	execBaseLower string
+	fullCmdLower  string
+}
+
+func parseCommandArgs(cmdArgs []string) parsedCmd {
+	if len(cmdArgs) == 0 {
+		return parsedCmd{}
+	}
+	fullCmd := strings.Join(cmdArgs, " ")
+	execPath := cmdArgs[0]
+	execBase := filepath.Base(execPath)
+	return parsedCmd{
+		fullCmd:       fullCmd,
+		execPath:      execPath,
+		execBase:      execBase,
+		execPathLower: strings.ToLower(execPath),
+		execBaseLower: strings.ToLower(execBase),
+		fullCmdLower:  strings.ToLower(fullCmd),
+	}
+}
+
 // MatchRunAlias evaluates configured autoload/run alias rules against command arguments
 // and returns the first matching AutoloadRule, a match indicator, and any
 // command-substitution error encountered for the matched rule.
@@ -21,8 +47,9 @@ func MatchRunAlias(cfg *config.Config, cmdArgs []string) (config.AutoloadRule, b
 	if cfg == nil || len(cfg.Autoload) == 0 || len(cmdArgs) == 0 {
 		return config.AutoloadRule{}, false, nil
 	}
+	parsed := parseCommandArgs(cmdArgs)
 	for _, rule := range cfg.Autoload {
-		matched, _, err := MatchCommandRule(rule, cmdArgs)
+		matched, _, err := matchPreparedCommandRule(rule, cmdArgs, parsed)
 		if matched {
 			return rule, true, err
 		}
@@ -50,20 +77,20 @@ func MatchCommandRule(rule config.AutoloadRule, cmdArgs []string) (bool, []strin
 	if len(cmdArgs) == 0 {
 		return false, cmdArgs, nil
 	}
+	return matchPreparedCommandRule(rule, cmdArgs, parseCommandArgs(cmdArgs))
+}
+
+func matchPreparedCommandRule(rule config.AutoloadRule, cmdArgs []string, parsed parsedCmd) (bool, []string, error) {
+	if len(cmdArgs) == 0 {
+		return false, cmdArgs, nil
+	}
 
 	pattern := strings.TrimSpace(rule.Match)
 	if pattern == "" {
 		return false, cmdArgs, nil
 	}
 
-	fullCmd := strings.Join(cmdArgs, " ")
-	execPath := cmdArgs[0]
-	execBase := filepath.Base(execPath)
-
 	ruleLower := strings.ToLower(pattern)
-	execPathLower := strings.ToLower(execPath)
-	execBaseLower := strings.ToLower(execBase)
-	fullCmdLower := strings.ToLower(fullCmd)
 
 	var re *regexp.Regexp
 	var matchIndices []int
@@ -71,13 +98,13 @@ func MatchCommandRule(rule config.AutoloadRule, cmdArgs []string) (bool, []strin
 	// 1. Attempt Regex compilation & match (cached)
 	if cached, ok := regexCache.Load(pattern); ok {
 		compiled := cached.(*regexp.Regexp)
-		if indices := compiled.FindStringSubmatchIndex(fullCmd); indices != nil {
+		if indices := compiled.FindStringSubmatchIndex(parsed.fullCmd); indices != nil {
 			re = compiled
 			matchIndices = indices
 		}
 	} else if compiled, err := regexp.Compile(pattern); err == nil {
 		regexCache.Store(pattern, compiled)
-		if indices := compiled.FindStringSubmatchIndex(fullCmd); indices != nil {
+		if indices := compiled.FindStringSubmatchIndex(parsed.fullCmd); indices != nil {
 			re = compiled
 			matchIndices = indices
 		}
@@ -91,9 +118,9 @@ func MatchCommandRule(rule config.AutoloadRule, cmdArgs []string) (bool, []strin
 
 	// 2. Fallback to basename / glob / prefix matching if regex didn't match
 	if !isMatched {
-		if execBaseLower == ruleLower || execPathLower == ruleLower || fullCmdLower == ruleLower ||
-			strings.HasPrefix(fullCmdLower, ruleLower+" ") || strings.HasPrefix(fullCmdLower, ruleLower+"\t") ||
-			matchWildcard(ruleLower, execBaseLower) || matchWildcard(ruleLower, execPathLower) || matchWildcard(ruleLower, fullCmdLower) {
+		if parsed.execBaseLower == ruleLower || parsed.execPathLower == ruleLower || parsed.fullCmdLower == ruleLower ||
+			strings.HasPrefix(parsed.fullCmdLower, ruleLower+" ") || strings.HasPrefix(parsed.fullCmdLower, ruleLower+"\t") ||
+			matchWildcard(ruleLower, parsed.execBaseLower) || matchWildcard(ruleLower, parsed.execPathLower) || matchWildcard(ruleLower, parsed.fullCmdLower) {
 			isMatched = true
 		}
 	}
@@ -107,7 +134,7 @@ func MatchCommandRule(rule config.AutoloadRule, cmdArgs []string) (bool, []strin
 		template := convertBackslashGroups(rule.Command)
 		var expanded string
 		if re != nil && matchIndices != nil {
-			expanded = string(re.ExpandString(nil, template, fullCmd, matchIndices))
+			expanded = string(re.ExpandString(nil, template, parsed.fullCmd, matchIndices))
 		} else {
 			expanded = template
 		}

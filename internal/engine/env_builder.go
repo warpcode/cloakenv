@@ -167,13 +167,15 @@ func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cmdArgs []string, 
 	currentCmdArgs := cmdArgs
 
 	if len(cmdArgs) > 0 && eb.config != nil {
+		parsed := parseCommandArgs(currentCmdArgs)
 		for _, rule := range eb.config.Autoload {
-			matched, newCmdArgs, err := MatchCommandRule(rule, currentCmdArgs)
+			matched, newCmdArgs, err := matchPreparedCommandRule(rule, currentCmdArgs, parsed)
 			if err != nil {
 				return nil, nil, fmt.Errorf("autoload rule %q: %w", rule.Match, err)
 			}
 			if matched {
 				currentCmdArgs = newCmdArgs
+				parsed = parseCommandArgs(currentCmdArgs)
 				for _, v := range rule.Vaults {
 					v = strings.TrimSpace(v)
 					if v != "" {
