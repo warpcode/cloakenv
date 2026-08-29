@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -134,7 +135,7 @@ func matchPreparedCommandRule(rule config.AutoloadRule, cmdArgs []string, parsed
 		template := convertBackslashGroups(rule.Command)
 		var expanded string
 		if re != nil && matchIndices != nil {
-			expanded = string(re.ExpandString(nil, template, parsed.fullCmd, matchIndices))
+			expanded = expandTemplate(re, template, parsed.fullCmd, matchIndices)
 		} else {
 			expanded = template
 		}
@@ -146,6 +147,203 @@ func matchPreparedCommandRule(rule config.AutoloadRule, cmdArgs []string, parsed
 	}
 
 	return true, cmdArgs, nil
+}
+
+type quoteContext int
+
+const (
+	quoteUnquoted quoteContext = iota
+	quoteSingle
+	quoteDouble
+)
+
+func escapeSubmatch(s string, ctx quoteContext) string {
+	var sb strings.Builder
+	for i := range len(s) {
+		ch := s[i]
+		switch ctx {
+		case quoteSingle:
+			if ch == '\'' {
+				sb.WriteString(`'\''`)
+			} else {
+				sb.WriteByte(ch)
+			}
+		case quoteDouble:
+			switch ch {
+			case '\\', '"', '$', '`':
+				sb.WriteByte('\\')
+				sb.WriteByte(ch)
+			default:
+				sb.WriteByte(ch)
+			}
+		default: // quoteUnquoted
+			switch ch {
+			case '\\', '"', '\'':
+				sb.WriteByte('\\')
+				sb.WriteByte(ch)
+			default:
+				sb.WriteByte(ch)
+			}
+		}
+	}
+	return sb.String()
+}
+
+func expandTemplate(re *regexp.Regexp, template string, src string, matchIndices []int) string {
+	names := re.SubexpNames()
+	var sb strings.Builder
+	inSingle := false
+	inDouble := false
+	escaped := false
+
+	for i := 0; i < len(template); i++ {
+		ch := template[i]
+
+		if escaped {
+			sb.WriteByte(ch)
+			escaped = false
+			continue
+		}
+
+		if ch == '\\' && !inSingle {
+			sb.WriteByte(ch)
+			escaped = true
+			continue
+		}
+
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+			sb.WriteByte(ch)
+			continue
+		}
+
+		if ch == '"' && !inSingle {
+			inDouble = !inDouble
+			sb.WriteByte(ch)
+			continue
+		}
+
+		if ch != '$' {
+			sb.WriteByte(ch)
+			continue
+		}
+
+		if i+1 >= len(template) {
+			sb.WriteByte('$')
+			break
+		}
+
+		next := template[i+1]
+		if next == '$' {
+			sb.WriteByte('$')
+			i++
+			continue
+		}
+
+		ctx := quoteUnquoted
+		if inSingle {
+			ctx = quoteSingle
+		} else if inDouble {
+			ctx = quoteDouble
+		}
+
+		if next == '{' {
+			closeIdx := strings.IndexByte(template[i+2:], '}')
+			if closeIdx != -1 {
+				nameOrNum := template[i+2 : i+2+closeIdx]
+				if isValidGroupNameOrNum(nameOrNum) {
+					group := findGroupIndex(names, nameOrNum)
+					if group >= 0 && group*2+1 < len(matchIndices) {
+						gStart := matchIndices[2*group]
+						gEnd := matchIndices[2*group+1]
+						if gStart >= 0 && gEnd >= gStart && gEnd <= len(src) {
+							val := src[gStart:gEnd]
+							val = escapeSubmatch(val, ctx)
+							sb.WriteString(val)
+						}
+						i += 2 + closeIdx
+						continue
+					}
+				}
+			}
+		}
+
+		_, group, consumed := parseSubmatchRef(names, template[i+1:])
+		if group >= 0 && group*2+1 < len(matchIndices) {
+			gStart := matchIndices[2*group]
+			gEnd := matchIndices[2*group+1]
+			if gStart >= 0 && gEnd >= gStart && gEnd <= len(src) {
+				val := src[gStart:gEnd]
+				val = escapeSubmatch(val, ctx)
+				sb.WriteString(val)
+			}
+			i += consumed
+			continue
+		}
+
+		sb.WriteByte('$')
+	}
+
+	return sb.String()
+}
+
+func isValidGroupNameOrNum(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i := range len(s) {
+		c := s[i]
+		if !isAlphaNum(c) && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func findGroupIndex(names []string, nameOrNum string) int {
+	if num, err := strconv.Atoi(nameOrNum); err == nil && num >= 0 && num < len(names) {
+		return num
+	}
+	for i, name := range names {
+		if name == nameOrNum && name != "" {
+			return i
+		}
+	}
+	return -1
+}
+
+func parseSubmatchRef(names []string, s string) (string, int, int) {
+	if len(s) == 0 {
+		return "", -1, 0
+	}
+	var digits int
+	for digits < len(s) && s[digits] >= '0' && s[digits] <= '9' {
+		digits++
+	}
+	if digits > 0 {
+		for d := digits; d > 0; d-- {
+			if num, err := strconv.Atoi(s[:d]); err == nil && num < len(names) {
+				return "", num, d
+			}
+		}
+	}
+	var end int
+	for end < len(s) && (isAlphaNum(s[end]) || s[end] == '_') {
+		end++
+	}
+	if end > 0 {
+		name := s[0:end]
+		for i, n := range names {
+			if n == name && n != "" {
+				return name, i, end
+			}
+		}
+	}
+	return "", -1, 0
+}
+
+func isAlphaNum(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
 func convertBackslashGroups(template string) string {

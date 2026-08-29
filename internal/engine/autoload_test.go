@@ -245,3 +245,109 @@ func TestMatchRunAlias(t *testing.T) {
 		}
 	})
 }
+
+func TestMatchCommandRule_Security(t *testing.T) {
+	t.Run("Unquoted template expansion", func(t *testing.T) {
+		rule := config.AutoloadRule{
+			Match:   `^litellm\s+(.*)$`,
+			Command: `uvx --with 'litellm[proxy]' litellm $1`,
+		}
+
+		tests := []struct {
+			name     string
+			cmdArgs  []string
+			wantArgs []string
+		}{
+			{
+				name:     "submatch expansion escaping quotes in arguments",
+				cmdArgs:  []string{"litellm", "--config", "my_config.yaml"},
+				wantArgs: []string{"uvx", "--with", "litellm[proxy]", "litellm", "--config", "my_config.yaml"},
+			},
+			{
+				name:     "unquoted submatch expands flags and spaces as separate CLI args",
+				cmdArgs:  []string{"litellm", "--config", "my config.yaml"},
+				wantArgs: []string{"uvx", "--with", "litellm[proxy]", "litellm", "--config", "my", "config.yaml"},
+			},
+			{
+				name:     "unquoted submatch escapes quotes preventing unclosed quote errors",
+				cmdArgs:  []string{"litellm", "--config", `foo.yaml' --injected-flag "bar`},
+				wantArgs: []string{"uvx", "--with", "litellm[proxy]", "litellm", "--config", "foo.yaml'", "--injected-flag", `"bar`},
+			},
+			{
+				name:     "unquoted submatch escapes backslashes and quotes",
+				cmdArgs:  []string{"litellm", `arg\" ; malicious_command`},
+				wantArgs: []string{"uvx", "--with", "litellm[proxy]", "litellm", `arg\"`, ";", "malicious_command"},
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				matched, gotArgs, err := MatchCommandRule(rule, tt.cmdArgs)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if !matched {
+					t.Fatalf("expected rule to match")
+				}
+				if len(gotArgs) != len(tt.wantArgs) {
+					t.Fatalf("got len %d, want len %d (%v vs %v)", len(gotArgs), len(tt.wantArgs), gotArgs, tt.wantArgs)
+				}
+				for i := range gotArgs {
+					if gotArgs[i] != tt.wantArgs[i] {
+						t.Errorf("arg[%d] = %q, want %q", i, gotArgs[i], tt.wantArgs[i])
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("Double quoted template expansion", func(t *testing.T) {
+		rule := config.AutoloadRule{
+			Match:   `^mytool\s+(.*)$`,
+			Command: `myrealtool "$1"`,
+		}
+
+		cmdArgs := []string{"mytool", `foo.yaml' --injected "bar`}
+		matched, gotArgs, err := MatchCommandRule(rule, cmdArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !matched {
+			t.Fatalf("expected rule to match")
+		}
+		wantArgs := []string{"myrealtool", `foo.yaml' --injected "bar`}
+		if len(gotArgs) != len(wantArgs) {
+			t.Fatalf("got len %d, want len %d (%v vs %v)", len(gotArgs), len(wantArgs), gotArgs, wantArgs)
+		}
+		for i := range gotArgs {
+			if gotArgs[i] != wantArgs[i] {
+				t.Errorf("arg[%d] = %q, want %q", i, gotArgs[i], wantArgs[i])
+			}
+		}
+	})
+
+	t.Run("Single quoted template expansion", func(t *testing.T) {
+		rule := config.AutoloadRule{
+			Match:   `^mytool\s+(.*)$`,
+			Command: `myrealtool '$1'`,
+		}
+
+		cmdArgs := []string{"mytool", "foo'bar"}
+		matched, gotArgs, err := MatchCommandRule(rule, cmdArgs)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !matched {
+			t.Fatalf("expected rule to match")
+		}
+		wantArgs := []string{"myrealtool", "foo'bar"}
+		if len(gotArgs) != len(wantArgs) {
+			t.Fatalf("got len %d, want len %d (%v vs %v)", len(gotArgs), len(wantArgs), gotArgs, wantArgs)
+		}
+		for i := range gotArgs {
+			if gotArgs[i] != wantArgs[i] {
+				t.Errorf("arg[%d] = %q, want %q", i, gotArgs[i], wantArgs[i])
+			}
+		}
+	})
+}
