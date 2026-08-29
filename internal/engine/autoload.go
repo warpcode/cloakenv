@@ -65,13 +65,11 @@ func MatchCommandRule(rule config.AutoloadRule, cmdArgs []string) (bool, []strin
 	var re *regexp.Regexp
 	var matchIndices []int
 
-	// 1. Attempt Regex match (precompiled)
+	// 1. Attempt Regex match (precompiled or compiled on-demand)
 	compiled := rule.CompiledRegex
 	if compiled == nil && pattern != "" {
-		var err error
-		compiled, err = regexp.Compile(pattern)
-		if err != nil {
-			compiled = nil
+		if re, err := regexp.Compile(pattern); err == nil {
+			compiled = re
 		}
 	}
 	if compiled != nil {
