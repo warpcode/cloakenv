@@ -1,9 +1,12 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"testing"
+
+	"github.com/warpcode/cloakenv/internal/config"
 )
 
 func BenchmarkEnvFormattingBaseline(b *testing.B) {
@@ -93,5 +96,44 @@ func BenchmarkEnvFormattingOnlyOptimized(b *testing.B) {
 			result = append(result, k+"="+finalEnv[k])
 		}
 		_ = result
+	}
+}
+
+func BenchmarkBuildEnvMerges(b *testing.B) {
+	b.ReportAllocs()
+	ctx := context.Background()
+
+	entities := make(map[string]map[string]any)
+	var merges []string
+	for i := range 10 {
+		entityName := fmt.Sprintf("app_%d", i)
+		attrs := make(map[string]any)
+		for j := range 20 {
+			attrs[fmt.Sprintf("VAR_%d_%d", i, j)] = fmt.Sprintf("val_%d_%d", i, j)
+		}
+		entities[entityName] = attrs
+		merges = append(merges, fmt.Sprintf("bench_vault://%s", entityName))
+	}
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"bench_vault": {
+				Provider: "custom_vault",
+				Entities: entities,
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		b.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	b.ResetTimer()
+	for range b.N {
+		_, err := orch.BuildEnv(ctx, nil, merges, nil, true)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }

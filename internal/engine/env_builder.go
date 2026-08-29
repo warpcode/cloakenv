@@ -64,14 +64,23 @@ func getParentEnv() map[string]string {
 	return parentEnvMap
 }
 
-func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, whitelist []string) ([]map[string]string, error) {
+type envKV struct {
+	k string
+	v string
+}
+
+func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, whitelist []string) ([][]envKV, error) {
+	if len(merges) == 0 {
+		return nil, nil
+	}
+
 	whitelistSet := make(map[string]bool)
 	for _, k := range whitelist {
 		whitelistSet[utils.FormatKey(k)] = true
 	}
 	hasWhitelist := len(whitelist) > 0
 
-	loaded := make([]map[string]string, len(merges))
+	loaded := make([][]envKV, len(merges))
 	var wg sync.WaitGroup
 	var errOnce sync.Once
 	var firstErr error
@@ -82,7 +91,6 @@ func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, 
 		go func(idx int, uri string) {
 			defer wg.Done()
 			defer release()
-			keys := make(map[string]string)
 			entry, err := eb.resolver.GetEntry(ctx, uri)
 			if err != nil {
 				errOnce.Do(func() {
@@ -90,6 +98,7 @@ func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, 
 				})
 				return
 			}
+			keys := make([]envKV, 0, len(entry.Attributes))
 			for k, v := range entry.Attributes {
 				if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 					continue
@@ -105,7 +114,7 @@ func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, 
 					})
 					return
 				}
-				keys[formattedKey] = strVal
+				keys = append(keys, envKV{k: formattedKey, v: strVal})
 			}
 			loaded[idx] = keys
 		}(i, m)
@@ -273,8 +282,8 @@ func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cmdArgs []string, 
 	}
 
 	for _, src := range mergedSources {
-		for k, v := range src {
-			finalEnv[k] = v
+		for _, kv := range src {
+			finalEnv[kv.k] = kv.v
 		}
 	}
 
