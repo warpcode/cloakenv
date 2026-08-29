@@ -29,36 +29,66 @@ func TestUnmarshal(t *testing.T) {
 }
 
 func TestMarshal(t *testing.T) {
-	m := map[string]string{"key": "value"}
-	data, err := Marshal(m)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if string(data) != "key: value\n" {
-		t.Errorf("unexpected output: %q", data)
+	tests := []struct {
+		name    string
+		input   any
+		want    string
+		wantErr bool
+	}{
+		{
+			name:  "valid map",
+			input: map[string]string{"key": "value"},
+			want:  "key: value\n",
+		},
+		{
+			name:    "failing marshaler",
+			input:   failMarshaler{},
+			wantErr: true,
+		},
 	}
 
-	// Test error case with custom Marshaler returning an error
-	errVal := failMarshaler{}
-	if _, err := Marshal(errVal); err == nil {
-		t.Error("expected error for failing marshaler, got nil")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Marshal(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Marshal() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && string(got) != tt.want {
+				t.Errorf("Marshal() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
 func TestMarshalString(t *testing.T) {
-	m := map[string]string{"key": "value"}
-	str, err := MarshalString(m)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if str != "key: value" {
-		t.Errorf("expected 'key: value', got %q", str)
+	tests := []struct {
+		name    string
+		input   any
+		want    string
+		wantErr bool
+	}{
+		{
+			name:  "valid map",
+			input: map[string]string{"key": "value"},
+			want:  "key: value",
+		},
+		{
+			name:    "failing marshaler",
+			input:   failMarshaler{},
+			wantErr: true,
+		},
 	}
 
-	// Test error case with custom Marshaler returning an error
-	errVal := failMarshaler{}
-	if _, err := MarshalString(errVal); err == nil {
-		t.Error("expected error for failing marshaler, got nil")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := MarshalString(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("MarshalString() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("MarshalString() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
