@@ -167,43 +167,73 @@ func TestEnvProvider_GetEntry(t *testing.T) {
 	p := NewEnvProvider()
 	ctx := context.Background()
 
-	t.Run("SuccessAll", func(t *testing.T) {
-		t.Setenv("CLOAKENV_TEST_VAR", "entry-value")
-		entry, err := p.GetEntry(ctx, "")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-		if entry.Title != "Environment Variables" {
-			t.Errorf("expected title 'Environment Variables', got %q", entry.Title)
-		}
-		if val, exists := entry.Attributes["CLOAKENV_TEST_VAR"]; !exists || val != "entry-value" {
-			t.Errorf("expected CLOAKENV_TEST_VAR to be 'entry-value', got %v", val)
-		}
-	})
+	tests := []struct {
+		name        string
+		setup       func(t *testing.T)
+		location    string
+		wantErr     bool
+		errContains string
+		validate    func(t *testing.T, entry Entry)
+	}{
+		{
+			name:        "LocationEmpty",
+			setup:       func(t *testing.T) {},
+			location:    "",
+			wantErr:     true,
+			errContains: "location cannot be empty",
+		},
+		{
+			name: "SuccessSingle",
+			setup: func(t *testing.T) {
+				t.Setenv("CLOAKENV_TEST_VAR_SINGLE", "single-value")
+			},
+			location: "CLOAKENV_TEST_VAR_SINGLE",
+			wantErr:  false,
+			validate: func(t *testing.T, entry Entry) {
+				if entry.Title != "Environment Variables" {
+					t.Errorf("expected title 'Environment Variables', got %q", entry.Title)
+				}
+				if val, exists := entry.Attributes["CLOAKENV_TEST_VAR_SINGLE"]; !exists || val != "single-value" {
+					t.Errorf("expected CLOAKENV_TEST_VAR_SINGLE to be 'single-value', got %v", val)
+				}
+				if len(entry.Attributes) != 1 {
+					t.Errorf("expected attributes length 1, got %d", len(entry.Attributes))
+				}
+			},
+		},
+		{
+			name:        "SingleNotSet",
+			setup:       func(t *testing.T) {},
+			location:    "CLOAKENV_NON_EXISTENT_VAR_123",
+			wantErr:     true,
+			errContains: "is not set",
+		},
+	}
 
-	t.Run("SuccessSingle", func(t *testing.T) {
-		t.Setenv("CLOAKENV_TEST_VAR_SINGLE", "single-value")
-		entry, err := p.GetEntry(ctx, "CLOAKENV_TEST_VAR_SINGLE")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-		if entry.Title != "Environment Variables" {
-			t.Errorf("expected title 'Environment Variables', got %q", entry.Title)
-		}
-		if val, exists := entry.Attributes["CLOAKENV_TEST_VAR_SINGLE"]; !exists || val != "single-value" {
-			t.Errorf("expected CLOAKENV_TEST_VAR_SINGLE to be 'single-value', got %v", val)
-		}
-		if len(entry.Attributes) != 1 {
-			t.Errorf("expected attributes length 1, got %d", len(entry.Attributes))
-		}
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.setup(t)
+			entry, err := p.GetEntry(ctx, tc.location)
 
-	t.Run("SingleNotSet", func(t *testing.T) {
-		_, err := p.GetEntry(ctx, "CLOAKENV_NON_EXISTENT_VAR_123")
-		if err == nil {
-			t.Error("expected error for non-existent env variable, got nil")
-		}
-	})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
+					t.Errorf("expected error to contain %q, got %q", tc.errContains, err.Error())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tc.validate != nil {
+				tc.validate(t, entry)
+			}
+		})
+	}
 }
 
 func TestEnvProvider_Search(t *testing.T) {
