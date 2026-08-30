@@ -222,3 +222,52 @@ func TestKeePassProvider_DeleteSecret(t *testing.T) {
 		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
 	}
 }
+
+func TestMatchEntryTags(t *testing.T) {
+	tests := []struct {
+		name      string
+		tagString string
+		queryTags []string
+		want      bool
+	}{
+		{
+			name:      "empty query tags matches anything",
+			tagString: "tag1, tag2",
+			queryTags: nil,
+			want:      true,
+		},
+		{
+			name:      "matching single tag case-insensitive",
+			tagString: "Production, Database",
+			queryTags: []string{"production"},
+			want:      true,
+		},
+		{
+			name:      "matching all query tags",
+			tagString: "Production, Database, Web",
+			queryTags: []string{"production", "database"},
+			want:      true,
+		},
+		{
+			name:      "missing query tag",
+			tagString: "Production, Database",
+			queryTags: []string{"production", "redis"},
+			want:      false,
+		},
+		{
+			name:      "empty entry tags with non-empty query",
+			tagString: "",
+			queryTags: []string{"production"},
+			want:      false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := matchEntryTags(tc.tagString, tc.queryTags)
+			if got != tc.want {
+				t.Errorf("matchEntryTags(%q, %v) = %v, want %v", tc.tagString, tc.queryTags, got, tc.want)
+			}
+		})
+	}
+}
