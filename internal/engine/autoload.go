@@ -67,7 +67,7 @@ func MatchCommandRule(rule config.AutoloadRule, cmdArgs []string) (bool, []strin
 
 	// 1. Attempt Regex match (precompiled or compiled on-demand)
 	compiled := rule.CompiledRegex
-	if compiled == nil && pattern != "" {
+	if compiled == nil && !rule.IsInvalidRegex && pattern != "" {
 		if re, err := regexp.Compile(pattern); err == nil {
 			compiled = re
 		}

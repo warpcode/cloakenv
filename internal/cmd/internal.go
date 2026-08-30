@@ -41,6 +41,9 @@ func Internal(args []string, cfg *config.Config) int {
 }
 
 func runMatchAlias(args []string, cfg *config.Config) int {
+	if cfg != nil {
+		cfg.CompileAutoloadRules()
+	}
 	if utils.HasHelpFlag(args) {
 		fmt.Fprintln(os.Stdout, `Usage:
   cloakenv internal match-alias [--json] -- <command> [args]

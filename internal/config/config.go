@@ -50,6 +50,9 @@ type AutoloadRule struct {
 
 	// CompiledRegex holds the precompiled regular expression for Match.
 	CompiledRegex *regexp.Regexp `yaml:"-"`
+
+	// IsInvalidRegex is set to true if Match failed regex compilation (e.g. glob rules).
+	IsInvalidRegex bool `yaml:"-"`
 }
 
 // CompileAutoloadRules precompiles regular expressions for all autoload rules in the configuration.
@@ -66,10 +69,15 @@ func (c *Config) CompileAutoloadRules() {
 // If Match is a non-regex glob or invalid regex syntax, CompiledRegex remains nil and matching
 // falls back to basename/glob/prefix matching.
 func (r *AutoloadRule) Compile() {
+	if r == nil {
+		return
+	}
 	pattern := strings.TrimSpace(r.Match)
-	if pattern != "" && r.CompiledRegex == nil {
+	if pattern != "" && r.CompiledRegex == nil && !r.IsInvalidRegex {
 		if re, err := regexp.Compile(pattern); err == nil {
 			r.CompiledRegex = re
+		} else {
+			r.IsInvalidRegex = true
 		}
 	}
 }
