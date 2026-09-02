@@ -37,6 +37,9 @@ type EnvBuilder struct {
 
 // NewEnvBuilder creates a new EnvBuilder.
 func NewEnvBuilder(cfg *config.Config, r EnvResolver) *EnvBuilder {
+	if cfg != nil {
+		cfg.CompileAutoloadRules()
+	}
 	return &EnvBuilder{
 		config:   cfg,
 		resolver: r,
