@@ -2,8 +2,15 @@ package yaml
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 )
+
+type failMarshaler struct{}
+
+func (failMarshaler) MarshalYAML() (any, error) {
+	return nil, errors.New("marshal error")
+}
 
 func TestUnmarshal(t *testing.T) {
 	data := []byte("key: value")
@@ -22,24 +29,66 @@ func TestUnmarshal(t *testing.T) {
 }
 
 func TestMarshal(t *testing.T) {
-	m := map[string]string{"key": "value"}
-	data, err := Marshal(m)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name    string
+		input   any
+		want    string
+		wantErr bool
+	}{
+		{
+			name:  "valid map",
+			input: map[string]string{"key": "value"},
+			want:  "key: value\n",
+		},
+		{
+			name:    "failing marshaler",
+			input:   failMarshaler{},
+			wantErr: true,
+		},
 	}
-	if string(data) != "key: value\n" {
-		t.Errorf("unexpected output: %q", data)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Marshal(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Marshal() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && string(got) != tt.want {
+				t.Errorf("Marshal() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
 func TestMarshalString(t *testing.T) {
-	m := map[string]string{"key": "value"}
-	str, err := MarshalString(m)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	tests := []struct {
+		name    string
+		input   any
+		want    string
+		wantErr bool
+	}{
+		{
+			name:  "valid map",
+			input: map[string]string{"key": "value"},
+			want:  "key: value",
+		},
+		{
+			name:    "failing marshaler",
+			input:   failMarshaler{},
+			wantErr: true,
+		},
 	}
-	if str != "key: value" {
-		t.Errorf("expected 'key: value', got %q", str)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := MarshalString(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("MarshalString() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("MarshalString() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
