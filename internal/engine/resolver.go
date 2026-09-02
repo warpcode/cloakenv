@@ -236,6 +236,27 @@ func resolveSliceRecursive[T any](ctx context.Context, r *Resolver, typedVal []T
 		workersToSpawn = 0
 	}
 
+	processElement := func(i int) bool {
+		v := typedVal[i]
+		res, err := r.ResolveAttrRecursive(ctx, v, depth, configKey)
+		if err != nil {
+			var shouldCancel bool
+			mu.Lock()
+			if firstErr == nil {
+				firstErr = err
+				shouldCancel = true
+			}
+			mu.Unlock()
+
+			if shouldCancel {
+				cancel()
+			}
+			return false
+		}
+		resolvedSlice[i] = formatFn(res)
+		return true
+	}
+
 SpawnLoop:
 	for i := 0; i < workersToSpawn; i++ {
 		select {
@@ -257,18 +278,9 @@ SpawnLoop:
 					default:
 					}
 
-					v := typedVal[i]
-					res, err := r.ResolveAttrRecursive(ctx, v, depth, configKey)
-					if err != nil {
-						mu.Lock()
-						if firstErr == nil {
-							firstErr = err
-							cancel()
-						}
-						mu.Unlock()
+					if !processElement(i) {
 						return
 					}
-					resolvedSlice[i] = formatFn(res)
 				}
 			}()
 		default:
@@ -284,18 +296,9 @@ SpawnLoop:
 		if ctx.Err() != nil {
 			break
 		}
-		v := typedVal[i]
-		res, err := r.ResolveAttrRecursive(ctx, v, depth, configKey)
-		if err != nil {
-			mu.Lock()
-			if firstErr == nil {
-				firstErr = err
-				cancel()
-			}
-			mu.Unlock()
+		if !processElement(i) {
 			break
 		}
-		resolvedSlice[i] = formatFn(res)
 	}
 
 	wg.Wait()
