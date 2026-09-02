@@ -136,15 +136,54 @@ func TestKeePassProvider(t *testing.T) {
 	})
 
 	t.Run("Search", func(t *testing.T) {
-		results, err := kp.Search(ctx, SearchQuery{Title: "Test Website"})
-		if err != nil {
-			t.Fatalf("Search failed: %v", err)
+		tests := []struct {
+			name          string
+			query         SearchQuery
+			wantCount     int
+			wantFirstPath string
+		}{
+			{
+				name:          "ByTitle",
+				query:         SearchQuery{Title: "Test Website"},
+				wantCount:     1,
+				wantFirstPath: "website/Test Website",
+			},
+			{
+				name:      "ByPath",
+				query:     SearchQuery{Path: "website/Test"},
+				wantCount: 1,
+			},
+			{
+				name:      "NoMatch",
+				query:     SearchQuery{Title: "NonExistentTitleItem12345"},
+				wantCount: 0,
+			},
+			{
+				name:      "NonExistentTag",
+				query:     SearchQuery{Tags: []string{"nonexistenttag"}},
+				wantCount: 0,
+			},
+			{
+				name:          "EmptyTagFilter",
+				query:         SearchQuery{Title: "Test Website", Tags: nil},
+				wantCount:     1,
+				wantFirstPath: "website/Test Website",
+			},
 		}
-		if len(results) != 1 {
-			t.Fatalf("expected 1 result, got %d", len(results))
-		}
-		if results[0].Path != "website/Test Website" {
-			t.Errorf("expected path 'website/Test Website', got %q", results[0].Path)
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				results, err := kp.Search(ctx, tc.query)
+				if err != nil {
+					t.Fatalf("Search failed: %v", err)
+				}
+				if len(results) != tc.wantCount {
+					t.Fatalf("expected %d result(s), got %d", tc.wantCount, len(results))
+				}
+				if tc.wantFirstPath != "" && results[0].Path != tc.wantFirstPath {
+					t.Errorf("expected path %q, got %q", tc.wantFirstPath, results[0].Path)
+				}
+			})
 		}
 	})
 
@@ -181,5 +220,54 @@ func TestKeePassProvider_DeleteSecret(t *testing.T) {
 	}
 	if err != nil && !strings.Contains(err.Error(), "read-only") {
 		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
+	}
+}
+
+func TestMatchEntryTags(t *testing.T) {
+	tests := []struct {
+		name      string
+		tagString string
+		queryTags []string
+		want      bool
+	}{
+		{
+			name:      "empty query tags matches anything",
+			tagString: "tag1, tag2",
+			queryTags: nil,
+			want:      true,
+		},
+		{
+			name:      "matching single tag case-insensitive",
+			tagString: "Production, Database",
+			queryTags: []string{"production"},
+			want:      true,
+		},
+		{
+			name:      "matching all query tags",
+			tagString: "Production, Database, Web",
+			queryTags: []string{"production", "database"},
+			want:      true,
+		},
+		{
+			name:      "missing query tag",
+			tagString: "Production, Database",
+			queryTags: []string{"production", "redis"},
+			want:      false,
+		},
+		{
+			name:      "empty entry tags with non-empty query",
+			tagString: "",
+			queryTags: []string{"production"},
+			want:      false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := matchEntryTags(tc.tagString, tc.queryTags)
+			if got != tc.want {
+				t.Errorf("matchEntryTags(%q, %v) = %v, want %v", tc.tagString, tc.queryTags, got, tc.want)
+			}
+		})
 	}
 }
