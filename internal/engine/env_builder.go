@@ -162,9 +162,19 @@ func (eb *EnvBuilder) resolveExplicitMappings(ctx context.Context, explicit map[
 	return resolved, nil
 }
 
+// EnvConfig holds configuration parameters for building the environment block.
+type EnvConfig struct {
+	CmdArgs   []string
+	Explicit  map[string]string
+	Merges    []string
+	Whitelist []string
+	EmptyEnv  bool
+}
+
 // BuildEnv constructs the full environment block without command autoloading.
-func (eb *EnvBuilder) BuildEnv(ctx context.Context, explicit map[string]string, merges []string, whitelist []string, emptyEnv bool) ([]string, error) {
-	_, env, err := eb.BuildEnvForCommand(ctx, nil, explicit, merges, whitelist, emptyEnv)
+func (eb *EnvBuilder) BuildEnv(ctx context.Context, cfg EnvConfig) ([]string, error) {
+	cfg.CmdArgs = nil
+	_, env, err := eb.BuildEnvForCommand(ctx, cfg)
 	return env, err
 }
 
@@ -252,25 +262,25 @@ func (eb *EnvBuilder) resolveCmdArgs(ctx context.Context, cmdArgs []string) ([]s
 }
 
 // BuildEnvForCommand constructs the full environment block and evaluates config autoload rules.
-func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cmdArgs []string, explicit map[string]string, merges []string, whitelist []string, emptyEnv bool) ([]string, []string, error) {
-	autoMerges, autoExplicit, autoWhitelist, currentCmdArgs, err := eb.evalAutoloadRules(cmdArgs)
+func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cfg EnvConfig) ([]string, []string, error) {
+	autoMerges, autoExplicit, autoWhitelist, currentCmdArgs, err := eb.evalAutoloadRules(cfg.CmdArgs)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	combinedMerges := append(autoMerges, merges...)
-	combinedWhitelist := append(autoWhitelist, whitelist...)
+	combinedMerges := append(autoMerges, cfg.Merges...)
+	combinedWhitelist := append(autoWhitelist, cfg.Whitelist...)
 
 	combinedExplicit := make(map[string]string)
 	for k, v := range autoExplicit {
 		combinedExplicit[k] = v
 	}
-	for k, v := range explicit {
+	for k, v := range cfg.Explicit {
 		combinedExplicit[k] = v // CLI explicit flags -e override autoload env
 	}
 
 	var finalEnv map[string]string
-	if !emptyEnv {
+	if !cfg.EmptyEnv {
 		finalEnv = getParentEnv()
 	} else {
 		finalEnv = make(map[string]string)
@@ -299,7 +309,7 @@ func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cmdArgs []string, 
 	result := formatEnvMap(finalEnv)
 
 	if len(currentCmdArgs) == 0 {
-		currentCmdArgs = cmdArgs
+		currentCmdArgs = cfg.CmdArgs
 	}
 
 	resolvedCmdArgs, err := eb.resolveCmdArgs(ctx, currentCmdArgs)

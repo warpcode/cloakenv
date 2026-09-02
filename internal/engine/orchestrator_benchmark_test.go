@@ -59,7 +59,7 @@ func BenchmarkBuildEnv(b *testing.B) {
 
 	b.ResetTimer()
 	for range b.N {
-		_, err := o.BuildEnv(ctx, explicit, nil, nil, false)
+		_, err := o.BuildEnv(ctx, EnvConfig{Explicit: explicit})
 		if err != nil {
 			b.Fatal(err)
 		}
