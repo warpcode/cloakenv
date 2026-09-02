@@ -2,9 +2,9 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
-	"strings"
 )
 
 // EnvProvider implements SecretProvider for the built-in env:// scheme.
@@ -66,24 +66,18 @@ func (e *EnvProvider) Search(ctx context.Context, query SearchQuery) ([]SearchRe
 }
 
 // GetEntry retrieves a complete structured entry representing environment variables.
-// If location is empty, it returns all environment variables.
-// If location is non-empty, it returns just that single environment variable.
+// Location cannot be empty as returning all environment variables is not supported for security reasons.
 func (e *EnvProvider) GetEntry(ctx context.Context, location string) (Entry, error) {
-	attrs := make(map[string]any)
-	if location != "" {
-		val, ok := os.LookupEnv(location)
-		if !ok {
-			return Entry{}, fmt.Errorf("environment variable %q is not set", location)
-		}
-		attrs[location] = val
-	} else {
-		for _, envStr := range os.Environ() {
-			k, v, ok := strings.Cut(envStr, "=")
-			if ok && k != "" {
-				attrs[k] = v
-			}
-		}
+	if location == "" {
+		return Entry{}, errors.New("location cannot be empty")
 	}
+
+	attrs := make(map[string]any)
+	val, ok := os.LookupEnv(location)
+	if !ok {
+		return Entry{}, fmt.Errorf("environment variable %q is not set", location)
+	}
+	attrs[location] = val
 
 	return Entry{
 		Title:      "Environment Variables",

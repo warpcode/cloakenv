@@ -32,6 +32,51 @@ func TestMarshal(t *testing.T) {
 	}
 }
 
+func TestMarshalString(t *testing.T) {
+	m := map[string]string{"key": "value"}
+	str, err := MarshalString(m)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if str != "key: value" {
+		t.Errorf("expected 'key: value', got %q", str)
+	}
+}
+
+func TestSerializeValue(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    any
+		expected string
+	}{
+		{"string", "hello", "hello"},
+		{"int", 42, "42"},
+		{"int64", int64(100), "100"},
+		{"int32", int32(50), "50"},
+		{"uint", uint(10), "10"},
+		{"uint64", uint64(999), "999"},
+		{"float64", 3.14159, "3.14159"},
+		{"float32", float32(2.5), "2.5"},
+		{"bool true", true, "true"},
+		{"bool false", false, "false"},
+		{"nil", nil, ""},
+		{"slice", []any{"a", "b"}, "- a\n- b"},
+		{"map", map[string]any{"foo": "bar"}, "foo: bar"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := SerializeValue(tc.input)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.expected {
+				t.Errorf("SerializeValue(%v) = %q, expected %q", tc.input, got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestEncoder(t *testing.T) {
 	var buf bytes.Buffer
 	enc := NewEncoder(&buf)

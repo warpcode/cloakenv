@@ -36,6 +36,45 @@ func TestRunCommand_Success(t *testing.T) {
 	}
 }
 
+func TestRunCommand_EnvPropagation(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
+		// Helper process: Execute 'sh' with '-c' to print environment variable.
+		// syscall.Exec replaces this process with 'sh'.
+		args := []string{"sh", "-c", "echo $CLOAKENV_TEST_VAR"}
+		exitCode := RunCommand(args, os.Environ())
+		os.Exit(exitCode)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunCommand_EnvPropagation")
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1", "CLOAKENV_TEST_VAR=secret_value_123")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err != nil {
+		t.Fatalf("Process failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "secret_value_123") {
+		t.Errorf("Expected output to contain 'secret_value_123', got %q", out.String())
+	}
+}
+
+func TestRunCommand_True(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
+		// Helper process: Execute 'true' command.
+		args := []string{"true"}
+		exitCode := RunCommand(args, os.Environ())
+		os.Exit(exitCode)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunCommand_True")
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+	err := cmd.Run()
+	if err != nil {
+		t.Fatalf("Execution of 'true' failed: %v", err)
+	}
+}
+
 func TestRunCommand_InvalidArgs(t *testing.T) {
 	tests := []struct {
 		name string
@@ -73,8 +112,8 @@ func TestRunCommand_InvalidArgs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create pipe: %v", err)
 			}
-			defer r.Close()
-			defer w.Close()
+			defer func() { _ = r.Close() }()
+			defer func() { _ = w.Close() }()
 
 			os.Stderr = w
 			t.Cleanup(func() {
@@ -83,7 +122,7 @@ func TestRunCommand_InvalidArgs(t *testing.T) {
 
 			exitCode := RunCommand(tt.args, os.Environ())
 
-			w.Close()
+			_ = w.Close()
 			os.Stderr = oldStderr
 			_, err = stderr.ReadFrom(r)
 			if err != nil {
@@ -109,8 +148,8 @@ func TestRunCommand_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create pipe: %v", err)
 	}
-	defer r.Close()
-	defer w.Close()
+	defer func() { _ = r.Close() }()
+	defer func() { _ = w.Close() }()
 
 	os.Stderr = w
 	t.Cleanup(func() {
@@ -119,7 +158,7 @@ func TestRunCommand_NotFound(t *testing.T) {
 
 	exitCode := RunCommand([]string{"this-command-definitely-does-not-exist"}, os.Environ())
 
-	w.Close()
+	_ = w.Close()
 	os.Stderr = oldStderr
 	_, err = stderr.ReadFrom(r)
 	if err != nil {
@@ -138,17 +177,17 @@ func TestRunCommand_NotFound(t *testing.T) {
 func TestRunCommand_ExecFailure(t *testing.T) {
 	// Create a temporary file that is executable but not a valid executable
 	// This will pass exec.LookPath but fail syscall.Exec with ENOEXEC
-	tmpFile, err := os.CreateTemp("", "invalid-exec-*")
+	tmpFile, err := os.CreateTemp(t.TempDir(), "invalid-exec-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	// Write some garbage
 	if _, err := tmpFile.WriteString("not a binary"); err != nil {
 		t.Fatalf("Failed to write to temp file: %v", err)
 	}
-	tmpFile.Close()
+	_ = tmpFile.Close()
 
 	// Make it executable
 	if err := os.Chmod(tmpFile.Name(), 0755); err != nil {
@@ -161,8 +200,8 @@ func TestRunCommand_ExecFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create pipe: %v", err)
 	}
-	defer r.Close()
-	defer w.Close()
+	defer func() { _ = r.Close() }()
+	defer func() { _ = w.Close() }()
 
 	os.Stderr = w
 	t.Cleanup(func() {
@@ -171,9 +210,9 @@ func TestRunCommand_ExecFailure(t *testing.T) {
 
 	exitCode := RunCommand([]string{tmpFile.Name()}, os.Environ())
 
-	w.Close()
+	_ = w.Close()
 	os.Stderr = oldStderr
-	stderr.ReadFrom(r)
+	_, _ = stderr.ReadFrom(r)
 
 	if exitCode != 1 {
 		t.Errorf("Expected exit code 1, got %d", exitCode)

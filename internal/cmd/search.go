@@ -51,42 +51,32 @@ func Search(args []string, cfg *config.Config) int {
 
 func parseSearchArgs(args []string) (query string, repoScopes []string, selectedKeys []string, outputFormat string, err error) {
 	outputFormat = "yaml" // default
-	i := 0
-	for i < len(args) {
-		switch args[i] {
-		case "-o", "--output":
-			if i+1 >= len(args) {
-				return "", nil, nil, "", fmt.Errorf("flag -o/--output requires an argument")
-			}
-			format := args[i+1]
-			if format != "yaml" && format != "json" {
-				return "", nil, nil, "", fmt.Errorf("invalid output format %q (expected yaml or json)", format)
-			}
-			outputFormat = format
-			i += 2
-		case "--vault":
-			if i+1 >= len(args) {
-				return "", nil, nil, "", fmt.Errorf("flag --vault requires an argument")
-			}
-			repoScopes = append(repoScopes, args[i+1])
-			i += 2
-		case "-i":
-			if i+1 >= len(args) {
-				return "", nil, nil, "", fmt.Errorf("flag -i requires an argument")
-			}
-			selectedKeys = append(selectedKeys, args[i+1])
-			i += 2
-		default:
-			if strings.HasPrefix(args[i], "-") {
-				return "", nil, nil, "", fmt.Errorf("unknown flag: %s", args[i])
-			}
-			if query != "" {
-				return "", nil, nil, "", fmt.Errorf("usage: cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]")
-			}
-			query = args[i]
-			i++
+
+	parser := NewFlagParser()
+	parser.Var([]string{"-o", "--output"}, true, "flag -o/--output requires an argument", func(name, val string) error {
+		if val != "yaml" && val != "json" {
+			return fmt.Errorf("invalid output format %q (expected yaml or json)", val)
 		}
+		outputFormat = val
+		return nil
+	})
+	parser.StringSlice([]string{"--vault"}, &repoScopes, "flag --vault requires an argument")
+	parser.StringSlice([]string{"-i"}, &selectedKeys, "flag -i requires an argument")
+	parser.UnknownFlagErr = func(flag string) error {
+		return fmt.Errorf("unknown flag: %s", flag)
 	}
+	parser.PositionalHandler = func(arg string) error {
+		if query != "" {
+			return fmt.Errorf("usage: cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]")
+		}
+		query = arg
+		return nil
+	}
+
+	if _, err := parser.Parse(args); err != nil {
+		return "", nil, nil, "", err
+	}
+
 	return query, repoScopes, selectedKeys, outputFormat, nil
 }
 
@@ -105,7 +95,14 @@ func flattenSearchResults(results []provider.SearchResult, selectedKeys []string
 }
 
 func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
-	flatRes := make(map[string]any)
+	if len(selectedKeys) > 0 {
+		return flattenSelectedKeys(r, selectedKeys, selectedKeysLower)
+	}
+	return flattenDefaultEntry(r)
+}
+
+func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
+	flatRes := make(map[string]any, len(selectedKeys))
 
 	var lowerAttrs map[string]string
 	if len(r.Entry.Attributes) > 0 {
@@ -115,49 +112,51 @@ func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLo
 		}
 	}
 
-	if len(selectedKeys) > 0 {
-		for j, field := range selectedKeys {
-			fieldLower := selectedKeysLower[j]
-			switch fieldLower {
-			case "provider":
-				flatRes["provider"] = r.Provider
-			case "vault":
-				flatRes["vault"] = r.Vault
-			case "path":
-				flatRes["path"] = r.Path
-			case "title":
-				flatRes["title"] = r.Entry.Title
-			case "tags":
-				flatRes["tags"] = r.Entry.Tags
-			default:
-				found := false
-				if origKey, ok := lowerAttrs[fieldLower]; ok {
-					flatRes[utils.FormatKey(origKey)] = r.Entry.Attributes[origKey]
-					found = true
-				}
+	for j, field := range selectedKeys {
+		fieldLower := selectedKeysLower[j]
+		switch fieldLower {
+		case "provider":
+			flatRes["provider"] = r.Provider
+		case "vault":
+			flatRes["vault"] = r.Vault
+		case "path":
+			flatRes["path"] = r.Path
+		case "title":
+			flatRes["title"] = r.Entry.Title
+		case "tags":
+			flatRes["tags"] = r.Entry.Tags
+		default:
+			key, val := resolveSelectedAttribute(r.Entry.Attributes, lowerAttrs, field, fieldLower)
+			flatRes[key] = val
+		}
+	}
+	return flatRes
+}
 
-				if !found {
-					if v, ok := r.Entry.Attributes[field]; ok {
-						flatRes[utils.FormatKey(field)] = v
-					} else {
-						flatRes[utils.FormatKey(field)] = nil
-					}
-				}
-			}
+func resolveSelectedAttribute(attributes map[string]any, lowerAttrs map[string]string, field, fieldLower string) (string, any) {
+	if origKey, ok := lowerAttrs[fieldLower]; ok {
+		return utils.FormatKey(origKey), attributes[origKey]
+	}
+	if v, ok := attributes[field]; ok {
+		return utils.FormatKey(field), v
+	}
+	return utils.FormatKey(field), nil
+}
+
+func flattenDefaultEntry(r provider.SearchResult) map[string]any {
+	flatRes := make(map[string]any, 5+len(r.Entry.Attributes))
+	flatRes["provider"] = r.Provider
+	flatRes["vault"] = r.Vault
+	flatRes["path"] = r.Path
+	flatRes["title"] = r.Entry.Title
+	flatRes["tags"] = r.Entry.Tags
+
+	for k, v := range r.Entry.Attributes {
+		kLower := strings.ToLower(k)
+		if kLower == "title" || kLower == "tags" {
+			continue
 		}
-	} else {
-		flatRes["provider"] = r.Provider
-		flatRes["vault"] = r.Vault
-		flatRes["path"] = r.Path
-		flatRes["title"] = r.Entry.Title
-		flatRes["tags"] = r.Entry.Tags
-		for k, v := range r.Entry.Attributes {
-			kLower := strings.ToLower(k)
-			if kLower == "title" || kLower == "tags" {
-				continue
-			}
-			flatRes[utils.FormatKey(k)] = v
-		}
+		flatRes[utils.FormatKey(k)] = v
 	}
 	return flatRes
 }

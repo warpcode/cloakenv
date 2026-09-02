@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -213,5 +216,78 @@ func TestExpandHome(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("expandHome(%q) = %q, expected %q", tt.input, got, tt.expected)
 		}
+	}
+}
+
+func TestKeyringPrefix(t *testing.T) {
+	defaultPath, _ := DefaultConfigPath()
+	defaultAbs, _ := filepath.Abs(defaultPath)
+
+	hashFunc := func(s string) string {
+		h := sha256.Sum256([]byte(s))
+		return hex.EncodeToString(h[:])[:10]
+	}
+
+	tests := []struct {
+		name string
+		cfg  *Config
+		want string
+	}{
+		{
+			name: "nil config",
+			cfg:  nil,
+			want: "cloakenv",
+		},
+		{
+			name: "empty config",
+			cfg:  &Config{},
+			want: "cloakenv",
+		},
+		{
+			name: "custom prefix empty path",
+			cfg: &Config{
+				Keyring: KeyringConfig{Prefix: "custom_prefix"},
+			},
+			want: "custom_prefix",
+		},
+		{
+			name: "default path no hash",
+			cfg: &Config{
+				ConfigPath: defaultAbs,
+			},
+			want: "cloakenv",
+		},
+		{
+			name: "custom path no isolate no hash",
+			cfg: &Config{
+				ConfigPath: "/custom/path/config.yaml",
+			},
+			want: "cloakenv",
+		},
+		{
+			name: "custom path with isolate and hash",
+			cfg: &Config{
+				Keyring:    KeyringConfig{Isolate: true},
+				ConfigPath: "/custom/path/config.yaml",
+			},
+			want: fmt.Sprintf("cloakenv_%s", hashFunc("/custom/path/config.yaml")),
+		},
+		{
+			name: "custom prefix and custom path with isolate and hash",
+			cfg: &Config{
+				Keyring:    KeyringConfig{Prefix: "myprefix", Isolate: true},
+				ConfigPath: "/custom/path/config.yaml",
+			},
+			want: fmt.Sprintf("myprefix_%s", hashFunc("/custom/path/config.yaml")),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.cfg.KeyringPrefix()
+			if got != tt.want {
+				t.Errorf("Config.KeyringPrefix() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

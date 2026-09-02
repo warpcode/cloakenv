@@ -71,23 +71,23 @@ func Set(args []string, cfg *config.Config) int {
 
 	var posArgs []string
 	var ttl time.Duration
-	for i := 0; i < len(args); i++ {
-		if args[i] == "--ttl" {
-			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "Error: missing value for --ttl flag")
-				return 1
-			}
-			var err error
-			ttl, err = time.ParseDuration(args[i+1])
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Invalid TTL duration format: %v (examples: 5m, 1h)\n", err)
-				return 1
-			}
-			i++
-		} else {
-			posArgs = append(posArgs, args[i])
+
+	parser := NewFlagParser()
+	parser.Var([]string{"--ttl"}, true, "Error: missing value for --ttl flag", func(name, val string) error {
+		d, err := time.ParseDuration(val)
+		if err != nil {
+			return fmt.Errorf("invalid TTL duration format: %w (examples: 5m, 1h)", err)
 		}
+		ttl = d
+		return nil
+	})
+
+	rem, err := parser.Parse(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
+	posArgs = rem
 
 	if len(posArgs) != 1 {
 		fmt.Fprintln(os.Stderr, "Usage: cloakenv set <uri> [--ttl <duration>]")
@@ -98,19 +98,20 @@ func Set(args []string, cfg *config.Config) int {
 	var value string
 
 	var b []byte
-	var err error
+	var readErr error
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		fmt.Fprint(os.Stderr, "Enter secret value: ")
-		b, err = term.ReadPassword(int(os.Stdin.Fd()))
+		b, readErr = term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
 	} else {
-		b, err = io.ReadAll(os.Stdin)
+		b, readErr = io.ReadAll(os.Stdin)
 	}
 
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", err)
+	if readErr != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", readErr)
 		return 1
 	}
+	defer utils.ZeroBytes(b)
 
 	value = string(b)
 	if strings.HasSuffix(value, "\r\n") {

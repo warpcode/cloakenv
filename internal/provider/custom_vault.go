@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/warpcode/cloakenv/internal/utils"
@@ -130,6 +131,12 @@ func (c *CustomVaultProvider) Search(_ context.Context, query SearchQuery) ([]Se
 		})
 	}
 
+	// Sort deterministically by path so results are stable across runs
+	// despite Go's randomized map iteration order.
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Path < results[j].Path
+	})
+
 	return results, nil
 }
 
@@ -176,16 +183,9 @@ func toEntry(name string, raw map[string]any) Entry {
 
 // serializeVal converts structured yaml/json data to string format.
 func serializeVal(val any) (string, error) {
-	switch v := val.(type) {
-	case string:
-		return v, nil
-	case []any, map[string]any, map[any]any:
-		data, err := yaml.Marshal(v)
-		if err != nil {
-			return "", fmt.Errorf("custom_vault serialization failed: %w", err)
-		}
-		return strings.TrimSuffix(string(data), "\n"), nil
-	default:
-		return fmt.Sprintf("%v", v), nil
+	s, err := yaml.SerializeValue(val)
+	if err != nil {
+		return "", fmt.Errorf("custom_vault serialization failed: %w", err)
 	}
+	return s, nil
 }

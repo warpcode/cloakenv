@@ -201,3 +201,61 @@ func TestCustomVaultProvider_Search(t *testing.T) {
 		})
 	}
 }
+
+func TestCustomVaultProvider_Validate(t *testing.T) {
+	p := NewCustomVaultProvider()
+
+	tests := []struct {
+		name     string
+		settings map[string]string
+	}{
+		{
+			name:     "nil settings",
+			settings: nil,
+		},
+		{
+			name:     "empty settings map",
+			settings: map[string]string{},
+		},
+		{
+			name:     "non-empty settings map",
+			settings: map[string]string{"key": "value", "foo": "bar"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := p.Validate(tt.settings); err != nil {
+				t.Errorf("Validate(%v) unexpected error: %v", tt.settings, err)
+			}
+		})
+	}
+}
+
+func TestCustomVaultProvider_SetSecret(t *testing.T) {
+	ctx := context.Background()
+	p := NewCustomVaultProvider()
+
+	err := p.SetSecret(ctx, "entity:attr", "secretval")
+	if err == nil {
+		t.Error("expected error for SetSecret, got nil")
+	}
+}
+
+func TestCustomVaultProvider_DeleteSecret(t *testing.T) {
+	ctx := context.Background()
+	p := NewCustomVaultProvider()
+
+	err := p.DeleteSecret(ctx, "entity:attr")
+	if err == nil {
+		t.Error("expected error for DeleteSecret, got nil")
+	}
+}
+
+func TestCustomVaultProvider_SupportsValueResolution(t *testing.T) {
+	p := NewCustomVaultProvider()
+
+	if !p.SupportsValueResolution() {
+		t.Error("expected SupportsValueResolution() to be true, got false")
+	}
+}

@@ -5,16 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
 func TestYamlProvider(t *testing.T) {
 	// Create a temporary entries.yaml file
-	tempDir, err := os.MkdirTemp("", "cloakenv-test")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	yamlContent := `
 entries:
@@ -108,11 +105,7 @@ entries:
 }
 
 func TestYamlProviderCustomEntriesKey(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "cloakenv-test-custom")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	// 1. Custom key: "hosts"
 	hostsContent := `
@@ -200,11 +193,7 @@ ssh_root:
 }
 
 func TestYamlProviderSingleEntity(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "cloakenv-yaml-single")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+	tempDir := t.TempDir()
 
 	yamlContent := `
 title: "My Single YAML Vault"
@@ -287,6 +276,28 @@ list:
 	}
 	if results[0].Path != "" {
 		t.Errorf("expected empty path, got %q", results[0].Path)
+	}
+}
+
+func TestYamlProvider_SetSecret(t *testing.T) {
+	yp := NewYamlProvider()
+	err := yp.SetSecret(context.Background(), "KEY", "VAL")
+	if err == nil {
+		t.Error("expected error for SetSecret, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
+	}
+}
+
+func TestYamlProvider_DeleteSecret(t *testing.T) {
+	yp := NewYamlProvider()
+	err := yp.DeleteSecret(context.Background(), "KEY")
+	if err == nil {
+		t.Error("expected error for DeleteSecret, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
 	}
 }
 

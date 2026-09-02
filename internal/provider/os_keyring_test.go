@@ -70,3 +70,40 @@ func TestOSKeyringProvider(t *testing.T) {
 		t.Errorf("expected error deleting invalid location")
 	}
 }
+
+func TestOSKeyringProvider_Validate(t *testing.T) {
+	p := NewOSKeyringProvider()
+
+	tests := []struct {
+		name     string
+		settings map[string]string
+		wantErr  bool
+	}{
+		{
+			name:     "nil settings",
+			settings: nil,
+			wantErr:  false,
+		},
+		{
+			name:     "empty settings map",
+			settings: map[string]string{},
+			wantErr:  false,
+		},
+		{
+			name: "populated settings map",
+			settings: map[string]string{
+				"service": "test",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := p.Validate(tt.settings)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
