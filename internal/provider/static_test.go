@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -111,4 +112,258 @@ func TestResolveDotPath(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStaticProvider_SetAndDeleteSecret(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		scheme     string
+		wantSubstr string
+	}{
+		{
+			name:       "json provider",
+			scheme:     "json",
+			wantSubstr: "json provider is read-only",
+		},
+		{
+			name:       "yaml provider",
+			scheme:     "yaml",
+			wantSubstr: "yaml provider is read-only",
+		},
+		{
+			name:       "custom static scheme",
+			scheme:     "static-custom",
+			wantSubstr: "static-custom provider is read-only",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := &staticProvider{scheme: tt.scheme}
+
+			t.Run("SetSecret", func(t *testing.T) {
+				err := p.SetSecret(ctx, "key", "val")
+				if err == nil {
+					t.Error("SetSecret() expected error, got nil")
+				} else if !strings.Contains(err.Error(), tt.wantSubstr) {
+					t.Errorf("SetSecret() error = %q, want substring %q", err.Error(), tt.wantSubstr)
+				}
+			})
+
+			t.Run("DeleteSecret", func(t *testing.T) {
+				err := p.DeleteSecret(ctx, "key")
+				if err == nil {
+					t.Error("DeleteSecret() expected error, got nil")
+				} else if !strings.Contains(err.Error(), tt.wantSubstr) {
+					t.Errorf("DeleteSecret() error = %q, want substring %q", err.Error(), tt.wantSubstr)
+				}
+			})
+		})
+	}
+}
+
+func TestStaticProvider_Validate(t *testing.T) {
+	p := &staticProvider{scheme: "json"}
+
+	tests := []struct {
+		name       string
+		settings   map[string]string
+		wantErr    bool
+		wantErrMsg string
+	}{
+		{
+			name: "valid vault_path",
+			settings: map[string]string{
+				"vault_path": "/path/to/vault.json",
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty vault_path",
+			settings: map[string]string{
+				"vault_path": "",
+			},
+			wantErr:    true,
+			wantErrMsg: "json provider: vault_path is required",
+		},
+		{
+			name:       "missing vault_path",
+			settings:   map[string]string{},
+			wantErr:    true,
+			wantErrMsg: "json provider: vault_path is required",
+		},
+		{
+			name:       "nil settings",
+			settings:   nil,
+			wantErr:    true,
+			wantErrMsg: "json provider: vault_path is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := p.Validate(tt.settings)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && err != nil && tt.wantErrMsg != "" && err.Error() != tt.wantErrMsg {
+				t.Errorf("Validate() error = %q, wantErrMsg %q", err.Error(), tt.wantErrMsg)
+			}
+		})
+	}
+}
+
+func TestStaticProvider_Search(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("single entity search", func(t *testing.T) {
+		t.Parallel()
+		sp := &staticProvider{
+			scheme:       "json",
+			singleEntity: true,
+			entries: map[string]Entry{
+				"": {
+					Title: "Production Vault",
+					Tags:  []string{"env:prod", "role:db"},
+					Attributes: map[string]any{
+						"host": "localhost",
+					},
+				},
+			},
+		}
+
+		tests := []struct {
+			name      string
+			query     SearchQuery
+			wantCount int
+			wantErr   bool
+		}{
+			{
+				name:      "empty query matches single entity",
+				query:     SearchQuery{},
+				wantCount: 1,
+			},
+			{
+				name:      "matching title substring",
+				query:     SearchQuery{Title: "prod"},
+				wantCount: 1,
+			},
+			{
+				name:      "non-matching title substring",
+				query:     SearchQuery{Title: "staging"},
+				wantCount: 0,
+			},
+			{
+				name:      "matching tags case-insensitive",
+				query:     SearchQuery{Tags: []string{"ENV:PROD", "ROLE:DB"}},
+				wantCount: 1,
+			},
+			{
+				name:      "partially non-matching tags",
+				query:     SearchQuery{Tags: []string{"env:prod", "role:web"}},
+				wantCount: 0,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				results, err := sp.Search(ctx, tt.query)
+				if (err != nil) != tt.wantErr {
+					t.Fatalf("Search() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				if len(results) != tt.wantCount {
+					t.Errorf("Search() got %d results, want %d", len(results), tt.wantCount)
+				}
+			})
+		}
+	})
+
+	t.Run("single entity missing entry error", func(t *testing.T) {
+		t.Parallel()
+		sp := &staticProvider{
+			scheme:       "json",
+			singleEntity: true,
+			entries:      map[string]Entry{},
+		}
+		_, err := sp.Search(ctx, SearchQuery{})
+		if err == nil {
+			t.Error("expected error when single entity entry is missing, got nil")
+		}
+	})
+
+	t.Run("multi entity search", func(t *testing.T) {
+		t.Parallel()
+		sp := &staticProvider{
+			scheme:       "json",
+			singleEntity: false,
+			entries: map[string]Entry{
+				"app/prod": {
+					Title: "App Prod",
+					Tags:  []string{"env:prod", "team:backend"},
+				},
+				"app/staging": {
+					Title: "App Staging",
+					Tags:  []string{"env:staging", "team:backend"},
+				},
+				"db/prod": {
+					Title: "Database Prod",
+					Tags:  []string{"env:prod", "team:dba"},
+				},
+			},
+		}
+
+		tests := []struct {
+			name      string
+			query     SearchQuery
+			wantCount int
+		}{
+			{
+				name:      "empty query returns all",
+				query:     SearchQuery{},
+				wantCount: 3,
+			},
+			{
+				name:      "title filter",
+				query:     SearchQuery{Title: "database"},
+				wantCount: 1,
+			},
+			{
+				name:      "path filter",
+				query:     SearchQuery{Path: "app/"},
+				wantCount: 2,
+			},
+			{
+				name:      "tags filter",
+				query:     SearchQuery{Tags: []string{"env:prod"}},
+				wantCount: 2,
+			},
+			{
+				name:      "combined filter",
+				query:     SearchQuery{Path: "app/", Tags: []string{"env:prod", "team:backend"}},
+				wantCount: 1,
+			},
+			{
+				name:      "no match",
+				query:     SearchQuery{Title: "nonexistent"},
+				wantCount: 0,
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				results, err := sp.Search(ctx, tt.query)
+				if err != nil {
+					t.Fatalf("Search() unexpected error = %v", err)
+				}
+				if len(results) != tt.wantCount {
+					t.Errorf("Search() got %d results, want %d", len(results), tt.wantCount)
+				}
+			})
+		}
+	})
 }

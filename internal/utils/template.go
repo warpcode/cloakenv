@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,17 +10,20 @@ import (
 )
 
 // ParseTemplateFile reads a template file and returns a map of KEY to URI.
-func ParseTemplateFile(fpath string) (map[string]string, error) {
+func ParseTemplateFile(fpath string) (envs map[string]string, err error) {
 	cleanPath := filepath.Clean(fpath)
-	file, err := os.Open(cleanPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open template file: %w", err)
+	file, openErr := os.Open(cleanPath)
+	if openErr != nil {
+		return nil, fmt.Errorf("failed to open template file: %w", openErr)
 	}
 	defer func() {
-		_ = file.Close() // read-only handle; close errors carry no actionable signal here
+		if closeErr := file.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to close template file: %w", closeErr))
+			envs = nil
+		}
 	}()
 
-	envs := make(map[string]string)
+	envs = make(map[string]string)
 	scanner := bufio.NewScanner(file)
 	lineNum := 0
 	for scanner.Scan() {

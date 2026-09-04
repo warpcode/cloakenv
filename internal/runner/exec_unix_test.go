@@ -36,6 +36,45 @@ func TestRunCommand_Success(t *testing.T) {
 	}
 }
 
+func TestRunCommand_EnvPropagation(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
+		// Helper process: Execute 'sh' with '-c' to print environment variable.
+		// syscall.Exec replaces this process with 'sh'.
+		args := []string{"sh", "-c", "echo $CLOAKENV_TEST_VAR"}
+		exitCode := RunCommand(args, os.Environ())
+		os.Exit(exitCode)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunCommand_EnvPropagation")
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1", "CLOAKENV_TEST_VAR=secret_value_123")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err != nil {
+		t.Fatalf("Process failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "secret_value_123") {
+		t.Errorf("Expected output to contain 'secret_value_123', got %q", out.String())
+	}
+}
+
+func TestRunCommand_True(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
+		// Helper process: Execute 'true' command.
+		args := []string{"true"}
+		exitCode := RunCommand(args, os.Environ())
+		os.Exit(exitCode)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestRunCommand_True")
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+	err := cmd.Run()
+	if err != nil {
+		t.Fatalf("Execution of 'true' failed: %v", err)
+	}
+}
+
 func TestRunCommand_InvalidArgs(t *testing.T) {
 	tests := []struct {
 		name string

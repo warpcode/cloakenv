@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/zalando/go-keyring"
@@ -20,11 +21,45 @@ func TestKeePassProvider(t *testing.T) {
 
 	t.Run("Validate", func(t *testing.T) {
 		kp := NewKeePassProvider()
-		if err := kp.Validate(map[string]string{"vault_path": "a"}); err != nil {
-			t.Errorf("expected validation success, got %v", err)
+
+		tests := []struct {
+			name     string
+			settings map[string]string
+			wantErr  bool
+		}{
+			{
+				name: "valid vault_path",
+				settings: map[string]string{
+					"vault_path": "/path/to/vault.kdbx",
+				},
+				wantErr: false,
+			},
+			{
+				name: "empty vault_path",
+				settings: map[string]string{
+					"vault_path": "",
+				},
+				wantErr: true,
+			},
+			{
+				name:     "missing vault_path",
+				settings: map[string]string{},
+				wantErr:  true,
+			},
+			{
+				name:     "nil settings",
+				settings: nil,
+				wantErr:  true,
+			},
 		}
-		if err := kp.Validate(nil); err == nil {
-			t.Errorf("expected validation failure for nil settings")
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				err := kp.Validate(tt.settings)
+				if (err != nil) != tt.wantErr {
+					t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+				}
+			})
 		}
 	})
 
@@ -101,24 +136,138 @@ func TestKeePassProvider(t *testing.T) {
 	})
 
 	t.Run("Search", func(t *testing.T) {
-		results, err := kp.Search(ctx, SearchQuery{Title: "Test Website"})
-		if err != nil {
-			t.Fatalf("Search failed: %v", err)
+		tests := []struct {
+			name          string
+			query         SearchQuery
+			wantCount     int
+			wantFirstPath string
+		}{
+			{
+				name:          "ByTitle",
+				query:         SearchQuery{Title: "Test Website"},
+				wantCount:     1,
+				wantFirstPath: "website/Test Website",
+			},
+			{
+				name:      "ByPath",
+				query:     SearchQuery{Path: "website/Test"},
+				wantCount: 1,
+			},
+			{
+				name:      "NoMatch",
+				query:     SearchQuery{Title: "NonExistentTitleItem12345"},
+				wantCount: 0,
+			},
+			{
+				name:      "NonExistentTag",
+				query:     SearchQuery{Tags: []string{"nonexistenttag"}},
+				wantCount: 0,
+			},
+			{
+				name:          "EmptyTagFilter",
+				query:         SearchQuery{Title: "Test Website", Tags: nil},
+				wantCount:     1,
+				wantFirstPath: "website/Test Website",
+			},
 		}
-		if len(results) != 1 {
-			t.Fatalf("expected 1 result, got %d", len(results))
-		}
-		if results[0].Path != "website/Test Website" {
-			t.Errorf("expected path 'website/Test Website', got %q", results[0].Path)
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				results, err := kp.Search(ctx, tc.query)
+				if err != nil {
+					t.Fatalf("Search failed: %v", err)
+				}
+				if len(results) != tc.wantCount {
+					t.Fatalf("expected %d result(s), got %d", tc.wantCount, len(results))
+				}
+				if tc.wantFirstPath != "" && results[0].Path != tc.wantFirstPath {
+					t.Errorf("expected path %q, got %q", tc.wantFirstPath, results[0].Path)
+				}
+			})
 		}
 	})
 
 	t.Run("ReadOnly", func(t *testing.T) {
 		if err := kp.SetSecret(ctx, "a", "b"); err == nil {
 			t.Errorf("expected SetSecret to fail")
+		} else if !strings.Contains(err.Error(), "read-only") {
+			t.Errorf("expected error to contain 'read-only', got %q", err.Error())
 		}
 		if err := kp.DeleteSecret(ctx, "a"); err == nil {
 			t.Errorf("expected DeleteSecret to fail")
+		} else if !strings.Contains(err.Error(), "read-only") {
+			t.Errorf("expected error to contain 'read-only', got %q", err.Error())
 		}
 	})
+}
+
+func TestKeePassProvider_SetSecret(t *testing.T) {
+	kp := NewKeePassProvider()
+	err := kp.SetSecret(context.Background(), "KEY", "VAL")
+	if err == nil {
+		t.Error("expected error for SetSecret, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
+	}
+}
+
+func TestKeePassProvider_DeleteSecret(t *testing.T) {
+	kp := NewKeePassProvider()
+	err := kp.DeleteSecret(context.Background(), "KEY")
+	if err == nil {
+		t.Error("expected error for DeleteSecret, got nil")
+	}
+	if err != nil && !strings.Contains(err.Error(), "read-only") {
+		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
+	}
+}
+
+func TestMatchEntryTags(t *testing.T) {
+	tests := []struct {
+		name      string
+		tagString string
+		queryTags []string
+		want      bool
+	}{
+		{
+			name:      "empty query tags matches anything",
+			tagString: "tag1, tag2",
+			queryTags: nil,
+			want:      true,
+		},
+		{
+			name:      "matching single tag case-insensitive",
+			tagString: "Production, Database",
+			queryTags: []string{"production"},
+			want:      true,
+		},
+		{
+			name:      "matching all query tags",
+			tagString: "Production, Database, Web",
+			queryTags: []string{"production", "database"},
+			want:      true,
+		},
+		{
+			name:      "missing query tag",
+			tagString: "Production, Database",
+			queryTags: []string{"production", "redis"},
+			want:      false,
+		},
+		{
+			name:      "empty entry tags with non-empty query",
+			tagString: "",
+			queryTags: []string{"production"},
+			want:      false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := matchEntryTags(tc.tagString, tc.queryTags)
+			if got != tc.want {
+				t.Errorf("matchEntryTags(%q, %v) = %v, want %v", tc.tagString, tc.queryTags, got, tc.want)
+			}
+		})
+	}
 }

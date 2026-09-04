@@ -95,7 +95,14 @@ func flattenSearchResults(results []provider.SearchResult, selectedKeys []string
 }
 
 func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
-	flatRes := make(map[string]any)
+	if len(selectedKeys) > 0 {
+		return flattenSelectedKeys(r, selectedKeys, selectedKeysLower)
+	}
+	return flattenDefaultEntry(r)
+}
+
+func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
+	flatRes := make(map[string]any, len(selectedKeys))
 
 	var lowerAttrs map[string]string
 	if len(r.Entry.Attributes) > 0 {
@@ -105,49 +112,51 @@ func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLo
 		}
 	}
 
-	if len(selectedKeys) > 0 {
-		for j, field := range selectedKeys {
-			fieldLower := selectedKeysLower[j]
-			switch fieldLower {
-			case "provider":
-				flatRes["provider"] = r.Provider
-			case "vault":
-				flatRes["vault"] = r.Vault
-			case "path":
-				flatRes["path"] = r.Path
-			case "title":
-				flatRes["title"] = r.Entry.Title
-			case "tags":
-				flatRes["tags"] = r.Entry.Tags
-			default:
-				found := false
-				if origKey, ok := lowerAttrs[fieldLower]; ok {
-					flatRes[utils.FormatKey(origKey)] = r.Entry.Attributes[origKey]
-					found = true
-				}
+	for j, field := range selectedKeys {
+		fieldLower := selectedKeysLower[j]
+		switch fieldLower {
+		case "provider":
+			flatRes["provider"] = r.Provider
+		case "vault":
+			flatRes["vault"] = r.Vault
+		case "path":
+			flatRes["path"] = r.Path
+		case "title":
+			flatRes["title"] = r.Entry.Title
+		case "tags":
+			flatRes["tags"] = r.Entry.Tags
+		default:
+			key, val := resolveSelectedAttribute(r.Entry.Attributes, lowerAttrs, field, fieldLower)
+			flatRes[key] = val
+		}
+	}
+	return flatRes
+}
 
-				if !found {
-					if v, ok := r.Entry.Attributes[field]; ok {
-						flatRes[utils.FormatKey(field)] = v
-					} else {
-						flatRes[utils.FormatKey(field)] = nil
-					}
-				}
-			}
+func resolveSelectedAttribute(attributes map[string]any, lowerAttrs map[string]string, field, fieldLower string) (string, any) {
+	if origKey, ok := lowerAttrs[fieldLower]; ok {
+		return utils.FormatKey(origKey), attributes[origKey]
+	}
+	if v, ok := attributes[field]; ok {
+		return utils.FormatKey(field), v
+	}
+	return utils.FormatKey(field), nil
+}
+
+func flattenDefaultEntry(r provider.SearchResult) map[string]any {
+	flatRes := make(map[string]any, 5+len(r.Entry.Attributes))
+	flatRes["provider"] = r.Provider
+	flatRes["vault"] = r.Vault
+	flatRes["path"] = r.Path
+	flatRes["title"] = r.Entry.Title
+	flatRes["tags"] = r.Entry.Tags
+
+	for k, v := range r.Entry.Attributes {
+		kLower := strings.ToLower(k)
+		if kLower == "title" || kLower == "tags" {
+			continue
 		}
-	} else {
-		flatRes["provider"] = r.Provider
-		flatRes["vault"] = r.Vault
-		flatRes["path"] = r.Path
-		flatRes["title"] = r.Entry.Title
-		flatRes["tags"] = r.Entry.Tags
-		for k, v := range r.Entry.Attributes {
-			kLower := strings.ToLower(k)
-			if kLower == "title" || kLower == "tags" {
-				continue
-			}
-			flatRes[utils.FormatKey(k)] = v
-		}
+		flatRes[utils.FormatKey(k)] = v
 	}
 	return flatRes
 }

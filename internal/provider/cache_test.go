@@ -22,8 +22,40 @@ func TestCacheProvider(t *testing.T) {
 
 	t.Run("Validate", func(t *testing.T) {
 		cp := NewCacheProvider()
-		if err := cp.Validate(nil); err != nil {
-			t.Errorf("Validate failed: %v", err)
+
+		tests := []struct {
+			name     string
+			settings map[string]string
+		}{
+			{
+				name:     "nil settings",
+				settings: nil,
+			},
+			{
+				name:     "empty settings",
+				settings: map[string]string{},
+			},
+			{
+				name: "settings with keyring_prefix",
+				settings: map[string]string{
+					"keyring_prefix": "custom_prefix",
+				},
+			},
+			{
+				name: "settings with arbitrary keys",
+				settings: map[string]string{
+					"keyring_prefix": "custom_prefix",
+					"extra_setting":  "value",
+				},
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				if err := cp.Validate(tt.settings); err != nil {
+					t.Errorf("Validate(%v) unexpected error = %v, want nil", tt.settings, err)
+				}
+			})
 		}
 	})
 

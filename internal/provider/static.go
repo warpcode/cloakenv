@@ -52,13 +52,26 @@ func (p *staticProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 	}
 	p.rawContent = raw
 
+	entitiesRootKey, isSingleEntity := p.determineEntityConfig(cfg, raw)
+	p.singleEntity = isSingleEntity
+
+	if p.singleEntity {
+		p.parseSingleEntity(cfg, raw, entitiesRootKey)
+		return nil
+	}
+
+	return p.parseMultiEntities(raw, entitiesRootKey)
+}
+
+func (p *staticProvider) determineEntityConfig(cfg ProviderConfig, raw map[string]any) (string, bool) {
+	var singleEntity bool
 	if cfg.SingleEntity != nil {
-		p.singleEntity = *cfg.SingleEntity
+		singleEntity = *cfg.SingleEntity
 	} else {
 		_, hasEntities := raw["entities"]
 		_, hasEntries := raw["entries"]
 		hasRootKey := hasEntities || hasEntries
-		p.singleEntity = (cfg.EntitiesRootKey == "" && cfg.Settings["entities_root_key"] == "" && cfg.Settings["entries_key"] == "" && !hasRootKey)
+		singleEntity = (cfg.EntitiesRootKey == "" && cfg.Settings["entities_root_key"] == "" && cfg.Settings["entries_key"] == "" && !hasRootKey)
 	}
 
 	entitiesRootKey := cfg.EntitiesRootKey
@@ -69,7 +82,7 @@ func (p *staticProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 		entitiesRootKey = cfg.Settings["entries_key"]
 	}
 	if entitiesRootKey == "" {
-		if p.singleEntity {
+		if singleEntity {
 			entitiesRootKey = "."
 		} else {
 			if _, ok := raw["entities"]; ok {
@@ -82,64 +95,67 @@ func (p *staticProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 		}
 	}
 
-	if p.singleEntity {
-		var attributesMap map[string]any
-		if entitiesRootKey == "." {
-			attributesMap = raw
-		} else {
-			val, ok := raw[entitiesRootKey]
-			if ok {
-				if m, ok := val.(map[string]any); ok {
-					attributesMap = m
-				} else if m2, ok := val.(map[any]any); ok {
-					attributesMap = make(map[string]any)
-					for k, v := range m2 {
-						attributesMap[fmt.Sprintf("%v", k)] = v
-					}
+	return entitiesRootKey, singleEntity
+}
+
+func (p *staticProvider) parseSingleEntity(cfg ProviderConfig, raw map[string]any, entitiesRootKey string) {
+	var attributesMap map[string]any
+	if entitiesRootKey == "." {
+		attributesMap = raw
+	} else {
+		val, ok := raw[entitiesRootKey]
+		if ok {
+			if m, ok := val.(map[string]any); ok {
+				attributesMap = m
+			} else if m2, ok := val.(map[any]any); ok {
+				attributesMap = make(map[string]any)
+				for k, v := range m2 {
+					attributesMap[fmt.Sprintf("%v", k)] = v
 				}
 			}
 		}
-		if attributesMap == nil {
-			attributesMap = make(map[string]any)
-		}
-
-		title := cfg.EntityName
-		if title == "" {
-			if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
-				title = vaultName
-			} else {
-				title = filepath.Base(vaultPath)
-			}
-		}
-
-		tags := cfg.Tags
-		entry := Entry{
-			Title:      title,
-			Attributes: make(map[string]any),
-		}
-
-		for k, v := range attributesMap {
-			kLower := strings.ToLower(k)
-			switch kLower {
-			case "tags":
-				if len(tags) == 0 {
-					tags = utils.ParseTags(v)
-				}
-			case "title":
-				if cfg.EntityName == "" {
-					if str, ok := v.(string); ok {
-						entry.Title = str
-					}
-				}
-			default:
-				entry.Attributes[k] = v
-			}
-		}
-		entry.Tags = tags
-		p.entries[""] = entry
-		return nil
+	}
+	if attributesMap == nil {
+		attributesMap = make(map[string]any)
 	}
 
+	title := cfg.EntityName
+	if title == "" {
+		if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
+			title = vaultName
+		} else {
+			title = filepath.Base(p.filePath)
+		}
+	}
+
+	tags := cfg.Tags
+	entry := Entry{
+		Title:      title,
+		Attributes: make(map[string]any),
+	}
+
+	for k, v := range attributesMap {
+		kLower := strings.ToLower(k)
+		switch kLower {
+		case "tags":
+			if len(tags) == 0 {
+				tags = utils.ParseTags(v)
+			}
+		case "title":
+			if cfg.EntityName == "" {
+				if str, ok := v.(string); ok {
+					entry.Title = str
+				}
+			}
+		default:
+			entry.Attributes[k] = v
+		}
+	}
+	entry.Tags = tags
+	p.entries[""] = entry
+}
+
+func (p *staticProvider) parseMultiEntities(raw map[string]any, entitiesRootKey string) error {
 	var rawEntries map[string]map[string]any
 	if entitiesRootKey == "." {
 		var err error
@@ -253,74 +269,54 @@ func (p *staticProvider) Search(_ context.Context, query SearchQuery) ([]SearchR
 			return nil, fmt.Errorf("%s provider: single entity not found", p.scheme)
 		}
 
-		if query.Title != "" {
-			if !strings.Contains(strings.ToLower(entry.Title), queryTitleLower) {
-				return results, nil
-			}
+		if matchEntry(entry, "", query, queryTitleLower, queryPathLower) {
+			results = append(results, SearchResult{
+				Path:  "",
+				Entry: entry,
+			})
 		}
-
-		if len(query.Tags) > 0 {
-			for _, qt := range query.Tags {
-				found := false
-				for _, t := range entry.Tags {
-					if strings.EqualFold(t, qt) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					return results, nil
-				}
-			}
-		}
-
-		results = append(results, SearchResult{
-			Path:  "",
-			Entry: entry,
-		})
 		return results, nil
 	}
 
 	for name, entry := range p.entries {
-		if query.Title != "" {
-			if !strings.Contains(strings.ToLower(entry.Title), queryTitleLower) {
-				continue
-			}
+		if matchEntry(entry, name, query, queryTitleLower, queryPathLower) {
+			results = append(results, SearchResult{
+				Path:  name,
+				Entry: entry,
+			})
 		}
-
-		if query.Path != "" {
-			if !strings.Contains(strings.ToLower(name), queryPathLower) {
-				continue
-			}
-		}
-
-		if len(query.Tags) > 0 {
-			match := true
-			for _, qt := range query.Tags {
-				found := false
-				for _, t := range entry.Tags {
-					if strings.EqualFold(t, qt) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					match = false
-					break
-				}
-			}
-			if !match {
-				continue
-			}
-		}
-
-		results = append(results, SearchResult{
-			Path:  name,
-			Entry: entry,
-		})
 	}
 
 	return results, nil
+}
+
+func matchTags(entryTags, queryTags []string) bool {
+	for _, qt := range queryTags {
+		found := false
+		for _, t := range entryTags {
+			if strings.EqualFold(t, qt) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func matchEntry(entry Entry, path string, query SearchQuery, queryTitleLower, queryPathLower string) bool {
+	if query.Title != "" && !strings.Contains(strings.ToLower(entry.Title), queryTitleLower) {
+		return false
+	}
+	if query.Path != "" && !strings.Contains(strings.ToLower(path), queryPathLower) {
+		return false
+	}
+	if len(query.Tags) > 0 && !matchTags(entry.Tags, query.Tags) {
+		return false
+	}
+	return true
 }
 
 func anyToString(v any) string {
@@ -336,6 +332,21 @@ func anyToString(v any) string {
 	}
 }
 
+func normalizeEntryMap(v any) (map[string]any, bool) {
+	switch m := v.(type) {
+	case map[string]any:
+		return m, true
+	case map[any]any:
+		converted := make(map[string]any, len(m))
+		for ek, ev := range m {
+			converted[anyToString(ek)] = ev
+		}
+		return converted, true
+	default:
+		return nil, false
+	}
+}
+
 func convertToEntriesMap(val any) (map[string]map[string]any, error) {
 	switch m := val.(type) {
 	case map[string]map[string]any:
@@ -343,14 +354,8 @@ func convertToEntriesMap(val any) (map[string]map[string]any, error) {
 	case map[string]any:
 		res := make(map[string]map[string]any)
 		for k, v := range m {
-			if entryMap, ok := v.(map[string]any); ok {
+			if entryMap, ok := normalizeEntryMap(v); ok {
 				res[k] = entryMap
-			} else if entryMap2, ok := v.(map[any]any); ok {
-				converted := make(map[string]any)
-				for ek, ev := range entryMap2 {
-					converted[anyToString(ek)] = ev
-				}
-				res[k] = converted
 			} else {
 				return nil, fmt.Errorf("entry %q is not a valid map", k)
 			}
@@ -360,14 +365,8 @@ func convertToEntriesMap(val any) (map[string]map[string]any, error) {
 		res := make(map[string]map[string]any)
 		for k, v := range m {
 			kStr := anyToString(k)
-			if entryMap, ok := v.(map[string]any); ok {
+			if entryMap, ok := normalizeEntryMap(v); ok {
 				res[kStr] = entryMap
-			} else if entryMap2, ok := v.(map[any]any); ok {
-				converted := make(map[string]any)
-				for ek, ev := range entryMap2 {
-					converted[anyToString(ek)] = ev
-				}
-				res[kStr] = converted
 			} else {
 				return nil, fmt.Errorf("entry %q is not a valid map", kStr)
 			}

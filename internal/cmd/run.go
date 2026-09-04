@@ -77,7 +77,13 @@ func Run(args []string, cfg *config.Config) int {
 	}
 
 	// Build the environment block and evaluate command transformations
-	finalCmdArgs, env, err := orch.BuildEnvForCommand(ctx, activeCmdArgs, explicitEnv, merges, whitelist, emptyEnv)
+	finalCmdArgs, env, err := orch.BuildEnvForCommand(ctx, engine.EnvConfig{
+		CmdArgs:   activeCmdArgs,
+		Explicit:  explicitEnv,
+		Merges:    merges,
+		Whitelist: whitelist,
+		EmptyEnv:  emptyEnv,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Secret resolution failed: %v\n", err)
 		return 1

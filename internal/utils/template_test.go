@@ -1,8 +1,10 @@
 package utils
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +59,40 @@ C=D
 			expectErr: false,
 		},
 		{
+			name:    "value containing equal signs",
+			content: "KEY=foo=bar=baz\n",
+			want: map[string]string{
+				"KEY": "foo=bar=baz",
+			},
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				p := filepath.Join(baseDir, "test_equals.env")
+				return p, p
+			},
+			expectErr: false,
+		},
+		{
+			name:    "mismatched quotes",
+			content: `KEY="value'` + "\n",
+			want: map[string]string{
+				"KEY": `"value'`,
+			},
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				p := filepath.Join(baseDir, "test_mismatched.env")
+				return p, p
+			},
+			expectErr: false,
+		},
+		{
+			name:    "empty file",
+			content: "",
+			want:    map[string]string{},
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				p := filepath.Join(baseDir, "empty.env")
+				return p, p
+			},
+			expectErr: false,
+		},
+		{
 			name:    "invalid format (missing equal)",
 			content: "INVALID_LINE\n",
 			want:    nil,
@@ -92,6 +128,36 @@ C=D
 			want:    nil,
 			setupPath: func(t *testing.T, baseDir string) (string, string) {
 				p := filepath.Join(baseDir, "test.env")
+				return p, p
+			},
+			expectErr: true,
+		},
+		{
+			name:    "quoted empty value double quotes",
+			content: `KEY=""` + "\n",
+			want:    nil,
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				p := filepath.Join(baseDir, "test_empty_dq.env")
+				return p, p
+			},
+			expectErr: true,
+		},
+		{
+			name:    "quoted empty value single quotes",
+			content: "KEY=''\n",
+			want:    nil,
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				p := filepath.Join(baseDir, "test_empty_sq.env")
+				return p, p
+			},
+			expectErr: true,
+		},
+		{
+			name:    "scanner read error due to line exceeding max token size",
+			content: strings.Repeat("A", bufio.MaxScanTokenSize+1) + "\n",
+			want:    nil,
+			setupPath: func(t *testing.T, baseDir string) (string, string) {
+				p := filepath.Join(baseDir, "test_long_line.env")
 				return p, p
 			},
 			expectErr: true,

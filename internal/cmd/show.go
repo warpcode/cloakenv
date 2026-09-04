@@ -82,18 +82,37 @@ func parseShowFlags(args []string) (*showOptions, error) {
 }
 
 func buildMergedEntry(ctx context.Context, orch *engine.Orchestrator, merges []string, whitelist []string, explicit map[string]string) (provider.Entry, error) {
-	entry := provider.Entry{
-		Tags:       []string{},
-		Attributes: make(map[string]any),
+	entries, err := resolveMergedEntries(ctx, orch, merges)
+	if err != nil {
+		return provider.Entry{}, err
 	}
 
-	whitelistSet := make(map[string]bool)
-	for _, k := range whitelist {
-		whitelistSet[utils.FormatKey(k)] = true
-	}
-	hasWhitelist := len(whitelist) > 0
+	tags, attributes := mergeTagsAndAttributes(entries, whitelist)
 
-	// Resolve the entries concurrently, then merge them in order
+	explicitResolved, err := resolveExplicitMappings(ctx, orch, explicit)
+	if err != nil {
+		return provider.Entry{}, err
+	}
+
+	for k, v := range explicitResolved {
+		attributes[k] = v
+	}
+
+	if tags == nil {
+		tags = []string{}
+	}
+
+	return provider.Entry{
+		Tags:       tags,
+		Attributes: attributes,
+	}, nil
+}
+
+func resolveMergedEntries(ctx context.Context, orch *engine.Orchestrator, merges []string) ([]provider.Entry, error) {
+	if len(merges) == 0 {
+		return nil, nil
+	}
+
 	type loadedEntry struct {
 		entry provider.Entry
 		err   error
@@ -110,69 +129,82 @@ func buildMergedEntry(ctx context.Context, orch *engine.Orchestrator, merges []s
 	}
 	mWg.Wait()
 
-	// Check if any merge failed
-	for _, lm := range loadedMerges {
+	entries := make([]provider.Entry, len(merges))
+	for i, lm := range loadedMerges {
 		if lm.err != nil {
-			return provider.Entry{}, fmt.Errorf("failed to retrieve entry: %w", lm.err)
+			return nil, fmt.Errorf("failed to retrieve entry: %w", lm.err)
 		}
+		entries[i] = lm.entry
 	}
+	return entries, nil
+}
 
-	// Merge tags and attributes in order
+func mergeTagsAndAttributes(entries []provider.Entry, whitelist []string) ([]string, map[string]any) {
+	whitelistSet := make(map[string]bool)
+	for _, k := range whitelist {
+		whitelistSet[utils.FormatKey(k)] = true
+	}
+	hasWhitelist := len(whitelist) > 0
+
 	tagSet := make(map[string]bool)
-	for _, lm := range loadedMerges {
-		for _, tag := range lm.entry.Tags {
+	attributes := make(map[string]any)
+
+	for _, e := range entries {
+		for _, tag := range e.Tags {
 			tagSet[tag] = true
 		}
-		for k, v := range lm.entry.Attributes {
-			kLower := strings.ToLower(k)
-			if kLower == "title" || kLower == "tags" {
+		for k, v := range e.Attributes {
+			if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 				continue
 			}
 			formattedKey := utils.FormatKey(k)
 			if hasWhitelist && !whitelistSet[formattedKey] {
 				continue
 			}
-			entry.Attributes[k] = v
+			attributes[k] = v
 		}
 	}
 
-	// Build the tags slice from tagSet
 	var uniqueTags []string
 	for tag := range tagSet {
 		uniqueTags = append(uniqueTags, tag)
 	}
-	entry.Tags = uniqueTags
 
-	// Resolve explicit -e mappings (highest priority, not subject to whitelist)
-	if len(explicit) > 0 {
-		type resolvedMapping struct {
-			key string
-			val string
-			err error
-		}
-		resolvedList := make([]resolvedMapping, len(explicit))
-		var eWg sync.WaitGroup
-		idx := 0
-		for k, uri := range explicit {
-			eWg.Add(1)
-			go func(i int, key, u string) {
-				defer eWg.Done()
-				val, err := orch.Resolve(ctx, u)
-				resolvedList[i] = resolvedMapping{key: key, val: val, err: err}
-			}(idx, k, uri)
-			idx++
-		}
-		eWg.Wait()
+	return uniqueTags, attributes
+}
 
-		for _, rm := range resolvedList {
-			if rm.err != nil {
-				return provider.Entry{}, fmt.Errorf("failed to resolve mapping %s=%s: %w", rm.key, explicit[rm.key], rm.err)
-			}
-			entry.Attributes[rm.key] = rm.val
-		}
+func resolveExplicitMappings(ctx context.Context, orch *engine.Orchestrator, explicit map[string]string) (map[string]string, error) {
+	if len(explicit) == 0 {
+		return nil, nil
 	}
 
-	return entry, nil
+	type resolvedMapping struct {
+		key string
+		val string
+		err error
+	}
+	resolvedList := make([]resolvedMapping, len(explicit))
+	var eWg sync.WaitGroup
+	idx := 0
+	for k, uri := range explicit {
+		eWg.Add(1)
+		go func(i int, key, u string) {
+			defer eWg.Done()
+			val, err := orch.Resolve(ctx, u)
+			resolvedList[i] = resolvedMapping{key: key, val: val, err: err}
+		}(idx, k, uri)
+		idx++
+	}
+	eWg.Wait()
+
+	results := make(map[string]string, len(explicit))
+	for _, rm := range resolvedList {
+		if rm.err != nil {
+			return nil, fmt.Errorf("failed to resolve mapping %s=%s: %w", rm.key, explicit[rm.key], rm.err)
+		}
+		results[rm.key] = rm.val
+	}
+	return results, nil
 }
 
 // Show handles "cloakenv show <entry-uri> [--yaml | --json]"
@@ -214,8 +246,7 @@ func Show(args []string, cfg *config.Config) int {
 	// Format all keys in entry.Attributes by default
 	formattedAttributes := make(map[string]any)
 	for k, v := range entry.Attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
+		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
 		formattedAttributes[utils.FormatKey(k)] = v
@@ -243,8 +274,7 @@ func Show(args []string, cfg *config.Config) int {
 
 func printEnvFormat(attributes map[string]any) {
 	for k, v := range attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
+		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
 		strVal, _ := utils.SerializeAttrValue(v)
@@ -263,8 +293,7 @@ func shouldQuoteDotenvValue(s string) bool {
 
 func printKeysFormat(attributes map[string]any) {
 	for k := range attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
+		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
 		fmt.Println(k)
