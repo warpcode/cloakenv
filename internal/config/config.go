@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/warpcode/cloakenv/internal/yaml"
@@ -47,32 +46,6 @@ type AutoloadRule struct {
 
 	// Whitelist is a list of key names to filter merged entries.
 	Whitelist []string `yaml:"whitelist"`
-
-	// CompiledRegex holds the precompiled regular expression for Match.
-	CompiledRegex *regexp.Regexp `yaml:"-"`
-}
-
-// CompileAutoloadRules precompiles regular expressions for all autoload rules in the configuration.
-func (c *Config) CompileAutoloadRules() {
-	if c == nil {
-		return
-	}
-	for i := range c.Autoload {
-		c.Autoload[i].Compile()
-	}
-}
-
-// Compile precompiles the regular expression pattern for the autoload rule if Match is non-empty.
-func (r *AutoloadRule) Compile() {
-	if r == nil {
-		return
-	}
-	pattern := strings.TrimSpace(r.Match)
-	if pattern != "" && r.CompiledRegex == nil {
-		if re, err := regexp.Compile(pattern); err == nil {
-			r.CompiledRegex = re
-		}
-	}
 }
 
 // CacheConfig holds cache-related configuration settings.
@@ -177,8 +150,6 @@ func Load(path string) (*Config, error) {
 		vault.VaultPath = expandHome(vault.VaultPath)
 		cfg.Vaults[name] = vault
 	}
-
-	cfg.CompileAutoloadRules()
 
 	return cfg, nil
 }

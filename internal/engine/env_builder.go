@@ -193,21 +193,6 @@ func formatEnvMap(envMap map[string]string) []string {
 	return result
 }
 
-// normalizeURIs trims whitespace, filters empty strings, and ensures URIs have a scheme suffix.
-func normalizeURIs(uris []string) []string {
-	result := make([]string, 0, len(uris))
-	for _, u := range uris {
-		u = strings.TrimSpace(u)
-		if u != "" {
-			if !strings.Contains(u, "://") {
-				u = u + "://"
-			}
-			result = append(result, u)
-		}
-	}
-	return result
-}
-
 // evalAutoloadRules evaluates configured autoload rules against command arguments.
 func (eb *EnvBuilder) evalAutoloadRules(cmdArgs []string) ([]string, map[string]string, []string, []string, error) {
 	var autoMerges []string
@@ -228,8 +213,24 @@ func (eb *EnvBuilder) evalAutoloadRules(cmdArgs []string) ([]string, map[string]
 		if matched {
 			currentCmdArgs = newCmdArgs
 			parsed = parseCommandArgs(currentCmdArgs)
-			autoMerges = append(autoMerges, normalizeURIs(rule.Vaults)...)
-			autoMerges = append(autoMerges, normalizeURIs(rule.Merge)...)
+			for _, v := range rule.Vaults {
+				v = strings.TrimSpace(v)
+				if v != "" {
+					if !strings.Contains(v, "://") {
+						v = v + "://"
+					}
+					autoMerges = append(autoMerges, v)
+				}
+			}
+			for _, m := range rule.Merge {
+				m = strings.TrimSpace(m)
+				if m != "" {
+					if !strings.Contains(m, "://") {
+						m = m + "://"
+					}
+					autoMerges = append(autoMerges, m)
+				}
+			}
 			for k, uri := range rule.Env {
 				if k != "" && uri != "" {
 					autoExplicit[k] = uri
