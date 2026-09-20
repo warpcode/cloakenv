@@ -287,6 +287,7 @@ func TestRun_Autoload(t *testing.T) {
 				},
 			},
 		}
+		cfg.CompileAutoloadRules()
 		os.Exit(Run(args, cfg))
 	}
 
