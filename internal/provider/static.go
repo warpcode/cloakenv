@@ -139,11 +139,7 @@ func (p *staticProvider) parseSingleEntity(cfg ProviderConfig, raw map[string]an
 		switch kLower {
 		case "tags":
 			if len(tags) == 0 {
-				parsedTags := utils.ParseTags(v)
-				tags = make([]string, len(parsedTags))
-				for i, t := range parsedTags {
-					tags[i] = strings.ToLower(t)
-				}
+				tags = utils.ParseTags(v)
 			}
 		case "title":
 			if cfg.EntityName == "" {
@@ -153,6 +149,12 @@ func (p *staticProvider) parseSingleEntity(cfg ProviderConfig, raw map[string]an
 			}
 		default:
 			entry.Attributes[k] = v
+		}
+	}
+	if len(cfg.Tags) > 0 {
+		tags = make([]string, len(cfg.Tags))
+		for i, t := range cfg.Tags {
+			tags[i] = strings.ToLower(t)
 		}
 	}
 	entry.Tags = tags
@@ -189,11 +191,7 @@ func (p *staticProvider) parseMultiEntities(raw map[string]any, entitiesRootKey 
 			kLower := strings.ToLower(k)
 			switch kLower {
 			case "tags":
-				parsedTags := utils.ParseTags(v)
-				entry.Tags = make([]string, len(parsedTags))
-				for i, t := range parsedTags {
-					entry.Tags[i] = strings.ToLower(t)
-				}
+				entry.Tags = utils.ParseTags(v)
 			case "title":
 				if str, ok := v.(string); ok {
 					entry.Title = str
@@ -310,9 +308,29 @@ func matchTags(entryTags, queryTagsLower []string) bool {
 	for _, qt := range queryTagsLower {
 		found := false
 		for _, t := range entryTags {
-			if t == qt {
-				found = true
-				break
+			if len(t) == len(qt) {
+				match := true
+				for i := 0; i < len(t); i++ {
+					c1 := t[i]
+					c2 := qt[i]
+					if c1 != c2 {
+						if 'A' <= c1 && c1 <= 'Z' {
+							c1 += 'a' - 'A'
+						}
+						if c1 != c2 {
+							if c1 >= 0x80 || c2 >= 0x80 {
+								match = strings.EqualFold(t, qt)
+								break
+							}
+							match = false
+							break
+						}
+					}
+				}
+				if match {
+					found = true
+					break
+				}
 			}
 		}
 		if !found {
