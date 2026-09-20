@@ -14,9 +14,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
-      - name: Fail when the commit introduces no file changes
+      - name: Fail when any commit introduces no file changes
         shell: bash
         run: |
           set -euo pipefail
@@ -24,19 +24,64 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             base_sha="${{ github.event.pull_request.base.sha }}"
             head_sha="${{ github.event.pull_request.head.sha }}"
+
+            if ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+              git fetch origin "$base_sha" --depth=50
+            fi
+            if ! git cat-file -e "${head_sha}^{commit}" 2>/dev/null; then
+              git fetch origin "$head_sha" --depth=50
+            fi
+
             if git diff --quiet "$base_sha" "$head_sha" -- .; then
-              echo "No file changes were detected in this PR. Empty or no-op changes are not allowed."
+              echo "No file changes were detected in this PR. Empty or no-op PRs are not allowed."
+              exit 1
+            fi
+
+            empty_commits=()
+            while IFS= read -r commit; do
+              [[ -z "$commit" ]] && continue
+              files=$(git diff-tree --no-commit-id --name-only -r "$commit")
+              if [[ -z "$files" ]]; then
+                empty_commits+=("$commit")
+              fi
+            done < <(git rev-list --no-merges "$base_sha..$head_sha")
+
+            if [[ ${#empty_commits[@]} -gt 0 ]]; then
+              echo "Empty commit(s) detected in PR:"
+              for c in "${empty_commits[@]}"; do
+                headline=$(git log -1 --format="%h (%s)" "$c")
+                echo "  - $headline"
+              done
               exit 1
             fi
             exit 0
           fi
 
-          if git rev-list --count HEAD | grep -q '^1$'; then
-            echo "Initial commit on this branch; no previous commit to compare against."
-            exit 0
+          before_sha="${{ github.event.before }}"
+          after_sha="${{ github.event.after }}"
+
+          if [[ -z "$before_sha" || "$before_sha" =~ ^0+$ ]]; then
+            if git rev-list --count HEAD | grep -q '^1$'; then
+              echo "Initial commit on repository; no previous commit to compare against."
+              exit 0
+            fi
+            before_sha="HEAD^"
           fi
 
-          if git diff --quiet HEAD^ HEAD -- .; then
-            echo "Empty commit detected: HEAD contains no file changes."
+          empty_commits=()
+          while IFS= read -r commit; do
+            [[ -z "$commit" ]] && continue
+            files=$(git diff-tree --no-commit-id --name-only -r "$commit")
+            if [[ -z "$files" ]]; then
+              empty_commits+=("$commit")
+            fi
+          done < <(git rev-list --no-merges "$before_sha..$after_sha")
+
+          if [[ ${#empty_commits[@]} -gt 0 ]]; then
+            echo "Empty commit(s) detected in push:"
+            for c in "${empty_commits[@]}"; do
+              headline=$(git log -1 --format="%h (%s)" "$c")
+              echo "  - $headline"
+            done
             exit 1
           fi
