@@ -152,44 +152,20 @@ func (r *Resolver) GetEntry(ctx context.Context, uri string) (provider.Entry, er
 	return r.GetEntryRecursive(ctx, uri, 0)
 }
 
-func (r *Resolver) GetEntryRecursive(ctx context.Context, uri string, depth int) (provider.Entry, error) {
-	if depth > 5 {
-		return provider.Entry{}, fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5 resolving entry %q", uri)
-	}
-
-	scheme, location, err := utils.ParseURI(uri)
-	if err != nil {
-		return provider.Entry{}, err
-	}
-
-	// If the location contains an attribute selector, resolve the single value
-	// and return a synthetic entry with that one key.
-	if attrIdx := strings.LastIndex(location, ":"); attrIdx >= 0 {
-		attrName := location[attrIdx+1:]
-		if attrName != "" {
-			val, err := r.resolveSingleURI(ctx, uri, depth, "")
-			if err != nil {
-				return provider.Entry{}, err
-			}
-			return provider.Entry{
-				Attributes: map[string]any{attrName: val},
-			}, nil
-		}
-	}
-
+func (r *Resolver) fetchProviderEntry(ctx context.Context, scheme, location string) (provider.Entry, bool, error) {
 	p, isBuiltin, err := r.providers.GetProvider(ctx, scheme)
 	if err != nil {
-		return provider.Entry{}, err
+		return provider.Entry{}, false, err
 	}
 
 	searchable, ok := p.(provider.SearchableProvider)
 	if !ok {
-		return provider.Entry{}, fmt.Errorf("provider %q does not support structured entries", scheme)
+		return provider.Entry{}, false, fmt.Errorf("provider %q does not support structured entries", scheme)
 	}
 
 	entry, err := searchable.GetEntry(ctx, location)
 	if err != nil {
-		return provider.Entry{}, err
+		return provider.Entry{}, false, err
 	}
 
 	shouldResolveAttrs := true
@@ -199,6 +175,10 @@ func (r *Resolver) GetEntryRecursive(ctx context.Context, uri string, depth int)
 		}
 	}
 
+	return entry, shouldResolveAttrs, nil
+}
+
+func (r *Resolver) resolveEntryAttributes(ctx context.Context, entry provider.Entry, shouldResolveAttrs bool, depth int) (provider.Entry, error) {
 	resolvedAttrs := make(map[string]any)
 	for k, v := range entry.Attributes {
 		if !shouldResolveAttrs {
@@ -212,8 +192,49 @@ func (r *Resolver) GetEntryRecursive(ctx context.Context, uri string, depth int)
 		resolvedAttrs[k] = resolvedVal
 	}
 	entry.Attributes = resolvedAttrs
-
 	return entry, nil
+}
+
+func (r *Resolver) resolveAttributeSelector(ctx context.Context, location, uri string, depth int) (provider.Entry, bool, error) {
+	if attrIdx := strings.LastIndex(location, ":"); attrIdx >= 0 {
+		attrName := location[attrIdx+1:]
+		if attrName != "" {
+			val, err := r.resolveSingleURI(ctx, uri, depth, "")
+			if err != nil {
+				return provider.Entry{}, true, err
+			}
+			return provider.Entry{
+				Attributes: map[string]any{attrName: val},
+			}, true, nil
+		}
+	}
+	return provider.Entry{}, false, nil
+}
+
+func (r *Resolver) GetEntryRecursive(ctx context.Context, uri string, depth int) (provider.Entry, error) {
+	if depth > 5 {
+		return provider.Entry{}, fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5 resolving entry %q", uri)
+	}
+
+	scheme, location, err := utils.ParseURI(uri)
+	if err != nil {
+		return provider.Entry{}, err
+	}
+
+	entry, handled, err := r.resolveAttributeSelector(ctx, location, uri, depth)
+	if err != nil {
+		return provider.Entry{}, err
+	}
+	if handled {
+		return entry, nil
+	}
+
+	entry, shouldResolveAttrs, err := r.fetchProviderEntry(ctx, scheme, location)
+	if err != nil {
+		return provider.Entry{}, err
+	}
+
+	return r.resolveEntryAttributes(ctx, entry, shouldResolveAttrs, depth)
 }
 
 func resolveSliceRecursive[T any](ctx context.Context, r *Resolver, typedVal []T, depth int, configKey string, formatFn func(any) T) ([]T, error) {
