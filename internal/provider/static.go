@@ -310,7 +310,7 @@ func matchTags(entryTags, queryTagsLower []string) bool {
 		for _, t := range entryTags {
 			if len(t) == len(qt) {
 				match := true
-				for i := 0; i < len(t); i++ {
+				for i := range len(t) {
 					c1 := t[i]
 					c2 := qt[i]
 					if c1 != c2 {
