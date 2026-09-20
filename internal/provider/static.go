@@ -139,7 +139,11 @@ func (p *staticProvider) parseSingleEntity(cfg ProviderConfig, raw map[string]an
 		switch kLower {
 		case "tags":
 			if len(tags) == 0 {
-				tags = utils.ParseTags(v)
+				parsedTags := utils.ParseTags(v)
+				tags = make([]string, len(parsedTags))
+				for i, t := range parsedTags {
+					tags[i] = strings.ToLower(t)
+				}
 			}
 		case "title":
 			if cfg.EntityName == "" {
@@ -185,7 +189,11 @@ func (p *staticProvider) parseMultiEntities(raw map[string]any, entitiesRootKey 
 			kLower := strings.ToLower(k)
 			switch kLower {
 			case "tags":
-				entry.Tags = utils.ParseTags(v)
+				parsedTags := utils.ParseTags(v)
+				entry.Tags = make([]string, len(parsedTags))
+				for i, t := range parsedTags {
+					entry.Tags[i] = strings.ToLower(t)
+				}
 			case "title":
 				if str, ok := v.(string); ok {
 					entry.Title = str
@@ -263,13 +271,21 @@ func (p *staticProvider) Search(_ context.Context, query SearchQuery) ([]SearchR
 	queryTitleLower := strings.ToLower(query.Title)
 	queryPathLower := strings.ToLower(query.Path)
 
+	var queryTagsLower []string
+	if len(query.Tags) > 0 {
+		queryTagsLower = make([]string, len(query.Tags))
+		for i, t := range query.Tags {
+			queryTagsLower[i] = strings.ToLower(t)
+		}
+	}
+
 	if p.singleEntity {
 		entry, ok := p.entries[""]
 		if !ok {
 			return nil, fmt.Errorf("%s provider: single entity not found", p.scheme)
 		}
 
-		if matchEntry(entry, "", query, queryTitleLower, queryPathLower) {
+		if matchEntry(entry, "", query, queryTitleLower, queryPathLower, queryTagsLower) {
 			results = append(results, SearchResult{
 				Path:  "",
 				Entry: entry,
@@ -279,7 +295,7 @@ func (p *staticProvider) Search(_ context.Context, query SearchQuery) ([]SearchR
 	}
 
 	for name, entry := range p.entries {
-		if matchEntry(entry, name, query, queryTitleLower, queryPathLower) {
+		if matchEntry(entry, name, query, queryTitleLower, queryPathLower, queryTagsLower) {
 			results = append(results, SearchResult{
 				Path:  name,
 				Entry: entry,
@@ -290,11 +306,11 @@ func (p *staticProvider) Search(_ context.Context, query SearchQuery) ([]SearchR
 	return results, nil
 }
 
-func matchTags(entryTags, queryTags []string) bool {
-	for _, qt := range queryTags {
+func matchTags(entryTags, queryTagsLower []string) bool {
+	for _, qt := range queryTagsLower {
 		found := false
 		for _, t := range entryTags {
-			if strings.EqualFold(t, qt) {
+			if t == qt {
 				found = true
 				break
 			}
@@ -306,14 +322,14 @@ func matchTags(entryTags, queryTags []string) bool {
 	return true
 }
 
-func matchEntry(entry Entry, path string, query SearchQuery, queryTitleLower, queryPathLower string) bool {
+func matchEntry(entry Entry, path string, query SearchQuery, queryTitleLower, queryPathLower string, queryTagsLower []string) bool {
 	if query.Title != "" && !strings.Contains(strings.ToLower(entry.Title), queryTitleLower) {
 		return false
 	}
 	if query.Path != "" && !strings.Contains(strings.ToLower(path), queryPathLower) {
 		return false
 	}
-	if len(query.Tags) > 0 && !matchTags(entry.Tags, query.Tags) {
+	if len(query.Tags) > 0 && !matchTags(entry.Tags, queryTagsLower) {
 		return false
 	}
 	return true

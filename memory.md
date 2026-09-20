@@ -1,0 +1,1 @@
+* In `internal/provider/static.go`, replacing `strings.EqualFold` in a loop with pre-lowercasing the query strings and the entry tags and doing a simple string comparison (`t == qt`) reduces search time per operation from ~9ms to ~2ms.

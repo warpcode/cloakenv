@@ -112,7 +112,7 @@ func BenchmarkYamlProvider_Search(b *testing.B) {
 func BenchmarkYamlSearchTags(b *testing.B) {
 	y := NewYamlProvider()
 	for i := range 1000 {
-		y.entries[strconv.Itoa(i)] = Entry{
+		if y.entries == nil { y.entries = make(map[string]Entry) }; y.entries[strconv.Itoa(i)] = Entry{
 			Title: "Test",
 			Tags:  []string{"tag1", "tag2", "tag3"},
 		}
