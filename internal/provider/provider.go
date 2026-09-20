@@ -42,6 +42,8 @@ type ProviderConfig struct {
 	Searchable      bool
 	Tags            []string
 	EntitiesRootKey string
+	IncludeFields   []string
+	ExcludeFields   []string
 }
 
 // Entry represents a multi-secret credential record with metadata.

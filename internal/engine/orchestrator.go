@@ -45,6 +45,11 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 				return nil, fmt.Errorf("invalid config: vault name %q conflicts with reserved scheme", vaultName)
 			}
 
+			filter := provider.NewFieldFilter(vault.IncludeFields, vault.ExcludeFields)
+			if err := filter.Validate(); err != nil {
+				return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
+			}
+
 			// If resolve_values is set, ask the provider whether it supports it.
 			if vault.ResolveValues {
 				p, err := newBareProvider(vault.Provider)

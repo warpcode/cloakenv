@@ -231,3 +231,133 @@ func TestOrchestratorFacade(t *testing.T) {
 		}
 	})
 }
+
+func TestOrchestrator_FieldFiltering(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	ctx := context.Background()
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"filtered_vault": {
+				Provider: "custom_vault",
+				IncludeFields: []string{
+					"env:*",
+					"UserName",
+					"Password",
+				},
+				ExcludeFields: []string{
+					"Password",
+					"env:internal_*",
+				},
+				Entities: map[string]map[string]any{
+					"app_entry": {
+						"UserName":           "app_user",
+						"Password":           "supersecret",
+						"env:public":         "public_val",
+						"env:internal_token": "internal_val",
+						"secret_note":        "hidden note",
+						"tags":               []string{"prod"},
+						"title":              "App Entry",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("NewOrchestrator failed: %v", err)
+	}
+
+	t.Run("Resolve allowed field", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, "${filtered_vault://app_entry:UserName}")
+		if err != nil {
+			t.Fatalf("Resolve UserName failed: %v", err)
+		}
+		if val != "app_user" {
+			t.Errorf("got %q, want %q", val, "app_user")
+		}
+
+		envVal, err := orch.Resolve(ctx, "${filtered_vault://app_entry:env:public}")
+		if err != nil {
+			t.Fatalf("Resolve env:public failed: %v", err)
+		}
+		if envVal != "public_val" {
+			t.Errorf("got %q, want %q", envVal, "public_val")
+		}
+	})
+
+	t.Run("Resolve excluded fields return error", func(t *testing.T) {
+		_, err := orch.Resolve(ctx, "${filtered_vault://app_entry:Password}")
+		if err == nil {
+			t.Errorf("expected error resolving excluded Password, got nil")
+		}
+
+		_, err = orch.Resolve(ctx, "${filtered_vault://app_entry:env:internal_token}")
+		if err == nil {
+			t.Errorf("expected error resolving excluded env:internal_token, got nil")
+		}
+
+		_, err = orch.Resolve(ctx, "${filtered_vault://app_entry:secret_note}")
+		if err == nil {
+			t.Errorf("expected error resolving non-included secret_note, got nil")
+		}
+	})
+
+	t.Run("GetEntry attributes are filtered", func(t *testing.T) {
+		entry, err := orch.GetEntry(ctx, "filtered_vault://app_entry")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if _, ok := entry.Attributes["UserName"]; !ok {
+			t.Errorf("expected UserName attribute in entry")
+		}
+		if _, ok := entry.Attributes["env:public"]; !ok {
+			t.Errorf("expected env:public attribute in entry")
+		}
+		if _, ok := entry.Attributes["Password"]; ok {
+			t.Errorf("expected Password attribute to be filtered out")
+		}
+		if _, ok := entry.Attributes["env:internal_token"]; ok {
+			t.Errorf("expected env:internal_token attribute to be filtered out")
+		}
+		if _, ok := entry.Attributes["secret_note"]; ok {
+			t.Errorf("expected secret_note attribute to be filtered out")
+		}
+	})
+
+	t.Run("Search filters entry attributes and expression context", func(t *testing.T) {
+		results, err := orch.Search(ctx, `"prod" in tags`, nil)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("Search len = %d, want 1", len(results))
+		}
+		attrs := results[0].Entry.Attributes
+		if _, ok := attrs["UserName"]; !ok {
+			t.Errorf("expected UserName in search result attributes")
+		}
+		if _, ok := attrs["Password"]; ok {
+			t.Errorf("expected Password to be filtered out from search result attributes")
+		}
+	})
+
+	t.Run("Invalid glob pattern in config fails NewOrchestrator", func(t *testing.T) {
+		badCfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"bad_vault": {
+					Provider:      "custom_vault",
+					IncludeFields: []string{"["},
+				},
+			},
+		}
+		_, err := NewOrchestrator(badCfg)
+		if err == nil {
+			t.Errorf("expected NewOrchestrator error for invalid glob pattern, got nil")
+		}
+	})
+}
