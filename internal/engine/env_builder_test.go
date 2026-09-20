@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -490,5 +491,58 @@ func TestBuildEnvDeterministicOrder(t *testing.T) {
 				t.Fatalf("run %d index %d: expected %q, got %q", i, j, expected[j], item)
 			}
 		}
+	}
+}
+
+func TestNormalizeURIs(t *testing.T) {
+	tests := []struct {
+		name string
+		uris []string
+		want []string
+	}{
+		{
+			name: "empty list",
+			uris: []string{},
+			want: []string{},
+		},
+		{
+			name: "nil list",
+			uris: nil,
+			want: []string{},
+		},
+		{
+			name: "list with empty strings and spaces",
+			uris: []string{"", "   ", "\t"},
+			want: []string{},
+		},
+		{
+			name: "list without schemes",
+			uris: []string{"my_vault", "another_vault"},
+			want: []string{"my_vault://", "another_vault://"},
+		},
+		{
+			name: "list with schemes",
+			uris: []string{"env://", "keyring://my-service"},
+			want: []string{"env://", "keyring://my-service"},
+		},
+		{
+			name: "mixed list",
+			uris: []string{"env://", "my_vault", "  ", "keyring://"},
+			want: []string{"env://", "my_vault://", "keyring://"},
+		},
+		{
+			name: "needs trimming",
+			uris: []string{"  env://  ", " my_vault\t"},
+			want: []string{"env://", "my_vault://"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeURIs(tt.uris)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("normalizeURIs() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
