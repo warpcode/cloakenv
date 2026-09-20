@@ -62,6 +62,11 @@ func TestRunCommand(t *testing.T) {
 			cmdArgs:  []string{"this-command-does-not-exist-123456789"},
 			wantCode: 1,
 		},
+		{
+			name:     "null_byte_arg",
+			cmdArgs:  []string{"echo", "hello\x00world"},
+			wantCode: 1,
+		},
 	}
 
 	for _, tt := range tests {

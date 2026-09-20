@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // RunCommand wraps command execution on Windows using os/exec.Command.
@@ -23,6 +24,20 @@ func RunCommand(cmdArgs []string, env []string) int {
 	if commandName == "" || commandName == "." || commandName == ".." {
 		fmt.Fprintf(os.Stderr, "Invalid command: %q\n", commandName)
 		return 1
+	}
+
+	for i, arg := range cmdArgs {
+		if strings.IndexByte(arg, 0) != -1 {
+			fmt.Fprintf(os.Stderr, "Invalid argument at index %d: contains null byte\n", i)
+			return 1
+		}
+	}
+
+	for i, e := range env {
+		if strings.IndexByte(e, 0) != -1 {
+			fmt.Fprintf(os.Stderr, "Invalid environment variable at index %d: contains null byte\n", i)
+			return 1
+		}
 	}
 
 	binary, err := exec.LookPath(commandName)
