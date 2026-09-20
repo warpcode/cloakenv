@@ -98,6 +98,7 @@ go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run  # Ful
 - Avoid `init()` functions; prefer explicit initialization in constructors.
 - Table-driven tests are preferred for unit tests covering multiple input cases.
 - Benchmark functions live in `*_benchmark_test.go` files within the same package.
+- **Entry & Tag Immutability**: `Entry.Tags` must NEVER be mutated (e.g. lowercased) at parse time. Lowercasing tags at parse time destroys original casing and breaks data fidelity for `GetEntry()` callers. Case-insensitive tag matching must always be performed dynamically within the `Search` loop only (matching the pattern in `custom_vault.go` and `keepass.go`). When handling provider configs with `cfg.Tags` (such as in `internal/provider/static.go`), beware of regression paths that bypass lowercasing logic when `len(tags) == 0`.
 
 ### Interfaces & Extensibility
 
@@ -183,6 +184,7 @@ The `testdata/testDB.kdbx` database provides a stable fixture for KeePass integr
 
 - Only modify files within the `cloakenv` workspace.
 - Do not modify files outside this workspace (e.g., `~/.agents/AGENTS.md`) unless the user explicitly requests a global memory update.
+- **Workspace Hygiene**: Subagents and audit tasks must NEVER write files to the workspace root (`/home/jase/src/cloakenv/`) during non-invasive audits or reviews. All temporary files, review payloads, and scratch scripts must be written to `/tmp/` or the agent scratch directory (`scratch/`).
 
 ### Code Changes
 
@@ -191,6 +193,10 @@ The `testdata/testDB.kdbx` database provides a stable fixture for KeePass integr
 - **No unrequested refactors**: Do not restructure, rename, or reorganize code beyond the stated scope.
 - **No new dependencies**: Do not add `go get` calls or modify `go.mod` without explicit user approval.
 - **Verify compilation**: After any Go change, confirm the build still passes (`make build` or `go build ./...`).
+
+### Execution Security & Environment Constraints
+
+- **Python Inline Execution Blocked**: The runtime security hook (`ai-command-gate`) blocks `python3 -c` inline execution with `SECURITY GUARD: Python inline execution is unsafe`. Always write Python scripts to a file (in `/tmp/` or agent scratch) and execute via `python3 <file>`.
 
 ### Testing Gate
 
@@ -230,6 +236,14 @@ Formal PRs must be created using the `github-pull-requests` skill. Required PR f
 | Body | What changed, why, and how to test it |
 | CI | All checks green before requesting review |
 | Branch | Delete immediately after merge |
+
+### Bot-Authored PRs & Known Contamination Patterns
+
+When reviewing PRs authored by automated bots (such as Google Jules / `google-labs-jules[bot]`):
+- **Smuggled Autoload Refactors**: Jules consistently attempts an unrequested `regexCache sync.Map` autoload refactor across unrelated feature PRs, frequently accompanied by removing `CompileAutoloadRules()` or inlining `normalizeURIs`. Strictly reject these out-of-scope refactors under the "No unrequested refactors" rule.
+- **Spurious Workflow Deletions**: Jules repeatedly deletes `.github/workflows/reject-empty-commit.yml` across unrelated PRs. Always verify this workflow file remains intact.
+- **Checklist Non-Compliance**: Jules routinely implements Go provider code but skips updating `README.md` and `examples/config.yaml`. Enforce all items in the *Provider Development Checklist*.
+- **Review Feedback Delivery**: All review findings MUST go into inline file-level comments (`REQUEST_CHANGES`). The top-level review body must be a neutral one-liner because bot runners only parse inline comments. Deleted files have no added lines (`side: RIGHT`) to anchor comments; bundle any deleted file findings into an inline comment on a modified file.
 
 ---
 
