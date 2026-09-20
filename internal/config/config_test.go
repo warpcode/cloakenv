@@ -49,6 +49,12 @@ vaults:
     entities_root_key: entries
     searchable: false
     single_entity: false
+    include_fields:
+      - "env:*"
+      - "UserName"
+    exclude_fields:
+      - "*.notes"
+      - "secret:*"
   custom_static:
     provider: custom_vault
     single_entity: true
@@ -107,6 +113,14 @@ autoload:
 
 	if vault.SingleEntity == nil || *vault.SingleEntity != false {
 		t.Error("expected single_entity to be false")
+	}
+
+	if len(vault.IncludeFields) != 2 || vault.IncludeFields[0] != "env:*" || vault.IncludeFields[1] != "UserName" {
+		t.Errorf("expected include_fields [env:*, UserName], got %v", vault.IncludeFields)
+	}
+
+	if len(vault.ExcludeFields) != 2 || vault.ExcludeFields[0] != "*.notes" || vault.ExcludeFields[1] != "secret:*" {
+		t.Errorf("expected exclude_fields [*.notes, secret:*], got %v", vault.ExcludeFields)
 	}
 
 	// Verify custom static vault parsing
