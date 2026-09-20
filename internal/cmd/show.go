@@ -82,21 +82,37 @@ func parseShowFlags(args []string) (*showOptions, error) {
 }
 
 func buildMergedEntry(ctx context.Context, orch *engine.Orchestrator, merges []string, whitelist []string, explicit map[string]string) (provider.Entry, error) {
-	entries, err := resolveMerges(ctx, orch, merges)
+	entries, err := resolveMergedEntries(ctx, orch, merges)
 	if err != nil {
 		return provider.Entry{}, err
 	}
 
-	entry := mergeEntries(entries, whitelist)
+	tags, attributes := mergeTagsAndAttributes(entries, whitelist)
 
-	if err := resolveExplicitMappings(ctx, orch, explicit, &entry); err != nil {
+	explicitResolved, err := resolveExplicitMappings(ctx, orch, explicit)
+	if err != nil {
 		return provider.Entry{}, err
 	}
 
-	return entry, nil
+	for k, v := range explicitResolved {
+		attributes[k] = v
+	}
+
+	if tags == nil {
+		tags = []string{}
+	}
+
+	return provider.Entry{
+		Tags:       tags,
+		Attributes: attributes,
+	}, nil
 }
 
-func resolveMerges(ctx context.Context, orch *engine.Orchestrator, merges []string) ([]provider.Entry, error) {
+func resolveMergedEntries(ctx context.Context, orch *engine.Orchestrator, merges []string) ([]provider.Entry, error) {
+	if len(merges) == 0 {
+		return nil, nil
+	}
+
 	type loadedEntry struct {
 		entry provider.Entry
 		err   error
@@ -123,12 +139,7 @@ func resolveMerges(ctx context.Context, orch *engine.Orchestrator, merges []stri
 	return entries, nil
 }
 
-func mergeEntries(entries []provider.Entry, whitelist []string) provider.Entry {
-	entry := provider.Entry{
-		Tags:       []string{},
-		Attributes: make(map[string]any),
-	}
-
+func mergeTagsAndAttributes(entries []provider.Entry, whitelist []string) ([]string, map[string]any) {
 	whitelistSet := make(map[string]bool)
 	for _, k := range whitelist {
 		whitelistSet[utils.FormatKey(k)] = true
@@ -136,33 +147,35 @@ func mergeEntries(entries []provider.Entry, whitelist []string) provider.Entry {
 	hasWhitelist := len(whitelist) > 0
 
 	tagSet := make(map[string]bool)
+	attributes := make(map[string]any)
+
 	for _, e := range entries {
 		for _, tag := range e.Tags {
 			tagSet[tag] = true
 		}
 		for k, v := range e.Attributes {
-			kLower := strings.ToLower(k)
-			if kLower == "title" || kLower == "tags" {
+			if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 				continue
 			}
 			formattedKey := utils.FormatKey(k)
 			if hasWhitelist && !whitelistSet[formattedKey] {
 				continue
 			}
-			entry.Attributes[k] = v
+			attributes[k] = v
 		}
 	}
 
+	var uniqueTags []string
 	for tag := range tagSet {
-		entry.Tags = append(entry.Tags, tag)
+		uniqueTags = append(uniqueTags, tag)
 	}
 
-	return entry
+	return uniqueTags, attributes
 }
 
-func resolveExplicitMappings(ctx context.Context, orch *engine.Orchestrator, explicit map[string]string, entry *provider.Entry) error {
+func resolveExplicitMappings(ctx context.Context, orch *engine.Orchestrator, explicit map[string]string) (map[string]string, error) {
 	if len(explicit) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	type resolvedMapping struct {
@@ -184,14 +197,14 @@ func resolveExplicitMappings(ctx context.Context, orch *engine.Orchestrator, exp
 	}
 	eWg.Wait()
 
+	results := make(map[string]string, len(explicit))
 	for _, rm := range resolvedList {
 		if rm.err != nil {
-			return fmt.Errorf("failed to resolve mapping %s=%s: %w", rm.key, explicit[rm.key], rm.err)
+			return nil, fmt.Errorf("failed to resolve mapping %s=%s: %w", rm.key, explicit[rm.key], rm.err)
 		}
-		entry.Attributes[rm.key] = rm.val
+		results[rm.key] = rm.val
 	}
-
-	return nil
+	return results, nil
 }
 
 // Show handles "cloakenv show <entry-uri> [--yaml | --json]"
@@ -233,8 +246,7 @@ func Show(args []string, cfg *config.Config) int {
 	// Format all keys in entry.Attributes by default
 	formattedAttributes := make(map[string]any)
 	for k, v := range entry.Attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
+		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
 		formattedAttributes[utils.FormatKey(k)] = v
@@ -262,8 +274,7 @@ func Show(args []string, cfg *config.Config) int {
 
 func printEnvFormat(attributes map[string]any) {
 	for k, v := range attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
+		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
 		strVal, _ := utils.SerializeAttrValue(v)
@@ -282,8 +293,7 @@ func shouldQuoteDotenvValue(s string) bool {
 
 func printKeysFormat(attributes map[string]any) {
 	for k := range attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
+		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
 		fmt.Println(k)

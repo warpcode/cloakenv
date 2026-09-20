@@ -144,13 +144,13 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 }
 
 // BuildEnv constructs the full environment block without command autoloading.
-func (o *Orchestrator) BuildEnv(ctx context.Context, explicit map[string]string, merges []string, whitelist []string, emptyEnv bool) ([]string, error) {
-	return o.envBuilder.BuildEnv(ctx, explicit, merges, whitelist, emptyEnv)
+func (o *Orchestrator) BuildEnv(ctx context.Context, cfg EnvConfig) ([]string, error) {
+	return o.envBuilder.BuildEnv(ctx, cfg)
 }
 
 // BuildEnvForCommand constructs the full environment block and evaluates config autoload rules.
-func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cmdArgs []string, explicit map[string]string, merges []string, whitelist []string, emptyEnv bool) ([]string, []string, error) {
-	return o.envBuilder.BuildEnvForCommand(ctx, cmdArgs, explicit, merges, whitelist, emptyEnv)
+func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cfg EnvConfig) ([]string, []string, error) {
+	return o.envBuilder.BuildEnvForCommand(ctx, cfg)
 }
 
 // Keyring returns the built-in keyring provider for direct access

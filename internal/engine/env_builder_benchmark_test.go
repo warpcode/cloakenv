@@ -131,7 +131,7 @@ func BenchmarkBuildEnvMerges(b *testing.B) {
 
 	b.ResetTimer()
 	for range b.N {
-		_, err := orch.BuildEnv(ctx, nil, merges, nil, true)
+		_, err := orch.BuildEnv(ctx, EnvConfig{Merges: merges, EmptyEnv: true})
 		if err != nil {
 			b.Fatal(err)
 		}

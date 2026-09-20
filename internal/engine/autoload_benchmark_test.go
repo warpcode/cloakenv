@@ -66,7 +66,7 @@ func BenchmarkBuildEnvForCommand_Autoload(b *testing.B) {
 
 	b.ResetTimer()
 	for range b.N {
-		_, _, err := eb.BuildEnvForCommand(ctx, cmdArgs, nil, nil, nil, true)
+		_, _, err := eb.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs, EmptyEnv: true})
 		if err != nil {
 			b.Fatal(err)
 		}

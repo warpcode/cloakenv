@@ -130,7 +130,7 @@ func TestOrchestratorFacade(t *testing.T) {
 	})
 
 	t.Run("BuildEnv and BuildEnvForCommand", func(t *testing.T) {
-		env, err := orch.BuildEnv(ctx, map[string]string{"CUSTOM": "test_vault://service_a:API_KEY"}, nil, nil, true)
+		env, err := orch.BuildEnv(ctx, EnvConfig{Explicit: map[string]string{"CUSTOM": "test_vault://service_a:API_KEY"}, EmptyEnv: true})
 		if err != nil {
 			t.Fatalf("BuildEnv failed: %v", err)
 		}
@@ -138,7 +138,7 @@ func TestOrchestratorFacade(t *testing.T) {
 			t.Errorf("BuildEnv() = %v, want [CUSTOM=secret-api-key]", env)
 		}
 
-		args, cmdEnv, err := orch.BuildEnvForCommand(ctx, []string{"deploy", "--run"}, nil, nil, nil, true)
+		args, cmdEnv, err := orch.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: []string{"deploy", "--run"}, EmptyEnv: true})
 		if err != nil {
 			t.Fatalf("BuildEnvForCommand failed: %v", err)
 		}
