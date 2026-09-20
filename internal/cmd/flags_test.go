@@ -23,10 +23,22 @@ func TestFlagParser_Bool(t *testing.T) {
 
 	remaining, err := fp.Parse([]string{"-v"})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("unexpected error parsing -v: %v", err)
 	}
 	if !verbose {
-		t.Errorf("expected verbose to be true, got false")
+		t.Errorf("expected verbose to be true after -v, got false")
+	}
+	if len(remaining) != 0 {
+		t.Errorf("expected remaining to be empty, got %v", remaining)
+	}
+
+	verbose = false
+	remaining, err = fp.Parse([]string{"--verbose"})
+	if err != nil {
+		t.Fatalf("unexpected error parsing --verbose: %v", err)
+	}
+	if !verbose {
+		t.Errorf("expected verbose to be true after --verbose, got false")
 	}
 	if len(remaining) != 0 {
 		t.Errorf("expected remaining to be empty, got %v", remaining)
@@ -111,6 +123,17 @@ func TestFlagParser_Parse(t *testing.T) {
 			},
 			args:          []string{"--", "foo"},
 			wantRemaining: []string{"foo"},
+		},
+		{
+			name: "flag taking value treats dash dash as value before StopOnDashDash check",
+			setup: func() *FlagParser {
+				fp := NewFlagParser()
+				var vals []string
+				fp.StringSlice([]string{"--opt"}, &vals, "")
+				return fp
+			},
+			args:          []string{"--opt", "--", "extra"},
+			wantRemaining: []string{"extra"},
 		},
 		{
 			name: "single dash is treated as positional argument",
