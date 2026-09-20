@@ -152,10 +152,7 @@ func (p *staticProvider) parseSingleEntity(cfg ProviderConfig, raw map[string]an
 		}
 	}
 	if len(cfg.Tags) > 0 {
-		tags = make([]string, len(cfg.Tags))
-		for i, t := range cfg.Tags {
-			tags[i] = strings.ToLower(t)
-		}
+		tags = cfg.Tags
 	}
 	entry.Tags = tags
 	p.entries[""] = entry
@@ -308,29 +305,9 @@ func matchTags(entryTags, queryTagsLower []string) bool {
 	for _, qt := range queryTagsLower {
 		found := false
 		for _, t := range entryTags {
-			if len(t) == len(qt) {
-				match := true
-				for i := range len(t) {
-					c1 := t[i]
-					c2 := qt[i]
-					if c1 != c2 {
-						if 'A' <= c1 && c1 <= 'Z' {
-							c1 += 'a' - 'A'
-						}
-						if c1 != c2 {
-							if c1 >= 0x80 || c2 >= 0x80 {
-								match = strings.EqualFold(t, qt)
-								break
-							}
-							match = false
-							break
-						}
-					}
-				}
-				if match {
-					found = true
-					break
-				}
+			if strings.ToLower(t) == qt {
+				found = true
+				break
 			}
 		}
 		if !found {
