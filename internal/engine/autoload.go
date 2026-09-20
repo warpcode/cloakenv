@@ -6,14 +6,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/warpcode/cloakenv/internal/config"
 )
-
-// regexCache stores compiled regular expressions to avoid recompilation on
-// every autoload rule evaluation.
-var regexCache sync.Map
 
 type parsedCmd struct {
 	fullCmd       string
@@ -68,7 +63,9 @@ func IsRunAlias(cfg *config.Config, cmdArgs []string) bool {
 // MatchCommand reports whether a command argument slice matches an autoload rule match pattern.
 // As a boolean predicate, substitution errors are intentionally not surfaced.
 func MatchCommand(ruleMatch string, cmdArgs []string) bool {
-	matched, _, _ := MatchCommandRule(config.AutoloadRule{Match: ruleMatch}, cmdArgs)
+	rule := config.AutoloadRule{Match: ruleMatch}
+	rule.Compile()
+	matched, _, _ := MatchCommandRule(rule, cmdArgs)
 	return matched
 }
 
@@ -96,15 +93,9 @@ func matchPreparedCommandRule(rule config.AutoloadRule, cmdArgs []string, parsed
 	var re *regexp.Regexp
 	var matchIndices []int
 
-	// 1. Attempt Regex compilation & match (cached)
-	if cached, ok := regexCache.Load(pattern); ok {
-		compiled := cached.(*regexp.Regexp)
-		if indices := compiled.FindStringSubmatchIndex(parsed.fullCmd); indices != nil {
-			re = compiled
-			matchIndices = indices
-		}
-	} else if compiled, err := regexp.Compile(pattern); err == nil {
-		regexCache.Store(pattern, compiled)
+	// 1. Attempt Regex match (precompiled)
+	compiled := rule.CompiledRegex
+	if compiled != nil {
 		if indices := compiled.FindStringSubmatchIndex(parsed.fullCmd); indices != nil {
 			re = compiled
 			matchIndices = indices

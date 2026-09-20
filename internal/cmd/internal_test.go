@@ -28,6 +28,7 @@ func TestInternalMatchAlias(t *testing.T) {
 			},
 		},
 	}
+	cfg.CompileAutoloadRules()
 
 	captureStdout := func(t *testing.T, fn func()) string {
 		t.Helper()

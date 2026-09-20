@@ -22,6 +22,8 @@ type Orchestrator struct {
 
 // NewOrchestrator creates a new orchestrator with the given config,
 // registers built-in providers, and validates all remote configurations.
+// Note: config.Load automatically precompiles autoload rules. Callers constructing
+// a Config struct manually should call cfg.CompileAutoloadRules() before evaluation.
 func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	kr := provider.NewOSKeyringProvider()
 	env := provider.NewEnvProvider()
