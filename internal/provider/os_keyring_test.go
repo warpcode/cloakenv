@@ -107,3 +107,44 @@ func TestOSKeyringProvider_Validate(t *testing.T) {
 		})
 	}
 }
+
+func TestOSKeyringProvider_RawSecrets(t *testing.T) {
+	keyring.MockInit()
+
+	kp := NewOSKeyringProvider()
+
+	service := "raw-test-service"
+	account := "raw-test-account"
+	secretVal := "raw-secret-content"
+
+	// Set raw secret
+	if err := kp.SetRawSecret(service, account, secretVal); err != nil {
+		t.Fatalf("SetRawSecret failed: %v", err)
+	}
+
+	// Verify using go-keyring directly since there's no GetRawSecret
+	got, err := keyring.Get(service, account)
+	if err != nil {
+		t.Fatalf("Failed to verify raw secret set: %v", err)
+	}
+	if got != secretVal {
+		t.Errorf("expected %q, got %q", secretVal, got)
+	}
+
+	// Delete raw secret
+	if err := kp.DeleteRawSecret(service, account); err != nil {
+		t.Fatalf("DeleteRawSecret failed: %v", err)
+	}
+
+	// Verify delete
+	_, err = keyring.Get(service, account)
+	if err == nil {
+		t.Errorf("expected error getting deleted raw secret")
+	}
+
+	// Delete non-existent raw secret
+	err = kp.DeleteRawSecret("non-existent-service", "non-existent-account")
+	if err == nil {
+		t.Errorf("expected error deleting non-existent raw secret")
+	}
+}
