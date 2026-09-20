@@ -34,7 +34,7 @@ func Auth(args []string, cfg *config.Config) int {
 	}
 }
 
-// authLogin handles "cloakenv auth login <scheme>".
+// authLogin handles "cloakenv auth login <vault>".
 func authLogin(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
 		PrintAuthLoginHelp()
@@ -61,7 +61,7 @@ func authLogin(args []string, cfg *config.Config) int {
 	return 0
 }
 
-// authForget handles "cloakenv auth forget <scheme>".
+// authForget handles "cloakenv auth forget <vault>".
 func authForget(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
 		PrintAuthForgetHelp()
