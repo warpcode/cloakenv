@@ -41,10 +41,10 @@ func authLogin(args []string, cfg *config.Config) int {
 		return 0
 	}
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: cloakenv auth login <scheme>")
+		fmt.Fprintln(os.Stderr, "Usage: cloakenv auth login <vault>")
 		return 1
 	}
-	scheme := args[0]
+	vault := args[0]
 
 	orch, err := engine.NewOrchestrator(cfg)
 	if err != nil {
@@ -52,12 +52,12 @@ func authLogin(args []string, cfg *config.Config) int {
 		return 1
 	}
 	ctx := context.Background()
-	if err := orch.Login(ctx, scheme); err != nil {
+	if err := orch.Login(ctx, vault); err != nil {
 		fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
 		return 1
 	}
 
-	fmt.Printf("Successfully authenticated and saved credentials for scheme %q\n", scheme)
+	fmt.Printf("Successfully authenticated and saved credentials for vault %q\n", vault)
 	return 0
 }
 
@@ -68,10 +68,10 @@ func authForget(args []string, cfg *config.Config) int {
 		return 0
 	}
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: cloakenv auth forget <scheme>")
+		fmt.Fprintln(os.Stderr, "Usage: cloakenv auth forget <vault>")
 		return 1
 	}
-	scheme := args[0]
+	vault := args[0]
 
 	orch, err := engine.NewOrchestrator(cfg)
 	if err != nil {
@@ -79,12 +79,12 @@ func authForget(args []string, cfg *config.Config) int {
 		return 1
 	}
 	ctx := context.Background()
-	if err := orch.Forget(ctx, scheme); err != nil {
+	if err := orch.Forget(ctx, vault); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to clear credentials: %v\n", err)
 		return 1
 	}
 
-	fmt.Printf("Successfully cleared credentials for scheme %q\n", scheme)
+	fmt.Printf("Successfully cleared credentials for vault %q\n", vault)
 	return 0
 }
 
