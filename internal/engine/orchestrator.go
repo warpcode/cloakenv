@@ -86,6 +86,19 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 				}
 			case "custom_vault":
 				// custom_vault is statically defined in config, so it is always valid.
+			case "search":
+				if vault.Searchable != nil {
+					return nil, fmt.Errorf("invalid config for vault %q: search provider does not support the searchable flag", vaultName)
+				}
+				if len(vault.SourceVaults) == 0 {
+					return nil, fmt.Errorf("invalid config for vault %q: search provider requires source_vaults", vaultName)
+				}
+				if strings.TrimSpace(vault.Query) == "" {
+					return nil, fmt.Errorf("invalid config for vault %q: search provider requires query", vaultName)
+				}
+				if err := validateExpression(vault.Query); err != nil {
+					return nil, fmt.Errorf("invalid config for vault %q: invalid search query: %w", vaultName, err)
+				}
 			default:
 				return nil, fmt.Errorf("unsupported provider type %q for vault %q", vault.Provider, vaultName)
 			}
@@ -102,6 +115,11 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	concurrencySem := make(chan struct{}, maxConcurrency)
 	resolver := NewResolver(pm, concurrencySem)
 	searcher := NewSearcher(pm, resolver)
+
+	// Register search runner for search provider vaults
+	pm.SetSearchRunner(func(ctx context.Context, expressionStr string, repoScopes []string) ([]provider.SearchResult, error) {
+		return searcher.Search(ctx, expressionStr, repoScopes)
+	})
 
 	// Break the circular dependency by setting the search callback dynamically
 	resolver.SetSearchFunc(func(ctx context.Context, expressionStr string, depth int) ([]provider.SearchResult, error) {
