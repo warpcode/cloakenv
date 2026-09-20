@@ -73,6 +73,9 @@ func (s *Searcher) getSearchableProviders(ctx context.Context, repoScopes []stri
 			if vaultConfig.Searchable != nil && !*vaultConfig.Searchable {
 				continue
 			}
+			if vaultConfig.Provider == "search" {
+				continue
+			}
 			p, _, err := s.providers.GetProvider(ctx, vaultName)
 			if err != nil {
 				continue

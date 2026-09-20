@@ -96,6 +96,12 @@ type VaultConfig struct {
 	// Only whole-value replacement is supported; inline interpolation is not.
 	// Defaults to false.
 	ResolveValues bool `yaml:"resolve_values"`
+
+	// SourceVaults defines the list of source vaults to query for search provider.
+	SourceVaults []string `yaml:"source_vaults"`
+
+	// Query is the search expression string used by search provider to filter entries.
+	Query string `yaml:"query"`
 }
 
 // DefaultConfigPath returns the default configuration file path:

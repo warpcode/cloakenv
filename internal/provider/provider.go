@@ -32,6 +32,10 @@ type SecretProvider interface {
 	Validate(settings map[string]string) error
 }
 
+// SearchRunner is a function type used by virtual providers (like search)
+// to execute search queries against the engine.
+type SearchRunner func(ctx context.Context, expressionStr string, repoScopes []string) ([]SearchResult, error)
+
 // ProviderConfig carries backend-specific initialization parameters.
 type ProviderConfig struct {
 	Settings        map[string]string
@@ -42,6 +46,9 @@ type ProviderConfig struct {
 	Searchable      bool
 	Tags            []string
 	EntitiesRootKey string
+	SourceVaults    []string
+	Query           string
+	SearchRunner    SearchRunner
 }
 
 // Entry represents a multi-secret credential record with metadata.
