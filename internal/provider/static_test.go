@@ -367,3 +367,106 @@ func TestStaticProvider_Search(t *testing.T) {
 		}
 	})
 }
+
+func TestStaticProvider_GetEntry(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("single entity mode success", func(t *testing.T) {
+		t.Parallel()
+		sp := &staticProvider{
+			scheme:       "json",
+			singleEntity: true,
+			entries: map[string]Entry{
+				"": {
+					Title: "Single Vault",
+					Tags:  []string{"env:prod"},
+					Attributes: map[string]any{
+						"key": "val",
+					},
+				},
+			},
+		}
+
+		entry, err := sp.GetEntry(ctx, "")
+		if err != nil {
+			t.Fatalf("GetEntry() unexpected error = %v", err)
+		}
+		if entry.Title != "Single Vault" {
+			t.Errorf("GetEntry() Title = %q, want %q", entry.Title, "Single Vault")
+		}
+
+		entryLoc, err := sp.GetEntry(ctx, "ignored_location")
+		if err != nil {
+			t.Fatalf("GetEntry() unexpected error = %v", err)
+		}
+		if entryLoc.Title != "Single Vault" {
+			t.Errorf("GetEntry() Title = %q, want %q", entryLoc.Title, "Single Vault")
+		}
+	})
+
+	t.Run("single entity mode missing entry error", func(t *testing.T) {
+		t.Parallel()
+		sp := &staticProvider{
+			scheme:       "json",
+			singleEntity: true,
+			entries:      map[string]Entry{},
+		}
+
+		_, err := sp.GetEntry(ctx, "")
+		if err == nil {
+			t.Fatal("GetEntry() expected error when single entity is missing, got nil")
+		}
+		wantMsg := "json provider: single entity not found"
+		if err.Error() != wantMsg {
+			t.Errorf("GetEntry() error = %q, want %q", err.Error(), wantMsg)
+		}
+	})
+
+	t.Run("multi entity mode success", func(t *testing.T) {
+		t.Parallel()
+		sp := &staticProvider{
+			scheme:       "yaml",
+			singleEntity: false,
+			entries: map[string]Entry{
+				"db/prod": {
+					Title: "Prod DB",
+					Tags:  []string{"role:db"},
+					Attributes: map[string]any{
+						"host": "db.prod",
+					},
+				},
+			},
+		}
+
+		entry, err := sp.GetEntry(ctx, "db/prod")
+		if err != nil {
+			t.Fatalf("GetEntry() unexpected error = %v", err)
+		}
+		if entry.Title != "Prod DB" {
+			t.Errorf("GetEntry() Title = %q, want %q", entry.Title, "Prod DB")
+		}
+		if !reflect.DeepEqual(entry.Tags, []string{"role:db"}) {
+			t.Errorf("GetEntry() Tags = %v, want %v", entry.Tags, []string{"role:db"})
+		}
+	})
+
+	t.Run("multi entity mode missing entry error", func(t *testing.T) {
+		t.Parallel()
+		sp := &staticProvider{
+			scheme:       "yaml",
+			singleEntity: false,
+			entries: map[string]Entry{
+				"db/prod": {Title: "Prod DB"},
+			},
+		}
+
+		_, err := sp.GetEntry(ctx, "db/staging")
+		if err == nil {
+			t.Fatal("GetEntry() expected error for non-existent entry, got nil")
+		}
+		wantMsg := `yaml provider: entry "db/staging" not found`
+		if err.Error() != wantMsg {
+			t.Errorf("GetEntry() error = %q, want %q", err.Error(), wantMsg)
+		}
+	})
+}
