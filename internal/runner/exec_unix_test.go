@@ -101,6 +101,16 @@ func TestRunCommand_InvalidArgs(t *testing.T) {
 			args: []string{".."},
 			want: "Invalid command: \"..\"",
 		},
+		{
+			name: "null byte in command",
+			args: []string{"echo\x00bar"},
+			want: "contains null byte",
+		},
+		{
+			name: "null byte in argument",
+			args: []string{"echo", "hello\x00world"},
+			want: "contains null byte",
+		},
 	}
 
 	for _, tt := range tests {
@@ -137,6 +147,40 @@ func TestRunCommand_InvalidArgs(t *testing.T) {
 				t.Errorf("Expected stderr to contain %q, got %q", tt.want, stderr.String())
 			}
 		})
+	}
+}
+
+func TestRunCommand_NullByteEnv(t *testing.T) {
+	var stderr bytes.Buffer
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	defer func() { _ = w.Close() }()
+
+	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+	})
+
+	exitCode := RunCommand([]string{"echo", "hi"}, []string{"BAD_VAR=foo\x00bar"})
+
+	_ = w.Close()
+	os.Stderr = oldStderr
+	_, err = stderr.ReadFrom(r)
+	if err != nil {
+		t.Fatalf("Failed to read from stderr pipe: %v", err)
+	}
+
+	if exitCode != 1 {
+		t.Errorf("Expected exit code 1, got %d", exitCode)
+	}
+
+	if !strings.Contains(stderr.String(), "Invalid environment variable") {
+		t.Errorf("Expected stderr to contain 'Invalid environment variable', got %q", stderr.String())
 	}
 }
 

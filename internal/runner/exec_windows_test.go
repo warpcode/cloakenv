@@ -45,6 +45,7 @@ func TestRunCommand(t *testing.T) {
 	tests := []struct {
 		name     string
 		cmdArgs  []string
+		env      []string
 		wantCode int
 	}{
 		{
@@ -62,11 +63,30 @@ func TestRunCommand(t *testing.T) {
 			cmdArgs:  []string{"this-command-does-not-exist-123456789"},
 			wantCode: 1,
 		},
+		{
+			name:     "null_byte_cmd",
+			cmdArgs:  []string{"echo\x00bar"},
+			wantCode: 1,
+		},
+		{
+			name:     "null_byte_arg",
+			cmdArgs:  []string{"echo", "hello\x00world"},
+			wantCode: 1,
+		},
+		{
+			name:     "null_byte_env",
+			cmdArgs:  []string{"echo", "hello"},
+			env:      []string{"BAD_VAR=foo\x00bar"},
+			wantCode: 1,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+			env := tt.env
+			if env == nil {
+				env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+			}
 			gotCode := RunCommand(tt.cmdArgs, env)
 			if gotCode != tt.wantCode {
 				t.Errorf("RunCommand() = %v, want %v", gotCode, tt.wantCode)
