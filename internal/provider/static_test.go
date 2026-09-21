@@ -116,9 +116,22 @@ func TestResolveDotPath(t *testing.T) {
 }
 
 func TestStaticProvider_Scheme(t *testing.T) {
-	p := &staticProvider{scheme: "json"}
-	if got := p.Scheme(); got != "json" {
-		t.Errorf("Scheme() = %q, want %q", got, "json")
+	tests := []struct {
+		name   string
+		scheme string
+	}{
+		{name: "json scheme", scheme: "json"},
+		{name: "yaml scheme", scheme: "yaml"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := &staticProvider{scheme: tt.scheme}
+			if got := p.Scheme(); got != tt.scheme {
+				t.Errorf("Scheme() = %q, want %q", got, tt.scheme)
+			}
+		})
 	}
 }
 
@@ -205,8 +218,9 @@ func TestStaticProvider_GetSecret(t *testing.T) {
 						},
 					},
 				},
-				location: "bad_val",
-				wantErr:  true,
+				location:   "bad_val",
+				wantErr:    true,
+				wantErrMsg: "dummy serialization error",
 			},
 		}
 
@@ -295,8 +309,9 @@ func TestStaticProvider_GetSecret(t *testing.T) {
 						"bad_field": make(chan int),
 					},
 				},
-				location: "bad_field",
-				wantErr:  true,
+				location:   "bad_field",
+				wantErr:    true,
+				wantErrMsg: "dummy serialization error",
 			},
 		}
 
