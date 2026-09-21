@@ -260,6 +260,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 				},
 			},
 		}
+		regexCfg.CompileAutoloadRules()
 
 		orchRegex, err := NewOrchestrator(regexCfg)
 		if err != nil {
@@ -302,6 +303,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 				},
 			},
 		}
+		uriCfg.CompileAutoloadRules()
 		orchURI, err := NewOrchestrator(uriCfg)
 		if err != nil {
 			t.Fatalf("failed to create orchestrator: %v", err)
@@ -372,6 +374,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 				},
 			},
 		}
+		secCfg.CompileAutoloadRules()
 		orchSec, err := NewOrchestrator(secCfg)
 		if err != nil {
 			t.Fatalf("failed to create orchestrator: %v", err)

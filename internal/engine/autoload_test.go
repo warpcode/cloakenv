@@ -172,6 +172,7 @@ func TestMatchRunAlias(t *testing.T) {
 			},
 		},
 	}
+	cfg.CompileAutoloadRules()
 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
@@ -252,6 +253,7 @@ func TestMatchCommandRule_Security(t *testing.T) {
 			Match:   `^litellm\s+(.*)$`,
 			Command: `uvx --with 'litellm[proxy]' litellm $1`,
 		}
+		rule.Compile()
 
 		tests := []struct {
 			name     string
@@ -306,6 +308,7 @@ func TestMatchCommandRule_Security(t *testing.T) {
 			Match:   `^mytool\s+(.*)$`,
 			Command: `myrealtool "$1"`,
 		}
+		rule.Compile()
 
 		cmdArgs := []string{"mytool", `foo.yaml' --injected "bar`}
 		matched, gotArgs, err := MatchCommandRule(rule, cmdArgs)
@@ -331,6 +334,7 @@ func TestMatchCommandRule_Security(t *testing.T) {
 			Match:   `^mytool\s+(.*)$`,
 			Command: `myrealtool '$1'`,
 		}
+		rule.Compile()
 
 		cmdArgs := []string{"mytool", "foo'bar"}
 		matched, gotArgs, err := MatchCommandRule(rule, cmdArgs)
