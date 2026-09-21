@@ -8,38 +8,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 )
 
 // RunCommand wraps command execution on Windows using os/exec.Command.
 // Windows does not support Unix-like execve/syscall.Exec, so we fall back
 // to executing the subprocess and proxying standard descriptors.
 func RunCommand(cmdArgs []string, env []string) int {
-	if len(cmdArgs) == 0 {
-		fmt.Fprintf(os.Stderr, "Command missing\n")
-		return 1
+	if code := validateCommand(cmdArgs, env); code != 0 {
+		return code
 	}
 
 	commandName := cmdArgs[0]
-	if commandName == "" || commandName == "." || commandName == ".." {
-		fmt.Fprintf(os.Stderr, "Invalid command: %q\n", commandName)
-		return 1
-	}
-
-	for i, arg := range cmdArgs {
-		if strings.IndexByte(arg, 0) != -1 {
-			fmt.Fprintf(os.Stderr, "Invalid argument at index %d: contains null byte\n", i)
-			return 1
-		}
-	}
-
-	for i, e := range env {
-		if strings.IndexByte(e, 0) != -1 {
-			fmt.Fprintf(os.Stderr, "Invalid environment variable at index %d: contains null byte\n", i)
-			return 1
-		}
-	}
-
 	binary, err := exec.LookPath(commandName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Command not found: %v\n", err)

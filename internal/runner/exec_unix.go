@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"syscall"
 )
 
@@ -17,31 +16,11 @@ import (
 // ensuring the child process directly inherits standard input (stdin),
 // standard output/error, PID, terminal control, and signal handling.
 func RunCommand(cmdArgs []string, env []string) int {
-	if len(cmdArgs) == 0 {
-		fmt.Fprintf(os.Stderr, "Command missing\n")
-		return 1
+	if code := validateCommand(cmdArgs, env); code != 0 {
+		return code
 	}
 
 	cmd := cmdArgs[0]
-	if cmd == "" || cmd == "." || cmd == ".." {
-		fmt.Fprintf(os.Stderr, "Invalid command: %q\n", cmd)
-		return 1
-	}
-
-	for i, arg := range cmdArgs {
-		if strings.IndexByte(arg, 0) != -1 {
-			fmt.Fprintf(os.Stderr, "Invalid argument at index %d: contains null byte\n", i)
-			return 1
-		}
-	}
-
-	for i, e := range env {
-		if strings.IndexByte(e, 0) != -1 {
-			fmt.Fprintf(os.Stderr, "Invalid environment variable at index %d: contains null byte\n", i)
-			return 1
-		}
-	}
-
 	binary, err := exec.LookPath(cmd)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Command not found: %v\n", err)
