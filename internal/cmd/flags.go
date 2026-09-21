@@ -104,8 +104,9 @@ func (fp *FlagParser) Parse(args []string) (remaining []string, err error) {
 					}
 					return nil, fmt.Errorf("flag %s requires an argument", arg)
 				}
+				// #nosec G602
+				val = args[i+1]
 				i++
-				val = args[i]
 			}
 
 			if err := matched.fn(arg, val); err != nil {
