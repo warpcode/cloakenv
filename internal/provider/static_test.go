@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -112,6 +113,227 @@ func TestResolveDotPath(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStaticProvider_Scheme(t *testing.T) {
+	tests := []struct {
+		name   string
+		scheme string
+	}{
+		{name: "json scheme", scheme: "json"},
+		{name: "yaml scheme", scheme: "yaml"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := &staticProvider{scheme: tt.scheme}
+			if got := p.Scheme(); got != tt.scheme {
+				t.Errorf("Scheme() = %q, want %q", got, tt.scheme)
+			}
+		})
+	}
+}
+
+func TestStaticProvider_GetSecret(t *testing.T) {
+	ctx := context.Background()
+
+	dummySerialize := func(val any) (string, error) {
+		if _, ok := val.(chan int); ok {
+			return "", errors.New("dummy serialization error")
+		}
+		return anyToString(val), nil
+	}
+
+	t.Run("single entity mode", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name       string
+			provider   *staticProvider
+			location   string
+			wantVal    string
+			wantErr    bool
+			wantErrMsg string
+		}{
+			{
+				name: "happy path",
+				provider: &staticProvider{
+					scheme:       "json",
+					singleEntity: true,
+					serialize:    dummySerialize,
+					entries: map[string]Entry{
+						"": {
+							Attributes: map[string]any{
+								"api_key": "secret123",
+							},
+						},
+					},
+				},
+				location: "api_key",
+				wantVal:  "secret123",
+				wantErr:  false,
+			},
+			{
+				name: "missing single entity entry",
+				provider: &staticProvider{
+					scheme:       "json",
+					singleEntity: true,
+					serialize:    dummySerialize,
+					entries:      map[string]Entry{},
+				},
+				location:   "api_key",
+				wantErr:    true,
+				wantErrMsg: "json provider: single entity not found",
+			},
+			{
+				name: "dot path resolution error",
+				provider: &staticProvider{
+					scheme:       "yaml",
+					singleEntity: true,
+					serialize:    dummySerialize,
+					entries: map[string]Entry{
+						"": {
+							Attributes: map[string]any{
+								"api_key": "secret123",
+							},
+						},
+					},
+				},
+				location:   "nonexistent_key",
+				wantErr:    true,
+				wantErrMsg: `yaml provider: failed to resolve path "nonexistent_key": key "nonexistent_key" not found`,
+			},
+			{
+				name: "serialization error",
+				provider: &staticProvider{
+					scheme:       "json",
+					singleEntity: true,
+					serialize:    dummySerialize,
+					entries: map[string]Entry{
+						"": {
+							Attributes: map[string]any{
+								"bad_val": make(chan int),
+							},
+						},
+					},
+				},
+				location:   "bad_val",
+				wantErr:    true,
+				wantErrMsg: "dummy serialization error",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got, err := tt.provider.GetSecret(ctx, tt.location)
+				if (err != nil) != tt.wantErr {
+					t.Fatalf("GetSecret() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				if tt.wantErr {
+					if tt.wantErrMsg != "" && !strings.Contains(err.Error(), tt.wantErrMsg) {
+						t.Errorf("GetSecret() error = %q, wantErrMsg containing %q", err.Error(), tt.wantErrMsg)
+					}
+				} else {
+					if got != tt.wantVal {
+						t.Errorf("GetSecret() = %q, want %q", got, tt.wantVal)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("multi entity mode", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name       string
+			provider   *staticProvider
+			location   string
+			wantVal    string
+			wantErr    bool
+			wantErrMsg string
+		}{
+			{
+				name: "happy path",
+				provider: &staticProvider{
+					scheme:       "json",
+					singleEntity: false,
+					serialize:    dummySerialize,
+					rawContent: map[string]any{
+						"entries": map[string]any{
+							"app": map[string]any{
+								"password": "db_pass_123",
+							},
+						},
+					},
+				},
+				location: "entries.app.password",
+				wantVal:  "db_pass_123",
+				wantErr:  false,
+			},
+			{
+				name: "uninitialized rawContent",
+				provider: &staticProvider{
+					scheme:       "json",
+					singleEntity: false,
+					serialize:    dummySerialize,
+					rawContent:   nil,
+				},
+				location:   "entries.app.password",
+				wantErr:    true,
+				wantErrMsg: "json provider: not initialized or empty database",
+			},
+			{
+				name: "dot path resolution error",
+				provider: &staticProvider{
+					scheme:       "yaml",
+					singleEntity: false,
+					serialize:    dummySerialize,
+					rawContent: map[string]any{
+						"entries": map[string]any{},
+					},
+				},
+				location:   "entries.missing",
+				wantErr:    true,
+				wantErrMsg: `yaml provider: failed to resolve path "entries.missing": key "missing" not found`,
+			},
+			{
+				name: "serialization error",
+				provider: &staticProvider{
+					scheme:       "json",
+					singleEntity: false,
+					serialize:    dummySerialize,
+					rawContent: map[string]any{
+						"bad_field": make(chan int),
+					},
+				},
+				location:   "bad_field",
+				wantErr:    true,
+				wantErrMsg: "dummy serialization error",
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got, err := tt.provider.GetSecret(ctx, tt.location)
+				if (err != nil) != tt.wantErr {
+					t.Fatalf("GetSecret() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				if tt.wantErr {
+					if tt.wantErrMsg != "" && !strings.Contains(err.Error(), tt.wantErrMsg) {
+						t.Errorf("GetSecret() error = %q, wantErrMsg containing %q", err.Error(), tt.wantErrMsg)
+					}
+				} else {
+					if got != tt.wantVal {
+						t.Errorf("GetSecret() = %q, want %q", got, tt.wantVal)
+					}
+				}
+			})
+		}
+	})
 }
 
 func TestStaticProvider_SetAndDeleteSecret(t *testing.T) {
