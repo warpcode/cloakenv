@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -300,16 +301,16 @@ func parseSearchURI(location string) (string, string, error) {
 			for _, tag := range tags {
 				tag = strings.TrimSpace(tag)
 				if tag != "" {
-					conditions = append(conditions, fmt.Sprintf("%q in tags", tag))
+					conditions = append(conditions, strconv.Quote(tag)+" in tags")
 				}
 			}
 		case "title":
 			if v != "" {
-				conditions = append(conditions, fmt.Sprintf("title contains %q", v))
+				conditions = append(conditions, "title contains "+strconv.Quote(v))
 			}
 		case "path":
 			if v != "" {
-				conditions = append(conditions, fmt.Sprintf("path contains %q", v))
+				conditions = append(conditions, "path contains "+strconv.Quote(v))
 			}
 		default:
 			return "", "", fmt.Errorf("unsupported search parameter: %q", k)
