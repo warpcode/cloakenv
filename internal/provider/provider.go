@@ -42,6 +42,8 @@ type ProviderConfig struct {
 	Searchable      bool
 	Tags            []string
 	EntitiesRootKey string
+	SourceVaults    []string
+	Query           string
 }
 
 // Entry represents a multi-secret credential record with metadata.
@@ -90,3 +92,6 @@ type ContextKey string
 
 // ContextKeyTTL is the context key for specifying cache TTL duration.
 const ContextKeyTTL ContextKey = "ttl"
+
+// ContextKeyDepth is the context key for specifying recursion depth.
+const ContextKeyDepth ContextKey = "depth"
