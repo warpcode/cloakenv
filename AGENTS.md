@@ -243,6 +243,7 @@ When reviewing PRs authored by automated bots (such as Google Jules / `google-la
 - **Smuggled Autoload Refactors**: Jules consistently attempts an unrequested `regexCache sync.Map` autoload refactor across unrelated feature PRs, frequently accompanied by removing `CompileAutoloadRules()` or inlining `normalizeURIs`. Strictly reject these out-of-scope refactors under the "No unrequested refactors" rule.
 - **Spurious Workflow Deletions**: Jules repeatedly deletes `.github/workflows/reject-empty-commit.yml` across unrelated PRs. Always verify this workflow file remains intact.
 - **Checklist Non-Compliance**: Jules routinely implements Go provider code but skips updating `README.md` and `examples/config.yaml`. Enforce all items in the *Provider Development Checklist*.
+- **Empty Amendment Commits**: Jules may push empty amendment commits (0 additions, 0 deletions) without addressing existing review feedback. Always verify commit statistics via git or GitHub API (`gh api repos/.../commits/<oid> --jq .stats`) before assuming amendments contain fixes, and ensure all existing review threads are genuinely resolved before approving.
 - **Review Feedback Delivery**: All review findings MUST go into inline file-level comments (`REQUEST_CHANGES`). The top-level review body must be a neutral one-liner because bot runners only parse inline comments. Deleted files have no added lines (`side: RIGHT`) to anchor comments; bundle any deleted file findings into an inline comment on a modified file.
 
 ---
