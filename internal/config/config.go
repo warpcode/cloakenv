@@ -123,6 +123,12 @@ type VaultConfig struct {
 	// Only whole-value replacement is supported; inline interpolation is not.
 	// Defaults to false.
 	ResolveValues bool `yaml:"resolve_values"`
+
+	// IncludeFields defines glob patterns to limit which entry fields are exposed.
+	IncludeFields []string `yaml:"include_fields"`
+
+	// ExcludeFields defines glob patterns to filter out entry fields from being exposed.
+	ExcludeFields []string `yaml:"exclude_fields"`
 }
 
 // DefaultConfigPath returns the default configuration file path:

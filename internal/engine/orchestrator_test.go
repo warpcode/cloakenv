@@ -231,3 +231,109 @@ func TestOrchestratorFacade(t *testing.T) {
 		}
 	})
 }
+
+func TestFieldFilteringIntegration(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"filtered_vault": {
+				Provider: "custom_vault",
+				IncludeFields: []string{
+					"env:*",
+					"UserName",
+				},
+				ExcludeFields: []string{
+					"*.notes",
+					"secret:*",
+				},
+				Entities: map[string]map[string]any{
+					"app_config": {
+						"UserName":     "alice",
+						"Password":     "secret123",
+						"env:PORT":     "8080",
+						"env:HOST":     "localhost",
+						"app.notes":    "internal notes",
+						"secret:token": "tok123",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("GetEntry Filtering", func(t *testing.T) {
+		entry, err := orch.GetEntry(ctx, "filtered_vault://app_config")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		if got, want := entry.Attributes["UserName"], "alice"; got != want {
+			t.Errorf("UserName = %v, want %q", got, want)
+		}
+		if got, want := entry.Attributes["env:PORT"], "8080"; got != want {
+			t.Errorf("env:PORT = %v, want %q", got, want)
+		}
+		if got, want := entry.Attributes["env:HOST"], "localhost"; got != want {
+			t.Errorf("env:HOST = %v, want %q", got, want)
+		}
+
+		for _, ex := range []string{"Password", "app.notes", "secret:token"} {
+			if _, ok := entry.Attributes[ex]; ok {
+				t.Errorf("attribute %q should be excluded", ex)
+			}
+		}
+	})
+
+	t.Run("Resolve Allowed and Filtered Fields", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, "${filtered_vault://app_config:UserName}")
+		if err != nil {
+			t.Fatalf("Resolve(UserName) failed: %v", err)
+		}
+		if val != "alice" {
+			t.Errorf("Resolve(UserName) = %q, want %q", val, "alice")
+		}
+
+		_, err = orch.Resolve(ctx, "${filtered_vault://app_config:Password}")
+		if err == nil {
+			t.Fatalf("Resolve(Password) expected error for filtered field, got nil")
+		}
+	})
+
+	t.Run("Search Filtering", func(t *testing.T) {
+		results, err := orch.Search(ctx, "", []string{"filtered_vault"})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("Search returned %d results, want 1", len(results))
+		}
+
+		attrs := results[0].Entry.Attributes
+		if got, want := attrs["UserName"], "alice"; got != want {
+			t.Errorf("UserName = %v, want %q", got, want)
+		}
+		if _, ok := attrs["Password"]; ok {
+			t.Errorf("Password should be filtered out from search results")
+		}
+	})
+
+	t.Run("Invalid Glob Pattern Validation", func(t *testing.T) {
+		badCfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"bad_vault": {
+					Provider:      "custom_vault",
+					IncludeFields: []string{"["},
+				},
+			},
+		}
+		_, err := NewOrchestrator(badCfg)
+		if err == nil || !strings.Contains(err.Error(), "invalid glob pattern") {
+			t.Errorf("NewOrchestrator expected invalid glob pattern error, got: %v", err)
+		}
+	})
+}

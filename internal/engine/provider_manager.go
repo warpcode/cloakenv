@@ -136,18 +136,31 @@ func (pm *ProviderManager) getVaultProvider(ctx context.Context, vaultName strin
 
 // initVaultProvider creates and initializes a provider for a configured vault.
 func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
+	var p provider.SecretProvider
+	var err error
+
 	switch vault.Provider {
 	case "keepass":
-		return pm.initKeePass(ctx, vaultName, vault)
+		p, err = pm.initKeePass(ctx, vaultName, vault)
 	case "yaml":
-		return pm.initYaml(ctx, vaultName, vault)
+		p, err = pm.initYaml(ctx, vaultName, vault)
 	case "json":
-		return pm.initJson(ctx, vaultName, vault)
+		p, err = pm.initJson(ctx, vaultName, vault)
 	case "custom_vault":
-		return pm.initCustomVault(ctx, vaultName, vault)
+		p, err = pm.initCustomVault(ctx, vaultName, vault)
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %q", vault.Provider)
 	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	if len(vault.IncludeFields) > 0 || len(vault.ExcludeFields) > 0 {
+		p = provider.NewFieldFilteringProvider(p, vault.IncludeFields, vault.ExcludeFields)
+	}
+
+	return p, nil
 }
 
 // initKeePass bootstraps a KeePass provider using settings.
@@ -164,6 +177,8 @@ func (pm *ProviderManager) initKeePass(ctx context.Context, vaultName string, va
 		Searchable:      vault.Searchable == nil || *vault.Searchable,
 		Tags:            vault.Tags,
 		EntitiesRootKey: vault.EntitiesRootKey,
+		IncludeFields:   vault.IncludeFields,
+		ExcludeFields:   vault.ExcludeFields,
 	})
 	if err != nil {
 		return nil, err
@@ -185,6 +200,8 @@ func (pm *ProviderManager) initYaml(ctx context.Context, vaultName string, vault
 		Searchable:      vault.Searchable == nil || *vault.Searchable,
 		Tags:            vault.Tags,
 		EntitiesRootKey: vault.EntitiesRootKey,
+		IncludeFields:   vault.IncludeFields,
+		ExcludeFields:   vault.ExcludeFields,
 	})
 	if err != nil {
 		return nil, err
@@ -206,6 +223,8 @@ func (pm *ProviderManager) initJson(ctx context.Context, vaultName string, vault
 		Searchable:      vault.Searchable == nil || *vault.Searchable,
 		Tags:            vault.Tags,
 		EntitiesRootKey: vault.EntitiesRootKey,
+		IncludeFields:   vault.IncludeFields,
+		ExcludeFields:   vault.ExcludeFields,
 	})
 	if err != nil {
 		return nil, err
@@ -243,7 +262,9 @@ func (pm *ProviderManager) initCustomVault(ctx context.Context, vaultName string
 		Settings: map[string]string{
 			"vault_name": vaultName,
 		},
-		Entities: entities,
+		Entities:      entities,
+		IncludeFields: vault.IncludeFields,
+		ExcludeFields: vault.ExcludeFields,
 	})
 	if err != nil {
 		return nil, err

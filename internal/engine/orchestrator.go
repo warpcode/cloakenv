@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/warpcode/cloakenv/internal/config"
@@ -55,6 +56,18 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 				}
 				if _, ok := p.(provider.ValueResolvableProvider); !ok {
 					return nil, fmt.Errorf("invalid config for vault %q: provider %q does not support resolve_values", vaultName, vault.Provider)
+				}
+			}
+
+			// Validate glob patterns in include_fields and exclude_fields
+			for _, pat := range vault.IncludeFields {
+				if _, err := path.Match(strings.ReplaceAll(pat, "/", "\x01"), ""); err != nil {
+					return nil, fmt.Errorf("invalid config for vault %q: invalid glob pattern %q in include_fields: %w", vaultName, pat, err)
+				}
+			}
+			for _, pat := range vault.ExcludeFields {
+				if _, err := path.Match(strings.ReplaceAll(pat, "/", "\x01"), ""); err != nil {
+					return nil, fmt.Errorf("invalid config for vault %q: invalid glob pattern %q in exclude_fields: %w", vaultName, pat, err)
 				}
 			}
 
