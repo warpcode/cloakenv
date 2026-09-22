@@ -186,15 +186,8 @@ func formatEnvMap(envMap map[string]string) []string {
 	}
 	slices.Sort(keys)
 
-	var sb strings.Builder
 	for i, k := range keys {
-		v := envMap[k]
-		sb.Grow(len(k) + 1 + len(v))
-		sb.WriteString(k)
-		sb.WriteString("=")
-		sb.WriteString(v)
-		keys[i] = sb.String()
-		sb.Reset()
+		keys[i] = k + "=" + envMap[k]
 	}
 	return keys
 }
