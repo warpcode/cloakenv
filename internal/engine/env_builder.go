@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -184,13 +184,12 @@ func formatEnvMap(envMap map[string]string) []string {
 	for k := range envMap {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 
-	result := make([]string, 0, len(keys))
-	for _, k := range keys {
-		result = append(result, k+"="+envMap[k])
+	for i, k := range keys {
+		keys[i] = k + "=" + envMap[k]
 	}
-	return result
+	return keys
 }
 
 // normalizeURIs trims whitespace, filters empty strings, and ensures URIs have a scheme suffix.
