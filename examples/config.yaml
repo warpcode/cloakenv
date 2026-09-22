@@ -107,7 +107,7 @@ autoload:
 # The following schemes are built-in and do not need to be registered in the 'vaults' block:
 # - env://      (Resolves secret values from local environment variables, e.g. env://USER)
 # - keyring://  (Resolves secret values from the OS keyring/keychain, e.g. keyring://ssh/prod_pass)
-# - cache://    (Resolves secret values from the secure in-memory cache daemon)
+# - cache://    (Resolves secret values from the secure local file cache)
 #
 # Note on KeePass Authentication:
 # Master passwords are NOT stored in the configuration file.

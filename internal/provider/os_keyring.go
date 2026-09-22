@@ -62,13 +62,13 @@ func (o *OSKeyringProvider) SetSecret(_ context.Context, location string, value 
 }
 
 // SetRawSecret stores a secret in the OS keyring using raw service and account strings.
-// Used by the "config set-vault-pass" subcommand.
+// Used by the "auth login" subcommand.
 func (o *OSKeyringProvider) SetRawSecret(service, account, password string) error {
 	return keyring.Set(service, account, password)
 }
 
 // DeleteRawSecret removes a secret from the OS keyring using raw service and account strings.
-// Used by the "config clear-vault-pass" subcommand.
+// Used by the "auth forget" subcommand.
 func (o *OSKeyringProvider) DeleteRawSecret(service, account string) error {
 	return keyring.Delete(service, account)
 }

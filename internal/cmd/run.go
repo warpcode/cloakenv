@@ -12,7 +12,7 @@ import (
 	"github.com/warpcode/cloakenv/internal/utils"
 )
 
-// Run handles "cloakenv run [-E] [-e KEY=uri ...] [-m entry-uri] [-i KEY ...] [--no-autoload] -- <cmd> [args]".
+// Run handles "cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] -- <cmd> [args]".
 func Run(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
 		PrintRunHelp()

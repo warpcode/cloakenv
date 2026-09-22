@@ -12,7 +12,7 @@ import (
 	"github.com/warpcode/cloakenv/internal/utils"
 )
 
-// Search handles "cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [--json | --yaml]"
+// Search handles "cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]"
 func Search(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
 		PrintSearchHelp()

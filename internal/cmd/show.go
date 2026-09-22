@@ -207,7 +207,7 @@ func resolveExplicitMappings(ctx context.Context, orch *engine.Orchestrator, exp
 	return results, nil
 }
 
-// Show handles "cloakenv show <entry-uri> [--yaml | --json]"
+// Show handles "cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]"
 func Show(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
 		PrintShowHelp()
