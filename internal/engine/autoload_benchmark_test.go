@@ -171,7 +171,7 @@ func BenchmarkMatchCommand(b *testing.B) {
 	ruleMatch := "^git (checkout|branch) "
 	cmdArgs := []string{"git", "checkout", "main"}
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		MatchCommand(ruleMatch, cmdArgs)
 	}
 }
