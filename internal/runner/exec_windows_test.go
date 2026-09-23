@@ -5,6 +5,7 @@ package runner
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -42,6 +43,15 @@ func TestRunCommand(t *testing.T) {
 		t.Fatalf("Could not get executable path: %v", err)
 	}
 
+	tempDir := t.TempDir()
+	batPath := filepath.Join(tempDir, "test.bat")
+	cmdPath := filepath.Join(tempDir, "test.cmd")
+
+	// Create dummy batch files to test the block logic without executing them.
+	// We just need LookPath to find them.
+	os.WriteFile(batPath, []byte(""), 0755)
+	os.WriteFile(cmdPath, []byte(""), 0755)
+
 	tests := []struct {
 		name     string
 		cmdArgs  []string
@@ -60,6 +70,16 @@ func TestRunCommand(t *testing.T) {
 		{
 			name:     "not_found",
 			cmdArgs:  []string{"this-command-does-not-exist-123456789"},
+			wantCode: 1,
+		},
+		{
+			name:     "bat_blocked",
+			cmdArgs:  []string{batPath, "hello"},
+			wantCode: 1,
+		},
+		{
+			name:     "cmd_blocked",
+			cmdArgs:  []string{cmdPath, "hello"},
 			wantCode: 1,
 		},
 	}
