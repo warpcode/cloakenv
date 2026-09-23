@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/warpcode/cloakenv/internal/config"
 )
@@ -60,11 +61,19 @@ func IsRunAlias(cfg *config.Config, cmdArgs []string) bool {
 	return matched
 }
 
+var matchCommandRuleCache sync.Map
+
 // MatchCommand reports whether a command argument slice matches an autoload rule match pattern.
 // As a boolean predicate, substitution errors are intentionally not surfaced.
 func MatchCommand(ruleMatch string, cmdArgs []string) bool {
-	rule := config.AutoloadRule{Match: ruleMatch}
-	rule.Compile()
+	var rule config.AutoloadRule
+	if cached, ok := matchCommandRuleCache.Load(ruleMatch); ok {
+		rule = cached.(config.AutoloadRule)
+	} else {
+		rule = config.AutoloadRule{Match: ruleMatch}
+		rule.Compile()
+		matchCommandRuleCache.Store(ruleMatch, rule)
+	}
 	matched, _, _ := MatchCommandRule(rule, cmdArgs)
 	return matched
 }
