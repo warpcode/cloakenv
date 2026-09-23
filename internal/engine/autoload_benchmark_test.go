@@ -166,3 +166,12 @@ func BenchmarkMatchCommandRule_PureMatch(b *testing.B) {
 		_, _, _ = MatchCommandRule(rule, cmdArgs)
 	}
 }
+
+func BenchmarkMatchCommand(b *testing.B) {
+	ruleMatch := "^git (checkout|branch) "
+	cmdArgs := []string{"git", "checkout", "main"}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		MatchCommand(ruleMatch, cmdArgs)
+	}
+}
