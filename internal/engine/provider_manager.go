@@ -18,6 +18,7 @@ type ProviderManager struct {
 	vaultCache          map[string]provider.SecretProvider
 	initLocks           map[string]*sync.Mutex
 	keyring             *provider.OSKeyringProvider
+	searchExecutor      provider.SearchExecutor
 	mu                  sync.Mutex
 }
 
@@ -40,6 +41,13 @@ func (pm *ProviderManager) Config() *config.Config {
 // Keyring returns the OS keyring provider.
 func (pm *ProviderManager) Keyring() *provider.OSKeyringProvider {
 	return pm.keyring
+}
+
+// SetSearchExecutor sets the callback function for search provider queries.
+func (pm *ProviderManager) SetSearchExecutor(exec provider.SearchExecutor) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.searchExecutor = exec
 }
 
 // HasBuiltin reports whether the given scheme is a registered built-in provider.
@@ -145,6 +153,8 @@ func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName stri
 		return pm.initJson(ctx, vaultName, vault)
 	case "custom_vault":
 		return pm.initCustomVault(ctx, vaultName, vault)
+	case "search":
+		return pm.initSearch(ctx, vaultName, vault)
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %q", vault.Provider)
 	}
@@ -249,6 +259,36 @@ func (pm *ProviderManager) initCustomVault(ctx context.Context, vaultName string
 		return nil, err
 	}
 	return cp, nil
+}
+
+// initSearch bootstraps a Search provider using config settings.
+func (pm *ProviderManager) initSearch(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
+	if vault.Searchable != nil {
+		return nil, fmt.Errorf("search provider does not support the searchable flag")
+	}
+
+	sp := provider.NewSearchProvider()
+
+	pm.mu.Lock()
+	exec := pm.searchExecutor
+	pm.mu.Unlock()
+
+	if exec != nil {
+		sp.SetSearchExecutor(exec)
+	}
+
+	err := sp.Initialize(ctx, provider.ProviderConfig{
+		Settings: map[string]string{
+			"vault_name": vaultName,
+			"query":      vault.Query,
+		},
+		SourceVaults: vault.SourceVaults,
+		Query:        vault.Query,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return sp, nil
 }
 
 // EnsureInitialized initializes a built-in provider if it hasn't been already.
@@ -411,6 +451,8 @@ func newBareProvider(providerType string) (provider.SecretProvider, error) {
 		return provider.NewJsonProvider(), nil
 	case "custom_vault":
 		return provider.NewCustomVaultProvider(), nil
+	case "search":
+		return provider.NewSearchProvider(), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider type %q", providerType)
 	}

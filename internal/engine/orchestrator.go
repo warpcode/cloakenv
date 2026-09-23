@@ -88,8 +88,64 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 				}
 			case "custom_vault":
 				// custom_vault is statically defined in config, so it is always valid.
+			case "search":
+				if vault.Searchable != nil {
+					return nil, fmt.Errorf("invalid config for vault %q: search provider does not support the searchable flag", vaultName)
+				}
+				if len(vault.SourceVaults) == 0 {
+					return nil, fmt.Errorf("invalid config for vault %q: search provider requires at least one source vault", vaultName)
+				}
+				for _, sv := range vault.SourceVaults {
+					if strings.TrimSpace(sv) == "" {
+						return nil, fmt.Errorf("invalid config for vault %q: empty source vault name", vaultName)
+					}
+					if sv == vaultName {
+						return nil, fmt.Errorf("invalid config for vault %q: search provider cannot reference itself in source_vaults", vaultName)
+					}
+					if _, exists := cfg.Vaults[sv]; !exists && !pm.HasBuiltin(sv) {
+						return nil, fmt.Errorf("invalid config for vault %q: source vault %q does not exist", vaultName, sv)
+					}
+				}
+				sp := provider.NewSearchProvider()
+				settings := map[string]string{
+					"query": vault.Query,
+				}
+				if err := sp.Validate(settings); err != nil {
+					return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
+				}
 			default:
 				return nil, fmt.Errorf("unsupported provider type %q for vault %q", vault.Provider, vaultName)
+			}
+		}
+
+		// Detect cyclic dependencies among search vaults
+		for vName, vCfg := range cfg.Vaults {
+			if vCfg.Provider != "search" {
+				continue
+			}
+			var detectCycle func(name string, path []string) error
+			detectCycle = func(name string, path []string) error {
+				for _, p := range path {
+					if p == name {
+						return fmt.Errorf("invalid config for vault %q: cyclic dependency detected in search vaults (%s -> %s)", vName, strings.Join(path, " -> "), name)
+					}
+				}
+				targetCfg, exists := cfg.Vaults[name]
+				if !exists || targetCfg.Provider != "search" {
+					return nil
+				}
+				newPath := append(path, name)
+				for _, sv := range targetCfg.SourceVaults {
+					if err := detectCycle(sv, newPath); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			for _, sv := range vCfg.SourceVaults {
+				if err := detectCycle(sv, []string{vName}); err != nil {
+					return nil, err
+				}
 			}
 		}
 
@@ -104,6 +160,10 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	concurrencySem := make(chan struct{}, maxConcurrency)
 	resolver := NewResolver(pm, concurrencySem)
 	searcher := NewSearcher(pm, resolver)
+
+	pm.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]provider.SearchResult, error) {
+		return searcher.SearchRecursive(ctx, query, sourceVaults, depth)
+	})
 
 	// Break the circular dependency by setting the search callback dynamically
 	resolver.SetSearchFunc(func(ctx context.Context, expressionStr string, depth int) ([]provider.SearchResult, error) {

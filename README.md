@@ -562,6 +562,19 @@ vaults:
 - Defined directly inside `config.yaml` with no external files.
 - Set `resolve_values: true` to enable recursive resolution of `${...}` URIs inside the configuration.
 
+#### 4. Stored Search Vault (`search`)
+- Acts as a stored search definition over one or more source vaults, returning a filtered synthetic entry view.
+- Non-searchable and read-only by design (does not support the `searchable` flag).
+- Resolves entries matching a stored `query` against configured `source_vaults`.
+- Example config:
+```yaml
+vaults:
+  openrouter:
+    provider: "search"
+    source_vaults: ["work"]
+    query: '"service:openrouter" in tags'
+```
+
 ---
 
 ## Command Autoloading & Alias Masking
@@ -720,6 +733,12 @@ vaults:
         username: "admin"
         Password: "${keyring://gateway/admin_pass}"
         tags: ["static", "gateway"]
+
+  # Stored Search Vault (filtered view over source vaults)
+  openrouter:
+    provider: "search"
+    source_vaults: ["work"]
+    query: '"service:openrouter" in tags'
 
 # ==========================================
 # Command Autoloading Rules
