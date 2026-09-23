@@ -8,7 +8,7 @@
 
 ## 🏗️ Project Overview
 
-`cloakenv` is a **pluggable secret orchestrator and dynamic runtime environment injector** written in Go. It wraps application binaries, resolves secret URIs from multiple configurable backends (KeePass, OS keyring, YAML, JSON, environment, encrypted cache), and injects secrets strictly into temporary execution memory — never persisting them to disk unencrypted.
+`cloakenv` is a **pluggable secret orchestrator and dynamic runtime environment injector** written in Go. It wraps application binaries, resolves secret URIs from multiple configurable backends (KeePass, OS keyring, YAML, JSON, stored search, environment, encrypted cache), and injects secrets strictly into temporary execution memory — never persisting them to disk unencrypted.
 
 ### Key Design Principles
 
@@ -250,6 +250,9 @@ When reviewing PRs authored by automated bots (such as Google Jules / `google-la
 - **Checklist Non-Compliance**: Jules routinely implements Go provider code but skips updating `README.md` and `examples/config.yaml`. Enforce all items in the *Provider Development Checklist*.
 - **Empty Amendment Commits**: Jules may push empty amendment commits (0 additions, 0 deletions) without addressing existing review feedback. Always verify commit statistics via git or GitHub API (`gh api repos/.../commits/<oid> --jq .stats`) before assuming amendments contain fixes, and ensure all existing review threads are genuinely resolved before approving.
 - **Review Feedback Delivery**: All review findings MUST go into inline file-level comments (`REQUEST_CHANGES`). The top-level review body must be a neutral one-liner because bot runners only parse inline comments. Deleted files have no added lines (`side: RIGHT`) to anchor comments; bundle any deleted file findings into an inline comment on a modified file.
+- **Helper & Signature Drift**: When reviewing PR branches created before recent merges to `main`, verify all calls to package-level helpers (e.g. `matchEntry`, `serializeVal`, `normalizeURIs`) match the current signature on `origin/main`. Git considers separate file additions textually mergeable even when function signatures conflict at compile time.
+- **Virtual Provider & Switch Case Drift**: When reviewing PRs modifying `initVaultProvider`, verify that recently added provider cases on `main` (such as `case "search":`) are not inadvertently dropped due to outdated branch origins, and that generic decorators (such as filtering or caching) wrap virtual providers alongside direct providers.
+- **Single-Entity & Dot-Path Filter Bypass**: When reviewing field filtering logic, verify that lookups without colons in single-entity vaults (YAML/JSON) or root-keyed vaults (`entities_root_key`) do not default to checking `"Password"` or fall through to unredacted secret retrieval.
 
 ---
 
