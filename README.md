@@ -613,6 +613,9 @@ autoload:
       KUBECONFIG_TOKEN: "keyring://k8s/token"
 ```
 
+> [!WARNING]
+> **Windows Batch Script Restriction**: Execution of `.bat` and `.cmd` scripts is explicitly blocked on Windows for security reasons due to vulnerabilities in how arguments are escaped by `cmd.exe`. If you must run a batch wrapper (e.g., `npm.cmd`, `gradlew.bat`), please invoke it explicitly using a shell, such as `cloakenv run -- bash -c "npm ..."` or invoke the underlying executable directly.
+
 ### Pattern Matching Types:
 1. **Regular Expressions**: `match: "^(aws|terraform)\\s+(.*)$"` with capture group substitutions (`\1`..`\9` or `$1`..`$9`) in `command:`.
 2. **Executable Basename & Path**: `match: "aws"` matches `aws`, `/usr/local/bin/aws`, or `aws s3 ls`.

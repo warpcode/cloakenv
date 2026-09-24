@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // RunCommand wraps command execution on Windows using os/exec.Command.
@@ -31,7 +32,15 @@ func RunCommand(cmdArgs []string, env []string) int {
 		return 1
 	}
 
-	cmd := exec.Command(absBinary, cmdArgs[1:]...)
+	cleanBinary := strings.TrimRight(absBinary, ". ")
+	ext := strings.ToLower(filepath.Ext(cleanBinary))
+	if ext == ".bat" || ext == ".cmd" {
+		fmt.Fprintf(os.Stderr, "Execution of batch file %q is blocked due to security risks\n", absBinary)
+		return 1
+	}
+
+	/* #nosec G204 */
+	cmd := exec.Command(absBinary, cmdArgs[1:]...) //nolint:gosec // by design; command provenance is the operator's config
 	cmd.Env = env
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
