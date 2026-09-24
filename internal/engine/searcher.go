@@ -209,7 +209,7 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 			}
 			r.Vault = name
 			if fieldPolicy != nil && (len(fieldPolicy.IncludeFields) > 0 || len(fieldPolicy.ExcludeFields) > 0) {
-				r.Entry = provider.FilterEntry(r.Entry, fieldPolicy.IncludeFields, fieldPolicy.ExcludeFields)
+				r.Entry = provider.FilterEntryWithPath(r.Entry, r.Path, nil, fieldPolicy.IncludeFields, fieldPolicy.ExcludeFields)
 			}
 			allResults = append(allResults, s.resolveSearchResultAttributes(ctx, r, depth))
 		}

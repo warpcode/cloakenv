@@ -1308,3 +1308,97 @@ entities:
 		}
 	})
 }
+
+func TestFilteringProvider_Static_SlicePath(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	yamlPath := filepath.Join(tmpDir, "slice.yaml")
+
+	content := `
+entities:
+  db:
+    accounts:
+      - token: "tok_1"
+        name: "acct1"
+      - token: "tok_2"
+        name: "acct2"
+`
+	if err := os.WriteFile(yamlPath, []byte(content), 0600); err != nil {
+		t.Fatalf("failed to write yaml fixture: %v", err)
+	}
+
+	p := NewYamlProvider()
+	if err := p.Initialize(ctx, ProviderConfig{
+		Settings: map[string]string{
+			"vault_path": yamlPath,
+		},
+		EntitiesRootKey: "entities",
+	}); err != nil {
+		t.Fatalf("failed to init YAML provider: %v", err)
+	}
+
+	fp := NewFilteringProvider(p, nil, []string{"token"})
+
+	val, err := fp.GetSecret(ctx, "entities.db.accounts")
+	if err != nil {
+		t.Fatalf("GetSecret(entities.db.accounts) failed: %v", err)
+	}
+	if strings.Contains(val, "tok_") {
+		t.Errorf("serialized slice exposed excluded token fields: %s", val)
+	}
+	if !strings.Contains(val, "acct1") || !strings.Contains(val, "acct2") {
+		t.Errorf("serialized slice is missing expected name fields: %s", val)
+	}
+}
+
+func TestFilteringProvider_Static_AncestorExclusion(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	jsonPath := filepath.Join(tmpDir, "ancestor.json")
+
+	content := `{
+  "entities": {
+    "db": {
+      "username": "db_admin",
+      "port": 5432
+    },
+    "cache": {
+      "host": "redis.internal"
+    }
+  }
+}`
+	if err := os.WriteFile(jsonPath, []byte(content), 0600); err != nil {
+		t.Fatalf("failed to write json fixture: %v", err)
+	}
+
+	p := NewJsonProvider()
+	if err := p.Initialize(ctx, ProviderConfig{
+		Settings: map[string]string{
+			"vault_path": jsonPath,
+		},
+		EntitiesRootKey: "entities",
+	}); err != nil {
+		t.Fatalf("failed to init JSON provider: %v", err)
+	}
+
+	// exclude_fields: ["db"] — should block access to any nested path under "db"
+	fp := NewFilteringProvider(p, nil, []string{"db"})
+
+	// Accessing db.username must be blocked because ancestor "db" is excluded
+	_, err := fp.GetSecret(ctx, "db.username")
+	if err == nil {
+		t.Fatalf("expected error for db.username when ancestor 'db' is excluded, got nil")
+	}
+	if !strings.Contains(err.Error(), "excluded") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+
+	// Sibling entity "cache" must still be accessible
+	val, err := fp.GetSecret(ctx, "cache.host")
+	if err != nil {
+		t.Fatalf("GetSecret(cache.host) should succeed but failed: %v", err)
+	}
+	if val != "redis.internal" {
+		t.Errorf("cache.host = %q, want 'redis.internal'", val)
+	}
+}

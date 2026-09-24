@@ -113,11 +113,6 @@ func getEntryAttributeKey(entry Entry, attrName string) (string, bool) {
 	return key, found
 }
 
-func getEntryAttribute(entry Entry, attrName string) (string, bool, error) {
-	_, val, found, err := lookupEntryAttribute(entry, attrName)
-	return val, found, err
-}
-
 // resolveSecretAndCanonicalKey resolves the matching entry, canonical attribute key, and serialized secret value
 // in a single search operation to guarantee atomic snapshot consistency.
 func (s *SearchProvider) resolveSecretAndCanonicalKey(ctx context.Context, location string) (string, string, error) {
@@ -194,13 +189,6 @@ func (s *SearchProvider) resolveSecretAndCanonicalKey(ctx context.Context, locat
 func (s *SearchProvider) GetSecret(ctx context.Context, location string) (string, error) {
 	_, val, err := s.resolveSecretAndCanonicalKey(ctx, location)
 	return val, err
-}
-
-// resolveCanonicalKey resolves the matching entry and canonical attribute key following the exact
-// same precedence and scanning order as GetSecret.
-func (s *SearchProvider) resolveCanonicalKey(ctx context.Context, location string) (string, error) {
-	key, _, err := s.resolveSecretAndCanonicalKey(ctx, location)
-	return key, err
 }
 
 // GetSecretWithKey resolves both the canonical attribute key and the secret value in a single search operation.

@@ -683,6 +683,20 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 		}
 	}
 
+	// Add ancestor path segments so subtree-exclude patterns apply to nested paths.
+	// e.g. exclude_fields: ["db"] blocks GetSecret("db.username").
+	// We add ancestors from both canonicalPath and strippedPath to cover root-prefixed and rootless forms.
+	for _, basePath := range []string{canonicalPath, strippedPath} {
+		if basePath == "" {
+			continue
+		}
+		segments := strings.Split(basePath, ".")
+		for i := 1; i < len(segments); i++ {
+			ancestor := strings.Join(segments[:i], ".")
+			cleanCandidates = append(cleanCandidates, ancestor)
+		}
+	}
+
 	// Check if container itself is excluded
 	if len(f.excludeFields) > 0 {
 		for _, pattern := range f.excludeFields {
@@ -724,6 +738,12 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
 		}
 		return sp.serialize(filteredMap)
+	}
+
+	// If rawVal is a slice, route through projectSliceRecursive for field filtering.
+	if rawSlice, ok := rawVal.([]any); ok {
+		projSlice, _ := projectSliceRecursive(rawSlice, "", cleanCandidates, f.includeFields, f.excludeFields, len(f.includeFields) == 0)
+		return sp.serialize(projSlice)
 	}
 
 	if !isFieldAuthorized(leafAttr, cleanCandidates, f.includeFields, f.excludeFields) {

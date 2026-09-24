@@ -133,6 +133,7 @@ go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run  # Ful
 3. **Testdata credentials are for testing only.** `testdata/testDB.kdbx` uses `password123` — this must never appear in production config examples.
 4. **No hardcoded credentials** anywhere in source, comments, or examples. Use placeholder strings like `<your-password>` in documentation.
 5. **Cross-platform keyring operations** must go through `internal/provider/os_keyring.go` via `go-keyring`. Do not bypass the abstraction layer.
+6. **Windows Path Normalization**: When evaluating executable paths or extensions on Windows (such as in `internal/runner`), trim trailing dots and spaces (`strings.TrimRight(path, ". ")`) prior to inspecting extensions (`filepath.Ext`) to prevent Win32 path canonicalization bypasses.
 
 ---
 
