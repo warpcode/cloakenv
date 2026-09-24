@@ -113,16 +113,16 @@ func getEntryAttributeKey(entry Entry, attrName string) (string, bool) {
 	return key, found
 }
 
-// resolveSecretAndCanonicalKey resolves the matching entry, canonical attribute key, and serialized secret value
-// in a single search operation to guarantee atomic snapshot consistency.
-func (s *SearchProvider) resolveSecretAndCanonicalKey(ctx context.Context, location string) (string, string, error) {
+// resolveSecretAndCanonicalKey resolves the matching entry, canonical attribute key, serialized secret value,
+// and result path in a single search operation to guarantee atomic snapshot consistency.
+func (s *SearchProvider) resolveSecretAndCanonicalKey(ctx context.Context, location string) (string, string, string, error) {
 	results, err := s.executeSearch(ctx)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
 	if len(results) == 0 {
-		return "", "", fmt.Errorf("search provider %q: no entries matched stored query", s.vaultName)
+		return "", "", "", fmt.Errorf("search provider %q: no entries matched stored query", s.vaultName)
 	}
 
 	if strings.Contains(location, ":") {
@@ -132,18 +132,18 @@ func (s *SearchProvider) resolveSecretAndCanonicalKey(ctx context.Context, locat
 
 		matching := s.findMatchingResults(results, entryLoc)
 		if len(matching) == 0 {
-			return "", "", fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, entryLoc)
+			return "", "", "", fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, entryLoc)
 		}
 
 		for _, targetResult := range matching {
 			if key, val, found, err := lookupEntryAttribute(targetResult.Entry, attrName); found {
 				if err != nil {
-					return "", "", err
+					return "", "", "", err
 				}
-				return key, val, nil
+				return key, val, targetResult.Path, nil
 			}
 		}
-		return "", "", fmt.Errorf("search provider %q: attribute %q not found in entry %q", s.vaultName, attrName, entryLoc)
+		return "", "", "", fmt.Errorf("search provider %q: attribute %q not found in entry %q", s.vaultName, attrName, entryLoc)
 	}
 
 	// Single result case
@@ -151,48 +151,48 @@ func (s *SearchProvider) resolveSecretAndCanonicalKey(ctx context.Context, locat
 		entry := results[0].Entry
 		if key, val, found, err := lookupEntryAttribute(entry, location); found {
 			if err != nil {
-				return "", "", err
+				return "", "", "", err
 			}
-			return key, val, nil
+			return key, val, results[0].Path, nil
 		}
 
 		if location == "" || location == "default" || location == results[0].Path || location == entry.Title {
 			if key, val, found, err := lookupEntryAttribute(entry, "Password"); found {
 				if err != nil {
-					return "", "", err
+					return "", "", "", err
 				}
-				return key, val, nil
+				return key, val, results[0].Path, nil
 			}
 		}
 
-		return "", "", fmt.Errorf("search provider %q: attribute or entry %q not found", s.vaultName, location)
+		return "", "", "", fmt.Errorf("search provider %q: attribute or entry %q not found", s.vaultName, location)
 	}
 
 	// Multiple results case
 	matching := s.findMatchingResults(results, location)
 	if len(matching) == 0 {
-		return "", "", fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, location)
+		return "", "", "", fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, location)
 	}
 
 	for _, targetResult := range matching {
 		if key, val, found, err := lookupEntryAttribute(targetResult.Entry, "Password"); found {
 			if err != nil {
-				return "", "", err
+				return "", "", "", err
 			}
-			return key, val, nil
+			return key, val, targetResult.Path, nil
 		}
 	}
-	return "", "", fmt.Errorf("search provider %q: default attribute \"Password\" not found in entry %q", s.vaultName, location)
+	return "", "", "", fmt.Errorf("search provider %q: default attribute \"Password\" not found in entry %q", s.vaultName, location)
 }
 
 // GetSecret resolves a secret attribute from the synthetic entry view.
 func (s *SearchProvider) GetSecret(ctx context.Context, location string) (string, error) {
-	_, val, err := s.resolveSecretAndCanonicalKey(ctx, location)
+	_, val, _, err := s.resolveSecretAndCanonicalKey(ctx, location)
 	return val, err
 }
 
-// GetSecretWithKey resolves both the canonical attribute key and the secret value in a single search operation.
-func (s *SearchProvider) GetSecretWithKey(ctx context.Context, location string) (string, string, error) {
+// GetSecretWithKey resolves the canonical attribute key, the secret value, and the result path in a single search operation.
+func (s *SearchProvider) GetSecretWithKey(ctx context.Context, location string) (string, string, string, error) {
 	return s.resolveSecretAndCanonicalKey(ctx, location)
 }
 

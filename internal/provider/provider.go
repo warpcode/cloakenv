@@ -107,14 +107,77 @@ type FieldPolicy struct {
 }
 
 // WithFieldPolicy returns a context carrying include and exclude glob field policies.
+// If ctx already carries a FieldPolicy, inherited and current policies are composed:
+// active includes intersect when both layers constrain fields, and excludes are unioned.
 func WithFieldPolicy(ctx context.Context, includeFields, excludeFields []string) context.Context {
-	if len(includeFields) == 0 && len(excludeFields) == 0 {
-		return ctx
+	inherited := FieldPolicyFromContext(ctx)
+	if inherited == nil {
+		if len(includeFields) == 0 && len(excludeFields) == 0 {
+			return ctx
+		}
+		return context.WithValue(ctx, contextKeyFieldPolicy{}, &FieldPolicy{
+			IncludeFields: includeFields,
+			ExcludeFields: excludeFields,
+		})
 	}
+
+	var effectiveExcludes []string
+	seenEx := make(map[string]bool)
+	for _, p := range inherited.ExcludeFields {
+		if !seenEx[p] {
+			seenEx[p] = true
+			effectiveExcludes = append(effectiveExcludes, p)
+		}
+	}
+	for _, p := range excludeFields {
+		if !seenEx[p] {
+			seenEx[p] = true
+			effectiveExcludes = append(effectiveExcludes, p)
+		}
+	}
+
+	var effectiveIncludes []string
+	if len(inherited.IncludeFields) > 0 && len(includeFields) > 0 {
+		effectiveIncludes = intersectIncludeFields(inherited.IncludeFields, includeFields)
+	} else if len(inherited.IncludeFields) > 0 {
+		effectiveIncludes = inherited.IncludeFields
+	} else if len(includeFields) > 0 {
+		effectiveIncludes = includeFields
+	}
+
 	return context.WithValue(ctx, contextKeyFieldPolicy{}, &FieldPolicy{
-		IncludeFields: includeFields,
-		ExcludeFields: excludeFields,
+		IncludeFields: effectiveIncludes,
+		ExcludeFields: effectiveExcludes,
 	})
+}
+
+func intersectIncludeFields(a, b []string) []string {
+	var res []string
+	seen := make(map[string]bool)
+	for _, p1 := range a {
+		for _, p2 := range b {
+			if p1 == p2 {
+				if !seen[p1] {
+					seen[p1] = true
+					res = append(res, p1)
+				}
+			} else if matchPattern(p1, p2) {
+				if !seen[p2] {
+					seen[p2] = true
+					res = append(res, p2)
+				}
+			} else if matchPattern(p2, p1) {
+				if !seen[p1] {
+					seen[p1] = true
+					res = append(res, p1)
+				}
+			}
+		}
+	}
+	if len(res) == 0 {
+		return []string{"\x00"}
+	}
+	return res
 }
 
 // FieldPolicyFromContext retrieves the FieldPolicy from ctx, if present.

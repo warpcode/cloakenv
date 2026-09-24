@@ -201,6 +201,15 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 			return nil, fmt.Errorf("failed to retrieve entries from repo %q: %w", name, err)
 		}
 
+		var rootPrefixes []string
+		if cfg != nil {
+			if vc, ok := cfg.Vaults[name]; ok {
+				if vc.EntitiesRootKey != "" && vc.EntitiesRootKey != "." {
+					rootPrefixes = []string{vc.EntitiesRootKey}
+				}
+			}
+		}
+
 		for _, r := range results {
 			if cfg != nil {
 				if vc, ok := cfg.Vaults[name]; ok {
@@ -209,7 +218,7 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 			}
 			r.Vault = name
 			if fieldPolicy != nil && (len(fieldPolicy.IncludeFields) > 0 || len(fieldPolicy.ExcludeFields) > 0) {
-				r.Entry = provider.FilterEntryWithPath(r.Entry, r.Path, nil, fieldPolicy.IncludeFields, fieldPolicy.ExcludeFields)
+				r.Entry = provider.FilterEntryWithPath(r.Entry, r.Path, rootPrefixes, fieldPolicy.IncludeFields, fieldPolicy.ExcludeFields)
 			}
 			allResults = append(allResults, s.resolveSearchResultAttributes(ctx, r, depth))
 		}

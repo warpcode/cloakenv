@@ -161,6 +161,27 @@ func projectRecursive(val any, pfx string, prefixes []string, includeFields, exc
 				childCandidates[i] = normalizeDotPath(c)
 			}
 
+			// Add ancestor path segments so subtree-exclude and subtree-include patterns apply.
+			var ancestorCandidates []string
+			for _, c := range childCandidates {
+				if c == "" {
+					continue
+				}
+				segments := strings.Split(c, ".")
+				for i := 1; i < len(segments); i++ {
+					ancestor := strings.Join(segments[:i], ".")
+					ancestorCandidates = append(ancestorCandidates, ancestor)
+				}
+				slashParts := strings.Split(c, "/")
+				for i := 1; i < len(slashParts); i++ {
+					ancestorCandidates = append(ancestorCandidates, strings.Join(slashParts[:i], "/"))
+				}
+			}
+
+			allCandidates := make([]string, 0, len(childCandidates)+len(ancestorCandidates))
+			allCandidates = append(allCandidates, childCandidates...)
+			allCandidates = append(allCandidates, ancestorCandidates...)
+
 			// Check exclude_fields first
 			childExcluded := false
 			if len(excludeFields) > 0 {
@@ -169,7 +190,7 @@ func projectRecursive(val any, pfx string, prefixes []string, includeFields, exc
 						childExcluded = true
 						break
 					}
-					for _, c := range childCandidates {
+					for _, c := range allCandidates {
 						if c != "" && matchPattern(pattern, c) {
 							childExcluded = true
 							break
@@ -184,7 +205,7 @@ func projectRecursive(val any, pfx string, prefixes []string, includeFields, exc
 				continue
 			}
 
-			childDirectlyIncluded := parentIncluded || isContainerDirectlyIncluded(kLeaf, childCandidates, includeFields)
+			childDirectlyIncluded := parentIncluded || isContainerDirectlyIncluded(kLeaf, allCandidates, includeFields)
 
 			// If child is a map:
 			if _, ok := normalizeEntryMap(v); ok {
@@ -205,7 +226,7 @@ func projectRecursive(val any, pfx string, prefixes []string, includeFields, exc
 			}
 
 			// Scalar value
-			if childDirectlyIncluded || isFieldAuthorized(kLeaf, childCandidates, includeFields, excludeFields) {
+			if childDirectlyIncluded || isFieldAuthorized(kLeaf, allCandidates, includeFields, excludeFields) {
 				filtered[k] = v
 			}
 		}
@@ -453,9 +474,11 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 	switch f.underlying.Scheme() {
 	case "keepass":
 		// Format: "[group/]entry[:attribute]". Omitted or empty selector defaults to "Password".
+		entryPath := location
 		effectiveAttr := "Password"
 		if strings.Contains(location, ":") {
 			parts := strings.SplitN(location, ":", 2)
+			entryPath = parts[0]
 			if parts[1] != "" {
 				effectiveAttr = parts[1]
 			}
@@ -464,7 +487,27 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		if lastDot := strings.LastIndex(effectiveAttr, "."); lastDot >= 0 {
 			leafAttr = effectiveAttr[lastDot+1:]
 		}
-		if !isFieldOrPathAllowed(effectiveAttr, leafAttr, f.includeFields, f.excludeFields) {
+
+		var candidates []string
+		candidates = append(candidates, effectiveAttr, location)
+		if entryPath != "" {
+			candidates = append(candidates, entryPath, entryPath+"."+effectiveAttr, entryPath+":"+effectiveAttr)
+			cleanEntryPath := normalizeDotPath(entryPath)
+			if cleanEntryPath != "" && cleanEntryPath != entryPath {
+				candidates = append(candidates, cleanEntryPath, cleanEntryPath+"."+effectiveAttr)
+			}
+			slashParts := strings.Split(entryPath, "/")
+			for i := 1; i < len(slashParts); i++ {
+				candidates = append(candidates, strings.Join(slashParts[:i], "/"))
+			}
+			fullField := entryPath + "." + effectiveAttr
+			segments := strings.Split(fullField, ".")
+			for i := 1; i < len(segments); i++ {
+				candidates = append(candidates, strings.Join(segments[:i], "."))
+			}
+		}
+
+		if !isFieldAuthorized(leafAttr, candidates, f.includeFields, f.excludeFields) {
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
 		}
 		return f.underlying.GetSecret(ctx, location)
@@ -472,8 +515,10 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 	case "custom_vault":
 		// Format: "entity[:attribute]". Bare location defaults to "Password".
 		effectiveAttr := "Password"
+		entityLoc := location
 		if strings.Contains(location, ":") {
 			parts := strings.SplitN(location, ":", 2)
+			entityLoc = parts[0]
 			effectiveAttr = parts[1]
 		}
 		if effectiveAttr == "" {
@@ -483,19 +528,55 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		if lastDot := strings.LastIndex(effectiveAttr, "."); lastDot >= 0 {
 			leafAttr = effectiveAttr[lastDot+1:]
 		}
-		if !isFieldOrPathAllowed(effectiveAttr, leafAttr, f.includeFields, f.excludeFields) {
+
+		var candidates []string
+		candidates = append(candidates, effectiveAttr, location)
+		if entityLoc != "" {
+			candidates = append(candidates, entityLoc, entityLoc+"."+effectiveAttr, entityLoc+":"+effectiveAttr)
+			cleanLoc := normalizeDotPath(entityLoc)
+			if cleanLoc != "" && cleanLoc != entityLoc {
+				candidates = append(candidates, cleanLoc, cleanLoc+"."+effectiveAttr)
+			}
+			dotParts := strings.Split(entityLoc, ".")
+			for i := 1; i < len(dotParts); i++ {
+				candidates = append(candidates, strings.Join(dotParts[:i], "."))
+			}
+			slashParts := strings.Split(entityLoc, "/")
+			for i := 1; i < len(slashParts); i++ {
+				candidates = append(candidates, strings.Join(slashParts[:i], "/"))
+			}
+			fullField := entityLoc + "." + effectiveAttr
+			segments := strings.Split(fullField, ".")
+			for i := 1; i < len(segments); i++ {
+				candidates = append(candidates, strings.Join(segments[:i], "."))
+			}
+		}
+
+		if !isFieldAuthorized(leafAttr, candidates, f.includeFields, f.excludeFields) {
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
 		}
 		return f.underlying.GetSecret(ctx, location)
 
 	case "search":
 		// Stored search provider:
-		// Attributes can be resolved case-insensitively, so resolve the exact result and canonical key first.
+		// Attributes can be resolved case-insensitively, so resolve the exact result, canonical key, and result path first.
 		var canonicalField string
 		var val string
+		var resultPath string
 		var resolved bool
 
 		if csp, ok := f.underlying.(interface {
+			GetSecretWithKey(ctx context.Context, location string) (string, string, string, error)
+		}); ok {
+			key, v, p, err := csp.GetSecretWithKey(ctx, location)
+			if err != nil {
+				return "", err
+			}
+			canonicalField = key
+			val = v
+			resultPath = p
+			resolved = true
+		} else if csp, ok := f.underlying.(interface {
 			GetSecretWithKey(ctx context.Context, location string) (string, string, error)
 		}); ok {
 			key, v, err := csp.GetSecretWithKey(ctx, location)
@@ -511,6 +592,7 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 				parts := strings.SplitN(location, ":", 2)
 				entryLoc := parts[0]
 				attrName := parts[1]
+				resultPath = entryLoc
 
 				if searchable, ok := f.underlying.(SearchableProvider); ok {
 					if entry, err := searchable.GetEntry(ctx, entryLoc); err == nil {
@@ -523,6 +605,7 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 					canonicalField = attrName
 				}
 			} else {
+				resultPath = location
 				if searchable, ok := f.underlying.(SearchableProvider); ok {
 					if entry, err := searchable.GetEntry(ctx, location); err == nil {
 						if key, found := getEntryAttributeKey(entry, location); found {
@@ -540,7 +623,31 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		if lastDot := strings.LastIndex(canonicalField, "."); lastDot >= 0 {
 			leafCanonical = canonicalField[lastDot+1:]
 		}
-		if !isFieldOrPathAllowed(canonicalField, leafCanonical, f.includeFields, f.excludeFields) {
+
+		var candidates []string
+		candidates = append(candidates, canonicalField, location)
+		if resultPath != "" {
+			candidates = append(candidates, resultPath, resultPath+"."+canonicalField, resultPath+":"+canonicalField)
+			cleanResPath := normalizeDotPath(resultPath)
+			if cleanResPath != "" && cleanResPath != resultPath {
+				candidates = append(candidates, cleanResPath, cleanResPath+"."+canonicalField)
+			}
+			dotParts := strings.Split(resultPath, ".")
+			for i := 1; i < len(dotParts); i++ {
+				candidates = append(candidates, strings.Join(dotParts[:i], "."))
+			}
+			slashParts := strings.Split(resultPath, "/")
+			for i := 1; i < len(slashParts); i++ {
+				candidates = append(candidates, strings.Join(slashParts[:i], "/"))
+			}
+			fullField := resultPath + "." + canonicalField
+			segments := strings.Split(fullField, ".")
+			for i := 1; i < len(segments); i++ {
+				candidates = append(candidates, strings.Join(segments[:i], "."))
+			}
+		}
+
+		if !isFieldAuthorized(leafCanonical, candidates, f.includeFields, f.excludeFields) {
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
 		}
 
@@ -742,7 +849,29 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 
 	// If rawVal is a slice, route through projectSliceRecursive for field filtering.
 	if rawSlice, ok := rawVal.([]any); ok {
-		projSlice, _ := projectSliceRecursive(rawSlice, "", cleanCandidates, f.includeFields, f.excludeFields, len(f.includeFields) == 0)
+		containerIncluded := len(f.includeFields) == 0
+		if !containerIncluded {
+			for _, pattern := range f.includeFields {
+				if matchPattern(pattern, leafAttr) {
+					containerIncluded = true
+					break
+				}
+				for _, c := range cleanCandidates {
+					if matchPattern(pattern, c) {
+						containerIncluded = true
+						break
+					}
+				}
+				if containerIncluded {
+					break
+				}
+			}
+		}
+
+		projSlice, hasAllowed := projectSliceRecursive(rawSlice, "", cleanCandidates, f.includeFields, f.excludeFields, containerIncluded)
+		if len(f.includeFields) > 0 && !containerIncluded && !hasAllowed {
+			return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
+		}
 		return sp.serialize(projSlice)
 	}
 

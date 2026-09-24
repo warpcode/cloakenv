@@ -107,7 +107,7 @@ go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run  # Ful
 - **Provider wrapper contracts**: Wrappers must preserve optional capabilities such as `ValueResolvableProvider`; the engine gates URI expansion by interface presence, not by the method return value. Do not unconditionally add optional interfaces to wrappers.
 - **Provider-specific URI parsing**: YAML/JSON locations use dot paths, KeePass/custom vaults use `entity:attribute`, and search providers may resolve attribute names case-insensitively. Field filters must authorize the effective canonical key and full static path before delegating.
 - **Filtered static resolution**: Root-keyed and nested YAML/JSON paths must be resolved and filtered before any fallback to the underlying provider; preserve the provider's native serializer.
-- **Filtering projection invariants**: Apply field filters recursively to structured maps and arrays, using canonical root and leaf paths consistently across `GetEntry`, `Search`, and `GetSecret`. For virtual search, apply the policy before source-value resolution and stored-query evaluation, and resolve the canonical key and returned value from the same search snapshot. Preserve actual attribute-map entries before metadata sentinels.
+- **Filtering projection invariants**: Apply field filters recursively to structured maps and arrays, using canonical root and leaf paths consistently across `GetEntry`, `Search`, and `GetSecret`. For virtual search, apply the policy before source-value resolution and stored-query evaluation, and resolve the canonical key and returned value from the same search snapshot. Preserve actual attribute-map entries before metadata sentinels. Nested virtual-search policies must compose before source resolution: intersect active include allowlists and union exclusions rather than replacing an inherited policy.
 
 ### File Naming
 
@@ -133,7 +133,6 @@ go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run  # Ful
 3. **Testdata credentials are for testing only.** `testdata/testDB.kdbx` uses `password123` — this must never appear in production config examples.
 4. **No hardcoded credentials** anywhere in source, comments, or examples. Use placeholder strings like `<your-password>` in documentation.
 5. **Cross-platform keyring operations** must go through `internal/provider/os_keyring.go` via `go-keyring`. Do not bypass the abstraction layer.
-6. **Windows Path Normalization**: When evaluating executable paths or extensions on Windows (such as in `internal/runner`), trim trailing dots and spaces (`strings.TrimRight(path, ". ")`) prior to inspecting extensions (`filepath.Ext`) to prevent Win32 path canonicalization bypasses.
 
 ---
 
