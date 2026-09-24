@@ -124,6 +124,12 @@ type VaultConfig struct {
 	// Defaults to false.
 	ResolveValues bool `yaml:"resolve_values"`
 
+	// IncludeFields limits returned entry attributes to field names matching these glob patterns.
+	IncludeFields []string `yaml:"include_fields,omitempty"`
+
+	// ExcludeFields removes entry attributes with field names matching these glob patterns.
+	ExcludeFields []string `yaml:"exclude_fields,omitempty"`
+
 	// SourceVaults specifies the list of vault names to query for search provider vaults.
 	SourceVaults []string `yaml:"source_vaults"`
 

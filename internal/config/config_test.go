@@ -291,3 +291,41 @@ func TestKeyringPrefix(t *testing.T) {
 		})
 	}
 }
+
+func TestLoad_FieldFiltering(t *testing.T) {
+	tempDir := t.TempDir()
+	yamlContent := `
+vaults:
+  work:
+    provider: "keepass"
+    vault_path: "~/secrets.kdbx"
+    include_fields:
+      - "env:*"
+      - "UserName"
+    exclude_fields:
+      - "*.notes"
+      - "secret:*"
+`
+	configPath := filepath.Join(tempDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write temp config file: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	v, ok := cfg.Vaults["work"]
+	if !ok {
+		t.Fatal("expected 'work' vault in config")
+	}
+
+	if len(v.IncludeFields) != 2 || v.IncludeFields[0] != "env:*" || v.IncludeFields[1] != "UserName" {
+		t.Errorf("unexpected IncludeFields: %v", v.IncludeFields)
+	}
+
+	if len(v.ExcludeFields) != 2 || v.ExcludeFields[0] != "*.notes" || v.ExcludeFields[1] != "secret:*" {
+		t.Errorf("unexpected ExcludeFields: %v", v.ExcludeFields)
+	}
+}

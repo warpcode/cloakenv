@@ -104,6 +104,9 @@ go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run  # Ful
 
 - The `provider.SecretProvider` interface is the **core extension point**. Adding a new backend = new file in `internal/provider/`, implementing the interface. Do not modify the interface signature without a plan review.
 - URI scheme registration happens in the engine; new providers must be registered there explicitly.
+- **Provider wrapper contracts**: Wrappers must preserve optional capabilities such as `ValueResolvableProvider`; the engine gates URI expansion by interface presence, not by the method return value. Do not unconditionally add optional interfaces to wrappers.
+- **Provider-specific URI parsing**: YAML/JSON locations use dot paths, KeePass/custom vaults use `entity:attribute`, and search providers may resolve attribute names case-insensitively. Field filters must authorize the effective canonical key and full static path before delegating.
+- **Filtered static resolution**: Root-keyed and nested YAML/JSON paths must be resolved and filtered before any fallback to the underlying provider; preserve the provider's native serializer.
 
 ### File Naming
 

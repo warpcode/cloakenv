@@ -144,20 +144,33 @@ func (pm *ProviderManager) getVaultProvider(ctx context.Context, vaultName strin
 
 // initVaultProvider creates and initializes a provider for a configured vault.
 func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
+	var p provider.SecretProvider
+	var err error
+
 	switch vault.Provider {
 	case "keepass":
-		return pm.initKeePass(ctx, vaultName, vault)
+		p, err = pm.initKeePass(ctx, vaultName, vault)
 	case "yaml":
-		return pm.initYaml(ctx, vaultName, vault)
+		p, err = pm.initYaml(ctx, vaultName, vault)
 	case "json":
-		return pm.initJson(ctx, vaultName, vault)
+		p, err = pm.initJson(ctx, vaultName, vault)
 	case "custom_vault":
-		return pm.initCustomVault(ctx, vaultName, vault)
+		p, err = pm.initCustomVault(ctx, vaultName, vault)
 	case "search":
-		return pm.initSearch(ctx, vaultName, vault)
+		p, err = pm.initSearch(ctx, vaultName, vault)
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %q", vault.Provider)
 	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	if len(vault.IncludeFields) > 0 || len(vault.ExcludeFields) > 0 {
+		p = provider.NewFilteringProvider(p, vault.IncludeFields, vault.ExcludeFields)
+	}
+
+	return p, nil
 }
 
 // initKeePass bootstraps a KeePass provider using settings.

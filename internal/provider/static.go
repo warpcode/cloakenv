@@ -14,13 +14,14 @@ import (
 
 // staticProvider implements common logic for file-based static providers like JSON and YAML.
 type staticProvider struct {
-	scheme       string
-	unmarshal    func([]byte, any) error
-	serialize    func(any) (string, error)
-	filePath     string
-	entries      map[string]Entry
-	rawContent   map[string]any
-	singleEntity bool
+	scheme          string
+	unmarshal       func([]byte, any) error
+	serialize       func(any) (string, error)
+	filePath        string
+	entries         map[string]Entry
+	rawContent      map[string]any
+	singleEntity    bool
+	entitiesRootKey string
 }
 
 func (p *staticProvider) Scheme() string {
@@ -54,6 +55,7 @@ func (p *staticProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 
 	entitiesRootKey, isSingleEntity := p.determineEntityConfig(cfg, raw)
 	p.singleEntity = isSingleEntity
+	p.entitiesRootKey = entitiesRootKey
 
 	if p.singleEntity {
 		p.parseSingleEntity(cfg, raw, entitiesRootKey)
@@ -202,6 +204,10 @@ func (p *staticProvider) parseMultiEntities(raw map[string]any, entitiesRootKey 
 	}
 
 	return nil
+}
+
+func (p *staticProvider) getStaticProvider() *staticProvider {
+	return p
 }
 
 func (p *staticProvider) GetSecret(_ context.Context, location string) (string, error) {

@@ -136,7 +136,7 @@ func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, 
 
 	shouldResolve := true
 	if !isBuiltin {
-		if _, ok := p.(provider.ValueResolvableProvider); ok {
+		if vr, ok := p.(provider.ValueResolvableProvider); ok && vr.SupportsValueResolution() {
 			shouldResolve = r.providers.Config().Vaults[scheme].ResolveValues
 		}
 	}
@@ -170,7 +170,7 @@ func (r *Resolver) fetchProviderEntry(ctx context.Context, scheme, location stri
 
 	shouldResolveAttrs := true
 	if !isBuiltin {
-		if _, ok := p.(provider.ValueResolvableProvider); ok {
+		if vr, ok := p.(provider.ValueResolvableProvider); ok && vr.SupportsValueResolution() {
 			shouldResolveAttrs = r.providers.Config().Vaults[scheme].ResolveValues
 		}
 	}

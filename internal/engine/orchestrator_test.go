@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -230,4 +232,173 @@ func TestOrchestratorFacade(t *testing.T) {
 			t.Errorf("Forget non-keepass expected unsupported error, got: %v", err)
 		}
 	})
+}
+
+func TestOrchestrator_FieldFiltering(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	ctx := context.Background()
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"filtered_vault": {
+				Provider: "custom_vault",
+				IncludeFields: []string{
+					"env:*",
+					"UserName",
+				},
+				ExcludeFields: []string{
+					"*.notes",
+					"secret:*",
+				},
+				Entities: map[string]map[string]any{
+					"app_config": {
+						"UserName":        "app_admin",
+						"Password":        "super_secret_pw",
+						"env:PORT":        "8080",
+						"env:HOST":        "127.0.0.1",
+						"env:notes.notes": "internal notes",
+						"secret:token":    "bearer_12345",
+						"db.notes":        "production database notes",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("GetEntry_FilteredAttributes", func(t *testing.T) {
+		entry, err := orch.GetEntry(ctx, "filtered_vault://app_config")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		if len(entry.Attributes) != 3 {
+			t.Fatalf("expected 3 attributes after filtering, got %d (%v)", len(entry.Attributes), entry.Attributes)
+		}
+
+		if entry.Attributes["UserName"] != "app_admin" {
+			t.Errorf("UserName = %v, want 'app_admin'", entry.Attributes["UserName"])
+		}
+		if entry.Attributes["env:PORT"] != "8080" {
+			t.Errorf("env:PORT = %v, want '8080'", entry.Attributes["env:PORT"])
+		}
+		if entry.Attributes["env:HOST"] != "127.0.0.1" {
+			t.Errorf("env:HOST = %v, want '127.0.0.1'", entry.Attributes["env:HOST"])
+		}
+
+		// Ensure excluded/non-included fields are removed
+		for _, excluded := range []string{"Password", "secret:token", "db.notes", "env:notes.notes"} {
+			if _, ok := entry.Attributes[excluded]; ok {
+				t.Errorf("field %q should have been filtered out", excluded)
+			}
+		}
+	})
+
+	t.Run("Search_FilteredAttributes", func(t *testing.T) {
+		results, err := orch.Search(ctx, "", []string{"filtered_vault"})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+
+		if len(results) != 1 {
+			t.Fatalf("expected 1 search result, got %d", len(results))
+		}
+
+		resEntry := results[0].Entry
+		if len(resEntry.Attributes) != 3 {
+			t.Fatalf("expected 3 attributes in search result entry, got %d (%v)", len(resEntry.Attributes), resEntry.Attributes)
+		}
+	})
+
+	t.Run("Resolve_AllowedField", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, "${filtered_vault://app_config:env:PORT}")
+		if err != nil {
+			t.Fatalf("Resolve env:PORT failed: %v", err)
+		}
+		if val != "8080" {
+			t.Errorf("Resolve env:PORT = %q, want '8080'", val)
+		}
+	})
+
+	t.Run("Resolve_ExcludedField", func(t *testing.T) {
+		_, err := orch.Resolve(ctx, "${filtered_vault://app_config:Password}")
+		if err == nil {
+			t.Fatalf("expected error resolving excluded field Password, got nil")
+		}
+
+		_, errToken := orch.Resolve(ctx, "${filtered_vault://app_config:secret:token}")
+		if errToken == nil {
+			t.Fatalf("expected error resolving excluded field secret:token, got nil")
+		}
+	})
+}
+
+func TestOrchestrator_FieldFiltering_WrappedDirectProviderResolution(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+	t.Setenv("MY_APP_SECRET", "super_secret_from_env")
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	yamlFile := filepath.Join(tmpDir, "vault.yaml")
+	yamlContent := `
+api_key: "${env://MY_APP_SECRET}"
+excluded_key: "${env://MY_APP_SECRET}"
+`
+	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write yaml fixture: %v", err)
+	}
+
+	isSingle := true
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"filtered_yaml": {
+				Provider:      "yaml",
+				VaultPath:     yamlFile,
+				SingleEntity:  &isSingle,
+				IncludeFields: []string{"api_key"},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	// 1. Allowed field with nested URI should resolve through to the env provider value
+	val, err := orch.Resolve(ctx, "${filtered_yaml://api_key}")
+	if err != nil {
+		t.Fatalf("failed to resolve filtered_yaml://api_key: %v", err)
+	}
+	if val != "super_secret_from_env" {
+		t.Errorf("Resolve = %q, want 'super_secret_from_env'", val)
+	}
+
+	// 2. Also check GetEntry has the resolved attribute value
+	entry, err := orch.GetEntry(ctx, "filtered_yaml://")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+	if entry.Attributes["api_key"] != "super_secret_from_env" {
+		t.Errorf("GetEntry attribute api_key = %v, want 'super_secret_from_env'", entry.Attributes["api_key"])
+	}
+	if _, ok := entry.Attributes["excluded_key"]; ok {
+		t.Errorf("excluded_key should be filtered out")
+	}
+
+	// 3. Excluded key must not be resolvable
+	_, errExcluded := orch.Resolve(ctx, "${filtered_yaml://excluded_key}")
+	if errExcluded == nil {
+		t.Fatalf("expected error resolving excluded_key, got nil")
+	}
 }

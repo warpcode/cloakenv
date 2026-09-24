@@ -575,6 +575,26 @@ vaults:
     query: '"service:openrouter" in tags'
 ```
 
+#### 5. Field Filtering (`include_fields` and `exclude_fields`)
+- Supported across all vault providers (direct and virtual providers alike).
+- `include_fields`: Limits returned entry attributes to field names matching configured glob patterns (via `path.Match`).
+- `exclude_fields`: Removes entry attributes with field names matching configured glob patterns before returning the entry.
+- Glob patterns support wildcards such as `env:*`, `*.notes`, and `secret:*`.
+- Filters apply generically across `GetEntry`, `Search`, and `GetSecret` secret resolution.
+- Example config:
+```yaml
+vaults:
+  work:
+    provider: "keepass"
+    vault_path: "~/secrets/work_vault.kdbx"
+    include_fields:
+      - "env:*"
+      - "UserName"
+    exclude_fields:
+      - "*.notes"
+      - "secret:*"
+```
+
 ---
 
 ## Command Autoloading & Alias Masking
