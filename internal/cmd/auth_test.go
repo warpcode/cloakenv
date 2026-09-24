@@ -160,7 +160,7 @@ func TestAuth_Login(t *testing.T) {
 		{
 			name:          "missing vault argument",
 			args:          []string{"login"},
-			expectedError: "Usage: cloakenv auth login <scheme>",
+			expectedError: "Usage: cloakenv auth login <vault>",
 			expectedCode:  1,
 		},
 		{
@@ -252,7 +252,7 @@ func TestAuth_Forget(t *testing.T) {
 		{
 			name:          "missing vault argument",
 			args:          []string{"forget"},
-			expectedError: "Usage: cloakenv auth forget <scheme>",
+			expectedError: "Usage: cloakenv auth forget <vault>",
 			expectedCode:  1,
 		},
 		{
@@ -270,7 +270,7 @@ func TestAuth_Forget(t *testing.T) {
 		{
 			name:           "forget existing credentials",
 			args:           []string{"forget", "mykp"},
-			expectedOutput: "Successfully cleared credentials for scheme \"mykp\"",
+			expectedOutput: "Successfully cleared credentials for vault \"mykp\"",
 			expectedCode:   0,
 			checkKeyring:   true,
 			keyringScheme:  "mykp",

@@ -64,6 +64,7 @@ func TestRunCommand(t *testing.T) {
 	tests := []struct {
 		name       string
 		cmdArgs    []string
+		env        []string
 		wantCode   int
 		wantStderr string
 	}{
@@ -112,6 +113,22 @@ func TestRunCommand(t *testing.T) {
 			wantCode:   1,
 			wantStderr: "is blocked due to security risks\n",
 		},
+		{
+			name:     "null_byte_cmd",
+			cmdArgs:  []string{"echo\x00bar"},
+			wantCode: 1,
+		},
+		{
+			name:     "null_byte_arg",
+			cmdArgs:  []string{"echo", "hello\x00world"},
+			wantCode: 1,
+		},
+		{
+			name:     "null_byte_env",
+			cmdArgs:  []string{"echo", "hello"},
+			env:      []string{"BAD_VAR=foo\x00bar"},
+			wantCode: 1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -122,13 +139,21 @@ func TestRunCommand(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to create pipe: %v", err)
 			}
+			defer func() { _ = r.Close() }()
+			defer func() { _ = w.Close() }()
 			os.Stderr = w
+			t.Cleanup(func() {
+				os.Stderr = oldStderr
+			})
 
-			env := append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+			env := tt.env
+			if env == nil {
+				env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+			}
 			gotCode := RunCommand(tt.cmdArgs, env)
 
 			// Restore os.Stderr and read captured output
-			w.Close()
+			_ = w.Close()
 			os.Stderr = oldStderr
 
 			var buf bytes.Buffer

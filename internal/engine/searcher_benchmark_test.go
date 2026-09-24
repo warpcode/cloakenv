@@ -1,0 +1,17 @@
+package engine
+
+import (
+	"testing"
+)
+
+func BenchmarkParseSearchURI(b *testing.B) {
+	uri := "tags=auth:ssh,env:prod,deprecated&title=bastion&path=servers/ssh/Password"
+	b.ResetTimer()
+	b.ReportAllocs()
+	for range b.N {
+		_, _, err := parseSearchURI(uri)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}

@@ -12,7 +12,7 @@ keyring:
   prefix: "cloakenv"
 
 # Custom vault definitions. Each mapping key becomes a custom URI scheme (ref).
-# Supported provider types: keepass, json, yaml, custom_vault
+# Supported provider types: keepass, json, yaml, custom_vault, search
 vaults:
   # Defines the keepass_dev:// URI scheme (KeePass provider example using the provided database.kdbx)
   keepass_dev:
@@ -75,6 +75,13 @@ vaults:
         secret_key: "secret_value"
         tags: [static, local]
 
+  # Defines the openrouter:// URI scheme (Stored Search vault provider example)
+  # Acts as a stored search definition returning a filtered synthetic view over source vaults.
+  openrouter:
+    provider: "search"
+    source_vaults: ["work"]
+    query: '"service:openrouter" in tags'
+
 # Autoloading configuration: Automatically match commands, mask/transform command lines, and inject vault credentials
 autoload:
   # Regex matching + command transformation (Alias masking):
@@ -107,7 +114,7 @@ autoload:
 # The following schemes are built-in and do not need to be registered in the 'vaults' block:
 # - env://      (Resolves secret values from local environment variables, e.g. env://USER)
 # - keyring://  (Resolves secret values from the OS keyring/keychain, e.g. keyring://ssh/prod_pass)
-# - cache://    (Resolves secret values from the secure in-memory cache daemon)
+# - cache://    (Resolves secret values from the secure local file cache)
 #
 # Note on KeePass Authentication:
 # Master passwords are NOT stored in the configuration file.
