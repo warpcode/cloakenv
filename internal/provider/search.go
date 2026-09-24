@@ -66,25 +66,43 @@ func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, err
 	return results, nil
 }
 
-func getEntryAttribute(entry Entry, attrName string) (string, bool, error) {
-	if val, ok := entry.Attributes[attrName]; ok {
-		sVal, err := serializeVal(val)
-		return sVal, true, err
+func getEntryAttributeKey(entry Entry, attrName string) (string, bool) {
+	if _, ok := entry.Attributes[attrName]; ok {
+		return attrName, true
 	}
-	for k, v := range entry.Attributes {
+	keys := make([]string, 0, len(entry.Attributes))
+	for k := range entry.Attributes {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
 		if strings.EqualFold(k, attrName) {
-			sVal, err := serializeVal(v)
-			return sVal, true, err
+			return k, true
 		}
 	}
 	if strings.EqualFold(attrName, "title") {
-		return entry.Title, true, nil
+		return "Title", true
 	}
 	if strings.EqualFold(attrName, "tags") {
+		return "Tags", true
+	}
+	return "", false
+}
+
+func getEntryAttribute(entry Entry, attrName string) (string, bool, error) {
+	key, found := getEntryAttributeKey(entry, attrName)
+	if !found {
+		return "", false, nil
+	}
+	if key == "Title" {
+		return entry.Title, true, nil
+	}
+	if key == "Tags" {
 		sVal, err := serializeVal(entry.Tags)
 		return sVal, true, err
 	}
-	return "", false, nil
+	sVal, err := serializeVal(entry.Attributes[key])
+	return sVal, true, err
 }
 
 // GetSecret resolves a secret attribute from the synthetic entry view.
@@ -153,6 +171,66 @@ func (s *SearchProvider) GetSecret(ctx context.Context, location string) (string
 				return "", err
 			}
 			return val, nil
+		}
+	}
+	return "", fmt.Errorf("search provider %q: default attribute \"Password\" not found in entry %q", s.vaultName, location)
+}
+
+// resolveCanonicalKey resolves the matching entry and canonical attribute key following the exact
+// same precedence and scanning order as GetSecret.
+func (s *SearchProvider) resolveCanonicalKey(ctx context.Context, location string) (string, error) {
+	results, err := s.executeSearch(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	if len(results) == 0 {
+		return "", fmt.Errorf("search provider %q: no entries matched stored query", s.vaultName)
+	}
+
+	if strings.Contains(location, ":") {
+		parts := strings.SplitN(location, ":", 2)
+		entryLoc := parts[0]
+		attrName := parts[1]
+
+		matching := s.findMatchingResults(results, entryLoc)
+		if len(matching) == 0 {
+			return "", fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, entryLoc)
+		}
+
+		for _, targetResult := range matching {
+			if key, found := getEntryAttributeKey(targetResult.Entry, attrName); found {
+				return key, nil
+			}
+		}
+		return "", fmt.Errorf("search provider %q: attribute %q not found in entry %q", s.vaultName, attrName, entryLoc)
+	}
+
+	// Single result case
+	if len(results) == 1 {
+		entry := results[0].Entry
+		if key, found := getEntryAttributeKey(entry, location); found {
+			return key, nil
+		}
+
+		if location == "" || location == "default" || location == results[0].Path || location == entry.Title {
+			if key, found := getEntryAttributeKey(entry, "Password"); found {
+				return key, nil
+			}
+		}
+
+		return "", fmt.Errorf("search provider %q: attribute or entry %q not found", s.vaultName, location)
+	}
+
+	// Multiple results case
+	matching := s.findMatchingResults(results, location)
+	if len(matching) == 0 {
+		return "", fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, location)
+	}
+
+	for _, targetResult := range matching {
+		if key, found := getEntryAttributeKey(targetResult.Entry, "Password"); found {
+			return key, nil
 		}
 	}
 	return "", fmt.Errorf("search provider %q: default attribute \"Password\" not found in entry %q", s.vaultName, location)

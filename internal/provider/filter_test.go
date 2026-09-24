@@ -718,3 +718,346 @@ func TestFilteringProvider_JSON_RootKeyAndDotPath(t *testing.T) {
 		t.Errorf("entities.db missing username: %s", valEntity)
 	}
 }
+
+func TestFilteringProvider_Search_DuplicatePath_MultiResult_MixedCase(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("DuplicatePath_FieldExclusionOnCanonicalKey", func(t *testing.T) {
+		// Two results with identical Path "app/config".
+		// First result lacks the requested field, second result supplies it.
+		sp := NewSearchProvider()
+		sp.searchExecutor = func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Vault: "source_vault",
+					Path:  "app/config",
+					Entry: Entry{
+						Title: "first_entry",
+						Attributes: map[string]any{
+							"other_field": "val1",
+						},
+					},
+				},
+				{
+					Vault: "source_vault",
+					Path:  "app/config",
+					Entry: Entry{
+						Title: "second_entry",
+						Attributes: map[string]any{
+							"api_key":  "secret_api_key",
+							"Password": "secret_password",
+						},
+					},
+				},
+			}, nil
+		}
+
+		if err := sp.Initialize(ctx, ProviderConfig{
+			Settings: map[string]string{
+				"vault_name": "filtered_search",
+				"query":      "app",
+			},
+		}); err != nil {
+			t.Fatalf("failed to init SearchProvider: %v", err)
+		}
+
+		fp := NewFilteringProvider(sp, nil, []string{"Password"})
+
+		// 1. Bare location defaults to Password; second result has Password, which must be excluded
+		_, errBare := fp.GetSecret(ctx, "app/config")
+		if errBare == nil {
+			t.Fatalf("expected error for excluded Password on bare location, got nil")
+		}
+		if !strings.Contains(errBare.Error(), "excluded") {
+			t.Errorf("unexpected error: %v", errBare)
+		}
+
+		// 2. Case-insensitive attribute query "password" resolves to second result's canonical key "Password"
+		_, errCase := fp.GetSecret(ctx, "app/config:password")
+		if errCase == nil {
+			t.Fatalf("expected error for excluded Password via case-insensitive query, got nil")
+		}
+		if !strings.Contains(errCase.Error(), "excluded") {
+			t.Errorf("unexpected error: %v", errCase)
+		}
+
+		// 3. Allowed field in second result is returned
+		val, err := fp.GetSecret(ctx, "app/config:api_key")
+		if err != nil {
+			t.Fatalf("failed to get api_key: %v", err)
+		}
+		if val != "secret_api_key" {
+			t.Errorf("api_key = %q, want 'secret_api_key'", val)
+		}
+	})
+
+	t.Run("MultiResult_DifferentPaths", func(t *testing.T) {
+		sp := NewSearchProvider()
+		sp.searchExecutor = func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Vault: "source_vault",
+					Path:  "services/auth",
+					Entry: Entry{
+						Title: "auth_service",
+						Attributes: map[string]any{
+							"token": "auth_token_123",
+						},
+					},
+				},
+				{
+					Vault: "source_vault",
+					Path:  "services/db",
+					Entry: Entry{
+						Title: "db_service",
+						Attributes: map[string]any{
+							"secret": "db_secret_456",
+						},
+					},
+				},
+			}, nil
+		}
+
+		if err := sp.Initialize(ctx, ProviderConfig{
+			Settings: map[string]string{
+				"vault_name": "filtered_search",
+				"query":      "services",
+			},
+		}); err != nil {
+			t.Fatalf("failed to init SearchProvider: %v", err)
+		}
+
+		fp := NewFilteringProvider(sp, nil, []string{"secret"})
+
+		// Allowed in first result
+		val, err := fp.GetSecret(ctx, "services/auth:token")
+		if err != nil {
+			t.Fatalf("failed to get token: %v", err)
+		}
+		if val != "auth_token_123" {
+			t.Errorf("token = %q, want 'auth_token_123'", val)
+		}
+
+		// Excluded in second result
+		_, errSec := fp.GetSecret(ctx, "services/db:secret")
+		if errSec == nil {
+			t.Fatalf("expected error for excluded secret, got nil")
+		}
+	})
+
+	t.Run("MixedCase_DeterministicResolution", func(t *testing.T) {
+		sp := NewSearchProvider()
+		sp.searchExecutor = func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Vault: "source_vault",
+					Path:  "app/config",
+					Entry: Entry{
+						Title: "app_config",
+						Attributes: map[string]any{
+							"API_KEY": "val_upper",
+							"api_key": "val_lower",
+						},
+					},
+				},
+			}, nil
+		}
+
+		if err := sp.Initialize(ctx, ProviderConfig{
+			Settings: map[string]string{
+				"vault_name": "filtered_search",
+				"query":      "app",
+			},
+		}); err != nil {
+			t.Fatalf("failed to init SearchProvider: %v", err)
+		}
+
+		// Exact match takes precedence
+		fp := NewFilteringProvider(sp, []string{"api_key"}, nil)
+		valExact, err := fp.GetSecret(ctx, "app/config:api_key")
+		if err != nil {
+			t.Fatalf("failed to get exact api_key: %v", err)
+		}
+		if valExact != "val_lower" {
+			t.Errorf("expected 'val_lower', got %q", valExact)
+		}
+
+		// Case-insensitive query resolves deterministically to the sorted key
+		_, errUpper := fp.GetSecret(ctx, "app/config:API_KEY")
+		if errUpper == nil {
+			t.Errorf("API_KEY should be rejected when only api_key is included")
+		}
+	})
+}
+
+func TestFilteringProvider_Static_FullPath_RootPrefixedAndRootless(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	jsonPath := filepath.Join(tmpDir, "db.json")
+
+	content := `{
+  "entities": {
+    "db": {
+      "username": "db_admin",
+      "password": "json_secret_pw",
+      "port": 5432
+    }
+  }
+}`
+	if err := os.WriteFile(jsonPath, []byte(content), 0600); err != nil {
+		t.Fatalf("failed to write json fixture: %v", err)
+	}
+
+	initProvider := func() SecretProvider {
+		p := NewJsonProvider()
+		if err := p.Initialize(ctx, ProviderConfig{
+			Settings: map[string]string{
+				"vault_path": jsonPath,
+			},
+			EntitiesRootKey: "entities",
+		}); err != nil {
+			t.Fatalf("failed to init JSON provider: %v", err)
+		}
+		return p
+	}
+
+	t.Run("Exclude_FullPath_RootPrefixedRule", func(t *testing.T) {
+		// exclude_fields has the full canonical path "entities.db.password"
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"entities.db.password"})
+
+		// Root-prefixed URI must be excluded
+		_, errPrefixed := fp.GetSecret(ctx, "entities.db.password")
+		if errPrefixed == nil {
+			t.Fatalf("expected error for excluded entities.db.password, got nil")
+		}
+
+		// Rootless URI alias must also be excluded (bypassing via rootless alias is blocked)
+		_, errRootless := fp.GetSecret(ctx, "db.password")
+		if errRootless == nil {
+			t.Fatalf("expected error for excluded db.password, got nil")
+		}
+
+		// Allowed field accessible via both forms
+		val1, err := fp.GetSecret(ctx, "entities.db.username")
+		if err != nil {
+			t.Fatalf("failed to get entities.db.username: %v", err)
+		}
+		if val1 != "db_admin" {
+			t.Errorf("username = %q, want 'db_admin'", val1)
+		}
+
+		val2, err := fp.GetSecret(ctx, "db.username")
+		if err != nil {
+			t.Fatalf("failed to get db.username: %v", err)
+		}
+		if val2 != "db_admin" {
+			t.Errorf("username = %q, want 'db_admin'", val2)
+		}
+	})
+
+	t.Run("Include_FullPath_RootPrefixedRule", func(t *testing.T) {
+		// include_fields has the full canonical path "entities.db.username"
+		p := initProvider()
+		fp := NewFilteringProvider(p, []string{"entities.db.username"}, nil)
+
+		// Root-prefixed URI is allowed
+		val1, err := fp.GetSecret(ctx, "entities.db.username")
+		if err != nil {
+			t.Fatalf("failed to get entities.db.username: %v", err)
+		}
+		if val1 != "db_admin" {
+			t.Errorf("username = %q, want 'db_admin'", val1)
+		}
+
+		// Rootless alias must also be allowed (not falsely rejected)
+		val2, err := fp.GetSecret(ctx, "db.username")
+		if err != nil {
+			t.Fatalf("failed to get db.username: %v", err)
+		}
+		if val2 != "db_admin" {
+			t.Errorf("username = %q, want 'db_admin'", val2)
+		}
+
+		// Other fields excluded via both forms
+		if _, err := fp.GetSecret(ctx, "entities.db.password"); err == nil {
+			t.Fatalf("expected error for password, got nil")
+		}
+		if _, err := fp.GetSecret(ctx, "db.password"); err == nil {
+			t.Fatalf("expected error for password, got nil")
+		}
+	})
+
+	t.Run("Exclude_RootlessFullPathRule", func(t *testing.T) {
+		// exclude_fields has the rootless path "db.password"
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"db.password"})
+
+		// Both forms must be excluded
+		if _, err := fp.GetSecret(ctx, "entities.db.password"); err == nil {
+			t.Fatalf("expected error for entities.db.password, got nil")
+		}
+		if _, err := fp.GetSecret(ctx, "db.password"); err == nil {
+			t.Fatalf("expected error for db.password, got nil")
+		}
+	})
+
+	t.Run("NormalizeEmptyPathComponents", func(t *testing.T) {
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"entities.db.password"})
+
+		// Consecutive dots or leading/trailing dots must not bypass exclusion
+		if _, err := fp.GetSecret(ctx, "entities..db.password"); err == nil {
+			t.Fatalf("expected error for entities..db.password, got nil")
+		}
+		if _, err := fp.GetSecret(ctx, ".db.password"); err == nil {
+			t.Fatalf("expected error for .db.password, got nil")
+		}
+
+		// Allowed fields with redundant dots are normalized and resolve properly
+		val1, err := fp.GetSecret(ctx, "entities..db.username")
+		if err != nil {
+			t.Fatalf("failed to get entities..db.username: %v", err)
+		}
+		if val1 != "db_admin" {
+			t.Errorf("username = %q, want 'db_admin'", val1)
+		}
+
+		val2, err := fp.GetSecret(ctx, ".db.username.")
+		if err != nil {
+			t.Fatalf("failed to get .db.username.: %v", err)
+		}
+		if val2 != "db_admin" {
+			t.Errorf("username = %q, want 'db_admin'", val2)
+		}
+	})
+
+	t.Run("EntityMap_FullPathFiltering", func(t *testing.T) {
+		// exclude_fields has full path "entities.db.password"
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"entities.db.password"})
+
+		// Fetching entities.db or db should omit password from the serialized map
+		valEntity1, err := fp.GetSecret(ctx, "entities.db")
+		if err != nil {
+			t.Fatalf("failed to get entities.db: %v", err)
+		}
+		if strings.Contains(valEntity1, "json_secret_pw") {
+			t.Errorf("entities.db exposed excluded password: %s", valEntity1)
+		}
+		if !strings.Contains(valEntity1, "db_admin") {
+			t.Errorf("entities.db missing username: %s", valEntity1)
+		}
+
+		valEntity2, err := fp.GetSecret(ctx, "db")
+		if err != nil {
+			t.Fatalf("failed to get db: %v", err)
+		}
+		if strings.Contains(valEntity2, "json_secret_pw") {
+			t.Errorf("db exposed excluded password: %s", valEntity2)
+		}
+		if !strings.Contains(valEntity2, "db_admin") {
+			t.Errorf("db missing username: %s", valEntity2)
+		}
+	})
+}

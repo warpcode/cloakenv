@@ -284,51 +284,42 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 
 	case "search":
 		// Stored search provider:
-		// Attributes can be resolved case-insensitively, so look up the canonical key first.
+		// Attributes can be resolved case-insensitively, so resolve the exact result and canonical key first.
 		var canonicalField string
-		var requestedField string
-
-		if strings.Contains(location, ":") {
-			parts := strings.SplitN(location, ":", 2)
-			entryLoc := parts[0]
-			attrName := parts[1]
-			requestedField = attrName
-
-			if searchable, ok := f.underlying.(SearchableProvider); ok {
-				if entry, err := searchable.GetEntry(ctx, entryLoc); err == nil {
-					for k := range entry.Attributes {
-						if strings.EqualFold(k, attrName) {
-							canonicalField = k
-							break
-						}
-					}
-					if canonicalField == "" {
-						if strings.EqualFold(attrName, "title") {
-							canonicalField = "Title"
-						} else if strings.EqualFold(attrName, "tags") {
-							canonicalField = "Tags"
-						}
-					}
-				}
+		if sp, ok := f.underlying.(*SearchProvider); ok {
+			key, err := sp.resolveCanonicalKey(ctx, location)
+			if err != nil {
+				return "", err
 			}
-			if canonicalField == "" {
-				canonicalField = attrName
-			}
+			canonicalField = key
 		} else {
-			requestedField = location
-			if searchable, ok := f.underlying.(SearchableProvider); ok {
-				if entry, err := searchable.GetEntry(ctx, location); err == nil {
-					for k := range entry.Attributes {
-						if strings.EqualFold(k, location) {
-							canonicalField = k
-							break
+			// Fallback for mocks / custom SearchableProvider implementations
+			if strings.Contains(location, ":") {
+				parts := strings.SplitN(location, ":", 2)
+				entryLoc := parts[0]
+				attrName := parts[1]
+
+				if searchable, ok := f.underlying.(SearchableProvider); ok {
+					if entry, err := searchable.GetEntry(ctx, entryLoc); err == nil {
+						if key, found := getEntryAttributeKey(entry, attrName); found {
+							canonicalField = key
 						}
 					}
 				}
-			}
-			if canonicalField == "" {
-				// Bare location did not match any attribute name; defaults to "Password"
-				canonicalField = "Password"
+				if canonicalField == "" {
+					canonicalField = attrName
+				}
+			} else {
+				if searchable, ok := f.underlying.(SearchableProvider); ok {
+					if entry, err := searchable.GetEntry(ctx, location); err == nil {
+						if key, found := getEntryAttributeKey(entry, location); found {
+							canonicalField = key
+						}
+					}
+				}
+				if canonicalField == "" {
+					canonicalField = "Password"
+				}
 			}
 		}
 
@@ -338,16 +329,6 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		}
 		if !isFieldOrPathAllowed(canonicalField, leafCanonical, f.includeFields, f.excludeFields) {
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
-		}
-
-		if requestedField != "" && requestedField != canonicalField {
-			leafRequested := requestedField
-			if lastDot := strings.LastIndex(requestedField, "."); lastDot >= 0 {
-				leafRequested = requestedField[lastDot+1:]
-			}
-			if !isFieldOrPathAllowed(requestedField, leafRequested, f.includeFields, f.excludeFields) {
-				return "", fmt.Errorf("field %q is excluded by vault configuration", leafRequested)
-			}
 		}
 
 		return f.underlying.GetSecret(ctx, location)
@@ -387,16 +368,31 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 	}
 }
 
+// normalizeDotPath strips empty components from a dot-separated path (e.g. "a..b" -> "a.b").
+func normalizeDotPath(path string) string {
+	parts := strings.Split(path, ".")
+	var cleanParts []string
+	for _, p := range parts {
+		if p != "" {
+			cleanParts = append(cleanParts, p)
+		}
+	}
+	return strings.Join(cleanParts, ".")
+}
+
 // getStaticSecret resolves static dot-path secrets and enforces field filtering before delegating.
-// Root-keyed and nested paths are resolved and filtered using the underlying provider's serializer.
+// Root-keyed and nested paths are resolved and authorized against effective canonical paths
+// before serialization, preserving the underlying provider's serializer.
 func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string) (string, error) {
+	cleanLoc := normalizeDotPath(location)
+
 	spAccessor, ok := f.underlying.(interface{ getStaticProvider() *staticProvider })
 	if !ok {
-		leafAttr := location
-		if lastDot := strings.LastIndex(location, "."); lastDot >= 0 {
-			leafAttr = location[lastDot+1:]
+		leafAttr := cleanLoc
+		if lastDot := strings.LastIndex(cleanLoc, "."); lastDot >= 0 {
+			leafAttr = cleanLoc[lastDot+1:]
 		}
-		if !isFieldOrPathAllowed(location, leafAttr, f.includeFields, f.excludeFields) {
+		if !isFieldOrPathAllowed(cleanLoc, leafAttr, f.includeFields, f.excludeFields) {
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
 		}
 		return f.underlying.GetSecret(ctx, location)
@@ -406,23 +402,33 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 
 	var rawVal any
 	var err error
+	canonicalPath := cleanLoc
 
 	if sp.singleEntity {
 		entry, ok := sp.entries[""]
 		if !ok {
 			return "", fmt.Errorf("%s provider: single entity not found", sp.scheme)
 		}
-		rawVal, err = resolveDotPath(entry.Attributes, location)
+		rawVal, err = resolveDotPath(entry.Attributes, cleanLoc)
 	} else {
 		if sp.rawContent == nil {
 			return "", fmt.Errorf("%s provider: not initialized or empty database", sp.scheme)
 		}
-		rawVal, err = resolveDotPath(sp.rawContent, location)
-		if err != nil && sp.entitiesRootKey != "" && sp.entitiesRootKey != "." && !strings.HasPrefix(location, sp.entitiesRootKey+".") {
-			if val2, err2 := resolveDotPath(sp.rawContent, sp.entitiesRootKey+"."+location); err2 == nil {
+		val, err1 := resolveDotPath(sp.rawContent, cleanLoc)
+		if err1 == nil {
+			rawVal = val
+			canonicalPath = cleanLoc
+		} else if sp.entitiesRootKey != "" && sp.entitiesRootKey != "." && !strings.HasPrefix(cleanLoc, sp.entitiesRootKey+".") {
+			rootPrefixed := sp.entitiesRootKey + "." + cleanLoc
+			val2, err2 := resolveDotPath(sp.rawContent, rootPrefixed)
+			if err2 == nil {
 				rawVal = val2
-				err = nil
+				canonicalPath = rootPrefixed
+			} else {
+				err = err1
 			}
+		} else {
+			err = err1
 		}
 	}
 
@@ -430,29 +436,22 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 		return "", fmt.Errorf("%s provider: failed to resolve path %q: %w", sp.scheme, location, err)
 	}
 
-	// If rawVal is a map (an entire entity or nested object), filter its attributes
-	if m, ok := normalizeEntryMap(rawVal); ok {
-		filteredMap := FilterAttributes(m, f.includeFields, f.excludeFields)
-		return sp.serialize(filteredMap)
-	}
-
-	// For scalar attributes, determine path candidates
-	leafAttr := location
-	if lastDot := strings.LastIndex(location, "."); lastDot >= 0 {
-		leafAttr = location[lastDot+1:]
+	leafAttr := canonicalPath
+	if lastDot := strings.LastIndex(canonicalPath, "."); lastDot >= 0 {
+		leafAttr = canonicalPath[lastDot+1:]
 	}
 
 	var strippedPath string
 	if !sp.singleEntity && sp.entitiesRootKey != "" && sp.entitiesRootKey != "." {
-		if strings.HasPrefix(location, sp.entitiesRootKey+".") {
-			strippedPath = strings.TrimPrefix(location, sp.entitiesRootKey+".")
+		if strings.HasPrefix(canonicalPath, sp.entitiesRootKey+".") {
+			strippedPath = strings.TrimPrefix(canonicalPath, sp.entitiesRootKey+".")
 		}
 	}
 
 	var entityAttr string
 	pathToCheck := strippedPath
 	if pathToCheck == "" {
-		pathToCheck = location
+		pathToCheck = canonicalPath
 	}
 	if !sp.singleEntity {
 		if dotIdx := strings.Index(pathToCheck, "."); dotIdx >= 0 {
@@ -460,31 +459,66 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 		}
 	}
 
-	if len(f.excludeFields) > 0 {
-		for _, pattern := range f.excludeFields {
-			if matchPattern(pattern, leafAttr) ||
-				matchPattern(pattern, location) ||
-				(strippedPath != "" && matchPattern(pattern, strippedPath)) ||
-				(entityAttr != "" && matchPattern(pattern, entityAttr)) {
-				return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
+	isAllowed := func(leaf string, candidates ...string) bool {
+		if len(f.excludeFields) > 0 {
+			for _, pattern := range f.excludeFields {
+				if matchPattern(pattern, leaf) {
+					return false
+				}
+				for _, c := range candidates {
+					if c != "" && matchPattern(pattern, c) {
+						return false
+					}
+				}
 			}
 		}
+		if len(f.includeFields) > 0 {
+			matched := false
+			for _, pattern := range f.includeFields {
+				if matchPattern(pattern, leaf) {
+					matched = true
+					break
+				}
+				for _, c := range candidates {
+					if c != "" && matchPattern(pattern, c) {
+						matched = true
+						break
+					}
+				}
+				if matched {
+					break
+				}
+			}
+			if !matched {
+				return false
+			}
+		}
+		return true
 	}
 
-	if len(f.includeFields) > 0 {
-		matched := false
-		for _, pattern := range f.includeFields {
-			if matchPattern(pattern, leafAttr) ||
-				matchPattern(pattern, location) ||
-				(strippedPath != "" && matchPattern(pattern, strippedPath)) ||
-				(entityAttr != "" && matchPattern(pattern, entityAttr)) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
+	// If rawVal is a map (an entire entity or nested object), filter its attributes
+	if m, ok := normalizeEntryMap(rawVal); ok {
+		if !isAllowed(leafAttr, canonicalPath, strippedPath, entityAttr, cleanLoc, location) {
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
 		}
+
+		filteredMap := make(map[string]any, len(m))
+		for k, v := range m {
+			kLeaf := k
+			kCanonical := canonicalPath + "." + k
+			var kStripped string
+			if strippedPath != "" {
+				kStripped = strippedPath + "." + k
+			}
+			if isAllowed(kLeaf, kCanonical, kStripped) {
+				filteredMap[k] = v
+			}
+		}
+		return sp.serialize(filteredMap)
+	}
+
+	if !isAllowed(leafAttr, canonicalPath, strippedPath, entityAttr, cleanLoc, location) {
+		return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
 	}
 
 	return sp.serialize(rawVal)

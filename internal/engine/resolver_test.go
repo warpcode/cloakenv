@@ -93,6 +93,37 @@ func TestResolveValues(t *testing.T) {
 		}
 	})
 
+	t.Run("ResolveValues_FalseReturn_HonoredByInterfacePresence", func(t *testing.T) {
+		// A provider implementing ValueResolvableProvider whose SupportsValueResolution returns false
+		// must still have resolve_values: false honored by the engine based on interface presence.
+		orch, err := NewOrchestrator(makeConfig(false))
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		underlying, _, err := orch.providerManager.GetProvider(ctx, "vault_a")
+		if err != nil {
+			t.Fatalf("failed to get vault_a provider: %v", err)
+		}
+		orch.providerManager.vaultCache["vault_a"] = &falseReturnResolvableProvider{underlying: underlying}
+
+		val, err := orch.Resolve(ctx, "${vault_a://entity1:Password}")
+		if err != nil {
+			t.Fatalf("Resolve failed: %v", err)
+		}
+		if val != "${vault_b://entry1:secret}" {
+			t.Errorf("expected raw URI when resolve_values is false, got %q", val)
+		}
+
+		entry, err := orch.GetEntry(ctx, "vault_a://entity1")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if raw := entry.Attributes["Password"]; raw != "${vault_b://entry1:secret}" {
+			t.Errorf("expected raw URI in GetEntry when resolve_values is false, got %q", raw)
+		}
+	})
+
 	t.Run("ResolveValues_CircularReference", func(t *testing.T) {
 		// vault_c.entry references vault_c itself — forms a cycle.
 		cfg := &config.Config{
@@ -485,4 +516,40 @@ func TestGetEntry(t *testing.T) {
 			}
 		})
 	}
+}
+
+type falseReturnResolvableProvider struct {
+	underlying provider.SecretProvider
+}
+
+func (f *falseReturnResolvableProvider) Scheme() string { return f.underlying.Scheme() }
+func (f *falseReturnResolvableProvider) Initialize(ctx context.Context, cfg provider.ProviderConfig) error {
+	return f.underlying.Initialize(ctx, cfg)
+}
+func (f *falseReturnResolvableProvider) GetSecret(ctx context.Context, location string) (string, error) {
+	return f.underlying.GetSecret(ctx, location)
+}
+func (f *falseReturnResolvableProvider) SetSecret(ctx context.Context, loc, val string) error {
+	return f.underlying.SetSecret(ctx, loc, val)
+}
+func (f *falseReturnResolvableProvider) DeleteSecret(ctx context.Context, loc string) error {
+	return f.underlying.DeleteSecret(ctx, loc)
+}
+func (f *falseReturnResolvableProvider) Validate(s map[string]string) error {
+	return f.underlying.Validate(s)
+}
+func (f *falseReturnResolvableProvider) SupportsValueResolution() bool {
+	return false
+}
+func (f *falseReturnResolvableProvider) GetEntry(ctx context.Context, loc string) (provider.Entry, error) {
+	if s, ok := f.underlying.(provider.SearchableProvider); ok {
+		return s.GetEntry(ctx, loc)
+	}
+	return provider.Entry{}, nil
+}
+func (f *falseReturnResolvableProvider) Search(ctx context.Context, q provider.SearchQuery) ([]provider.SearchResult, error) {
+	if s, ok := f.underlying.(provider.SearchableProvider); ok {
+		return s.Search(ctx, q)
+	}
+	return nil, nil
 }
