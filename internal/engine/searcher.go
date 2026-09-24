@@ -191,6 +191,8 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 		return nil, err
 	}
 
+	fieldPolicy := provider.FieldPolicyFromContext(ctx)
+
 	cfg := s.providers.Config()
 	var allResults []provider.SearchResult
 	for name, searchable := range providersToSearch {
@@ -206,6 +208,9 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 				}
 			}
 			r.Vault = name
+			if fieldPolicy != nil && (len(fieldPolicy.IncludeFields) > 0 || len(fieldPolicy.ExcludeFields) > 0) {
+				r.Entry = provider.FilterEntry(r.Entry, fieldPolicy.IncludeFields, fieldPolicy.ExcludeFields)
+			}
 			allResults = append(allResults, s.resolveSearchResultAttributes(ctx, r, depth))
 		}
 	}

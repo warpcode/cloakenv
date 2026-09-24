@@ -295,8 +295,10 @@ func (pm *ProviderManager) initSearch(ctx context.Context, vaultName string, vau
 			"vault_name": vaultName,
 			"query":      vault.Query,
 		},
-		SourceVaults: vault.SourceVaults,
-		Query:        vault.Query,
+		SourceVaults:  vault.SourceVaults,
+		Query:         vault.Query,
+		IncludeFields: vault.IncludeFields,
+		ExcludeFields: vault.ExcludeFields,
 	})
 	if err != nil {
 		return nil, err

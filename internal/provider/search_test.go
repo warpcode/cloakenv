@@ -398,3 +398,78 @@ func TestSearchProvider_MaxDepth(t *testing.T) {
 		t.Errorf("expected max depth exceeded error, got: %v", err)
 	}
 }
+
+func TestSearchProvider_AttributeMapPrecedenceOverMetadata(t *testing.T) {
+	ctx := context.Background()
+	p := provider.NewSearchProvider()
+
+	err := p.Initialize(ctx, provider.ProviderConfig{
+		Settings: map[string]string{"vault_name": "precedence_test"},
+		Query:    "true",
+	})
+	if err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	p.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]provider.SearchResult, error) {
+		return []provider.SearchResult{
+			{
+				Vault: "source",
+				Path:  "custom_entry",
+				Entry: provider.Entry{
+					Title: "metadata_title",
+					Tags:  []string{"meta_tag"},
+					Attributes: map[string]any{
+						"Title": "secret_title_attr",
+						"Tags":  "secret_tags_attr",
+					},
+				},
+			},
+			{
+				Vault: "source",
+				Path:  "fallback_entry",
+				Entry: provider.Entry{
+					Title: "fallback_title",
+					Tags:  []string{"fallback_tag"},
+					Attributes: map[string]any{
+						"Password": "secret_password",
+					},
+				},
+			},
+		}, nil
+	})
+
+	// When Attributes has "Title" or "Tags", attribute map value must take precedence over Entry metadata
+	valTitle, err := p.GetSecret(ctx, "custom_entry:Title")
+	if err != nil {
+		t.Fatalf("unexpected error getting Title: %v", err)
+	}
+	if valTitle != "secret_title_attr" {
+		t.Errorf("Title = %q, want 'secret_title_attr' (attribute map precedence)", valTitle)
+	}
+
+	valTags, err := p.GetSecret(ctx, "custom_entry:Tags")
+	if err != nil {
+		t.Fatalf("unexpected error getting Tags: %v", err)
+	}
+	if valTags != "secret_tags_attr" {
+		t.Errorf("Tags = %q, want 'secret_tags_attr' (attribute map precedence)", valTags)
+	}
+
+	// When Attributes does NOT have "Title" or "Tags", it falls back to Entry metadata
+	valMetaTitle, err := p.GetSecret(ctx, "fallback_entry:Title")
+	if err != nil {
+		t.Fatalf("unexpected error getting fallback Title: %v", err)
+	}
+	if valMetaTitle != "fallback_title" {
+		t.Errorf("Title = %q, want 'fallback_title' (metadata fallback)", valMetaTitle)
+	}
+
+	valMetaTags, err := p.GetSecret(ctx, "fallback_entry:Tags")
+	if err != nil {
+		t.Fatalf("unexpected error getting fallback Tags: %v", err)
+	}
+	if !strings.Contains(valMetaTags, "fallback_tag") {
+		t.Errorf("Tags = %q, want to contain 'fallback_tag' (metadata fallback)", valMetaTags)
+	}
+}

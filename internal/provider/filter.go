@@ -75,31 +75,226 @@ func isFieldOrPathAllowed(fullPath, leafAttr string, includeFields, excludeField
 	return true
 }
 
+// isFieldAuthorized checks if a field is permitted under include and exclude glob patterns,
+// matching against leaf attribute name and all candidate paths.
+func isFieldAuthorized(leafAttr string, candidates []string, includeFields, excludeFields []string) bool {
+	if len(excludeFields) > 0 {
+		for _, pattern := range excludeFields {
+			if matchPattern(pattern, leafAttr) {
+				return false
+			}
+			for _, c := range candidates {
+				if c != "" && matchPattern(pattern, c) {
+					return false
+				}
+			}
+		}
+	}
+
+	if len(includeFields) > 0 {
+		matched := false
+		for _, pattern := range includeFields {
+			if matchPattern(pattern, leafAttr) {
+				matched = true
+				break
+			}
+			for _, c := range candidates {
+				if c != "" && matchPattern(pattern, c) {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+
+	return true
+}
+
+func isContainerDirectlyIncluded(leafAttr string, candidates []string, includeFields []string) bool {
+	if len(includeFields) == 0 {
+		return true
+	}
+	for _, pattern := range includeFields {
+		if matchPattern(pattern, leafAttr) {
+			return true
+		}
+		for _, c := range candidates {
+			if c != "" && matchPattern(pattern, c) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// projectRecursive performs path-aware recursive canonical projection on maps and slices.
+func projectRecursive(val any, pfx string, prefixes []string, includeFields, excludeFields []string, parentIncluded bool) (any, bool) {
+	m, isMap := normalizeEntryMap(val)
+	if isMap {
+		filtered := make(map[string]any, len(m))
+		for k, v := range m {
+			kLeaf := k
+			if lastDot := strings.LastIndex(k, "."); lastDot >= 0 {
+				kLeaf = k[lastDot+1:]
+			}
+			childPfx := k
+			if pfx != "" {
+				childPfx = pfx + "." + k
+			}
+			var childCandidates []string
+			childCandidates = append(childCandidates, childPfx, k)
+			for _, p := range prefixes {
+				if p != "" {
+					childCandidates = append(childCandidates, p+"."+k)
+					if pfx != "" {
+						childCandidates = append(childCandidates, p+"."+pfx+"."+k)
+					}
+				}
+			}
+			for i, c := range childCandidates {
+				childCandidates[i] = normalizeDotPath(c)
+			}
+
+			// Check exclude_fields first
+			childExcluded := false
+			if len(excludeFields) > 0 {
+				for _, pattern := range excludeFields {
+					if matchPattern(pattern, kLeaf) {
+						childExcluded = true
+						break
+					}
+					for _, c := range childCandidates {
+						if c != "" && matchPattern(pattern, c) {
+							childExcluded = true
+							break
+						}
+					}
+					if childExcluded {
+						break
+					}
+				}
+			}
+			if childExcluded {
+				continue
+			}
+
+			childDirectlyIncluded := parentIncluded || isContainerDirectlyIncluded(kLeaf, childCandidates, includeFields)
+
+			// If child is a map:
+			if _, ok := normalizeEntryMap(v); ok {
+				projChild, hasAllowed := projectRecursive(v, childPfx, prefixes, includeFields, excludeFields, childDirectlyIncluded)
+				if hasAllowed {
+					filtered[k] = projChild
+				}
+				continue
+			}
+
+			// If child is a slice:
+			if childSlice, ok := v.([]any); ok {
+				projSlice, hasAllowed := projectSliceRecursive(childSlice, childPfx, prefixes, includeFields, excludeFields, childDirectlyIncluded)
+				if hasAllowed {
+					filtered[k] = projSlice
+				}
+				continue
+			}
+
+			// Scalar value
+			if childDirectlyIncluded || isFieldAuthorized(kLeaf, childCandidates, includeFields, excludeFields) {
+				filtered[k] = v
+			}
+		}
+
+		if len(filtered) > 0 || len(includeFields) == 0 || parentIncluded {
+			return filtered, true
+		}
+		return nil, false
+	}
+
+	return val, true
+}
+
+func projectSliceRecursive(slice []any, pfx string, prefixes []string, includeFields, excludeFields []string, parentIncluded bool) ([]any, bool) {
+	filtered := make([]any, 0, len(slice))
+	for _, item := range slice {
+		if _, ok := normalizeEntryMap(item); ok {
+			projItem, hasAllowed := projectRecursive(item, pfx, prefixes, includeFields, excludeFields, parentIncluded)
+			if hasAllowed {
+				filtered = append(filtered, projItem)
+			}
+		} else if itemSlice, ok := item.([]any); ok {
+			projSlice, hasAllowed := projectSliceRecursive(itemSlice, pfx, prefixes, includeFields, excludeFields, parentIncluded)
+			if hasAllowed {
+				filtered = append(filtered, projSlice)
+			}
+		} else {
+			if parentIncluded || len(includeFields) == 0 {
+				filtered = append(filtered, item)
+			}
+		}
+	}
+	if len(filtered) > 0 || len(includeFields) == 0 || parentIncluded {
+		return filtered, true
+	}
+	return nil, false
+}
+
 // FilterAttributes filters a map of entry attributes according to includeFields
 // and excludeFields glob patterns, returning a new map with only allowed keys.
+// Path-aware recursive projection is applied to nested maps and slices.
 func FilterAttributes(attrs map[string]any, includeFields, excludeFields []string) map[string]any {
+	return FilterAttributesWithPrefixes(attrs, nil, includeFields, excludeFields)
+}
+
+// FilterAttributesWithPrefixes applies path-aware recursive projection to attrs.
+func FilterAttributesWithPrefixes(attrs map[string]any, prefixes []string, includeFields, excludeFields []string) map[string]any {
 	if attrs == nil {
 		return nil
 	}
 	if len(includeFields) == 0 && len(excludeFields) == 0 {
 		return attrs
 	}
-
-	filtered := make(map[string]any, len(attrs))
-	for k, v := range attrs {
-		if IsFieldAllowed(k, includeFields, excludeFields) {
-			filtered[k] = v
-		}
+	proj, _ := projectRecursive(attrs, "", prefixes, includeFields, excludeFields, len(includeFields) == 0)
+	if m, ok := proj.(map[string]any); ok {
+		return m
 	}
-	return filtered
+	return make(map[string]any)
 }
 
 // FilterEntry applies field filtering to an Entry's Attributes map.
 func FilterEntry(entry Entry, includeFields, excludeFields []string) Entry {
+	return FilterEntryWithPath(entry, entry.Title, nil, includeFields, excludeFields)
+}
+
+// FilterEntryWithPath applies path-aware recursive field filtering to an Entry's Attributes map,
+// taking entry path and root prefixes into account.
+func FilterEntryWithPath(entry Entry, entryPath string, rootPrefixes []string, includeFields, excludeFields []string) Entry {
 	if len(includeFields) == 0 && len(excludeFields) == 0 {
 		return entry
 	}
-	entry.Attributes = FilterAttributes(entry.Attributes, includeFields, excludeFields)
+	var prefixes []string
+	cleanPath := normalizeDotPath(entryPath)
+	if cleanPath != "" {
+		prefixes = append(prefixes, cleanPath)
+	}
+	for _, rp := range rootPrefixes {
+		cleanRP := normalizeDotPath(rp)
+		if cleanRP != "" {
+			prefixes = append(prefixes, cleanRP)
+			if cleanPath != "" {
+				prefixes = append(prefixes, normalizeDotPath(cleanRP+"."+cleanPath))
+			}
+		}
+	}
+	if entry.Title != "" && entry.Title != cleanPath {
+		prefixes = append(prefixes, entry.Title)
+	}
+	entry.Attributes = FilterAttributesWithPrefixes(entry.Attributes, prefixes, includeFields, excludeFields)
 	return entry
 }
 
@@ -146,6 +341,16 @@ type SearchableFilteringProvider struct {
 	FilteringProvider
 }
 
+func (s *SearchableFilteringProvider) rootPrefixes() []string {
+	if spAccessor, ok := s.underlying.(interface{ getStaticProvider() *staticProvider }); ok {
+		sp := spAccessor.getStaticProvider()
+		if sp != nil && sp.entitiesRootKey != "" && sp.entitiesRootKey != "." {
+			return []string{sp.entitiesRootKey}
+		}
+	}
+	return nil
+}
+
 // GetEntry retrieves a structured entry and filters its attributes according to configured glob rules.
 func (s *SearchableFilteringProvider) GetEntry(ctx context.Context, location string) (Entry, error) {
 	searchable, ok := s.underlying.(SearchableProvider)
@@ -158,7 +363,7 @@ func (s *SearchableFilteringProvider) GetEntry(ctx context.Context, location str
 		return Entry{}, err
 	}
 
-	return FilterEntry(entry, s.includeFields, s.excludeFields), nil
+	return FilterEntryWithPath(entry, location, s.rootPrefixes(), s.includeFields, s.excludeFields), nil
 }
 
 // Search retrieves matching entries and filters all result entry attributes according to configured glob rules.
@@ -173,9 +378,10 @@ func (s *SearchableFilteringProvider) Search(ctx context.Context, query SearchQu
 		return nil, err
 	}
 
+	rootPrefixes := s.rootPrefixes()
 	filteredResults := make([]SearchResult, len(results))
 	for i, r := range results {
-		r.Entry = FilterEntry(r.Entry, s.includeFields, s.excludeFields)
+		r.Entry = FilterEntryWithPath(r.Entry, r.Path, rootPrefixes, s.includeFields, s.excludeFields)
 		filteredResults[i] = r
 	}
 
@@ -286,12 +492,19 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		// Stored search provider:
 		// Attributes can be resolved case-insensitively, so resolve the exact result and canonical key first.
 		var canonicalField string
-		if sp, ok := f.underlying.(*SearchProvider); ok {
-			key, err := sp.resolveCanonicalKey(ctx, location)
+		var val string
+		var resolved bool
+
+		if csp, ok := f.underlying.(interface {
+			GetSecretWithKey(ctx context.Context, location string) (string, string, error)
+		}); ok {
+			key, v, err := csp.GetSecretWithKey(ctx, location)
 			if err != nil {
 				return "", err
 			}
 			canonicalField = key
+			val = v
+			resolved = true
 		} else {
 			// Fallback for mocks / custom SearchableProvider implementations
 			if strings.Contains(location, ":") {
@@ -331,6 +544,9 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
 		}
 
+		if resolved {
+			return val, nil
+		}
 		return f.underlying.GetSecret(ctx, location)
 
 	case "yaml", "json":
@@ -459,65 +675,58 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 		}
 	}
 
-	isAllowed := func(leaf string, candidates ...string) bool {
-		if len(f.excludeFields) > 0 {
-			for _, pattern := range f.excludeFields {
-				if matchPattern(pattern, leaf) {
-					return false
-				}
-				for _, c := range candidates {
-					if c != "" && matchPattern(pattern, c) {
-						return false
-					}
+	containerCandidates := []string{canonicalPath, strippedPath, entityAttr, cleanLoc, location}
+	var cleanCandidates []string
+	for _, c := range containerCandidates {
+		if c != "" {
+			cleanCandidates = append(cleanCandidates, normalizeDotPath(c))
+		}
+	}
+
+	// Check if container itself is excluded
+	if len(f.excludeFields) > 0 {
+		for _, pattern := range f.excludeFields {
+			if matchPattern(pattern, leafAttr) {
+				return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
+			}
+			for _, c := range cleanCandidates {
+				if matchPattern(pattern, c) {
+					return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
 				}
 			}
 		}
-		if len(f.includeFields) > 0 {
-			matched := false
+	}
+
+	// If rawVal is a map (an entire entity or nested object), evaluate allowed descendants independently
+	if m, ok := normalizeEntryMap(rawVal); ok {
+		containerIncluded := len(f.includeFields) == 0
+		if !containerIncluded {
 			for _, pattern := range f.includeFields {
-				if matchPattern(pattern, leaf) {
-					matched = true
+				if matchPattern(pattern, leafAttr) {
+					containerIncluded = true
 					break
 				}
-				for _, c := range candidates {
-					if c != "" && matchPattern(pattern, c) {
-						matched = true
+				for _, c := range cleanCandidates {
+					if matchPattern(pattern, c) {
+						containerIncluded = true
 						break
 					}
 				}
-				if matched {
+				if containerIncluded {
 					break
 				}
 			}
-			if !matched {
-				return false
-			}
 		}
-		return true
-	}
 
-	// If rawVal is a map (an entire entity or nested object), filter its attributes
-	if m, ok := normalizeEntryMap(rawVal); ok {
-		if !isAllowed(leafAttr, canonicalPath, strippedPath, entityAttr, cleanLoc, location) {
+		proj, _ := projectRecursive(m, "", cleanCandidates, f.includeFields, f.excludeFields, containerIncluded)
+		filteredMap, _ := proj.(map[string]any)
+		if len(f.includeFields) > 0 && !containerIncluded && len(filteredMap) == 0 {
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
-		}
-
-		filteredMap := make(map[string]any, len(m))
-		for k, v := range m {
-			kLeaf := k
-			kCanonical := canonicalPath + "." + k
-			var kStripped string
-			if strippedPath != "" {
-				kStripped = strippedPath + "." + k
-			}
-			if isAllowed(kLeaf, kCanonical, kStripped) {
-				filteredMap[k] = v
-			}
 		}
 		return sp.serialize(filteredMap)
 	}
 
-	if !isAllowed(leafAttr, canonicalPath, strippedPath, entityAttr, cleanLoc, location) {
+	if !isFieldAuthorized(leafAttr, cleanCandidates, f.includeFields, f.excludeFields) {
 		return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
 	}
 

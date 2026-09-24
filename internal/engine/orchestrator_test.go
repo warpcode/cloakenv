@@ -402,3 +402,99 @@ excluded_key: "${env://MY_APP_SECRET}"
 		t.Fatalf("expected error resolving excluded_key, got nil")
 	}
 }
+
+type tripwireProvider struct {
+	called bool
+}
+
+func (t *tripwireProvider) Scheme() string                                                { return "tripwire" }
+func (t *tripwireProvider) Initialize(_ context.Context, _ provider.ProviderConfig) error { return nil }
+func (t *tripwireProvider) GetSecret(_ context.Context, _ string) (string, error) {
+	t.called = true
+	return "tripwire_triggered", nil
+}
+func (t *tripwireProvider) SetSecret(_ context.Context, _, _ string) error { return nil }
+func (t *tripwireProvider) DeleteSecret(_ context.Context, _ string) error { return nil }
+func (t *tripwireProvider) Validate(_ map[string]string) error             { return nil }
+
+func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"source_vault": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"entry1": {
+						"safe_field":     "safe_value",
+						"excluded_field": "${tripwire://must_not_be_called}",
+					},
+				},
+			},
+			"virtual_search": {
+				Provider:      "search",
+				Query:         "safe_field == 'safe_value'",
+				SourceVaults:  []string{"source_vault"},
+				ExcludeFields: []string{"excluded_field"},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	tw := &tripwireProvider{}
+	orch.providerManager.vaultCache["tripwire"] = tw
+
+	// Resolve through the virtual search provider
+	val, err := orch.Resolve(ctx, "${virtual_search://entry1:safe_field}")
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if val != "safe_value" {
+		t.Errorf("Resolve = %q, want 'safe_value'", val)
+	}
+
+	// Verify that the excluded field was never dereferenced
+	if tw.called {
+		t.Errorf("pre-resolution isolation violated: excluded URI value ${tripwire://...} was dereferenced")
+	}
+
+	// Also verify that a search vault whose query references the excluded field fails to match
+	cfgQueryLeak := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"source_vault": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"entry1": {
+						"safe_field":     "safe_value",
+						"excluded_field": "${tripwire://must_not_be_called}",
+					},
+				},
+			},
+			"query_leak_search": {
+				Provider:      "search",
+				Query:         "excluded_field == 'tripwire_triggered'",
+				SourceVaults:  []string{"source_vault"},
+				ExcludeFields: []string{"excluded_field"},
+			},
+		},
+	}
+
+	orchLeak, err := NewOrchestrator(cfgQueryLeak)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	orchLeak.providerManager.vaultCache["tripwire"] = tw
+
+	// Since excluded_field was stripped before query evaluation, it cannot match
+	_, errMatch := orchLeak.Resolve(ctx, "${query_leak_search://entry1:safe_field}")
+	if errMatch == nil {
+		t.Errorf("expected query match to fail when query references an excluded field, got nil")
+	}
+	if tw.called {
+		t.Errorf("excluded URI was dereferenced during query evaluation")
+	}
+}

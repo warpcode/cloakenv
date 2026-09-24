@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1058,6 +1059,252 @@ func TestFilteringProvider_Static_FullPath_RootPrefixedAndRootless(t *testing.T)
 		}
 		if !strings.Contains(valEntity2, "db_admin") {
 			t.Errorf("db missing username: %s", valEntity2)
+		}
+	})
+
+	t.Run("EntityMap_AggregateInclude_RootPrefixedAndRootless", func(t *testing.T) {
+		// include_fields has leaf "username"
+		p := initProvider()
+		fp := NewFilteringProvider(p, []string{"username"}, nil)
+
+		// Root-prefixed container entities.db must include username and exclude password
+		valEntity1, err := fp.GetSecret(ctx, "entities.db")
+		if err != nil {
+			t.Fatalf("failed to get entities.db: %v", err)
+		}
+		if !strings.Contains(valEntity1, "db_admin") {
+			t.Errorf("entities.db missing username: %s", valEntity1)
+		}
+		if strings.Contains(valEntity1, "json_secret_pw") {
+			t.Errorf("entities.db exposed non-included password: %s", valEntity1)
+		}
+
+		// Rootless container db must also include username and exclude password
+		valEntity2, err := fp.GetSecret(ctx, "db")
+		if err != nil {
+			t.Fatalf("failed to get db: %v", err)
+		}
+		if !strings.Contains(valEntity2, "db_admin") {
+			t.Errorf("db missing username: %s", valEntity2)
+		}
+		if strings.Contains(valEntity2, "json_secret_pw") {
+			t.Errorf("db exposed non-included password: %s", valEntity2)
+		}
+
+		// Full-path include rules: "entities.db.username" and "db.username"
+		fpFullPath := NewFilteringProvider(p, []string{"entities.db.username"}, nil)
+		valFullPath1, err := fpFullPath.GetSecret(ctx, "entities.db")
+		if err != nil {
+			t.Fatalf("failed to get entities.db with full-path include: %v", err)
+		}
+		if !strings.Contains(valFullPath1, "db_admin") || strings.Contains(valFullPath1, "json_secret_pw") {
+			t.Errorf("unexpected output with full-path include: %s", valFullPath1)
+		}
+
+		valFullPath2, err := fpFullPath.GetSecret(ctx, "db")
+		if err != nil {
+			t.Fatalf("failed to get db with full-path include: %v", err)
+		}
+		if !strings.Contains(valFullPath2, "db_admin") || strings.Contains(valFullPath2, "json_secret_pw") {
+			t.Errorf("unexpected output with full-path include: %s", valFullPath2)
+		}
+	})
+}
+
+func TestFilteringProvider_Search_SinglePassConsistency(t *testing.T) {
+	ctx := context.Background()
+
+	// Stateful search executor that returns different results on each successive call
+	callCount := 0
+	sp := NewSearchProvider()
+	sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+		callCount++
+		return []SearchResult{
+			{
+				Vault: "src",
+				Path:  "app/config",
+				Entry: Entry{
+					Title: "app_config",
+					Attributes: map[string]any{
+						"Password": fmt.Sprintf("pw_snapshot_%d", callCount),
+					},
+				},
+			},
+		}, nil
+	})
+
+	fp := NewFilteringProvider(sp, nil, []string{"other_field"})
+
+	val, err := fp.GetSecret(ctx, "app/config:Password")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Must only call search executor once per GetSecret
+	if callCount != 1 {
+		t.Errorf("search executor called %d times, want exactly 1 (single-pass consistency)", callCount)
+	}
+	if val != "pw_snapshot_1" {
+		t.Errorf("val = %q, want 'pw_snapshot_1'", val)
+	}
+}
+
+func TestFilteringProvider_StructuredOutput_RecursiveCanonicalProjection(t *testing.T) {
+	ctx := context.Background()
+
+	rawContent := []byte(`
+entities:
+  db:
+    credentials:
+      token: "secret_token_123"
+      user: "db_admin"
+    accounts:
+      - token: "acct_token_1"
+        name: "acct1"
+      - token: "acct_token_2"
+        name: "acct2"
+    flat.dotted.secret: "flat_secret_val"
+    flat.dotted.safe: "flat_safe_val"
+`)
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "vault.yaml")
+	if err := os.WriteFile(filePath, rawContent, 0600); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	initProvider := func() SecretProvider {
+		p := NewYamlProvider()
+		err := p.Initialize(ctx, ProviderConfig{
+			Settings: map[string]string{
+				"vault_path": filePath,
+				"vault_name": "test_yaml",
+			},
+			EntitiesRootKey: "entities",
+			Searchable:      true,
+		})
+		if err != nil {
+			t.Fatalf("failed to initialize yaml provider: %v", err)
+		}
+		return p
+	}
+
+	t.Run("NestedMap_ExcludeLeaf", func(t *testing.T) {
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"token"})
+
+		searchable, ok := fp.(SearchableProvider)
+		if !ok {
+			t.Fatalf("expected SearchableProvider")
+		}
+
+		entry, err := searchable.GetEntry(ctx, "db")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		creds, ok := entry.Attributes["credentials"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected credentials to be map[string]any, got %T", entry.Attributes["credentials"])
+		}
+		if _, hasToken := creds["token"]; hasToken {
+			t.Errorf("expected token to be excluded from credentials map, got %v", creds)
+		}
+		if creds["user"] != "db_admin" {
+			t.Errorf("expected user 'db_admin', got %v", creds["user"])
+		}
+	})
+
+	t.Run("NestedMap_RootedRuleExclusion", func(t *testing.T) {
+		// exclude_fields has canonical full path "entities.db.credentials.token"
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"entities.db.credentials.token"})
+
+		searchable := fp.(SearchableProvider)
+		entry, err := searchable.GetEntry(ctx, "db")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		creds, ok := entry.Attributes["credentials"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected credentials map")
+		}
+		if _, hasToken := creds["token"]; hasToken {
+			t.Errorf("expected token excluded under rooted rule, got %v", creds)
+		}
+		if creds["user"] != "db_admin" {
+			t.Errorf("expected user preserved, got %v", creds["user"])
+		}
+	})
+
+	t.Run("MapsInsideArray_Exclusion", func(t *testing.T) {
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"token"})
+
+		searchable := fp.(SearchableProvider)
+		entry, err := searchable.GetEntry(ctx, "db")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		accounts, ok := entry.Attributes["accounts"].([]any)
+		if !ok {
+			t.Fatalf("expected accounts to be []any, got %T", entry.Attributes["accounts"])
+		}
+		if len(accounts) != 2 {
+			t.Fatalf("expected 2 accounts, got %d", len(accounts))
+		}
+		for i, acctRaw := range accounts {
+			acct, ok := acctRaw.(map[string]any)
+			if !ok {
+				t.Fatalf("account %d is not map[string]any", i)
+			}
+			if _, hasToken := acct["token"]; hasToken {
+				t.Errorf("account %d has excluded token: %v", i, acct)
+			}
+			if acct["name"] == "" {
+				t.Errorf("account %d missing name: %v", i, acct)
+			}
+		}
+	})
+
+	t.Run("DottedAttributeKeys_Exclusion", func(t *testing.T) {
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"*.secret"})
+
+		searchable := fp.(SearchableProvider)
+		entry, err := searchable.GetEntry(ctx, "db")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		if _, hasSecret := entry.Attributes["flat.dotted.secret"]; hasSecret {
+			t.Errorf("flat.dotted.secret was not excluded: %v", entry.Attributes)
+		}
+		if entry.Attributes["flat.dotted.safe"] != "flat_safe_val" {
+			t.Errorf("flat.dotted.safe missing or altered: %v", entry.Attributes)
+		}
+	})
+
+	t.Run("Search_StructuredOutput_Filtering", func(t *testing.T) {
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"token"})
+
+		searchable := fp.(SearchableProvider)
+		results, err := searchable.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) == 0 {
+			t.Fatalf("expected search results")
+		}
+
+		for _, r := range results {
+			if creds, ok := r.Entry.Attributes["credentials"].(map[string]any); ok {
+				if _, hasToken := creds["token"]; hasToken {
+					t.Errorf("search result exposed excluded token in credentials: %v", creds)
+				}
+			}
 		}
 	})
 }

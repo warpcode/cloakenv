@@ -44,6 +44,8 @@ type ProviderConfig struct {
 	EntitiesRootKey string
 	SourceVaults    []string
 	Query           string
+	IncludeFields   []string
+	ExcludeFields   []string
 }
 
 // Entry represents a multi-secret credential record with metadata.
@@ -95,3 +97,33 @@ const ContextKeyTTL ContextKey = "ttl"
 
 // ContextKeyDepth is the context key for specifying recursion depth.
 const ContextKeyDepth ContextKey = "depth"
+
+type contextKeyFieldPolicy struct{}
+
+// FieldPolicy holds include and exclude glob patterns for attribute filtering.
+type FieldPolicy struct {
+	IncludeFields []string
+	ExcludeFields []string
+}
+
+// WithFieldPolicy returns a context carrying include and exclude glob field policies.
+func WithFieldPolicy(ctx context.Context, includeFields, excludeFields []string) context.Context {
+	if len(includeFields) == 0 && len(excludeFields) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, contextKeyFieldPolicy{}, &FieldPolicy{
+		IncludeFields: includeFields,
+		ExcludeFields: excludeFields,
+	})
+}
+
+// FieldPolicyFromContext retrieves the FieldPolicy from ctx, if present.
+func FieldPolicyFromContext(ctx context.Context) *FieldPolicy {
+	if ctx == nil {
+		return nil
+	}
+	if fp, ok := ctx.Value(contextKeyFieldPolicy{}).(*FieldPolicy); ok {
+		return fp
+	}
+	return nil
+}

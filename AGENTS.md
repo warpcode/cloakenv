@@ -107,6 +107,7 @@ go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run  # Ful
 - **Provider wrapper contracts**: Wrappers must preserve optional capabilities such as `ValueResolvableProvider`; the engine gates URI expansion by interface presence, not by the method return value. Do not unconditionally add optional interfaces to wrappers.
 - **Provider-specific URI parsing**: YAML/JSON locations use dot paths, KeePass/custom vaults use `entity:attribute`, and search providers may resolve attribute names case-insensitively. Field filters must authorize the effective canonical key and full static path before delegating.
 - **Filtered static resolution**: Root-keyed and nested YAML/JSON paths must be resolved and filtered before any fallback to the underlying provider; preserve the provider's native serializer.
+- **Filtering projection invariants**: Apply field filters recursively to structured maps and arrays, using canonical root and leaf paths consistently across `GetEntry`, `Search`, and `GetSecret`. For virtual search, apply the policy before source-value resolution and stored-query evaluation, and resolve the canonical key and returned value from the same search snapshot. Preserve actual attribute-map entries before metadata sentinels.
 
 ### File Naming
 
@@ -165,6 +166,7 @@ docs: update README with JSON provider usage
 - Mock or stub external I/O (keyring, filesystem) in unit tests. Integration tests requiring real keyring access must be skipped in CI via `t.Skip()` or build tags.
 - **Keyring/Cache Testing Isolation**: Tests that execute cache operations (such as `ClearCache()`) or interact with keyring providers must invoke `keyring.MockInit()` and set environment variables (`HOME`, `XDG_CACHE_HOME`, `LocalAppData`) to a temporary directory (`t.TempDir()`) during test setup to prevent local cache erasure and test leakage.
 - **Safe Redirection in Tests**: When capturing stdout or stderr using `os.Pipe()`, check the returned error immediately. Defer closing both writer ends (`wOut.Close()`, `wErr.Close()`) immediately after creation to prevent resource leaks (dangling goroutines/pipes) if the test function panics.
+- **Filtering regression coverage**: Cover recursive map/array projection, rooted and rootless static paths through scalar and structured APIs, changing search snapshots, and real `Title`/`Tags` attributes.
 
 ### Integration Tests
 
