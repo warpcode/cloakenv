@@ -4,8 +4,11 @@
 package runner
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -47,15 +50,22 @@ func TestRunCommand(t *testing.T) {
 	batPath := filepath.Join(tempDir, "test.bat")
 	cmdPath := filepath.Join(tempDir, "test.cmd")
 
-	// Create dummy batch files to test the block logic without executing them.
-	// We just need LookPath to find them.
-	os.WriteFile(batPath, []byte(""), 0755)
-	os.WriteFile(cmdPath, []byte(""), 0755)
+	if err := os.WriteFile(batPath, []byte(""), 0755); err != nil {
+		t.Fatalf("Failed to create dummy bat file: %v", err)
+	}
+	if err := os.WriteFile(cmdPath, []byte(""), 0755); err != nil {
+		t.Fatalf("Failed to create dummy cmd file: %v", err)
+	}
+	batUpperPath := filepath.Join(tempDir, "test.BAT")
+	if err := os.WriteFile(batUpperPath, []byte(""), 0755); err != nil {
+		t.Fatalf("Failed to create dummy BAT file: %v", err)
+	}
 
 	tests := []struct {
-		name     string
-		cmdArgs  []string
-		wantCode int
+		name       string
+		cmdArgs    []string
+		wantCode   int
+		wantStderr string
 	}{
 		{
 			name:     "success",
@@ -73,23 +83,66 @@ func TestRunCommand(t *testing.T) {
 			wantCode: 1,
 		},
 		{
-			name:     "bat_blocked",
-			cmdArgs:  []string{batPath, "hello"},
-			wantCode: 1,
+			name:       "bat_blocked",
+			cmdArgs:    []string{batPath, "hello"},
+			wantCode:   1,
+			wantStderr: "is blocked due to security risks\n",
 		},
 		{
-			name:     "cmd_blocked",
-			cmdArgs:  []string{cmdPath, "hello"},
-			wantCode: 1,
+			name:       "cmd_blocked",
+			cmdArgs:    []string{cmdPath, "hello"},
+			wantCode:   1,
+			wantStderr: "is blocked due to security risks\n",
+		},
+		{
+			name:       "bat_blocked_uppercase",
+			cmdArgs:    []string{batUpperPath, "hello"},
+			wantCode:   1,
+			wantStderr: "is blocked due to security risks\n",
+		},
+		{
+			name:       "bat_blocked_trailing_dot",
+			cmdArgs:    []string{batPath + ".", "hello"},
+			wantCode:   1,
+			wantStderr: "is blocked due to security risks\n",
+		},
+		{
+			name:       "bat_blocked_trailing_space",
+			cmdArgs:    []string{batPath + " ", "hello"},
+			wantCode:   1,
+			wantStderr: "is blocked due to security risks\n",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Redirect os.Stderr to capture output
+			oldStderr := os.Stderr
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("Failed to create pipe: %v", err)
+			}
+			os.Stderr = w
+
 			env := append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
 			gotCode := RunCommand(tt.cmdArgs, env)
+
+			// Restore os.Stderr and read captured output
+			w.Close()
+			os.Stderr = oldStderr
+
+			var buf bytes.Buffer
+			if _, err := io.Copy(&buf, r); err != nil {
+				t.Fatalf("Failed to read from pipe: %v", err)
+			}
+			gotStderr := buf.String()
+
 			if gotCode != tt.wantCode {
 				t.Errorf("RunCommand() = %v, want %v", gotCode, tt.wantCode)
+			}
+
+			if tt.wantStderr != "" && !strings.Contains(gotStderr, tt.wantStderr) {
+				t.Errorf("RunCommand() stderr = %q, want to contain %q", gotStderr, tt.wantStderr)
 			}
 		})
 	}

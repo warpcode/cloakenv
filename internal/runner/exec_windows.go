@@ -38,9 +38,10 @@ func RunCommand(cmdArgs []string, env []string) int {
 		return 1
 	}
 
-	ext := strings.ToLower(filepath.Ext(absBinary))
+	cleanBinary := strings.TrimRight(absBinary, ". ")
+	ext := strings.ToLower(filepath.Ext(cleanBinary))
 	if ext == ".bat" || ext == ".cmd" {
-		fmt.Fprintf(os.Stderr, "Execution of batch files is blocked due to security risks\n")
+		fmt.Fprintf(os.Stderr, "Execution of batch file %q is blocked due to security risks\n", absBinary)
 		return 1
 	}
 
