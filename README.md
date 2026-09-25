@@ -576,11 +576,20 @@ vaults:
 ```
 
 #### 5. Field Filtering (`include_fields` and `exclude_fields`)
-- Supported across all vault providers (direct and virtual providers alike).
-- `include_fields`: Limits returned entry attributes to field names matching configured glob patterns (via `path.Match`).
-- `exclude_fields`: Removes entry attributes with field names matching configured glob patterns before returning the entry.
-- Glob patterns support wildcards such as `env:*`, `*.notes`, and `secret:*`.
-- Filters apply generically across `GetEntry`, `Search`, and `GetSecret` secret resolution.
+- Supported across structured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`).
+- **`exclude_fields`**: Drops attributes matching any configured glob pattern before returning secrets. **Exclude rules always take precedence over include rules** (evaluated first at every step).
+- **`include_fields`**: When configured, restricts returned entry attributes to fields matching at least one glob pattern. An **empty list means filtering is disabled** (all unexcluded attributes allowed), not deny-all.
+- **Case-Sensitivity**: Glob patterns are evaluated **case-sensitively** (via Go's `path.Match`). A pattern like `"password"` will not match an attribute named `"Password"`. Ensure pattern casing matches the provider's attribute names.
+- **Candidate Matching Scope**: Pattern matching is not limited to bare attribute names; it evaluates multiple candidate representations:
+  - **Bare field names**: e.g., `UserName`, `password`, `notes`.
+  - **Full static dot paths**: e.g., `entities.db.password`, `db.password`.
+  - **Numeric array indices**: e.g., `users.0.token`, `config.servers.1.host`.
+  - **Entry titles & qualified attributes**: e.g., `Test Website.notes`, `Test Website:notes`.
+  - **Subtree exclusions via ancestor segments**: e.g., `exclude_fields: ["db"]` or `["entities.db"]` blocks all attributes beneath that container. Directly requesting and including a container grants its unexcluded nested attributes.
+- **Path Separators (`/` vs `.`) and Wildcards**:
+  - `path.Match`'s `*` wildcard **does not cross `/`** directory separators. A pattern like `exclude_fields: ["*"]` matches bare field names or title aliases without slashes, but will *not* match paths containing slashes (such as `group/entry`).
+  - The `*.notes` example below works because bare entry-title aliases (e.g. `Test Website.notes`) are expanded as candidate paths alongside hierarchical paths like `website/Test Website.notes`.
+- Filters apply consistently across `GetEntry`, `Search`, and scalar `GetSecret` resolution.
 - Example config:
 ```yaml
 vaults:

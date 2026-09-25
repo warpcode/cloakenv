@@ -2307,4 +2307,183 @@ entities:
 			t.Errorf("expected api_key to be excluded in GetEntry, got: %v", entry.Attributes)
 		}
 	})
+
+	t.Run("StaticProvider_SingleEntity_TitleQualified", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		yamlPath := filepath.Join(tmpDir, "single_entity_title.yaml")
+		yamlContent := `
+token: "secret_admin_tok"
+username: "app_user"
+host: "app.internal"
+`
+		if err := os.WriteFile(yamlPath, []byte(yamlContent), 0600); err != nil {
+			t.Fatalf("failed to write yaml: %v", err)
+		}
+
+		yp := NewYamlProvider()
+		if err := yp.Initialize(ctx, ProviderConfig{
+			Settings: map[string]string{
+				"vault_path":  yamlPath,
+				"entity_name": "app",
+			},
+		}); err != nil {
+			t.Fatalf("failed to init single-entity YAML: %v", err)
+		}
+
+		// 1. Title-qualified exclusion: exclude_fields: ["app.token"]
+		fpExcl := NewFilteringProvider(yp, nil, []string{"app.token"})
+
+		// Scalar GetSecret("token") must be blocked
+		_, err := fpExcl.GetSecret(ctx, "token")
+		if err == nil {
+			t.Errorf("expected GetSecret(token) to be blocked by title-qualified exclusion, got nil")
+		}
+
+		// Non-excluded field must succeed
+		val, err := fpExcl.GetSecret(ctx, "username")
+		if err != nil {
+			t.Fatalf("GetSecret(username) failed: %v", err)
+		}
+		if val != "app_user" {
+			t.Errorf("expected 'app_user', got %q", val)
+		}
+
+		// Structured GetEntry("") must also exclude token
+		sfpExcl := fpExcl.(SearchableProvider)
+		entryExcl, err := sfpExcl.GetEntry(ctx, "")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if _, hasToken := entryExcl.Attributes["token"]; hasToken {
+			t.Errorf("expected token to be excluded in GetEntry, got: %v", entryExcl.Attributes)
+		}
+
+		// 2. Title-qualified inclusion: include_fields: ["app.username"]
+		fpInc := NewFilteringProvider(yp, []string{"app.username"}, nil)
+
+		// Scalar GetSecret("username") must be allowed
+		valInc, err := fpInc.GetSecret(ctx, "username")
+		if err != nil {
+			t.Fatalf("GetSecret(username) failed with title-qualified include: %v", err)
+		}
+		if valInc != "app_user" {
+			t.Errorf("expected 'app_user', got %q", valInc)
+		}
+
+		// Scalar GetSecret("token") must be rejected by include
+		_, err = fpInc.GetSecret(ctx, "token")
+		if err == nil {
+			t.Errorf("expected GetSecret(token) to be rejected by title-qualified include, got nil")
+		}
+
+		// Structured GetEntry("") must only include username
+		sfpInc := fpInc.(SearchableProvider)
+		entryInc, err := sfpInc.GetEntry(ctx, "")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entryInc.Attributes["username"] != "app_user" {
+			t.Errorf("expected username in GetEntry, got: %v", entryInc.Attributes)
+		}
+		if _, hasToken := entryInc.Attributes["token"]; hasToken {
+			t.Errorf("expected token to not be included in GetEntry, got: %v", entryInc.Attributes)
+		}
+	})
 }
+
+func TestFilteringProvider_TitleResolutionError(t *testing.T) {
+	ctx := context.Background()
+
+	// Custom vault: lookup for nonexistent entity title must return error
+	cp := NewCustomVaultProvider()
+	if err := cp.Initialize(ctx, ProviderConfig{
+		Entities: map[string]map[string]any{
+			"valid_entity": {
+				"Password": "secret",
+				"title":    "Valid Title",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("failed to initialize custom vault: %v", err)
+	}
+
+	fp := NewFilteringProvider(cp, nil, []string{"Valid Title.Password"})
+
+	// Looking up a nonexistent entity must surface the lookup error, not silently drop candidate title
+	_, err := fp.GetSecret(ctx, "missing_entity:Password")
+	if err == nil {
+		t.Errorf("expected error when resolving nonexistent entity, got nil")
+	}
+}
+
+func TestFilteringProvider_AncestorInclusionIsolation(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDir := t.TempDir()
+	yamlPath := filepath.Join(tmpDir, "ancestor_inc.yaml")
+	yamlContent := `
+entities:
+  db:
+    username: "db_user"
+    password: "db_password"
+`
+	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write yaml fixture: %v", err)
+	}
+
+	yp := NewYamlProvider()
+	if err := yp.Initialize(ctx, ProviderConfig{
+		Settings: map[string]string{
+			"vault_path": yamlPath,
+		},
+		EntitiesRootKey: "entities",
+	}); err != nil {
+		t.Fatalf("failed to init YAML: %v", err)
+	}
+
+	// include_fields: ["entities"] must NOT act as a no-op allowlist that grants all children
+	fp := NewFilteringProvider(yp, []string{"entities"}, nil)
+
+	// Scalar GetSecret for "db.username" must NOT be granted by the ancestor "entities"
+	_, err := fp.GetSecret(ctx, "db.username")
+	if err == nil {
+		t.Errorf("expected GetSecret(db.username) to be rejected by include_fields: ['entities'], got nil")
+	}
+
+	// Structured GetEntry for "db" must not expose username or password when only ancestor "entities" is included
+	sfp := fp.(SearchableProvider)
+	entry, err := sfp.GetEntry(ctx, "db")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+	if len(entry.Attributes) != 0 {
+		t.Errorf("expected empty attributes with include_fields: ['entities'], got: %v", entry.Attributes)
+	}
+}
+
+func TestFilteringProvider_UnsupportedSchemeDenial(t *testing.T) {
+	ctx := context.Background()
+
+	// A mock provider with an unsupported scheme (e.g. "unknown_scheme")
+	mock := &mockGenericProvider{scheme: "unknown_scheme", val: "my_secret"}
+	fp := NewFilteringProvider(mock, []string{"my_secret"}, nil)
+
+	_, err := fp.GetSecret(ctx, "my_secret")
+	if err == nil {
+		t.Errorf("expected error denying unsupported scheme with field filtering, got nil")
+	}
+}
+
+type mockGenericProvider struct {
+	scheme string
+	val    string
+}
+
+func (m *mockGenericProvider) Scheme() string                                       { return m.scheme }
+func (m *mockGenericProvider) Initialize(_ context.Context, _ ProviderConfig) error { return nil }
+func (m *mockGenericProvider) GetSecret(_ context.Context, _ string) (string, error) {
+	return m.val, nil
+}
+func (m *mockGenericProvider) SetSecret(_ context.Context, _, _ string) error { return nil }
+func (m *mockGenericProvider) DeleteSecret(_ context.Context, _ string) error { return nil }
+func (m *mockGenericProvider) Validate(_ map[string]string) error             { return nil }

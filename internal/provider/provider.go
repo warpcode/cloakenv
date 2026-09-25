@@ -163,8 +163,6 @@ func WithFieldPolicy(ctx context.Context, includeFields, excludeFields []string)
 	var effectiveIncludeLayers [][]string
 	if len(inherited.IncludeLayers) > 0 {
 		effectiveIncludeLayers = append(effectiveIncludeLayers, inherited.IncludeLayers...)
-	} else if len(inherited.IncludeFields) > 0 {
-		effectiveIncludeLayers = append(effectiveIncludeLayers, inherited.IncludeFields)
 	}
 	if len(includeFields) > 0 {
 		effectiveIncludeLayers = append(effectiveIncludeLayers, includeFields)

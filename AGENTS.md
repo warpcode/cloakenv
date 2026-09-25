@@ -250,6 +250,8 @@ When reviewing PRs authored by automated bots (such as Google Jules / `google-la
 - **Checklist Non-Compliance**: Jules routinely implements Go provider code but skips updating `README.md` and `examples/config.yaml`. Enforce all items in the *Provider Development Checklist*.
 - **Empty Amendment Commits**: Jules may push empty amendment commits (0 additions, 0 deletions) without addressing existing review feedback. Always verify commit statistics via git or GitHub API (`gh api repos/.../commits/<oid> --jq .stats`) before assuming amendments contain fixes, and ensure all existing review threads are genuinely resolved before approving.
 - **Review Feedback Delivery**: All review findings MUST go into inline file-level comments (`REQUEST_CHANGES`). The top-level review body must be a neutral one-liner because bot runners only parse inline comments. Deleted files have no added lines (`side: RIGHT`) to anchor comments; bundle any deleted file findings into an inline comment on a modified file.
+- **Subtest Redundancy in Flat-to-`t.Run` Refactors**: When Jules converts a flat test to `t.Run` subtests, verify the "new" subtests do not duplicate existing table-driven cases (particularly in `TestFlagParser_Parse` or equivalent). Reject subtests that replicate existing coverage without exercising a new branch, dimension, or contract.
+- **Dead `defer os.Remove` with `t.TempDir`**: Jules frequently adds `defer os.Remove(f.Name())` immediately after `os.CreateTemp(t.TempDir(), ...)`. `t.TempDir()` already schedules the entire directory for cleanup on test teardown — the defer is dead code and should be removed.
 
 ---
 

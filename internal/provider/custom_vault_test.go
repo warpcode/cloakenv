@@ -72,6 +72,20 @@ func TestCustomVaultProvider_MultipleEntities(t *testing.T) {
 		t.Errorf("unexpected tags parsed: %v", entry.Tags)
 	}
 
+	// 2b. GetEntryTitle
+	title, err := p.GetEntryTitle(ctx, "entity1")
+	if err != nil {
+		t.Fatalf("GetEntryTitle failed: %v", err)
+	}
+	if title != "entity1" {
+		t.Errorf("expected title 'entity1', got %q", title)
+	}
+
+	_, err = p.GetEntryTitle(ctx, "nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent entity, got nil")
+	}
+
 	// 3. Search
 	results, err := p.Search(ctx, SearchQuery{})
 	if err != nil {

@@ -37,12 +37,6 @@ func (s *SearchProvider) SetSearchExecutor(exec SearchExecutor) {
 	s.searchExecutor = exec
 }
 
-// SetFieldPolicy configures the field filtering policy for this search provider.
-func (s *SearchProvider) SetFieldPolicy(includeFields, excludeFields []string) {
-	s.includeFields = includeFields
-	s.excludeFields = excludeFields
-}
-
 // Initialize prepares the search provider with configuration parameters.
 func (s *SearchProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 	s.vaultName = cfg.Settings["vault_name"]
@@ -103,23 +97,6 @@ func lookupEntryAttributeRaw(entry Entry, attrName string) (canonicalKey string,
 		return "Tags", entry.Tags, true
 	}
 	return "", nil, false
-}
-
-// lookupEntryAttribute searches entry.Attributes first (exact match, then case-insensitive sorted),
-// and only falls back to Entry metadata (Title, Tags) if no attribute matches.
-// This ensures attributes named "Title" or "Tags" in entry.Attributes take precedence over Entry metadata.
-func lookupEntryAttribute(entry Entry, attrName string) (canonicalKey string, val string, found bool, err error) {
-	key, rawVal, found := lookupEntryAttributeRaw(entry, attrName)
-	if !found {
-		return "", "", false, nil
-	}
-	sVal, err := serializeVal(rawVal)
-	return key, sVal, true, err
-}
-
-func getEntryAttributeKey(entry Entry, attrName string) (string, bool) {
-	key, _, found, _ := lookupEntryAttribute(entry, attrName)
-	return key, found
 }
 
 // resolveSecretAndCanonicalKeyRaw resolves the matching entry, canonical attribute key, raw attribute value,

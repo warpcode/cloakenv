@@ -108,6 +108,23 @@ func (c *CustomVaultProvider) GetEntryWithPath(ctx context.Context, location str
 	return entry, location, nil
 }
 
+// GetEntryTitle retrieves only the title of an entity by location.
+func (c *CustomVaultProvider) GetEntryTitle(_ context.Context, location string) (string, error) {
+	raw, ok := c.entities[location]
+	if !ok {
+		return "", fmt.Errorf("custom_vault: entity %q not found", location)
+	}
+
+	for k, v := range raw {
+		if strings.EqualFold(k, "title") {
+			if str, ok := v.(string); ok {
+				return str, nil
+			}
+		}
+	}
+	return location, nil
+}
+
 // Search filters the entries using the given SearchQuery criteria.
 func (c *CustomVaultProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
 	var results []SearchResult

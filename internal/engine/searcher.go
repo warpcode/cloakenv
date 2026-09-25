@@ -92,8 +92,13 @@ func (s *Searcher) getSearchableProviders(ctx context.Context, repoScopes []stri
 
 func (s *Searcher) resolveSearchResultAttributes(ctx context.Context, r provider.SearchResult, depth int) provider.SearchResult {
 	if s.providers.Config() != nil {
-		if vaultConfig, hasVault := s.providers.Config().Vaults[r.Vault]; hasVault && !vaultConfig.ResolveValues {
-			return r
+		if vaultConfig, hasVault := s.providers.Config().Vaults[r.Vault]; hasVault {
+			p, err := newBareProvider(vaultConfig.Provider)
+			if err == nil {
+				if _, ok := p.(provider.ValueResolvableProvider); ok && !vaultConfig.ResolveValues {
+					return r
+				}
+			}
 		}
 	}
 	// Recursively resolve attributes

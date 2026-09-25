@@ -6,6 +6,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // matchPattern checks if name matches the glob pattern using path.Match.
@@ -206,7 +207,7 @@ func projectRecursive(val any, pfx string, prefixes []string, includeFields, exc
 				continue
 			}
 
-			childDirectlyIncluded := parentIncluded || isContainerDirectlyIncluded(kLeaf, allCandidates, includeFields)
+			childDirectlyIncluded := parentIncluded || isContainerDirectlyIncluded(kLeaf, childCandidates, includeFields)
 
 			// If child is a map:
 			if _, ok := normalizeEntryMap(v); ok {
@@ -227,7 +228,7 @@ func projectRecursive(val any, pfx string, prefixes []string, includeFields, exc
 			}
 
 			// Scalar value
-			if childDirectlyIncluded || isFieldAuthorized(kLeaf, allCandidates, includeFields, excludeFields) {
+			if childDirectlyIncluded || isFieldAuthorized(kLeaf, childCandidates, includeFields, excludeFields) {
 				filtered[k] = v
 			}
 		}
@@ -305,7 +306,7 @@ func projectSliceRecursive(slice []any, pfx string, prefixes []string, includeFi
 			continue
 		}
 
-		elemDirectlyIncluded := parentIncluded || isContainerDirectlyIncluded(idxStr, allElemCandidates, includeFields)
+		elemDirectlyIncluded := parentIncluded || isContainerDirectlyIncluded(idxStr, elemCandidates, includeFields)
 
 		if _, ok := normalizeEntryMap(item); ok {
 			projItem, hasAllowed := projectRecursive(item, elemPfx, prefixes, includeFields, excludeFields, elemDirectlyIncluded)
@@ -318,7 +319,7 @@ func projectSliceRecursive(slice []any, pfx string, prefixes []string, includeFi
 				filtered = append(filtered, projSlice)
 			}
 		} else {
-			if elemDirectlyIncluded || isFieldAuthorized(idxStr, allElemCandidates, includeFields, excludeFields) {
+			if elemDirectlyIncluded || isFieldAuthorized(idxStr, elemCandidates, includeFields, excludeFields) {
 				filtered = append(filtered, item)
 			}
 		}
@@ -379,7 +380,30 @@ func FilterEntryWithPath(entry Entry, entryPath string, rootPrefixes []string, i
 	if entry.Title != "" && entry.Title != cleanPath {
 		prefixes = append(prefixes, entry.Title)
 	}
-	entry.Attributes = FilterAttributesWithPrefixes(entry.Attributes, prefixes, includeFields, excludeFields)
+
+	entryIncluded := len(includeFields) == 0
+	if !entryIncluded {
+		for _, pattern := range includeFields {
+			if cleanPath != "" && matchPattern(pattern, cleanPath) {
+				entryIncluded = true
+				break
+			}
+			if entry.Title != "" && matchPattern(pattern, entry.Title) {
+				entryIncluded = true
+				break
+			}
+		}
+	}
+
+	if entry.Attributes == nil {
+		return entry
+	}
+	proj, _ := projectRecursive(entry.Attributes, "", prefixes, includeFields, excludeFields, entryIncluded)
+	if m, ok := proj.(map[string]any); ok {
+		entry.Attributes = m
+	} else {
+		entry.Attributes = make(map[string]any)
+	}
 	return entry
 }
 
@@ -389,6 +413,70 @@ type FilteringProvider struct {
 	underlying    SecretProvider
 	includeFields []string
 	excludeFields []string
+	titleCache    map[string]string
+	titleMu       *sync.RWMutex
+}
+
+// getCachedEntryTitle retrieves and memoizes the entry title for entryPath, unwrapping
+// any nested filtering wrappers to query the underlying provider without loading attachments or full entries.
+func (f *FilteringProvider) getCachedEntryTitle(ctx context.Context, entryPath string) (string, error) {
+	if entryPath == "" {
+		return "", nil
+	}
+
+	if f.titleMu != nil {
+		f.titleMu.RLock()
+	}
+	if f.titleCache != nil {
+		if title, ok := f.titleCache[entryPath]; ok {
+			if f.titleMu != nil {
+				f.titleMu.RUnlock()
+			}
+			return title, nil
+		}
+	}
+	if f.titleMu != nil {
+		f.titleMu.RUnlock()
+	}
+
+	curr := f.underlying
+	for {
+		if inner, ok := curr.(interface{ Underlying() SecretProvider }); ok {
+			curr = inner.Underlying()
+		} else {
+			break
+		}
+	}
+
+	var title string
+	if titleProvider, ok := curr.(interface {
+		GetEntryTitle(ctx context.Context, location string) (string, error)
+	}); ok {
+		t, err := titleProvider.GetEntryTitle(ctx, entryPath)
+		if err != nil {
+			return "", err
+		}
+		title = t
+	} else if searchable, ok := curr.(SearchableProvider); ok {
+		entry, err := searchable.GetEntry(ctx, entryPath)
+		if err != nil {
+			return "", err
+		}
+		title = entry.Title
+	}
+
+	if f.titleMu != nil {
+		f.titleMu.Lock()
+	}
+	if f.titleCache == nil {
+		f.titleCache = make(map[string]string)
+	}
+	f.titleCache[entryPath] = title
+	if f.titleMu != nil {
+		f.titleMu.Unlock()
+	}
+
+	return title, nil
 }
 
 // Scheme delegates to the underlying provider.
@@ -430,12 +518,6 @@ type SearchableFilteringProvider struct {
 func (s *SearchableFilteringProvider) RootPrefixes() []string {
 	if rpProvider, ok := s.underlying.(interface{ RootPrefixes() []string }); ok {
 		return rpProvider.RootPrefixes()
-	}
-	if spAccessor, ok := s.underlying.(interface{ getStaticProvider() *staticProvider }); ok {
-		sp := spAccessor.getStaticProvider()
-		if sp != nil && sp.entitiesRootKey != "" && sp.entitiesRootKey != "." {
-			return []string{sp.entitiesRootKey}
-		}
 	}
 	return nil
 }
@@ -530,6 +612,8 @@ func NewFilteringProvider(p SecretProvider, includeFields, excludeFields []strin
 		underlying:    p,
 		includeFields: includeFields,
 		excludeFields: excludeFields,
+		titleCache:    make(map[string]string),
+		titleMu:       &sync.RWMutex{},
 	}
 
 	_, isSearchable := p.(SearchableProvider)
@@ -576,10 +660,12 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		}
 
 		var entryTitle string
-		if searchable, ok := f.underlying.(SearchableProvider); ok {
-			if entry, err := searchable.GetEntry(ctx, entryPath); err == nil {
-				entryTitle = entry.Title
+		if entryPath != "" {
+			t, err := f.getCachedEntryTitle(ctx, entryPath)
+			if err != nil {
+				return "", fmt.Errorf("keepass provider: failed to resolve entry title for %q: %w", entryPath, err)
 			}
+			entryTitle = t
 		}
 
 		var candidates []string
@@ -640,10 +726,12 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		}
 
 		var entryTitle string
-		if searchable, ok := f.underlying.(SearchableProvider); ok {
-			if entry, err := searchable.GetEntry(ctx, entityLoc); err == nil {
-				entryTitle = entry.Title
+		if entityLoc != "" {
+			t, err := f.getCachedEntryTitle(ctx, entityLoc)
+			if err != nil {
+				return "", fmt.Errorf("custom_vault provider: failed to resolve entry title for %q: %w", entityLoc, err)
 			}
+			entryTitle = t
 		}
 
 		var candidates []string
@@ -738,11 +826,7 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		// Attributes can be resolved case-insensitively, so resolve the exact result, canonical key, and result path first.
 		var canonicalField string
 		var rawVal any
-		var val string
 		var resultPath string
-		var resolved bool
-		var hasRaw bool
-
 		var entryTitle string
 		if rawProvider, ok := f.underlying.(interface {
 			GetSecretWithRaw(ctx context.Context, location string) (string, any, string, string, error)
@@ -755,82 +839,8 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 			rawVal = raw
 			resultPath = p
 			entryTitle = title
-			resolved = true
-			hasRaw = true
-		} else if rawProvider, ok := f.underlying.(interface {
-			GetSecretWithRaw(ctx context.Context, location string) (string, any, string, error)
-		}); ok {
-			key, raw, p, err := rawProvider.GetSecretWithRaw(ctx, location)
-			if err != nil {
-				return "", err
-			}
-			canonicalField = key
-			rawVal = raw
-			resultPath = p
-			resolved = true
-			hasRaw = true
-		} else if csp, ok := f.underlying.(interface {
-			GetSecretWithKey(ctx context.Context, location string) (string, string, string, error)
-		}); ok {
-			key, v, p, err := csp.GetSecretWithKey(ctx, location)
-			if err != nil {
-				return "", err
-			}
-			canonicalField = key
-			val = v
-			resultPath = p
-			resolved = true
-		} else if csp, ok := f.underlying.(interface {
-			GetSecretWithKey(ctx context.Context, location string) (string, string, error)
-		}); ok {
-			key, v, err := csp.GetSecretWithKey(ctx, location)
-			if err != nil {
-				return "", err
-			}
-			canonicalField = key
-			val = v
-			resolved = true
 		} else {
-			// Fallback for mocks / custom SearchableProvider implementations
-			if strings.Contains(location, ":") {
-				parts := strings.SplitN(location, ":", 2)
-				entryLoc := parts[0]
-				attrName := parts[1]
-				resultPath = entryLoc
-
-				if searchable, ok := f.underlying.(SearchableProvider); ok {
-					if entry, err := searchable.GetEntry(ctx, entryLoc); err == nil {
-						entryTitle = entry.Title
-						if key, found := getEntryAttributeKey(entry, attrName); found {
-							canonicalField = key
-							if v, ok := entry.Attributes[key]; ok {
-								rawVal = v
-								hasRaw = true
-							}
-						}
-					}
-				}
-				if canonicalField == "" {
-					canonicalField = attrName
-				}
-			} else {
-				resultPath = location
-				if searchable, ok := f.underlying.(SearchableProvider); ok {
-					if entry, err := searchable.GetEntry(ctx, location); err == nil {
-						entryTitle = entry.Title
-						if key, found := getEntryAttributeKey(entry, location); found {
-							canonicalField = key
-							if v, ok := entry.Attributes[key]; ok {
-								rawVal = v
-								hasRaw = true
-							}
-						}
-					}
-				}
-				if canonicalField == "" {
-					canonicalField = "Password"
-				}
-			}
+			return "", fmt.Errorf("search provider %q: unsupported search provider implementation", f.underlying.Scheme())
 		}
 
 		leafCanonical := canonicalField
@@ -885,74 +895,43 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
 		}
 
-		if hasRaw {
-			var prefixes []string
-			if resultPath != "" {
-				prefixes = append(prefixes, resultPath)
-			}
-			if entryTitle != "" && entryTitle != resultPath {
-				prefixes = append(prefixes, entryTitle)
-			}
-			parentIncluded := len(f.includeFields) == 0 || isContainerDirectlyIncluded(leafCanonical, candidates, f.includeFields)
-			if m, isMap := normalizeEntryMap(rawVal); isMap {
-				proj, hasAllowed := projectRecursive(m, canonicalField, prefixes, f.includeFields, f.excludeFields, parentIncluded)
-				if !hasAllowed && len(f.includeFields) > 0 && !parentIncluded {
-					return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
-				}
-				filteredMap, _ := proj.(map[string]any)
-				if filteredMap == nil {
-					filteredMap = make(map[string]any)
-				}
-				return serializeVal(filteredMap)
-			}
-			if s, isSlice := rawVal.([]any); isSlice {
-				projSlice, hasAllowed := projectSliceRecursive(s, canonicalField, prefixes, f.includeFields, f.excludeFields, parentIncluded)
-				if !hasAllowed && len(f.includeFields) > 0 && !parentIncluded {
-					return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
-				}
-				if projSlice == nil {
-					projSlice = []any{}
-				}
-				return serializeVal(projSlice)
-			}
-			return serializeVal(rawVal)
+		var prefixes []string
+		if resultPath != "" {
+			prefixes = append(prefixes, resultPath)
 		}
-
-		if resolved {
-			return val, nil
+		if entryTitle != "" && entryTitle != resultPath {
+			prefixes = append(prefixes, entryTitle)
 		}
-		return f.underlying.GetSecret(ctx, location)
+		parentIncluded := len(f.includeFields) == 0 || isContainerDirectlyIncluded(leafCanonical, candidates, f.includeFields)
+		if m, isMap := normalizeEntryMap(rawVal); isMap {
+			proj, hasAllowed := projectRecursive(m, canonicalField, prefixes, f.includeFields, f.excludeFields, parentIncluded)
+			if !hasAllowed && len(f.includeFields) > 0 && !parentIncluded {
+				return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
+			}
+			filteredMap, _ := proj.(map[string]any)
+			if filteredMap == nil {
+				filteredMap = make(map[string]any)
+			}
+			return serializeVal(filteredMap)
+		}
+		if s, isSlice := rawVal.([]any); isSlice {
+			projSlice, hasAllowed := projectSliceRecursive(s, canonicalField, prefixes, f.includeFields, f.excludeFields, parentIncluded)
+			if !hasAllowed && len(f.includeFields) > 0 && !parentIncluded {
+				return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
+			}
+			if projSlice == nil {
+				projSlice = []any{}
+			}
+			return serializeVal(projSlice)
+		}
+		return serializeVal(rawVal)
 
 	case "yaml", "json":
 		return f.getStaticSecret(ctx, location)
 
 	default:
-		// Generic fallback
-		if strings.Contains(location, ":") {
-			parts := strings.SplitN(location, ":", 2)
-			attrName := parts[1]
-			if attrName == "" {
-				attrName = "Password"
-			}
-			leafAttr := attrName
-			if lastDot := strings.LastIndex(attrName, "."); lastDot >= 0 {
-				leafAttr = attrName[lastDot+1:]
-			}
-			if !isFieldOrPathAllowed(attrName, leafAttr, f.includeFields, f.excludeFields) {
-				return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
-			}
-			return f.underlying.GetSecret(ctx, location)
-		}
-
-		if strings.Contains(location, ".") {
-			leafAttr := location[strings.LastIndex(location, ".")+1:]
-			if !isFieldOrPathAllowed(location, leafAttr, f.includeFields, f.excludeFields) {
-				return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
-			}
-		} else {
-			if !IsFieldAllowed(location, f.includeFields, f.excludeFields) && !IsFieldAllowed("Password", f.includeFields, f.excludeFields) {
-				return "", fmt.Errorf("field %q is excluded by vault configuration", location)
-			}
+		if len(f.includeFields) > 0 || len(f.excludeFields) > 0 {
+			return "", fmt.Errorf("field filtering is not supported for provider scheme %q", f.underlying.Scheme())
 		}
 		return f.underlying.GetSecret(ctx, location)
 	}
@@ -1062,6 +1041,7 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 		if entry, ok := sp.entries[""]; ok {
 			entityTitle = entry.Title
 		}
+		entityAttr = pathToCheck
 	} else {
 		entityName := strippedPath
 		if dotIdx := strings.Index(entityName, "."); dotIdx >= 0 {
@@ -1091,7 +1071,8 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 
 	// Add ancestor path segments so subtree-exclude patterns apply to nested paths.
 	// e.g. exclude_fields: ["db"] blocks GetSecret("db.username").
-	// We add ancestors from canonicalPath, strippedPath, and entityTitle to cover root-prefixed, rootless, and title forms.
+	// We keep ancestors in ancestorCandidates for exclude checks only, so they do NOT feed inclusion.
+	var ancestorCandidates []string
 	basePaths := []string{canonicalPath, strippedPath}
 	if entityTitle != "" {
 		basePaths = append(basePaths, entityTitle)
@@ -1106,9 +1087,13 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 		segments := strings.Split(basePath, ".")
 		for i := 1; i < len(segments); i++ {
 			ancestor := strings.Join(segments[:i], ".")
-			cleanCandidates = append(cleanCandidates, ancestor)
+			ancestorCandidates = append(ancestorCandidates, ancestor)
 		}
 	}
+
+	allExcludeCandidates := make([]string, 0, len(cleanCandidates)+len(ancestorCandidates))
+	allExcludeCandidates = append(allExcludeCandidates, cleanCandidates...)
+	allExcludeCandidates = append(allExcludeCandidates, ancestorCandidates...)
 
 	// Check if container itself is excluded
 	if len(f.excludeFields) > 0 {
@@ -1116,7 +1101,7 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 			if matchPattern(pattern, leafAttr) {
 				return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
 			}
-			for _, c := range cleanCandidates {
+			for _, c := range allExcludeCandidates {
 				if matchPattern(pattern, c) {
 					return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
 				}
