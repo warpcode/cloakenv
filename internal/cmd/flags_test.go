@@ -64,23 +64,66 @@ func TestFlagParser_StringSlice(t *testing.T) {
 }
 
 func TestFlagParser_Var(t *testing.T) {
-	fp := NewFlagParser()
-	var count int
-	fp.Var([]string{"--inc"}, false, "", func(name, val string) error {
-		count++
-		return nil
+	t.Run("without value", func(t *testing.T) {
+		fp := NewFlagParser()
+		var count int
+		var capturedName string
+		fp.Var([]string{"--inc"}, false, "", func(name, val string) error {
+			count++
+			capturedName = name
+			return nil
+		})
+
+		remaining, err := fp.Parse([]string{"--inc", "--inc"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if count != 2 {
+			t.Errorf("count = %d, want 2", count)
+		}
+		if capturedName != "--inc" {
+			t.Errorf("captured name = %q, want %q", capturedName, "--inc")
+		}
+		if len(remaining) != 0 {
+			t.Errorf("expected remaining to be empty, got %v", remaining)
+		}
 	})
 
-	remaining, err := fp.Parse([]string{"--inc", "--inc"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if count != 2 {
-		t.Errorf("count = %d, want 2", count)
-	}
-	if len(remaining) != 0 {
-		t.Errorf("expected remaining to be empty, got %v", remaining)
-	}
+	t.Run("with value", func(t *testing.T) {
+		fp := NewFlagParser()
+		var items []string
+		fp.Var([]string{"--item"}, true, "missing item", func(name, val string) error {
+			items = append(items, val)
+			return nil
+		})
+
+		remaining, err := fp.Parse([]string{"--item", "apple", "--item", "banana"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		wantItems := []string{"apple", "banana"}
+		if !reflect.DeepEqual(items, wantItems) {
+			t.Errorf("items = %v, want %v", items, wantItems)
+		}
+		if len(remaining) != 0 {
+			t.Errorf("expected remaining to be empty, got %v", remaining)
+		}
+	})
+
+	t.Run("with value - missing arg", func(t *testing.T) {
+		fp := NewFlagParser()
+		fp.Var([]string{"--item"}, true, "missing item", func(name, val string) error {
+			return nil
+		})
+
+		_, err := fp.Parse([]string{"--item"})
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+		if err.Error() != "missing item" {
+			t.Errorf("error = %q, want %q", err.Error(), "missing item")
+		}
+	})
 }
 
 func TestFlagParser_Parse(t *testing.T) {
