@@ -499,7 +499,7 @@ func TestSearchProvider_GetSecretWithRaw(t *testing.T) {
 	})
 
 	// 1. Raw map attribute
-	key, rawVal, resPath, err := p.GetSecretWithRaw(ctx, "config")
+	key, rawVal, resPath, title, err := p.GetSecretWithRaw(ctx, "config")
 	if err != nil {
 		t.Fatalf("GetSecretWithRaw(config) failed: %v", err)
 	}
@@ -509,13 +509,16 @@ func TestSearchProvider_GetSecretWithRaw(t *testing.T) {
 	if resPath != "services/api" {
 		t.Errorf("expected resultPath 'services/api', got %q", resPath)
 	}
+	if title != "api_service" {
+		t.Errorf("expected title 'api_service', got %q", title)
+	}
 	m, ok := rawVal.(map[string]any)
 	if !ok || m["endpoint"] != "https://api.internal" || m["token"] != "tok_raw_123" {
 		t.Errorf("unexpected rawVal: %v", rawVal)
 	}
 
 	// 2. Raw slice attribute
-	key, rawVal, resPath, err = p.GetSecretWithRaw(ctx, "tokens")
+	key, rawVal, resPath, title, err = p.GetSecretWithRaw(ctx, "tokens")
 	if err != nil {
 		t.Fatalf("GetSecretWithRaw(tokens) failed: %v", err)
 	}
@@ -525,13 +528,16 @@ func TestSearchProvider_GetSecretWithRaw(t *testing.T) {
 	if resPath != "services/api" {
 		t.Errorf("expected resultPath 'services/api', got %q", resPath)
 	}
+	if title != "api_service" {
+		t.Errorf("expected title 'api_service', got %q", title)
+	}
 	s, ok := rawVal.([]any)
 	if !ok || len(s) != 2 || s[0] != "t1" {
 		t.Errorf("unexpected rawVal slice: %v", rawVal)
 	}
 
 	// 3. Default password
-	key, rawVal, resPath, err = p.GetSecretWithRaw(ctx, "default")
+	key, rawVal, resPath, title, err = p.GetSecretWithRaw(ctx, "default")
 	if err != nil {
 		t.Fatalf("GetSecretWithRaw(default) failed: %v", err)
 	}
@@ -540,5 +546,8 @@ func TestSearchProvider_GetSecretWithRaw(t *testing.T) {
 	}
 	if resPath != "services/api" {
 		t.Errorf("expected resultPath 'services/api', got %q", resPath)
+	}
+	if title != "api_service" {
+		t.Errorf("expected title 'api_service', got %q", title)
 	}
 }

@@ -1983,3 +1983,328 @@ func TestFilteringProvider_SingleEntity_RootSymmetry(t *testing.T) {
 		t.Fatalf("expected error for entities.db.password with exclude_fields: ['db.password'], got nil")
 	}
 }
+
+func TestSearchableFilteringProvider_GetEntry_AuthoritativePathVsCallerAlias(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// 1. Single-entity static provider:
+	// The entry's authoritative Title is "guest_user".
+	// The allowlist includes only "admin.*".
+	// A caller injecting location "admin.super" must NOT inherit inclusion for the entry's attributes.
+	yamlPath := filepath.Join(tmpDir, "single_entity_alias.yaml")
+	yamlContent := `
+title: "guest_user"
+token: "secret_token_123"
+name: "guest"
+`
+	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write yaml: %v", err)
+	}
+
+	singleEntity := true
+	yp := NewYamlProvider()
+	if err := yp.Initialize(ctx, ProviderConfig{
+		Settings: map[string]string{
+			"vault_path": yamlPath,
+		},
+		SingleEntity: &singleEntity,
+	}); err != nil {
+		t.Fatalf("failed to init YAML provider: %v", err)
+	}
+
+	fp := NewFilteringProvider(yp, []string{"admin.*"}, nil)
+	sfp, ok := fp.(SearchableProvider)
+	if !ok {
+		t.Fatal("expected SearchableProvider wrapper")
+	}
+
+	// Caller attempts alias injection by asking for "admin.super"
+	entry, err := sfp.GetEntry(ctx, "admin.super")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+	if len(entry.Attributes) != 0 {
+		t.Errorf("expected all attributes to be excluded under authoritative title 'guest_user', but got: %v", entry.Attributes)
+	}
+
+	// 2. Single-result SearchProvider:
+	// Result path is "guest/account". Allowlist includes only "admin/*".
+	// Caller requesting "admin/account" must NOT inherit inclusion.
+	sp := NewSearchProvider()
+	sp.SetSearchExecutor(func(_ context.Context, _ string, _ []string, _ int) ([]SearchResult, error) {
+		return []SearchResult{
+			{
+				Vault: "src",
+				Path:  "guest/account",
+				Entry: Entry{
+					Title: "guest_account",
+					Attributes: map[string]any{
+						"token": "tok_guest",
+					},
+				},
+			},
+		}, nil
+	})
+
+	sfpSearch := NewFilteringProvider(sp, []string{"admin/*"}, nil).(SearchableProvider)
+	entrySearch, err := sfpSearch.GetEntry(ctx, "admin/account")
+	if err != nil {
+		t.Fatalf("GetEntry on search provider failed: %v", err)
+	}
+	if len(entrySearch.Attributes) != 0 {
+		t.Errorf("expected attributes to be excluded under authoritative path 'guest/account', but got: %v", entrySearch.Attributes)
+	}
+}
+
+func TestFilteringProvider_SliceIndexing(t *testing.T) {
+	rawEntry := Entry{
+		Title: "users_entry",
+		Attributes: map[string]any{
+			"users": []any{
+				map[string]any{
+					"name":  "alice",
+					"token": "tok_alice",
+				},
+				map[string]any{
+					"name":  "bob",
+					"token": "tok_bob",
+				},
+			},
+			"tags_list": []any{"public", "secret_tag", "internal"},
+			"matrix": []any{
+				[]any{"m00", "m01"},
+				[]any{"m10", "m11"},
+			},
+		},
+	}
+
+	t.Run("ExcludeSpecificElementFieldByIndex", func(t *testing.T) {
+		// exclude_fields: ["users.0.token"]
+		// Element 0 loses token, element 1 keeps token
+		filtered := FilterEntry(rawEntry, nil, []string{"users.0.token"})
+		users, ok := filtered.Attributes["users"].([]any)
+		if !ok || len(users) != 2 {
+			t.Fatalf("expected 2 users, got: %v", users)
+		}
+		u0 := users[0].(map[string]any)
+		if _, hasToken := u0["token"]; hasToken {
+			t.Errorf("expected users.0.token to be excluded, but present: %v", u0)
+		}
+		if u0["name"] != "alice" {
+			t.Errorf("expected users.0.name to be alice, got: %v", u0["name"])
+		}
+		u1 := users[1].(map[string]any)
+		if u1["token"] != "tok_bob" {
+			t.Errorf("expected users.1.token to be tok_bob, got: %v", u1["token"])
+		}
+	})
+
+	t.Run("ExcludeEntireSliceElementByIndex", func(t *testing.T) {
+		// exclude_fields: ["users.1"]
+		filtered := FilterEntry(rawEntry, nil, []string{"users.1"})
+		users, ok := filtered.Attributes["users"].([]any)
+		if !ok || len(users) != 1 {
+			t.Fatalf("expected 1 user after excluding index 1, got: %v", users)
+		}
+		u0 := users[0].(map[string]any)
+		if u0["name"] != "alice" {
+			t.Errorf("expected alice, got: %v", u0["name"])
+		}
+	})
+
+	t.Run("IncludeSpecificElementFieldByIndex", func(t *testing.T) {
+		// include_fields: ["users.0.name"]
+		filtered := FilterEntry(rawEntry, []string{"users.0.name"}, nil)
+		users, ok := filtered.Attributes["users"].([]any)
+		if !ok || len(users) != 1 {
+			t.Fatalf("expected 1 user element matching include_fields, got: %v", users)
+		}
+		u0 := users[0].(map[string]any)
+		if u0["name"] != "alice" {
+			t.Errorf("expected alice, got: %v", u0["name"])
+		}
+		if _, hasToken := u0["token"]; hasToken {
+			t.Errorf("token should not be included: %v", u0)
+		}
+	})
+
+	t.Run("ScalarSliceElementExclusion", func(t *testing.T) {
+		// exclude_fields: ["tags_list.1"]
+		filtered := FilterEntry(rawEntry, nil, []string{"tags_list.1"})
+		tagsList, ok := filtered.Attributes["tags_list"].([]any)
+		if !ok || len(tagsList) != 2 {
+			t.Fatalf("expected 2 tags, got: %v", tagsList)
+		}
+		if tagsList[0] != "public" || tagsList[1] != "internal" {
+			t.Errorf("unexpected tagsList: %v", tagsList)
+		}
+	})
+
+	t.Run("NestedSliceElementExclusion", func(t *testing.T) {
+		// exclude_fields: ["matrix.0.1"]
+		filtered := FilterEntry(rawEntry, nil, []string{"matrix.0.1"})
+		matrix, ok := filtered.Attributes["matrix"].([]any)
+		if !ok || len(matrix) != 2 {
+			t.Fatalf("expected 2 matrix rows, got: %v", matrix)
+		}
+		row0 := matrix[0].([]any)
+		if len(row0) != 1 || row0[0] != "m00" {
+			t.Errorf("expected row0 to have only m00, got: %v", row0)
+		}
+		row1 := matrix[1].([]any)
+		if len(row1) != 2 {
+			t.Errorf("expected row1 to have 2 elements, got: %v", row1)
+		}
+	})
+}
+
+func TestFilteringProvider_TitleQualifiedExclusion(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("StaticProvider_TitleQualifiedExclusion", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		yamlPath := filepath.Join(tmpDir, "title_excl.yaml")
+		yamlContent := `
+entities:
+  entry1:
+    title: "Database Admin"
+    token: "secret_admin_tok"
+    host: "db.internal"
+`
+		if err := os.WriteFile(yamlPath, []byte(yamlContent), 0600); err != nil {
+			t.Fatalf("failed to write yaml: %v", err)
+		}
+
+		yp := NewYamlProvider()
+		if err := yp.Initialize(ctx, ProviderConfig{
+			Settings: map[string]string{
+				"vault_path": yamlPath,
+			},
+			EntitiesRootKey: "entities",
+		}); err != nil {
+			t.Fatalf("failed to init YAML: %v", err)
+		}
+
+		// exclude_fields: ["Database Admin.token"]
+		fp := NewFilteringProvider(yp, nil, []string{"Database Admin.token"})
+
+		// Scalar GetSecret must be blocked using title-prefixed exclusion
+		_, err := fp.GetSecret(ctx, "entry1.token")
+		if err == nil {
+			t.Errorf("expected GetSecret(entry1.token) to be blocked by title-qualified exclusion, got nil")
+		}
+
+		// Non-excluded field must succeed
+		val, err := fp.GetSecret(ctx, "entry1.host")
+		if err != nil {
+			t.Fatalf("GetSecret(entry1.host) failed: %v", err)
+		}
+		if val != "db.internal" {
+			t.Errorf("expected 'db.internal', got %q", val)
+		}
+
+		// Structured GetEntry must also exclude token
+		sfp := fp.(SearchableProvider)
+		entry, err := sfp.GetEntry(ctx, "entry1")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if _, hasToken := entry.Attributes["token"]; hasToken {
+			t.Errorf("expected token to be excluded in GetEntry, but got: %v", entry.Attributes)
+		}
+	})
+
+	t.Run("CustomVault_TitleQualifiedExclusion", func(t *testing.T) {
+		cp := NewCustomVaultProvider()
+		if err := cp.Initialize(ctx, ProviderConfig{
+			Entities: map[string]map[string]any{
+				"e1": {
+					"title":    "My App Secret",
+					"Password": "top_secret_pass",
+					"username": "admin",
+				},
+			},
+		}); err != nil {
+			t.Fatalf("failed to init CustomVault: %v", err)
+		}
+
+		// exclude_fields: ["My App Secret.Password"]
+		fp := NewFilteringProvider(cp, nil, []string{"My App Secret.Password"})
+
+		// Scalar GetSecret with default Password
+		_, err := fp.GetSecret(ctx, "e1")
+		if err == nil {
+			t.Errorf("expected GetSecret(e1) to be blocked by title-qualified exclusion, got nil")
+		}
+
+		// Scalar GetSecret with explicit attribute
+		_, err = fp.GetSecret(ctx, "e1:Password")
+		if err == nil {
+			t.Errorf("expected GetSecret(e1:Password) to be blocked by title-qualified exclusion, got nil")
+		}
+
+		// Non-excluded field succeeds
+		val, err := fp.GetSecret(ctx, "e1:username")
+		if err != nil {
+			t.Fatalf("GetSecret(e1:username) failed: %v", err)
+		}
+		if val != "admin" {
+			t.Errorf("expected admin, got %q", val)
+		}
+
+		// Structured GetEntry must also exclude Password
+		sfp := fp.(SearchableProvider)
+		entry, err := sfp.GetEntry(ctx, "e1")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if _, hasPass := entry.Attributes["Password"]; hasPass {
+			t.Errorf("expected Password to be excluded in GetEntry, got: %v", entry.Attributes)
+		}
+	})
+
+	t.Run("SearchProvider_TitleQualifiedExclusion", func(t *testing.T) {
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(_ context.Context, _ string, _ []string, _ int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Vault: "src",
+					Path:  "services/backend",
+					Entry: Entry{
+						Title: "Backend Service",
+						Attributes: map[string]any{
+							"api_key":  "secret_key_999",
+							"endpoint": "https://service.internal",
+						},
+					},
+				},
+			}, nil
+		})
+
+		// exclude_fields: ["Backend Service.api_key"]
+		fp := NewFilteringProvider(sp, nil, []string{"Backend Service.api_key"})
+
+		_, err := fp.GetSecret(ctx, "services/backend:api_key")
+		if err == nil {
+			t.Errorf("expected GetSecret to be blocked by title-qualified exclusion, got nil")
+		}
+
+		val, err := fp.GetSecret(ctx, "services/backend:endpoint")
+		if err != nil {
+			t.Fatalf("GetSecret for endpoint failed: %v", err)
+		}
+		if val != "https://service.internal" {
+			t.Errorf("expected endpoint, got %q", val)
+		}
+
+		sfp := fp.(SearchableProvider)
+		entry, err := sfp.GetEntry(ctx, "services/backend")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if _, hasKey := entry.Attributes["api_key"]; hasKey {
+			t.Errorf("expected api_key to be excluded in GetEntry, got: %v", entry.Attributes)
+		}
+	})
+}

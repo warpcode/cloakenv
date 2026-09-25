@@ -274,6 +274,20 @@ func (p *staticProvider) GetEntry(_ context.Context, location string) (Entry, er
 	return entry, nil
 }
 
+// GetEntryWithPath retrieves a structured entry along with its authoritative path.
+// For single-entity static providers, the authoritative path is the entry's Title.
+// For multi-entity static providers, the authoritative path is the location key.
+func (p *staticProvider) GetEntryWithPath(ctx context.Context, location string) (Entry, string, error) {
+	entry, err := p.GetEntry(ctx, location)
+	if err != nil {
+		return Entry{}, "", err
+	}
+	if p.singleEntity {
+		return entry, entry.Title, nil
+	}
+	return entry, location, nil
+}
+
 func (p *staticProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
 	var results []SearchResult
 

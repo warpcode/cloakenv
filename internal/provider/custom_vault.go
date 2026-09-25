@@ -99,6 +99,15 @@ func (c *CustomVaultProvider) GetEntry(_ context.Context, location string) (Entr
 	return toEntry(location, entity), nil
 }
 
+// GetEntryWithPath retrieves a complete structured entry along with its location path.
+func (c *CustomVaultProvider) GetEntryWithPath(ctx context.Context, location string) (Entry, string, error) {
+	entry, err := c.GetEntry(ctx, location)
+	if err != nil {
+		return Entry{}, "", err
+	}
+	return entry, location, nil
+}
+
 // Search filters the entries using the given SearchQuery criteria.
 func (c *CustomVaultProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
 	var results []SearchResult

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -242,19 +243,82 @@ func projectRecursive(val any, pfx string, prefixes []string, includeFields, exc
 
 func projectSliceRecursive(slice []any, pfx string, prefixes []string, includeFields, excludeFields []string, parentIncluded bool) ([]any, bool) {
 	filtered := make([]any, 0, len(slice))
-	for _, item := range slice {
+	for i, item := range slice {
+		idxStr := strconv.Itoa(i)
+		elemPfx := idxStr
+		if pfx != "" {
+			elemPfx = pfx + "." + idxStr
+		}
+
+		var elemCandidates []string
+		elemCandidates = append(elemCandidates, elemPfx, idxStr)
+		for _, p := range prefixes {
+			if p != "" {
+				elemCandidates = append(elemCandidates, p+"."+idxStr)
+				if pfx != "" {
+					elemCandidates = append(elemCandidates, p+"."+elemPfx)
+				}
+			}
+		}
+		for j, c := range elemCandidates {
+			elemCandidates[j] = normalizeDotPath(c)
+		}
+
+		var ancestorCandidates []string
+		for _, c := range elemCandidates {
+			if c == "" {
+				continue
+			}
+			segments := strings.Split(c, ".")
+			for k := 1; k < len(segments); k++ {
+				ancestorCandidates = append(ancestorCandidates, strings.Join(segments[:k], "."))
+			}
+			slashParts := strings.Split(c, "/")
+			for k := 1; k < len(slashParts); k++ {
+				ancestorCandidates = append(ancestorCandidates, strings.Join(slashParts[:k], "/"))
+			}
+		}
+
+		allElemCandidates := make([]string, 0, len(elemCandidates)+len(ancestorCandidates))
+		allElemCandidates = append(allElemCandidates, elemCandidates...)
+		allElemCandidates = append(allElemCandidates, ancestorCandidates...)
+
+		elemExcluded := false
+		if len(excludeFields) > 0 {
+			for _, pattern := range excludeFields {
+				if matchPattern(pattern, idxStr) {
+					elemExcluded = true
+					break
+				}
+				for _, c := range allElemCandidates {
+					if c != "" && matchPattern(pattern, c) {
+						elemExcluded = true
+						break
+					}
+				}
+				if elemExcluded {
+					break
+				}
+			}
+		}
+		if elemExcluded {
+			continue
+		}
+
+		elemDirectlyIncluded := parentIncluded || isContainerDirectlyIncluded(idxStr, allElemCandidates, includeFields)
+
 		if _, ok := normalizeEntryMap(item); ok {
-			projItem, hasAllowed := projectRecursive(item, pfx, prefixes, includeFields, excludeFields, parentIncluded)
+			projItem, hasAllowed := projectRecursive(item, elemPfx, prefixes, includeFields, excludeFields, elemDirectlyIncluded)
 			if hasAllowed {
 				filtered = append(filtered, projItem)
 			}
 		} else if itemSlice, ok := item.([]any); ok {
-			projSlice, hasAllowed := projectSliceRecursive(itemSlice, pfx, prefixes, includeFields, excludeFields, parentIncluded)
+			projSlice, hasAllowed := projectSliceRecursive(itemSlice, elemPfx, prefixes, includeFields, excludeFields, elemDirectlyIncluded)
 			if hasAllowed {
 				filtered = append(filtered, projSlice)
 			}
 		} else {
-			if parentIncluded || len(includeFields) == 0 {
+			if elemDirectlyIncluded || isFieldAuthorized(idxStr, allElemCandidates, includeFields, excludeFields) {
 				filtered = append(filtered, item)
 			}
 		}
@@ -376,19 +440,38 @@ func (s *SearchableFilteringProvider) RootPrefixes() []string {
 	return nil
 }
 
+// GetEntryWithPath retrieves a structured entry along with its authoritative path,
+// and filters its attributes according to configured glob rules.
+func (s *SearchableFilteringProvider) GetEntryWithPath(ctx context.Context, location string) (Entry, string, error) {
+	var entry Entry
+	var authoritativePath string
+	var err error
+
+	if pathProvider, ok := s.underlying.(interface {
+		GetEntryWithPath(ctx context.Context, location string) (Entry, string, error)
+	}); ok {
+		entry, authoritativePath, err = pathProvider.GetEntryWithPath(ctx, location)
+		if err != nil {
+			return Entry{}, "", err
+		}
+	} else if searchable, ok := s.underlying.(SearchableProvider); ok {
+		entry, err = searchable.GetEntry(ctx, location)
+		if err != nil {
+			return Entry{}, "", err
+		}
+		authoritativePath = location
+	} else {
+		return Entry{}, "", fmt.Errorf("provider %q does not support structured entries", s.Scheme())
+	}
+
+	filtered := FilterEntryWithPath(entry, authoritativePath, s.RootPrefixes(), s.includeFields, s.excludeFields)
+	return filtered, authoritativePath, nil
+}
+
 // GetEntry retrieves a structured entry and filters its attributes according to configured glob rules.
 func (s *SearchableFilteringProvider) GetEntry(ctx context.Context, location string) (Entry, error) {
-	searchable, ok := s.underlying.(SearchableProvider)
-	if !ok {
-		return Entry{}, fmt.Errorf("provider %q does not support structured entries", s.Scheme())
-	}
-
-	entry, err := searchable.GetEntry(ctx, location)
-	if err != nil {
-		return Entry{}, err
-	}
-
-	return FilterEntryWithPath(entry, location, s.RootPrefixes(), s.includeFields, s.excludeFields), nil
+	entry, _, err := s.GetEntryWithPath(ctx, location)
+	return entry, err
 }
 
 // Search retrieves matching entries and filters all result entry attributes according to configured glob rules.
@@ -492,6 +575,13 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 			leafAttr = effectiveAttr[lastDot+1:]
 		}
 
+		var entryTitle string
+		if searchable, ok := f.underlying.(SearchableProvider); ok {
+			if entry, err := searchable.GetEntry(ctx, entryPath); err == nil {
+				entryTitle = entry.Title
+			}
+		}
+
 		var candidates []string
 		candidates = append(candidates, effectiveAttr, location)
 		if entryPath != "" {
@@ -506,6 +596,22 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 			}
 			fullField := entryPath + "." + effectiveAttr
 			segments := strings.Split(fullField, ".")
+			for i := 1; i < len(segments); i++ {
+				candidates = append(candidates, strings.Join(segments[:i], "."))
+			}
+		}
+		if entryTitle != "" && entryTitle != entryPath {
+			candidates = append(candidates, entryTitle, entryTitle+"."+effectiveAttr, entryTitle+":"+effectiveAttr)
+			cleanTitle := normalizeDotPath(entryTitle)
+			if cleanTitle != "" && cleanTitle != entryTitle {
+				candidates = append(candidates, cleanTitle, cleanTitle+"."+effectiveAttr)
+			}
+			slashParts := strings.Split(entryTitle, "/")
+			for i := 1; i < len(slashParts); i++ {
+				candidates = append(candidates, strings.Join(slashParts[:i], "/"))
+			}
+			fullTitleField := entryTitle + "." + effectiveAttr
+			segments := strings.Split(fullTitleField, ".")
 			for i := 1; i < len(segments); i++ {
 				candidates = append(candidates, strings.Join(segments[:i], "."))
 			}
@@ -533,6 +639,13 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 			leafAttr = effectiveAttr[lastDot+1:]
 		}
 
+		var entryTitle string
+		if searchable, ok := f.underlying.(SearchableProvider); ok {
+			if entry, err := searchable.GetEntry(ctx, entityLoc); err == nil {
+				entryTitle = entry.Title
+			}
+		}
+
 		var candidates []string
 		candidates = append(candidates, effectiveAttr, location)
 		if entityLoc != "" {
@@ -555,6 +668,26 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 				candidates = append(candidates, strings.Join(segments[:i], "."))
 			}
 		}
+		if entryTitle != "" && entryTitle != entityLoc {
+			candidates = append(candidates, entryTitle, entryTitle+"."+effectiveAttr, entryTitle+":"+effectiveAttr)
+			cleanTitle := normalizeDotPath(entryTitle)
+			if cleanTitle != "" && cleanTitle != entryTitle {
+				candidates = append(candidates, cleanTitle, cleanTitle+"."+effectiveAttr)
+			}
+			dotParts := strings.Split(entryTitle, ".")
+			for i := 1; i < len(dotParts); i++ {
+				candidates = append(candidates, strings.Join(dotParts[:i], "."))
+			}
+			slashParts := strings.Split(entryTitle, "/")
+			for i := 1; i < len(slashParts); i++ {
+				candidates = append(candidates, strings.Join(slashParts[:i], "/"))
+			}
+			fullTitleField := entryTitle + "." + effectiveAttr
+			segments := strings.Split(fullTitleField, ".")
+			for i := 1; i < len(segments); i++ {
+				candidates = append(candidates, strings.Join(segments[:i], "."))
+			}
+		}
 
 		if !isFieldAuthorized(leafAttr, candidates, f.includeFields, f.excludeFields) {
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
@@ -570,6 +703,9 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 			var prefixes []string
 			if entityLoc != "" {
 				prefixes = append(prefixes, entityLoc)
+			}
+			if entryTitle != "" && entryTitle != entityLoc {
+				prefixes = append(prefixes, entryTitle)
 			}
 			parentIncluded := len(f.includeFields) == 0 || isContainerDirectlyIncluded(leafAttr, candidates, f.includeFields)
 			if m, isMap := normalizeEntryMap(rawVal); isMap {
@@ -607,7 +743,21 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		var resolved bool
 		var hasRaw bool
 
+		var entryTitle string
 		if rawProvider, ok := f.underlying.(interface {
+			GetSecretWithRaw(ctx context.Context, location string) (string, any, string, string, error)
+		}); ok {
+			key, raw, p, title, err := rawProvider.GetSecretWithRaw(ctx, location)
+			if err != nil {
+				return "", err
+			}
+			canonicalField = key
+			rawVal = raw
+			resultPath = p
+			entryTitle = title
+			resolved = true
+			hasRaw = true
+		} else if rawProvider, ok := f.underlying.(interface {
 			GetSecretWithRaw(ctx context.Context, location string) (string, any, string, error)
 		}); ok {
 			key, raw, p, err := rawProvider.GetSecretWithRaw(ctx, location)
@@ -650,6 +800,7 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 
 				if searchable, ok := f.underlying.(SearchableProvider); ok {
 					if entry, err := searchable.GetEntry(ctx, entryLoc); err == nil {
+						entryTitle = entry.Title
 						if key, found := getEntryAttributeKey(entry, attrName); found {
 							canonicalField = key
 							if v, ok := entry.Attributes[key]; ok {
@@ -666,6 +817,7 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 				resultPath = location
 				if searchable, ok := f.underlying.(SearchableProvider); ok {
 					if entry, err := searchable.GetEntry(ctx, location); err == nil {
+						entryTitle = entry.Title
 						if key, found := getEntryAttributeKey(entry, location); found {
 							canonicalField = key
 							if v, ok := entry.Attributes[key]; ok {
@@ -708,6 +860,26 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 				candidates = append(candidates, strings.Join(segments[:i], "."))
 			}
 		}
+		if entryTitle != "" && entryTitle != resultPath {
+			candidates = append(candidates, entryTitle, entryTitle+"."+canonicalField, entryTitle+":"+canonicalField)
+			cleanTitle := normalizeDotPath(entryTitle)
+			if cleanTitle != "" && cleanTitle != entryTitle {
+				candidates = append(candidates, cleanTitle, cleanTitle+"."+canonicalField)
+			}
+			dotParts := strings.Split(entryTitle, ".")
+			for i := 1; i < len(dotParts); i++ {
+				candidates = append(candidates, strings.Join(dotParts[:i], "."))
+			}
+			slashParts := strings.Split(entryTitle, "/")
+			for i := 1; i < len(slashParts); i++ {
+				candidates = append(candidates, strings.Join(slashParts[:i], "/"))
+			}
+			fullTitleField := entryTitle + "." + canonicalField
+			segments := strings.Split(fullTitleField, ".")
+			for i := 1; i < len(segments); i++ {
+				candidates = append(candidates, strings.Join(segments[:i], "."))
+			}
+		}
 
 		if !isFieldAuthorized(leafCanonical, candidates, f.includeFields, f.excludeFields) {
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
@@ -717,6 +889,9 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 			var prefixes []string
 			if resultPath != "" {
 				prefixes = append(prefixes, resultPath)
+			}
+			if entryTitle != "" && entryTitle != resultPath {
+				prefixes = append(prefixes, entryTitle)
 			}
 			parentIncluded := len(f.includeFields) == 0 || isContainerDirectlyIncluded(leafCanonical, candidates, f.includeFields)
 			if m, isMap := normalizeEntryMap(rawVal); isMap {
@@ -882,13 +1057,31 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 	if pathToCheck == "" {
 		pathToCheck = canonicalPath
 	}
-	if !sp.singleEntity {
+	var entityTitle string
+	if sp.singleEntity {
+		if entry, ok := sp.entries[""]; ok {
+			entityTitle = entry.Title
+		}
+	} else {
+		entityName := strippedPath
+		if dotIdx := strings.Index(entityName, "."); dotIdx >= 0 {
+			entityName = entityName[:dotIdx]
+		}
+		if entry, ok := sp.entries[entityName]; ok {
+			entityTitle = entry.Title
+		}
 		if dotIdx := strings.Index(pathToCheck, "."); dotIdx >= 0 {
 			entityAttr = pathToCheck[dotIdx+1:]
 		}
 	}
 
 	containerCandidates := []string{canonicalPath, strippedPath, entityAttr, cleanLoc, location}
+	if entityTitle != "" {
+		containerCandidates = append(containerCandidates, entityTitle)
+		if entityAttr != "" {
+			containerCandidates = append(containerCandidates, entityTitle+"."+entityAttr)
+		}
+	}
 	var cleanCandidates []string
 	for _, c := range containerCandidates {
 		if c != "" {
@@ -898,8 +1091,15 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 
 	// Add ancestor path segments so subtree-exclude patterns apply to nested paths.
 	// e.g. exclude_fields: ["db"] blocks GetSecret("db.username").
-	// We add ancestors from both canonicalPath and strippedPath to cover root-prefixed and rootless forms.
-	for _, basePath := range []string{canonicalPath, strippedPath} {
+	// We add ancestors from canonicalPath, strippedPath, and entityTitle to cover root-prefixed, rootless, and title forms.
+	basePaths := []string{canonicalPath, strippedPath}
+	if entityTitle != "" {
+		basePaths = append(basePaths, entityTitle)
+		if entityAttr != "" {
+			basePaths = append(basePaths, entityTitle+"."+entityAttr)
+		}
+	}
+	for _, basePath := range basePaths {
 		if basePath == "" {
 			continue
 		}

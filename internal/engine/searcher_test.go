@@ -646,13 +646,13 @@ func TestSearcher_InferredRoot_PreResolutionExclusion(t *testing.T) {
 
 	// YAML file has "entities" root key, but EntitiesRootKey will be omitted from VaultConfig.
 	// staticProvider infers entitiesRootKey = "entities".
-	// The entry has a secret URI reference that would fail if resolution was attempted.
+	// The entry has a secret URI reference that must never be dereferenced when excluded.
 	yamlContent := `
 entities:
   api:
     title: "api_service"
     username: "api_user"
-    secret_ref: "${invalid_vault://should_not_resolve}"
+    secret_ref: "${tripwire://must_not_be_called}"
 `
 	yamlPath := filepath.Join(tempDir, "inferred_root.yaml")
 	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0644); err != nil {
@@ -661,10 +661,16 @@ entities:
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"static_vault": {
+			"yaml_vault": {
 				Provider:  "yaml",
 				VaultPath: yamlPath,
 				// EntitiesRootKey intentionally omitted to test inferred root handling
+			},
+			"virtual_search": {
+				Provider:      "search",
+				SourceVaults:  []string{"yaml_vault"},
+				ResolveValues: true,
+				ExcludeFields: []string{"entities.*.secret_ref"},
 			},
 		},
 	}
@@ -674,11 +680,15 @@ entities:
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
 
-	// With exclude_fields: ["entities.*.secret_ref"], the inferred root key "entities"
-	// must be passed to ApplyToEntry, causing secret_ref to be stripped.
-	ctx := provider.WithFieldPolicy(context.Background(), nil, []string{"entities.*.secret_ref"})
+	tw := &tripwireProvider{}
+	orch.providerManager.vaultCache["tripwire"] = tw
 
-	results, err := orch.Search(ctx, `title == "api_service"`, []string{"static_vault"})
+	ctx := context.Background()
+
+	// With exclude_fields: ["entities.*.secret_ref"] on virtual_search, the inferred root key
+	// "entities" must be passed to ApplyToEntry before resolution, causing secret_ref to be stripped
+	// so the tripwire provider is never called.
+	results, err := orch.Search(ctx, `title == "api_service"`, []string{"virtual_search"})
 	if err != nil {
 		t.Fatalf("Search failed: %v", err)
 	}
@@ -692,6 +702,21 @@ entities:
 	}
 	if entry.Attributes["username"] != "api_user" {
 		t.Errorf("expected username 'api_user', got %v", entry.Attributes["username"])
+	}
+	if tw.called {
+		t.Errorf("pre-resolution isolation violated during search: tripwire was dereferenced for excluded field")
+	}
+
+	// Also verify that GetEntry on virtual_search strips the field before dynamic attribute resolution
+	entryRes, err := orch.GetEntry(ctx, "virtual_search://api")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+	if _, ok := entryRes.Attributes["secret_ref"]; ok {
+		t.Errorf("expected secret_ref to be excluded in GetEntry, but it was present: %v", entryRes.Attributes["secret_ref"])
+	}
+	if tw.called {
+		t.Errorf("pre-resolution isolation violated during GetEntry: tripwire was dereferenced for excluded field")
 	}
 }
 

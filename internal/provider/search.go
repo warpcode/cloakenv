@@ -123,15 +123,15 @@ func getEntryAttributeKey(entry Entry, attrName string) (string, bool) {
 }
 
 // resolveSecretAndCanonicalKeyRaw resolves the matching entry, canonical attribute key, raw attribute value,
-// and result path in a single search operation to guarantee atomic snapshot consistency.
-func (s *SearchProvider) resolveSecretAndCanonicalKeyRaw(ctx context.Context, location string) (string, any, string, error) {
+// result path, and entry title in a single search operation to guarantee atomic snapshot consistency.
+func (s *SearchProvider) resolveSecretAndCanonicalKeyRaw(ctx context.Context, location string) (string, any, string, string, error) {
 	results, err := s.executeSearch(ctx)
 	if err != nil {
-		return "", nil, "", err
+		return "", nil, "", "", err
 	}
 
 	if len(results) == 0 {
-		return "", nil, "", fmt.Errorf("search provider %q: no entries matched stored query", s.vaultName)
+		return "", nil, "", "", fmt.Errorf("search provider %q: no entries matched stored query", s.vaultName)
 	}
 
 	if strings.Contains(location, ":") {
@@ -141,51 +141,51 @@ func (s *SearchProvider) resolveSecretAndCanonicalKeyRaw(ctx context.Context, lo
 
 		matching := s.findMatchingResults(results, entryLoc)
 		if len(matching) == 0 {
-			return "", "", "", fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, entryLoc)
+			return "", nil, "", "", fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, entryLoc)
 		}
 
 		for _, targetResult := range matching {
 			if key, rawVal, found := lookupEntryAttributeRaw(targetResult.Entry, attrName); found {
-				return key, rawVal, targetResult.Path, nil
+				return key, rawVal, targetResult.Path, targetResult.Entry.Title, nil
 			}
 		}
-		return "", nil, "", fmt.Errorf("search provider %q: attribute %q not found in entry %q", s.vaultName, attrName, entryLoc)
+		return "", nil, "", "", fmt.Errorf("search provider %q: attribute %q not found in entry %q", s.vaultName, attrName, entryLoc)
 	}
 
 	// Single result case
 	if len(results) == 1 {
 		entry := results[0].Entry
 		if key, rawVal, found := lookupEntryAttributeRaw(entry, location); found {
-			return key, rawVal, results[0].Path, nil
+			return key, rawVal, results[0].Path, entry.Title, nil
 		}
 
 		if location == "" || location == "default" || location == results[0].Path || location == entry.Title {
 			if key, rawVal, found := lookupEntryAttributeRaw(entry, "Password"); found {
-				return key, rawVal, results[0].Path, nil
+				return key, rawVal, results[0].Path, entry.Title, nil
 			}
 		}
 
-		return "", nil, "", fmt.Errorf("search provider %q: attribute or entry %q not found", s.vaultName, location)
+		return "", nil, "", "", fmt.Errorf("search provider %q: attribute or entry %q not found", s.vaultName, location)
 	}
 
 	// Multiple results case
 	matching := s.findMatchingResults(results, location)
 	if len(matching) == 0 {
-		return "", nil, "", fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, location)
+		return "", nil, "", "", fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, location)
 	}
 
 	for _, targetResult := range matching {
 		if key, rawVal, found := lookupEntryAttributeRaw(targetResult.Entry, "Password"); found {
-			return key, rawVal, targetResult.Path, nil
+			return key, rawVal, targetResult.Path, targetResult.Entry.Title, nil
 		}
 	}
-	return "", nil, "", fmt.Errorf("search provider %q: default attribute \"Password\" not found in entry %q", s.vaultName, location)
+	return "", nil, "", "", fmt.Errorf("search provider %q: default attribute \"Password\" not found in entry %q", s.vaultName, location)
 }
 
 // resolveSecretAndCanonicalKey resolves the matching entry, canonical attribute key, serialized secret value,
 // and result path in a single search operation to guarantee atomic snapshot consistency.
 func (s *SearchProvider) resolveSecretAndCanonicalKey(ctx context.Context, location string) (string, string, string, error) {
-	key, rawVal, path, err := s.resolveSecretAndCanonicalKeyRaw(ctx, location)
+	key, rawVal, path, _, err := s.resolveSecretAndCanonicalKeyRaw(ctx, location)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -207,8 +207,8 @@ func (s *SearchProvider) GetSecretWithKey(ctx context.Context, location string) 
 	return s.resolveSecretAndCanonicalKey(ctx, location)
 }
 
-// GetSecretWithRaw resolves the canonical attribute key, the raw attribute value, and the result path in a single search operation.
-func (s *SearchProvider) GetSecretWithRaw(ctx context.Context, location string) (string, any, string, error) {
+// GetSecretWithRaw resolves the canonical attribute key, the raw attribute value, the result path, and the entry title in a single search operation.
+func (s *SearchProvider) GetSecretWithRaw(ctx context.Context, location string) (string, any, string, string, error) {
 	return s.resolveSecretAndCanonicalKeyRaw(ctx, location)
 }
 
@@ -235,38 +235,44 @@ func (s *SearchProvider) SupportsValueResolution() bool {
 	return true
 }
 
-// GetEntry retrieves a complete structured entry by location.
-func (s *SearchProvider) GetEntry(ctx context.Context, location string) (Entry, error) {
+// GetEntryWithPath retrieves a structured entry along with its authoritative result path.
+func (s *SearchProvider) GetEntryWithPath(ctx context.Context, location string) (Entry, string, error) {
 	results, err := s.executeSearch(ctx)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, "", err
 	}
 
 	if len(results) == 0 {
-		return Entry{}, fmt.Errorf("search provider %q: no entries matched stored query", s.vaultName)
+		return Entry{}, "", fmt.Errorf("search provider %q: no entries matched stored query", s.vaultName)
 	}
 
 	if location == "" || location == "default" {
 		if len(results) == 1 {
-			return results[0].Entry, nil
+			return results[0].Entry, results[0].Path, nil
 		}
 		matching := s.findMatchingResults(results, location)
 		if len(matching) > 0 {
-			return matching[0].Entry, nil
+			return matching[0].Entry, matching[0].Path, nil
 		}
-		return Entry{}, fmt.Errorf("search provider %q: location is required when search returns multiple entries", s.vaultName)
+		return Entry{}, "", fmt.Errorf("search provider %q: location is required when search returns multiple entries", s.vaultName)
 	}
 
 	matching := s.findMatchingResults(results, location)
 	if len(matching) > 0 {
-		return matching[0].Entry, nil
+		return matching[0].Entry, matching[0].Path, nil
 	}
 
 	if len(results) == 1 {
-		return results[0].Entry, nil
+		return results[0].Entry, results[0].Path, nil
 	}
 
-	return Entry{}, fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, location)
+	return Entry{}, "", fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, location)
+}
+
+// GetEntry retrieves a complete structured entry by location.
+func (s *SearchProvider) GetEntry(ctx context.Context, location string) (Entry, error) {
+	entry, _, err := s.GetEntryWithPath(ctx, location)
+	return entry, err
 }
 
 // Search retrieves entries matching the query criteria.
