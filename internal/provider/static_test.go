@@ -814,7 +814,9 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		if !ok {
 			t.Fatal("expected single entry stored under key ''")
 		}
-		_ = entry // entry populated
+		if len(entry.Attributes) == 0 {
+			t.Error("expected entry.Attributes to be populated after parseSingleEntity")
+		}
 	})
 
 	t.Run("valid json multi entities (implicit)", func(t *testing.T) {
