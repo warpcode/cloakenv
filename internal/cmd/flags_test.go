@@ -46,21 +46,76 @@ func TestFlagParser_Bool(t *testing.T) {
 }
 
 func TestFlagParser_StringSlice(t *testing.T) {
-	fp := NewFlagParser()
-	var tags []string
-	fp.StringSlice([]string{"-t", "--tag"}, &tags, "tag value missing")
+	t.Run("short flag appends value", func(t *testing.T) {
+		fp := NewFlagParser()
+		var tags []string
+		fp.StringSlice([]string{"-t", "--tag"}, &tags, "tag value missing")
 
-	remaining, err := fp.Parse([]string{"-t", "v1", "--tag", "v2"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	wantTags := []string{"v1", "v2"}
-	if !reflect.DeepEqual(tags, wantTags) {
-		t.Errorf("tags = %v, want %v", tags, wantTags)
-	}
-	if len(remaining) != 0 {
-		t.Errorf("expected remaining to be empty, got %v", remaining)
-	}
+		remaining, err := fp.Parse([]string{"-t", "v1"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		wantTags := []string{"v1"}
+		if !reflect.DeepEqual(tags, wantTags) {
+			t.Errorf("tags = %v, want %v", tags, wantTags)
+		}
+		if len(remaining) != 0 {
+			t.Errorf("expected remaining to be empty, got %v", remaining)
+		}
+	})
+
+	t.Run("long flag appends value", func(t *testing.T) {
+		fp := NewFlagParser()
+		var tags []string
+		fp.StringSlice([]string{"-t", "--tag"}, &tags, "tag value missing")
+
+		remaining, err := fp.Parse([]string{"--tag", "v2"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		wantTags := []string{"v2"}
+		if !reflect.DeepEqual(tags, wantTags) {
+			t.Errorf("tags = %v, want %v", tags, wantTags)
+		}
+		if len(remaining) != 0 {
+			t.Errorf("expected remaining to be empty, got %v", remaining)
+		}
+	})
+
+	t.Run("appends to existing slice", func(t *testing.T) {
+		fp := NewFlagParser()
+		tags := []string{"existing"}
+		fp.StringSlice([]string{"-t"}, &tags, "")
+
+		remaining, err := fp.Parse([]string{"-t", "new"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		wantTags := []string{"existing", "new"}
+		if !reflect.DeepEqual(tags, wantTags) {
+			t.Errorf("tags = %v, want %v", tags, wantTags)
+		}
+		if len(remaining) != 0 {
+			t.Errorf("expected remaining to be empty, got %v", remaining)
+		}
+	})
+
+	t.Run("no flags leaves slice unchanged", func(t *testing.T) {
+		fp := NewFlagParser()
+		var tags []string
+		fp.StringSlice([]string{"-t"}, &tags, "")
+
+		remaining, err := fp.Parse([]string{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if tags != nil {
+			t.Errorf("tags = %v, want nil", tags)
+		}
+		if len(remaining) != 0 {
+			t.Errorf("expected remaining to be empty, got %v", remaining)
+		}
+	})
 }
 
 func TestFlagParser_Var(t *testing.T) {
