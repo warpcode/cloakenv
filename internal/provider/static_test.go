@@ -725,9 +725,6 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create temp file: %v", err)
 		}
-		defer func() {
-			_ = os.Remove(f.Name())
-		}()
 
 		if _, err := f.Write([]byte("invalid json")); err != nil {
 			t.Fatalf("failed to write temp file: %v", err)
@@ -754,9 +751,6 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create temp file: %v", err)
 		}
-		defer func() {
-			_ = os.Remove(f.Name())
-		}()
 
 		if _, err := f.Write([]byte(`{"key": "value"}`)); err != nil {
 			t.Fatalf("failed to write temp file: %v", err)
@@ -778,6 +772,13 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		if p.rawContent["key"] != "value" {
 			t.Errorf("expected rawContent['key'] to be 'value', got: %v", p.rawContent["key"])
 		}
+		val, err := p.GetSecret(context.Background(), "key")
+		if err != nil {
+			t.Fatalf("GetSecret failed: %v", err)
+		}
+		if val != "value" {
+			t.Errorf("expected 'value', got %q", val)
+		}
 	})
 
 	t.Run("valid json single entity (explicit config)", func(t *testing.T) {
@@ -786,9 +787,6 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create temp file: %v", err)
 		}
-		defer func() {
-			_ = os.Remove(f.Name())
-		}()
 
 		if _, err := f.Write([]byte(`{"entities": {"e1": {"key": "value"}}}`)); err != nil {
 			t.Fatalf("failed to write temp file: %v", err)
@@ -809,6 +807,14 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		if !p.singleEntity {
 			t.Error("expected singleEntity to be true")
 		}
+		if p.rawContent == nil {
+			t.Error("expected rawContent to be populated")
+		}
+		entry, ok := p.entries[""]
+		if !ok {
+			t.Fatal("expected single entry stored under key ''")
+		}
+		_ = entry // entry populated
 	})
 
 	t.Run("valid json multi entities (implicit)", func(t *testing.T) {
@@ -817,9 +823,6 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create temp file: %v", err)
 		}
-		defer func() {
-			_ = os.Remove(f.Name())
-		}()
 
 		if _, err := f.Write([]byte(`{"entities": {"e1": {"key": "value"}}}`)); err != nil {
 			t.Fatalf("failed to write temp file: %v", err)
@@ -852,9 +855,6 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create temp file: %v", err)
 		}
-		defer func() {
-			_ = os.Remove(f.Name())
-		}()
 
 		if _, err := f.Write([]byte(`{"my_root": {"e1": {"key": "value"}}}`)); err != nil {
 			t.Fatalf("failed to write temp file: %v", err)
@@ -888,9 +888,6 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create temp file: %v", err)
 		}
-		defer func() {
-			_ = os.Remove(f.Name())
-		}()
 
 		if _, err := f.Write([]byte(`null`)); err != nil {
 			t.Fatalf("failed to write temp file: %v", err)
@@ -905,6 +902,117 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		err = p.Initialize(context.Background(), cfg)
 		if err != nil {
 			t.Fatalf("expected no error, got: %v", err)
+		}
+		if p.rawContent != nil {
+			t.Errorf("expected rawContent to be nil for null content, got: %v", p.rawContent)
+		}
+		if len(p.entries) != 0 {
+			t.Errorf("expected no entries for null content, got: %d", len(p.entries))
+		}
+	})
+
+	t.Run("invalid yaml", func(t *testing.T) {
+		p := NewYamlProvider()
+		f, err := os.CreateTemp(t.TempDir(), "invalid*.yaml")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+
+		if _, err := f.Write([]byte("	tabs are not allowed")); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+		_ = f.Close()
+
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path": f.Name(),
+			},
+		}
+		err = p.Initialize(context.Background(), cfg)
+		if err == nil {
+			t.Fatal("expected error for invalid yaml")
+		}
+		if !strings.Contains(err.Error(), "failed to parse") {
+			t.Errorf("expected error message to contain 'failed to parse', got: %v", err)
+		}
+	})
+
+	t.Run("valid yaml single entity (implicit)", func(t *testing.T) {
+		p := NewYamlProvider()
+		f, err := os.CreateTemp(t.TempDir(), "single*.yaml")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+
+		if _, err := f.Write([]byte("key: value")); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+		_ = f.Close()
+
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path": f.Name(),
+			},
+		}
+		err = p.Initialize(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if !p.singleEntity {
+			t.Error("expected singleEntity to be true")
+		}
+
+		val, err := p.GetSecret(context.Background(), "key")
+		if err != nil {
+			t.Fatalf("GetSecret failed: %v", err)
+		}
+		if val != "value" {
+			t.Errorf("expected 'value', got %q", val)
+		}
+	})
+
+	t.Run("valid yaml multi entities (implicit)", func(t *testing.T) {
+		p := NewYamlProvider()
+		f, err := os.CreateTemp(t.TempDir(), "multi*.yaml")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+
+		yamlData := `
+entities:
+  e1:
+    key: value
+`
+		if _, err := f.Write([]byte(yamlData)); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+		_ = f.Close()
+
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path": f.Name(),
+			},
+		}
+		err = p.Initialize(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if p.singleEntity {
+			t.Error("expected singleEntity to be false")
+		}
+		if len(p.entries) != 1 {
+			t.Errorf("expected 1 entry, got: %d", len(p.entries))
+		}
+		if _, ok := p.entries["e1"]; !ok {
+			t.Error("expected entry 'e1' to be present")
+		}
+
+		val, err := p.GetSecret(context.Background(), "entities.e1.key")
+		if err != nil {
+			t.Fatalf("GetSecret failed: %v", err)
+		}
+		if val != "value" {
+			t.Errorf("expected 'value', got %q", val)
 		}
 	})
 }
