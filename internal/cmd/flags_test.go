@@ -46,16 +46,34 @@ func TestFlagParser_Bool(t *testing.T) {
 }
 
 func TestFlagParser_StringSlice(t *testing.T) {
-	t.Run("appends multiple values", func(t *testing.T) {
+	t.Run("short flag appends value", func(t *testing.T) {
 		fp := NewFlagParser()
 		var tags []string
 		fp.StringSlice([]string{"-t", "--tag"}, &tags, "tag value missing")
 
-		remaining, err := fp.Parse([]string{"-t", "v1", "--tag", "v2"})
+		remaining, err := fp.Parse([]string{"-t", "v1"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		wantTags := []string{"v1", "v2"}
+		wantTags := []string{"v1"}
+		if !reflect.DeepEqual(tags, wantTags) {
+			t.Errorf("tags = %v, want %v", tags, wantTags)
+		}
+		if len(remaining) != 0 {
+			t.Errorf("expected remaining to be empty, got %v", remaining)
+		}
+	})
+
+	t.Run("long flag appends value", func(t *testing.T) {
+		fp := NewFlagParser()
+		var tags []string
+		fp.StringSlice([]string{"-t", "--tag"}, &tags, "tag value missing")
+
+		remaining, err := fp.Parse([]string{"--tag", "v2"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		wantTags := []string{"v2"}
 		if !reflect.DeepEqual(tags, wantTags) {
 			t.Errorf("tags = %v, want %v", tags, wantTags)
 		}
@@ -69,7 +87,7 @@ func TestFlagParser_StringSlice(t *testing.T) {
 		tags := []string{"existing"}
 		fp.StringSlice([]string{"-t"}, &tags, "")
 
-		_, err := fp.Parse([]string{"-t", "new"})
+		remaining, err := fp.Parse([]string{"-t", "new"})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -77,19 +95,25 @@ func TestFlagParser_StringSlice(t *testing.T) {
 		if !reflect.DeepEqual(tags, wantTags) {
 			t.Errorf("tags = %v, want %v", tags, wantTags)
 		}
+		if len(remaining) != 0 {
+			t.Errorf("expected remaining to be empty, got %v", remaining)
+		}
 	})
 
-	t.Run("returns missing value error", func(t *testing.T) {
+	t.Run("no flags leaves slice unchanged", func(t *testing.T) {
 		fp := NewFlagParser()
 		var tags []string
-		fp.StringSlice([]string{"-t"}, &tags, "custom missing error")
+		fp.StringSlice([]string{"-t"}, &tags, "")
 
-		_, err := fp.Parse([]string{"-t"})
-		if err == nil {
-			t.Fatal("expected error, got nil")
+		remaining, err := fp.Parse([]string{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-		if err.Error() != "custom missing error" {
-			t.Errorf("error = %q, want %q", err.Error(), "custom missing error")
+		if tags != nil {
+			t.Errorf("tags = %v, want nil", tags)
+		}
+		if len(remaining) != 0 {
+			t.Errorf("expected remaining to be empty, got %v", remaining)
 		}
 	})
 }
