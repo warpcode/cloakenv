@@ -721,16 +721,18 @@ func TestStaticProvider_Initialize(t *testing.T) {
 
 	t.Run("invalid json", func(t *testing.T) {
 		p := NewJsonProvider()
-		f, err := os.CreateTemp("", "invalid*.json")
+		f, err := os.CreateTemp(t.TempDir(), "invalid*.json")
 		if err != nil {
 			t.Fatalf("failed to create temp file: %v", err)
 		}
-		defer os.Remove(f.Name())
+		defer func() {
+			_ = os.Remove(f.Name())
+		}()
 
 		if _, err := f.Write([]byte("invalid json")); err != nil {
 			t.Fatalf("failed to write temp file: %v", err)
 		}
-		f.Close()
+		_ = f.Close()
 
 		cfg := ProviderConfig{
 			Settings: map[string]string{
@@ -748,16 +750,18 @@ func TestStaticProvider_Initialize(t *testing.T) {
 
 	t.Run("valid json single entity (implicit)", func(t *testing.T) {
 		p := NewJsonProvider()
-		f, err := os.CreateTemp("", "single*.json")
+		f, err := os.CreateTemp(t.TempDir(), "single*.json")
 		if err != nil {
 			t.Fatalf("failed to create temp file: %v", err)
 		}
-		defer os.Remove(f.Name())
+		defer func() {
+			_ = os.Remove(f.Name())
+		}()
 
 		if _, err := f.Write([]byte(`{"key": "value"}`)); err != nil {
 			t.Fatalf("failed to write temp file: %v", err)
 		}
-		f.Close()
+		_ = f.Close()
 
 		cfg := ProviderConfig{
 			Settings: map[string]string{
@@ -778,16 +782,18 @@ func TestStaticProvider_Initialize(t *testing.T) {
 
 	t.Run("valid json single entity (explicit config)", func(t *testing.T) {
 		p := NewJsonProvider()
-		f, err := os.CreateTemp("", "single_explicit*.json")
+		f, err := os.CreateTemp(t.TempDir(), "single_explicit*.json")
 		if err != nil {
 			t.Fatalf("failed to create temp file: %v", err)
 		}
-		defer os.Remove(f.Name())
+		defer func() {
+			_ = os.Remove(f.Name())
+		}()
 
 		if _, err := f.Write([]byte(`{"entities": {"e1": {"key": "value"}}}`)); err != nil {
 			t.Fatalf("failed to write temp file: %v", err)
 		}
-		f.Close()
+		_ = f.Close()
 
 		trueVal := true
 		cfg := ProviderConfig{
@@ -807,16 +813,18 @@ func TestStaticProvider_Initialize(t *testing.T) {
 
 	t.Run("valid json multi entities (implicit)", func(t *testing.T) {
 		p := NewJsonProvider()
-		f, err := os.CreateTemp("", "multi*.json")
+		f, err := os.CreateTemp(t.TempDir(), "multi*.json")
 		if err != nil {
 			t.Fatalf("failed to create temp file: %v", err)
 		}
-		defer os.Remove(f.Name())
+		defer func() {
+			_ = os.Remove(f.Name())
+		}()
 
 		if _, err := f.Write([]byte(`{"entities": {"e1": {"key": "value"}}}`)); err != nil {
 			t.Fatalf("failed to write temp file: %v", err)
 		}
-		f.Close()
+		_ = f.Close()
 
 		cfg := ProviderConfig{
 			Settings: map[string]string{
@@ -840,16 +848,18 @@ func TestStaticProvider_Initialize(t *testing.T) {
 
 	t.Run("valid json multi entities (explicit root key)", func(t *testing.T) {
 		p := NewJsonProvider()
-		f, err := os.CreateTemp("", "multi_root*.json")
+		f, err := os.CreateTemp(t.TempDir(), "multi_root*.json")
 		if err != nil {
 			t.Fatalf("failed to create temp file: %v", err)
 		}
-		defer os.Remove(f.Name())
+		defer func() {
+			_ = os.Remove(f.Name())
+		}()
 
 		if _, err := f.Write([]byte(`{"my_root": {"e1": {"key": "value"}}}`)); err != nil {
 			t.Fatalf("failed to write temp file: %v", err)
 		}
-		f.Close()
+		_ = f.Close()
 
 		cfg := ProviderConfig{
 			EntitiesRootKey: "my_root",
@@ -874,16 +884,18 @@ func TestStaticProvider_Initialize(t *testing.T) {
 
 	t.Run("valid json null content", func(t *testing.T) {
 		p := NewJsonProvider()
-		f, err := os.CreateTemp("", "null*.json")
+		f, err := os.CreateTemp(t.TempDir(), "null*.json")
 		if err != nil {
 			t.Fatalf("failed to create temp file: %v", err)
 		}
-		defer os.Remove(f.Name())
+		defer func() {
+			_ = os.Remove(f.Name())
+		}()
 
 		if _, err := f.Write([]byte(`null`)); err != nil {
 			t.Fatalf("failed to write temp file: %v", err)
 		}
-		f.Close()
+		_ = f.Close()
 
 		cfg := ProviderConfig{
 			Settings: map[string]string{
