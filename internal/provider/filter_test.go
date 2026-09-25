@@ -2322,9 +2322,9 @@ host: "app.internal"
 
 		yp := NewYamlProvider()
 		if err := yp.Initialize(ctx, ProviderConfig{
+			EntityName: "app",
 			Settings: map[string]string{
-				"vault_path":  yamlPath,
-				"entity_name": "app",
+				"vault_path": yamlPath,
 			},
 		}); err != nil {
 			t.Fatalf("failed to init single-entity YAML: %v", err)
@@ -2384,6 +2384,96 @@ host: "app.internal"
 		}
 		if entryInc.Attributes["username"] != "app_user" {
 			t.Errorf("expected username in GetEntry, got: %v", entryInc.Attributes)
+		}
+		if _, hasToken := entryInc.Attributes["token"]; hasToken {
+			t.Errorf("expected token to not be included in GetEntry, got: %v", entryInc.Attributes)
+		}
+	})
+
+	t.Run("StaticProvider_DotRoot_TitleQualified", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		yamlPath := filepath.Join(tmpDir, "dot_root_title.yaml")
+		yamlContent := `
+db:
+  title: MyApp
+  username: "db_user"
+  password: "secret_db_password"
+  token: "secret_admin_tok"
+`
+		if err := os.WriteFile(yamlPath, []byte(yamlContent), 0600); err != nil {
+			t.Fatalf("failed to write yaml: %v", err)
+		}
+
+		yp := NewYamlProvider()
+		if err := yp.Initialize(ctx, ProviderConfig{
+			EntitiesRootKey: ".",
+			Settings: map[string]string{
+				"vault_path": yamlPath,
+			},
+		}); err != nil {
+			t.Fatalf("failed to init dot-root YAML: %v", err)
+		}
+
+		// 1. Title-qualified exclusion: exclude_fields: ["MyApp.token"]
+		fpExcl := NewFilteringProvider(yp, nil, []string{"MyApp.token"})
+
+		// Scalar GetSecret("db.token") must be blocked by MyApp.token
+		_, err := fpExcl.GetSecret(ctx, "db.token")
+		if err == nil {
+			t.Errorf("expected GetSecret(db.token) to be blocked by title-qualified exclusion, got nil")
+		}
+
+		// Non-excluded field must succeed
+		val, err := fpExcl.GetSecret(ctx, "db.username")
+		if err != nil {
+			t.Fatalf("GetSecret(db.username) failed: %v", err)
+		}
+		if val != "db_user" {
+			t.Errorf("expected 'db_user', got %q", val)
+		}
+
+		// Structured GetEntry("db") must also exclude token
+		sfpExcl := fpExcl.(SearchableProvider)
+		entryExcl, err := sfpExcl.GetEntry(ctx, "db")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if _, hasToken := entryExcl.Attributes["token"]; hasToken {
+			t.Errorf("expected token to be excluded in GetEntry, got: %v", entryExcl.Attributes)
+		}
+		if entryExcl.Attributes["username"] != "db_user" {
+			t.Errorf("expected username in GetEntry, got: %v", entryExcl.Attributes["username"])
+		}
+
+		// 2. Title-qualified inclusion: include_fields: ["MyApp.username"]
+		fpInc := NewFilteringProvider(yp, []string{"MyApp.username"}, nil)
+
+		// Scalar GetSecret("db.username") must be allowed
+		valInc, err := fpInc.GetSecret(ctx, "db.username")
+		if err != nil {
+			t.Fatalf("GetSecret(db.username) failed under title include: %v", err)
+		}
+		if valInc != "db_user" {
+			t.Errorf("expected 'db_user', got %q", valInc)
+		}
+
+		// Scalar GetSecret("db.password") must be rejected
+		_, err = fpInc.GetSecret(ctx, "db.password")
+		if err == nil {
+			t.Errorf("expected GetSecret(db.password) to be rejected by title-qualified include, got nil")
+		}
+
+		// Structured GetEntry("db") must only include username
+		sfpInc := fpInc.(SearchableProvider)
+		entryInc, err := sfpInc.GetEntry(ctx, "db")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entryInc.Attributes["username"] != "db_user" {
+			t.Errorf("expected username in GetEntry, got: %v", entryInc.Attributes)
+		}
+		if _, hasPass := entryInc.Attributes["password"]; hasPass {
+			t.Errorf("expected password to not be included in GetEntry, got: %v", entryInc.Attributes)
 		}
 		if _, hasToken := entryInc.Attributes["token"]; hasToken {
 			t.Errorf("expected token to not be included in GetEntry, got: %v", entryInc.Attributes)

@@ -1044,10 +1044,17 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 		entityAttr = pathToCheck
 	} else {
 		entityName := strippedPath
+		if entityName == "" {
+			entityName = pathToCheck
+		}
 		if dotIdx := strings.Index(entityName, "."); dotIdx >= 0 {
 			entityName = entityName[:dotIdx]
 		}
 		if entry, ok := sp.entries[entityName]; ok {
+			entityTitle = entry.Title
+		} else if entry, ok := sp.entries[strippedPath]; ok {
+			entityTitle = entry.Title
+		} else if entry, ok := sp.entries[pathToCheck]; ok {
 			entityTitle = entry.Title
 		}
 		if dotIdx := strings.Index(pathToCheck, "."); dotIdx >= 0 {

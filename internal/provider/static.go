@@ -123,9 +123,7 @@ func (p *staticProvider) parseSingleEntity(cfg ProviderConfig, raw map[string]an
 
 	title := cfg.EntityName
 	if title == "" {
-		if en := cfg.Settings["entity_name"]; en != "" {
-			title = en
-		} else if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
+		if vaultName := cfg.Settings["vault_name"]; vaultName != "" {
 			title = vaultName
 		} else {
 			title = filepath.Base(p.filePath)

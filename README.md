@@ -587,8 +587,8 @@ vaults:
   - **Entry titles & qualified attributes**: e.g., `Test Website.notes`, `Test Website:notes`.
   - **Subtree exclusions via ancestor segments**: e.g., `exclude_fields: ["db"]` or `["entities.db"]` blocks all attributes beneath that container. Directly requesting and including a container grants its unexcluded nested attributes.
 - **Path Separators (`/` vs `.`) and Wildcards**:
-  - `path.Match`'s `*` wildcard **does not cross `/`** directory separators. A pattern like `exclude_fields: ["*"]` matches bare field names or title aliases without slashes, but will *not* match paths containing slashes (such as `group/entry`).
-  - The `*.notes` example below works because bare entry-title aliases (e.g. `Test Website.notes`) are expanded as candidate paths alongside hierarchical paths like `website/Test Website.notes`.
+  - In Go's `path.Match`, the `*` wildcard does not match across `/` directory separators. However, for hierarchical vaults (`keepass`, `custom_vault`), each `/`-separated group prefix is also generated as a candidate path (`filter.go:679-682`, `749-752`). For example, resolving `keepass://website/Test Website:Password` generates the candidate prefix `website`. Because `path.Match("*", "website")` is true, an exclude pattern like `exclude_fields: ["*"]` matches the top-level group prefix and **excludes every secret in all top-level groups**.
+  - In contrast, the `*.notes` pattern below targets title-qualified attribute candidates (e.g. `Test Website.notes`), matching any entry's notes attribute without matching slashed group prefixes. To exclude specific hierarchical groups or subtrees safely without blocking entire vaults, use qualified patterns (e.g. `website/*` or `group/subgroup/*`).
 - Filters apply consistently across `GetEntry`, `Search`, and scalar `GetSecret` resolution.
 - Example config:
 ```yaml
