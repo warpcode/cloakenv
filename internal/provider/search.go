@@ -179,11 +179,6 @@ func (s *SearchProvider) GetSecret(ctx context.Context, location string) (string
 	return val, err
 }
 
-// GetSecretWithKey resolves the canonical attribute key, the secret value, and the result path in a single search operation.
-func (s *SearchProvider) GetSecretWithKey(ctx context.Context, location string) (string, string, string, error) {
-	return s.resolveSecretAndCanonicalKey(ctx, location)
-}
-
 // GetSecretWithRaw resolves the canonical attribute key, the raw attribute value, the result path, and the entry title in a single search operation.
 func (s *SearchProvider) GetSecretWithRaw(ctx context.Context, location string) (string, any, string, string, error) {
 	return s.resolveSecretAndCanonicalKeyRaw(ctx, location)

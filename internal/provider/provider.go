@@ -103,7 +103,6 @@ type contextKeyFieldPolicy struct{}
 // FieldPolicy holds include layers and exclude glob patterns for attribute filtering.
 type FieldPolicy struct {
 	IncludeLayers [][]string
-	IncludeFields []string
 	ExcludeFields []string
 }
 
@@ -140,7 +139,6 @@ func WithFieldPolicy(ctx context.Context, includeFields, excludeFields []string)
 		}
 		return context.WithValue(ctx, contextKeyFieldPolicy{}, &FieldPolicy{
 			IncludeLayers: layers,
-			IncludeFields: includeFields,
 			ExcludeFields: excludeFields,
 		})
 	}
@@ -168,14 +166,8 @@ func WithFieldPolicy(ctx context.Context, includeFields, excludeFields []string)
 		effectiveIncludeLayers = append(effectiveIncludeLayers, includeFields)
 	}
 
-	var effectiveIncludes []string
-	if len(effectiveIncludeLayers) == 1 {
-		effectiveIncludes = effectiveIncludeLayers[0]
-	}
-
 	return context.WithValue(ctx, contextKeyFieldPolicy{}, &FieldPolicy{
 		IncludeLayers: effectiveIncludeLayers,
-		IncludeFields: effectiveIncludes,
 		ExcludeFields: effectiveExcludes,
 	})
 }
