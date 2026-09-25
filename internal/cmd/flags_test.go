@@ -67,8 +67,10 @@ func TestFlagParser_Var(t *testing.T) {
 	t.Run("without value", func(t *testing.T) {
 		fp := NewFlagParser()
 		var count int
+		var capturedName string
 		fp.Var([]string{"--inc"}, false, "", func(name, val string) error {
 			count++
+			capturedName = name
 			return nil
 		})
 
@@ -78,6 +80,9 @@ func TestFlagParser_Var(t *testing.T) {
 		}
 		if count != 2 {
 			t.Errorf("count = %d, want 2", count)
+		}
+		if capturedName != "--inc" {
+			t.Errorf("captured name = %q, want %q", capturedName, "--inc")
 		}
 		if len(remaining) != 0 {
 			t.Errorf("expected remaining to be empty, got %v", remaining)
@@ -105,18 +110,18 @@ func TestFlagParser_Var(t *testing.T) {
 		}
 	})
 
-	t.Run("handler returns error", func(t *testing.T) {
+	t.Run("with value - missing arg", func(t *testing.T) {
 		fp := NewFlagParser()
-		fp.Var([]string{"--fail"}, false, "", func(name, val string) error {
-			return errors.New("simulated error")
+		fp.Var([]string{"--item"}, true, "missing item", func(name, val string) error {
+			return nil
 		})
 
-		_, err := fp.Parse([]string{"--fail"})
+		_, err := fp.Parse([]string{"--item"})
 		if err == nil {
 			t.Fatalf("expected error, got nil")
 		}
-		if err.Error() != "simulated error" {
-			t.Errorf("error = %v, want 'simulated error'", err)
+		if err.Error() != "missing item" {
+			t.Errorf("error = %q, want %q", err.Error(), "missing item")
 		}
 	})
 }
