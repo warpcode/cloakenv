@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -689,6 +690,209 @@ func TestStaticProvider_GetEntry(t *testing.T) {
 		wantMsg := `yaml provider: entry "db/staging" not found`
 		if err.Error() != wantMsg {
 			t.Errorf("GetEntry() error = %q, want %q", err.Error(), wantMsg)
+		}
+	})
+}
+
+func TestStaticProvider_Initialize(t *testing.T) {
+	t.Run("missing vault_path", func(t *testing.T) {
+		p := NewJsonProvider()
+		err := p.Initialize(context.Background(), ProviderConfig{})
+		if err == nil {
+			t.Fatal("expected error for missing vault_path")
+		}
+		if !strings.Contains(err.Error(), "vault_path is required") {
+			t.Errorf("expected error message to contain 'vault_path is required', got: %v", err)
+		}
+	})
+
+	t.Run("file does not exist", func(t *testing.T) {
+		p := NewJsonProvider()
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path": "non-existent-file.json",
+			},
+		}
+		err := p.Initialize(context.Background(), cfg)
+		if err != nil {
+			t.Errorf("expected no error for non-existent file, got: %v", err)
+		}
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		p := NewJsonProvider()
+		f, err := os.CreateTemp("", "invalid*.json")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+		defer os.Remove(f.Name())
+
+		if _, err := f.Write([]byte("invalid json")); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+		f.Close()
+
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path": f.Name(),
+			},
+		}
+		err = p.Initialize(context.Background(), cfg)
+		if err == nil {
+			t.Fatal("expected error for invalid json")
+		}
+		if !strings.Contains(err.Error(), "failed to parse") {
+			t.Errorf("expected error message to contain 'failed to parse', got: %v", err)
+		}
+	})
+
+	t.Run("valid json single entity (implicit)", func(t *testing.T) {
+		p := NewJsonProvider()
+		f, err := os.CreateTemp("", "single*.json")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+		defer os.Remove(f.Name())
+
+		if _, err := f.Write([]byte(`{"key": "value"}`)); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+		f.Close()
+
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path": f.Name(),
+			},
+		}
+		err = p.Initialize(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if !p.singleEntity {
+			t.Error("expected singleEntity to be true")
+		}
+		if p.rawContent["key"] != "value" {
+			t.Errorf("expected rawContent['key'] to be 'value', got: %v", p.rawContent["key"])
+		}
+	})
+
+	t.Run("valid json single entity (explicit config)", func(t *testing.T) {
+		p := NewJsonProvider()
+		f, err := os.CreateTemp("", "single_explicit*.json")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+		defer os.Remove(f.Name())
+
+		if _, err := f.Write([]byte(`{"entities": {"e1": {"key": "value"}}}`)); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+		f.Close()
+
+		trueVal := true
+		cfg := ProviderConfig{
+			SingleEntity: &trueVal,
+			Settings: map[string]string{
+				"vault_path": f.Name(),
+			},
+		}
+		err = p.Initialize(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if !p.singleEntity {
+			t.Error("expected singleEntity to be true")
+		}
+	})
+
+	t.Run("valid json multi entities (implicit)", func(t *testing.T) {
+		p := NewJsonProvider()
+		f, err := os.CreateTemp("", "multi*.json")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+		defer os.Remove(f.Name())
+
+		if _, err := f.Write([]byte(`{"entities": {"e1": {"key": "value"}}}`)); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+		f.Close()
+
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path": f.Name(),
+			},
+		}
+		err = p.Initialize(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if p.singleEntity {
+			t.Error("expected singleEntity to be false")
+		}
+		if len(p.entries) != 1 {
+			t.Errorf("expected 1 entry, got: %d", len(p.entries))
+		}
+		if _, ok := p.entries["e1"]; !ok {
+			t.Error("expected entry 'e1' to be present")
+		}
+	})
+
+	t.Run("valid json multi entities (explicit root key)", func(t *testing.T) {
+		p := NewJsonProvider()
+		f, err := os.CreateTemp("", "multi_root*.json")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+		defer os.Remove(f.Name())
+
+		if _, err := f.Write([]byte(`{"my_root": {"e1": {"key": "value"}}}`)); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+		f.Close()
+
+		cfg := ProviderConfig{
+			EntitiesRootKey: "my_root",
+			Settings: map[string]string{
+				"vault_path": f.Name(),
+			},
+		}
+		err = p.Initialize(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if p.singleEntity {
+			t.Error("expected singleEntity to be false")
+		}
+		if len(p.entries) != 1 {
+			t.Errorf("expected 1 entry, got: %d", len(p.entries))
+		}
+		if _, ok := p.entries["e1"]; !ok {
+			t.Error("expected entry 'e1' to be present")
+		}
+	})
+
+	t.Run("valid json null content", func(t *testing.T) {
+		p := NewJsonProvider()
+		f, err := os.CreateTemp("", "null*.json")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+		defer os.Remove(f.Name())
+
+		if _, err := f.Write([]byte(`null`)); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+		f.Close()
+
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path": f.Name(),
+			},
+		}
+		err = p.Initialize(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
 		}
 	})
 }
