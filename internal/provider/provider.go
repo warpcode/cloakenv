@@ -44,6 +44,8 @@ type ProviderConfig struct {
 	EntitiesRootKey string
 	SourceVaults    []string
 	Query           string
+	IncludeFields   []string
+	ExcludeFields   []string
 }
 
 // Entry represents a multi-secret credential record with metadata.
@@ -95,3 +97,88 @@ const ContextKeyTTL ContextKey = "ttl"
 
 // ContextKeyDepth is the context key for specifying recursion depth.
 const ContextKeyDepth ContextKey = "depth"
+
+type contextKeyFieldPolicy struct{}
+
+// FieldPolicy holds include layers and exclude glob patterns for attribute filtering.
+type FieldPolicy struct {
+	IncludeLayers [][]string
+	ExcludeFields []string
+}
+
+// ApplyToEntry applies the composed field policy to an entry taking entryPath and rootPrefixes into account.
+// Include layers are evaluated successively to enforce set intersection across all constraining layers.
+func (fp *FieldPolicy) ApplyToEntry(entry Entry, entryPath string, rootPrefixes []string) Entry {
+	if fp == nil {
+		return entry
+	}
+	current := entry
+	for _, layer := range fp.IncludeLayers {
+		if len(layer) > 0 {
+			current = FilterEntryWithPath(current, entryPath, rootPrefixes, layer, nil)
+		}
+	}
+	if len(fp.ExcludeFields) > 0 {
+		current = FilterEntryWithPath(current, entryPath, rootPrefixes, nil, fp.ExcludeFields)
+	}
+	return current
+}
+
+// WithFieldPolicy returns a context carrying include and exclude glob field policies.
+// If ctx already carries a FieldPolicy, inherited and current policies are composed:
+// active includes preserve layers to evaluate intersection, and excludes are unioned.
+func WithFieldPolicy(ctx context.Context, includeFields, excludeFields []string) context.Context {
+	inherited := FieldPolicyFromContext(ctx)
+	if inherited == nil {
+		if len(includeFields) == 0 && len(excludeFields) == 0 {
+			return ctx
+		}
+		var layers [][]string
+		if len(includeFields) > 0 {
+			layers = append(layers, includeFields)
+		}
+		return context.WithValue(ctx, contextKeyFieldPolicy{}, &FieldPolicy{
+			IncludeLayers: layers,
+			ExcludeFields: excludeFields,
+		})
+	}
+
+	var effectiveExcludes []string
+	seenEx := make(map[string]bool)
+	for _, p := range inherited.ExcludeFields {
+		if !seenEx[p] {
+			seenEx[p] = true
+			effectiveExcludes = append(effectiveExcludes, p)
+		}
+	}
+	for _, p := range excludeFields {
+		if !seenEx[p] {
+			seenEx[p] = true
+			effectiveExcludes = append(effectiveExcludes, p)
+		}
+	}
+
+	var effectiveIncludeLayers [][]string
+	if len(inherited.IncludeLayers) > 0 {
+		effectiveIncludeLayers = append(effectiveIncludeLayers, inherited.IncludeLayers...)
+	}
+	if len(includeFields) > 0 {
+		effectiveIncludeLayers = append(effectiveIncludeLayers, includeFields)
+	}
+
+	return context.WithValue(ctx, contextKeyFieldPolicy{}, &FieldPolicy{
+		IncludeLayers: effectiveIncludeLayers,
+		ExcludeFields: effectiveExcludes,
+	})
+}
+
+// FieldPolicyFromContext retrieves the FieldPolicy from ctx, if present.
+func FieldPolicyFromContext(ctx context.Context) *FieldPolicy {
+	if ctx == nil {
+		return nil
+	}
+	if fp, ok := ctx.Value(contextKeyFieldPolicy{}).(*FieldPolicy); ok {
+		return fp
+	}
+	return nil
+}

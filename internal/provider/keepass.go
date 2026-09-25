@@ -276,6 +276,20 @@ func (k *KeePassProvider) GetEntry(_ context.Context, location string) (Entry, e
 	return k.toEntry(entry), nil
 }
 
+// GetEntryTitle retrieves only the title of an entry by location without loading attributes or binary attachments.
+func (k *KeePassProvider) GetEntryTitle(_ context.Context, location string) (string, error) {
+	if k.db == nil {
+		return "", errors.New("keepass provider: not initialized")
+	}
+
+	entry, _, err := k.findEntry(location)
+	if err != nil {
+		return "", err
+	}
+
+	return k.getEntryTitle(entry), nil
+}
+
 // Search retrieves all entries matching the query criteria.
 func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]SearchResult, error) {
 	if k.db == nil {

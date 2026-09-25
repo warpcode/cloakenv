@@ -13,6 +13,7 @@ import (
 	"github.com/expr-lang/expr/ast"
 
 	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/provider"
 )
 
 func TestOrchestratorRecursiveAndSearch(t *testing.T) {
@@ -637,5 +638,125 @@ func TestSearchNilConfig(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no configuration loaded") {
 		t.Errorf("expected 'no configuration loaded' error, got %v", err)
+	}
+}
+
+func TestSearcher_InferredRoot_PreResolutionExclusion(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// YAML file has "entities" root key, but EntitiesRootKey will be omitted from VaultConfig.
+	// staticProvider infers entitiesRootKey = "entities".
+	// The entry has a secret URI reference that must never be dereferenced when excluded.
+	yamlContent := `
+entities:
+  api:
+    title: "api_service"
+    username: "api_user"
+    secret_ref: "${tripwire://must_not_be_called}"
+`
+	yamlPath := filepath.Join(tempDir, "inferred_root.yaml")
+	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write yaml fixture: %v", err)
+	}
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"yaml_vault": {
+				Provider:  "yaml",
+				VaultPath: yamlPath,
+				// EntitiesRootKey intentionally omitted to test inferred root handling
+			},
+			"virtual_search": {
+				Provider:      "search",
+				SourceVaults:  []string{"yaml_vault"},
+				ResolveValues: true,
+				ExcludeFields: []string{"entities.*.secret_ref"},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	tw := &tripwireProvider{}
+	orch.providerManager.vaultCache["tripwire"] = tw
+
+	ctx := context.Background()
+
+	// With exclude_fields: ["entities.*.secret_ref"] on virtual_search, the inferred root key
+	// "entities" must be passed to ApplyToEntry before resolution, causing secret_ref to be stripped
+	// so the tripwire provider is never called.
+	results, err := orch.Search(ctx, `title == "api_service"`, []string{"virtual_search"})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	entry := results[0].Entry
+	if _, ok := entry.Attributes["secret_ref"]; ok {
+		t.Errorf("expected secret_ref to be excluded before resolution, but it was present: %v", entry.Attributes["secret_ref"])
+	}
+	if entry.Attributes["username"] != "api_user" {
+		t.Errorf("expected username 'api_user', got %v", entry.Attributes["username"])
+	}
+	if tw.called {
+		t.Errorf("pre-resolution isolation violated during search: tripwire was dereferenced for excluded field")
+	}
+
+	// Also verify that GetEntry on virtual_search strips the field before dynamic attribute resolution
+	entryRes, err := orch.GetEntry(ctx, "virtual_search://api")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+	if _, ok := entryRes.Attributes["secret_ref"]; ok {
+		t.Errorf("expected secret_ref to be excluded in GetEntry, but it was present: %v", entryRes.Attributes["secret_ref"])
+	}
+	if tw.called {
+		t.Errorf("pre-resolution isolation violated during GetEntry: tripwire was dereferenced for excluded field")
+	}
+}
+
+func TestSearcher_OverlappingIncludeLayers(t *testing.T) {
+	entry := provider.Entry{
+		Title: "test_entry",
+		Attributes: map[string]any{
+			"env:PROD":  "prod_val",
+			"env:DEV":   "dev_val",
+			"app:PROD":  "app_val",
+			"something": "other",
+		},
+	}
+
+	// Layer 1: include_fields: ["env:*"]
+	// Layer 2: include_fields: ["*:PROD"]
+	ctx := provider.WithFieldPolicy(context.Background(), []string{"env:*"}, nil)
+	ctx = provider.WithFieldPolicy(ctx, []string{"*:PROD"}, nil)
+
+	fp := provider.FieldPolicyFromContext(ctx)
+	if fp == nil {
+		t.Fatal("expected non-nil FieldPolicy")
+	}
+
+	filtered := fp.ApplyToEntry(entry, "test_entry", nil)
+
+	// "env:PROD" matches both layers and must be kept.
+	if filtered.Attributes["env:PROD"] != "prod_val" {
+		t.Errorf("expected env:PROD to be kept, got: %v", filtered.Attributes["env:PROD"])
+	}
+	// "env:DEV" fails layer 2 ("*:PROD") and must be excluded.
+	if _, ok := filtered.Attributes["env:DEV"]; ok {
+		t.Errorf("expected env:DEV to be excluded by layer 2")
+	}
+	// "app:PROD" fails layer 1 ("env:*") and must be excluded.
+	if _, ok := filtered.Attributes["app:PROD"]; ok {
+		t.Errorf("expected app:PROD to be excluded by layer 1")
+	}
+	// "something" fails both layers and must be excluded.
+	if _, ok := filtered.Attributes["something"]; ok {
+		t.Errorf("expected something to be excluded")
 	}
 }

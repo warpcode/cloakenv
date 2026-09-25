@@ -72,6 +72,20 @@ func TestCustomVaultProvider_MultipleEntities(t *testing.T) {
 		t.Errorf("unexpected tags parsed: %v", entry.Tags)
 	}
 
+	// 2b. GetEntryTitle
+	title, err := p.GetEntryTitle(ctx, "entity1")
+	if err != nil {
+		t.Fatalf("GetEntryTitle failed: %v", err)
+	}
+	if title != "entity1" {
+		t.Errorf("expected title 'entity1', got %q", title)
+	}
+
+	_, err = p.GetEntryTitle(ctx, "nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent entity, got nil")
+	}
+
 	// 3. Search
 	results, err := p.Search(ctx, SearchQuery{})
 	if err != nil {
@@ -257,5 +271,68 @@ func TestCustomVaultProvider_SupportsValueResolution(t *testing.T) {
 
 	if !p.SupportsValueResolution() {
 		t.Error("expected SupportsValueResolution() to be true, got false")
+	}
+}
+
+func TestCustomVaultProvider_GetRawAttribute(t *testing.T) {
+	ctx := context.Background()
+	p := NewCustomVaultProvider()
+
+	rawMap := map[string]any{"user": "alice", "token": "secret123"}
+	rawSlice := []any{"item1", "item2"}
+
+	cfg := ProviderConfig{
+		Entities: map[string]map[string]any{
+			"app": {
+				"data":   rawMap,
+				"tokens": rawSlice,
+				"secret": "scalar_secret",
+			},
+		},
+	}
+
+	if err := p.Initialize(ctx, cfg); err != nil {
+		t.Fatalf("failed to initialize: %v", err)
+	}
+
+	// 1. Map attribute
+	val, err := p.GetRawAttribute("app", "data")
+	if err != nil {
+		t.Fatalf("GetRawAttribute(app, data) failed: %v", err)
+	}
+	m, ok := val.(map[string]any)
+	if !ok || m["user"] != "alice" || m["token"] != "secret123" {
+		t.Errorf("GetRawAttribute returned unexpected map: %v", val)
+	}
+
+	// 2. Slice attribute
+	val, err = p.GetRawAttribute("app", "tokens")
+	if err != nil {
+		t.Fatalf("GetRawAttribute(app, tokens) failed: %v", err)
+	}
+	s, ok := val.([]any)
+	if !ok || len(s) != 2 || s[0] != "item1" {
+		t.Errorf("GetRawAttribute returned unexpected slice: %v", val)
+	}
+
+	// 3. Scalar attribute
+	val, err = p.GetRawAttribute("app", "secret")
+	if err != nil {
+		t.Fatalf("GetRawAttribute(app, secret) failed: %v", err)
+	}
+	if val != "scalar_secret" {
+		t.Errorf("GetRawAttribute returned %v, want scalar_secret", val)
+	}
+
+	// 4. Missing entity
+	_, err = p.GetRawAttribute("missing", "data")
+	if err == nil {
+		t.Errorf("expected error for missing entity, got nil")
+	}
+
+	// 5. Missing attribute
+	_, err = p.GetRawAttribute("app", "missing")
+	if err == nil {
+		t.Errorf("expected error for missing attribute, got nil")
 	}
 }

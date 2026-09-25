@@ -191,12 +191,26 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 		return nil, err
 	}
 
+	fieldPolicy := provider.FieldPolicyFromContext(ctx)
+
 	cfg := s.providers.Config()
 	var allResults []provider.SearchResult
 	for name, searchable := range providersToSearch {
 		results, err := searchable.Search(ctx, provider.SearchQuery{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to retrieve entries from repo %q: %w", name, err)
+		}
+
+		var rootPrefixes []string
+		if rpProvider, ok := searchable.(interface{ RootPrefixes() []string }); ok {
+			rootPrefixes = rpProvider.RootPrefixes()
+		}
+		if len(rootPrefixes) == 0 && cfg != nil {
+			if vc, ok := cfg.Vaults[name]; ok {
+				if vc.EntitiesRootKey != "" && vc.EntitiesRootKey != "." {
+					rootPrefixes = []string{vc.EntitiesRootKey}
+				}
+			}
 		}
 
 		for _, r := range results {
@@ -206,6 +220,9 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 				}
 			}
 			r.Vault = name
+			if fieldPolicy != nil {
+				r.Entry = fieldPolicy.ApplyToEntry(r.Entry, r.Path, rootPrefixes)
+			}
 			allResults = append(allResults, s.resolveSearchResultAttributes(ctx, r, depth))
 		}
 	}

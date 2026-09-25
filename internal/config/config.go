@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -124,6 +125,12 @@ type VaultConfig struct {
 	// Defaults to false.
 	ResolveValues bool `yaml:"resolve_values"`
 
+	// IncludeFields limits returned entry attributes to field names matching these glob patterns.
+	IncludeFields []string `yaml:"include_fields,omitempty"`
+
+	// ExcludeFields removes entry attributes with field names matching these glob patterns.
+	ExcludeFields []string `yaml:"exclude_fields,omitempty"`
+
 	// SourceVaults specifies the list of vault names to query for search provider vaults.
 	SourceVaults []string `yaml:"source_vaults"`
 
@@ -176,6 +183,20 @@ func Load(path string) (*Config, error) {
 	for name, vault := range cfg.Vaults {
 		vault.VaultPath = expandHome(vault.VaultPath)
 		cfg.Vaults[name] = vault
+	}
+
+	// Validate include_fields and exclude_fields glob patterns
+	for vaultName, vault := range cfg.Vaults {
+		for _, pattern := range vault.IncludeFields {
+			if _, err := pathpkg.Match(pattern, ""); err != nil {
+				return nil, fmt.Errorf("vault %q: invalid include_fields glob pattern %q: %w", vaultName, pattern, err)
+			}
+		}
+		for _, pattern := range vault.ExcludeFields {
+			if _, err := pathpkg.Match(pattern, ""); err != nil {
+				return nil, fmt.Errorf("vault %q: invalid exclude_fields glob pattern %q: %w", vaultName, pattern, err)
+			}
+		}
 	}
 
 	cfg.CompileAutoloadRules()

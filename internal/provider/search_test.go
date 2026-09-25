@@ -398,3 +398,156 @@ func TestSearchProvider_MaxDepth(t *testing.T) {
 		t.Errorf("expected max depth exceeded error, got: %v", err)
 	}
 }
+
+func TestSearchProvider_AttributeMapPrecedenceOverMetadata(t *testing.T) {
+	ctx := context.Background()
+	p := provider.NewSearchProvider()
+
+	err := p.Initialize(ctx, provider.ProviderConfig{
+		Settings: map[string]string{"vault_name": "precedence_test"},
+		Query:    "true",
+	})
+	if err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	p.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]provider.SearchResult, error) {
+		return []provider.SearchResult{
+			{
+				Vault: "source",
+				Path:  "custom_entry",
+				Entry: provider.Entry{
+					Title: "metadata_title",
+					Tags:  []string{"meta_tag"},
+					Attributes: map[string]any{
+						"Title": "secret_title_attr",
+						"Tags":  "secret_tags_attr",
+					},
+				},
+			},
+			{
+				Vault: "source",
+				Path:  "fallback_entry",
+				Entry: provider.Entry{
+					Title: "fallback_title",
+					Tags:  []string{"fallback_tag"},
+					Attributes: map[string]any{
+						"Password": "secret_password",
+					},
+				},
+			},
+		}, nil
+	})
+
+	// When Attributes has "Title" or "Tags", attribute map value must take precedence over Entry metadata
+	valTitle, err := p.GetSecret(ctx, "custom_entry:Title")
+	if err != nil {
+		t.Fatalf("unexpected error getting Title: %v", err)
+	}
+	if valTitle != "secret_title_attr" {
+		t.Errorf("Title = %q, want 'secret_title_attr' (attribute map precedence)", valTitle)
+	}
+
+	valTags, err := p.GetSecret(ctx, "custom_entry:Tags")
+	if err != nil {
+		t.Fatalf("unexpected error getting Tags: %v", err)
+	}
+	if valTags != "secret_tags_attr" {
+		t.Errorf("Tags = %q, want 'secret_tags_attr' (attribute map precedence)", valTags)
+	}
+
+	// When Attributes does NOT have "Title" or "Tags", it falls back to Entry metadata
+	valMetaTitle, err := p.GetSecret(ctx, "fallback_entry:Title")
+	if err != nil {
+		t.Fatalf("unexpected error getting fallback Title: %v", err)
+	}
+	if valMetaTitle != "fallback_title" {
+		t.Errorf("Title = %q, want 'fallback_title' (metadata fallback)", valMetaTitle)
+	}
+
+	valMetaTags, err := p.GetSecret(ctx, "fallback_entry:Tags")
+	if err != nil {
+		t.Fatalf("unexpected error getting fallback Tags: %v", err)
+	}
+	if !strings.Contains(valMetaTags, "fallback_tag") {
+		t.Errorf("Tags = %q, want to contain 'fallback_tag' (metadata fallback)", valMetaTags)
+	}
+}
+
+func TestSearchProvider_GetSecretWithRaw(t *testing.T) {
+	ctx := context.Background()
+	p := provider.NewSearchProvider()
+	p.SetSearchExecutor(func(_ context.Context, _ string, _ []string, _ int) ([]provider.SearchResult, error) {
+		return []provider.SearchResult{
+			{
+				Vault: "source",
+				Path:  "services/api",
+				Entry: provider.Entry{
+					Title: "api_service",
+					Tags:  []string{"env:prod"},
+					Attributes: map[string]any{
+						"config": map[string]any{
+							"endpoint": "https://api.internal",
+							"token":    "tok_raw_123",
+						},
+						"tokens":   []any{"t1", "t2"},
+						"Password": "plain_password",
+					},
+				},
+			},
+		}, nil
+	})
+
+	// 1. Raw map attribute
+	key, rawVal, resPath, title, err := p.GetSecretWithRaw(ctx, "config")
+	if err != nil {
+		t.Fatalf("GetSecretWithRaw(config) failed: %v", err)
+	}
+	if key != "config" {
+		t.Errorf("expected canonicalKey 'config', got %q", key)
+	}
+	if resPath != "services/api" {
+		t.Errorf("expected resultPath 'services/api', got %q", resPath)
+	}
+	if title != "api_service" {
+		t.Errorf("expected title 'api_service', got %q", title)
+	}
+	m, ok := rawVal.(map[string]any)
+	if !ok || m["endpoint"] != "https://api.internal" || m["token"] != "tok_raw_123" {
+		t.Errorf("unexpected rawVal: %v", rawVal)
+	}
+
+	// 2. Raw slice attribute
+	key, rawVal, resPath, title, err = p.GetSecretWithRaw(ctx, "tokens")
+	if err != nil {
+		t.Fatalf("GetSecretWithRaw(tokens) failed: %v", err)
+	}
+	if key != "tokens" {
+		t.Errorf("expected canonicalKey 'tokens', got %q", key)
+	}
+	if resPath != "services/api" {
+		t.Errorf("expected resultPath 'services/api', got %q", resPath)
+	}
+	if title != "api_service" {
+		t.Errorf("expected title 'api_service', got %q", title)
+	}
+	s, ok := rawVal.([]any)
+	if !ok || len(s) != 2 || s[0] != "t1" {
+		t.Errorf("unexpected rawVal slice: %v", rawVal)
+	}
+
+	// 3. Default password
+	key, rawVal, resPath, title, err = p.GetSecretWithRaw(ctx, "default")
+	if err != nil {
+		t.Fatalf("GetSecretWithRaw(default) failed: %v", err)
+	}
+	if key != "Password" || rawVal != "plain_password" {
+		t.Errorf("unexpected default password: key=%q, rawVal=%v", key, rawVal)
+	}
+	if resPath != "services/api" {
+		t.Errorf("expected resultPath 'services/api', got %q", resPath)
+	}
+	if title != "api_service" {
+		t.Errorf("expected title 'api_service', got %q", title)
+	}
+}

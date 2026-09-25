@@ -82,6 +82,19 @@ vaults:
     source_vaults: ["work"]
     query: '"service:openrouter" in tags'
 
+  # Example of generic field filtering on any vault provider using include_fields and exclude_fields:
+  # include_fields: limits returned entry attributes to field names matching glob patterns
+  # exclude_fields: removes entry attributes matching glob patterns before returning the entry
+  # filtered_work:
+  #   provider: "keepass"
+  #   vault_path: "~/secrets/work_vault.kdbx"
+  #   include_fields:
+  #     - "env:*"
+  #     - "UserName"
+  #   exclude_fields:
+  #     - "*.notes"
+  #     - "secret:*"
+
 # Autoloading configuration: Automatically match commands, mask/transform command lines, and inject vault credentials
 autoload:
   # Regex matching + command transformation (Alias masking):

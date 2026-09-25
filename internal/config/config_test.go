@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -287,6 +288,93 @@ func TestKeyringPrefix(t *testing.T) {
 			got := tt.cfg.KeyringPrefix()
 			if got != tt.want {
 				t.Errorf("Config.KeyringPrefix() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoad_FieldFiltering(t *testing.T) {
+	tempDir := t.TempDir()
+	yamlContent := `
+vaults:
+  work:
+    provider: "keepass"
+    vault_path: "~/secrets.kdbx"
+    include_fields:
+      - "env:*"
+      - "UserName"
+    exclude_fields:
+      - "*.notes"
+      - "secret:*"
+`
+	configPath := filepath.Join(tempDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write temp config file: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	v, ok := cfg.Vaults["work"]
+	if !ok {
+		t.Fatal("expected 'work' vault in config")
+	}
+
+	if len(v.IncludeFields) != 2 || v.IncludeFields[0] != "env:*" || v.IncludeFields[1] != "UserName" {
+		t.Errorf("unexpected IncludeFields: %v", v.IncludeFields)
+	}
+
+	if len(v.ExcludeFields) != 2 || v.ExcludeFields[0] != "*.notes" || v.ExcludeFields[1] != "secret:*" {
+		t.Errorf("unexpected ExcludeFields: %v", v.ExcludeFields)
+	}
+}
+
+func TestLoad_InvalidGlobPattern(t *testing.T) {
+	tempDir := t.TempDir()
+
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "invalid include_fields pattern",
+			content: `
+vaults:
+  work:
+    provider: "keepass"
+    vault_path: "~/secrets.kdbx"
+    include_fields:
+      - "secret:["
+`,
+		},
+		{
+			name: "invalid exclude_fields pattern",
+			content: `
+vaults:
+  work:
+    provider: "keepass"
+    vault_path: "~/secrets.kdbx"
+    exclude_fields:
+      - "bad[pattern"
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(tempDir, tt.name+".yaml")
+			if err := os.WriteFile(configPath, []byte(tt.content), 0644); err != nil {
+				t.Fatalf("failed to write config file: %v", err)
+			}
+
+			_, err := Load(configPath)
+			if err == nil {
+				t.Fatalf("expected error for invalid glob pattern, got nil")
+			}
+			if !strings.Contains(err.Error(), "invalid") {
+				t.Errorf("expected error message to contain 'invalid', got: %v", err)
 			}
 		})
 	}

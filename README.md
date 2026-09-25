@@ -575,6 +575,35 @@ vaults:
     query: '"service:openrouter" in tags'
 ```
 
+#### 5. Field Filtering (`include_fields` and `exclude_fields`)
+- Supported across structured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`).
+- **`exclude_fields`**: Drops attributes matching any configured glob pattern before returning secrets. **Exclude rules always take precedence over include rules** (evaluated first at every step).
+- **`include_fields`**: When configured, restricts returned entry attributes to fields matching at least one glob pattern. An **empty list means filtering is disabled** (all unexcluded attributes allowed), not deny-all.
+- **Case-Sensitivity**: Glob patterns are evaluated **case-sensitively** (via Go's `path.Match`). A pattern like `"password"` will not match an attribute named `"Password"`. Ensure pattern casing matches the provider's attribute names.
+- **Candidate Matching Scope**: Pattern matching is not limited to bare attribute names; it evaluates multiple candidate representations:
+  - **Bare field names**: e.g., `UserName`, `password`, `notes`.
+  - **Full static dot paths**: e.g., `entities.db.password`, `db.password`.
+  - **Numeric array indices**: e.g., `users.0.token`, `config.servers.1.host`.
+  - **Entry titles & qualified attributes**: e.g., `Test Website.notes`, `Test Website:notes`.
+  - **Subtree exclusions via ancestor segments**: e.g., `exclude_fields: ["db"]` or `["entities.db"]` blocks all attributes beneath that container. Directly requesting and including a container grants its unexcluded nested attributes.
+- **Path Separators (`/` vs `.`) and Wildcards**:
+  - In Go's `path.Match`, the `*` wildcard does not match across `/` directory separators. However, for hierarchical vaults (`keepass`, `custom_vault`), each `/`-separated group prefix is also generated as a candidate path (`filter.go:679-682`, `749-752`). For example, resolving `keepass://website/Test Website:Password` generates the candidate prefix `website`. Because `path.Match("*", "website")` is true, an exclude pattern like `exclude_fields: ["*"]` matches the top-level group prefix and **excludes every secret in all top-level groups**.
+  - In contrast, the `*.notes` pattern below targets title-qualified attribute candidates (e.g. `Test Website.notes`), matching any entry's notes attribute without matching slashed group prefixes. To exclude specific hierarchical groups or subtrees safely without blocking entire vaults, use qualified patterns (e.g. `website/*` or `group/subgroup/*`).
+- Filters apply consistently across `GetEntry`, `Search`, and scalar `GetSecret` resolution.
+- Example config:
+```yaml
+vaults:
+  work:
+    provider: "keepass"
+    vault_path: "~/secrets/work_vault.kdbx"
+    include_fields:
+      - "env:*"
+      - "UserName"
+    exclude_fields:
+      - "*.notes"
+      - "secret:*"
+```
+
 ---
 
 ## Command Autoloading & Alias Masking

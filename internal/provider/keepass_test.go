@@ -100,6 +100,27 @@ func TestKeePassProvider(t *testing.T) {
 		}
 	})
 
+	t.Run("GetEntryTitle", func(t *testing.T) {
+		title, err := kp.GetEntryTitle(ctx, "website/Test Website")
+		if err != nil {
+			t.Fatalf("GetEntryTitle failed: %v", err)
+		}
+		if title != "Test Website" {
+			t.Errorf("GetEntryTitle = %q, want %q", title, "Test Website")
+		}
+
+		_, err = kp.GetEntryTitle(ctx, "nonexistent/entry")
+		if err == nil {
+			t.Errorf("expected error for nonexistent entry, got nil")
+		}
+
+		uninitKP := NewKeePassProvider()
+		_, err = uninitKP.GetEntryTitle(ctx, "website/Test Website")
+		if err == nil {
+			t.Errorf("expected error on uninitialized KeePassProvider, got nil")
+		}
+	})
+
 	t.Run("GetSecret", func(t *testing.T) {
 		tests := []struct {
 			name     string

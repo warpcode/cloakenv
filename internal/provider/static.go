@@ -14,13 +14,14 @@ import (
 
 // staticProvider implements common logic for file-based static providers like JSON and YAML.
 type staticProvider struct {
-	scheme       string
-	unmarshal    func([]byte, any) error
-	serialize    func(any) (string, error)
-	filePath     string
-	entries      map[string]Entry
-	rawContent   map[string]any
-	singleEntity bool
+	scheme          string
+	unmarshal       func([]byte, any) error
+	serialize       func(any) (string, error)
+	filePath        string
+	entries         map[string]Entry
+	rawContent      map[string]any
+	singleEntity    bool
+	entitiesRootKey string
 }
 
 func (p *staticProvider) Scheme() string {
@@ -54,6 +55,7 @@ func (p *staticProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 
 	entitiesRootKey, isSingleEntity := p.determineEntityConfig(cfg, raw)
 	p.singleEntity = isSingleEntity
+	p.entitiesRootKey = entitiesRootKey
 
 	if p.singleEntity {
 		p.parseSingleEntity(cfg, raw, entitiesRootKey)
@@ -204,6 +206,18 @@ func (p *staticProvider) parseMultiEntities(raw map[string]any, entitiesRootKey 
 	return nil
 }
 
+func (p *staticProvider) getStaticProvider() *staticProvider {
+	return p
+}
+
+// RootPrefixes returns root key prefixes for static entries if configured or inferred.
+func (p *staticProvider) RootPrefixes() []string {
+	if p.entitiesRootKey != "" && p.entitiesRootKey != "." {
+		return []string{p.entitiesRootKey}
+	}
+	return nil
+}
+
 func (p *staticProvider) GetSecret(_ context.Context, location string) (string, error) {
 	if p.singleEntity {
 		entry, ok := p.entries[""]
@@ -258,6 +272,20 @@ func (p *staticProvider) GetEntry(_ context.Context, location string) (Entry, er
 		return Entry{}, fmt.Errorf("%s provider: entry %q not found", p.scheme, location)
 	}
 	return entry, nil
+}
+
+// GetEntryWithPath retrieves a structured entry along with its authoritative path.
+// For single-entity static providers, the authoritative path is the entry's Title.
+// For multi-entity static providers, the authoritative path is the location key.
+func (p *staticProvider) GetEntryWithPath(ctx context.Context, location string) (Entry, string, error) {
+	entry, err := p.GetEntry(ctx, location)
+	if err != nil {
+		return Entry{}, "", err
+	}
+	if p.singleEntity {
+		return entry, entry.Title, nil
+	}
+	return entry, location, nil
 }
 
 func (p *staticProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
