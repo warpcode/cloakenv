@@ -202,7 +202,10 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 		}
 
 		var rootPrefixes []string
-		if cfg != nil {
+		if rpProvider, ok := searchable.(interface{ RootPrefixes() []string }); ok {
+			rootPrefixes = rpProvider.RootPrefixes()
+		}
+		if len(rootPrefixes) == 0 && cfg != nil {
 			if vc, ok := cfg.Vaults[name]; ok {
 				if vc.EntitiesRootKey != "" && vc.EntitiesRootKey != "." {
 					rootPrefixes = []string{vc.EntitiesRootKey}
@@ -217,8 +220,8 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 				}
 			}
 			r.Vault = name
-			if fieldPolicy != nil && (len(fieldPolicy.IncludeFields) > 0 || len(fieldPolicy.ExcludeFields) > 0) {
-				r.Entry = provider.FilterEntryWithPath(r.Entry, r.Path, rootPrefixes, fieldPolicy.IncludeFields, fieldPolicy.ExcludeFields)
+			if fieldPolicy != nil {
+				r.Entry = fieldPolicy.ApplyToEntry(r.Entry, r.Path, rootPrefixes)
 			}
 			allResults = append(allResults, s.resolveSearchResultAttributes(ctx, r, depth))
 		}

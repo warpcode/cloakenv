@@ -13,6 +13,7 @@ import (
 	"github.com/expr-lang/expr/ast"
 
 	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/provider"
 )
 
 func TestOrchestratorRecursiveAndSearch(t *testing.T) {
@@ -637,5 +638,100 @@ func TestSearchNilConfig(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no configuration loaded") {
 		t.Errorf("expected 'no configuration loaded' error, got %v", err)
+	}
+}
+
+func TestSearcher_InferredRoot_PreResolutionExclusion(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// YAML file has "entities" root key, but EntitiesRootKey will be omitted from VaultConfig.
+	// staticProvider infers entitiesRootKey = "entities".
+	// The entry has a secret URI reference that would fail if resolution was attempted.
+	yamlContent := `
+entities:
+  api:
+    title: "api_service"
+    username: "api_user"
+    secret_ref: "${invalid_vault://should_not_resolve}"
+`
+	yamlPath := filepath.Join(tempDir, "inferred_root.yaml")
+	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write yaml fixture: %v", err)
+	}
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"static_vault": {
+				Provider:  "yaml",
+				VaultPath: yamlPath,
+				// EntitiesRootKey intentionally omitted to test inferred root handling
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	// With exclude_fields: ["entities.*.secret_ref"], the inferred root key "entities"
+	// must be passed to ApplyToEntry, causing secret_ref to be stripped.
+	ctx := provider.WithFieldPolicy(context.Background(), nil, []string{"entities.*.secret_ref"})
+
+	results, err := orch.Search(ctx, `title == "api_service"`, []string{"static_vault"})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	entry := results[0].Entry
+	if _, ok := entry.Attributes["secret_ref"]; ok {
+		t.Errorf("expected secret_ref to be excluded before resolution, but it was present: %v", entry.Attributes["secret_ref"])
+	}
+	if entry.Attributes["username"] != "api_user" {
+		t.Errorf("expected username 'api_user', got %v", entry.Attributes["username"])
+	}
+}
+
+func TestSearcher_OverlappingIncludeLayers(t *testing.T) {
+	entry := provider.Entry{
+		Title: "test_entry",
+		Attributes: map[string]any{
+			"env:PROD":  "prod_val",
+			"env:DEV":   "dev_val",
+			"app:PROD":  "app_val",
+			"something": "other",
+		},
+	}
+
+	// Layer 1: include_fields: ["env:*"]
+	// Layer 2: include_fields: ["*:PROD"]
+	ctx := provider.WithFieldPolicy(context.Background(), []string{"env:*"}, nil)
+	ctx = provider.WithFieldPolicy(ctx, []string{"*:PROD"}, nil)
+
+	fp := provider.FieldPolicyFromContext(ctx)
+	if fp == nil {
+		t.Fatal("expected non-nil FieldPolicy")
+	}
+
+	filtered := fp.ApplyToEntry(entry, "test_entry", nil)
+
+	// "env:PROD" matches both layers and must be kept.
+	if filtered.Attributes["env:PROD"] != "prod_val" {
+		t.Errorf("expected env:PROD to be kept, got: %v", filtered.Attributes["env:PROD"])
+	}
+	// "env:DEV" fails layer 2 ("*:PROD") and must be excluded.
+	if _, ok := filtered.Attributes["env:DEV"]; ok {
+		t.Errorf("expected env:DEV to be excluded by layer 2")
+	}
+	// "app:PROD" fails layer 1 ("env:*") and must be excluded.
+	if _, ok := filtered.Attributes["app:PROD"]; ok {
+		t.Errorf("expected app:PROD to be excluded by layer 1")
+	}
+	// "something" fails both layers and must be excluded.
+	if _, ok := filtered.Attributes["something"]; ok {
+		t.Errorf("expected something to be excluded")
 	}
 }

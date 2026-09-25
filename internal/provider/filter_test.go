@@ -1824,3 +1824,162 @@ func TestFilteringProvider_Static_TopLevelSlice_ExactContainerInclude(t *testing
 		t.Errorf("GetSecret(db.tags) missing expected items: %s", valRootTags)
 	}
 }
+
+func TestFilteringProvider_CustomVault_StructuredProjection(t *testing.T) {
+	ctx := context.Background()
+	cvp := NewCustomVaultProvider()
+
+	cfg := ProviderConfig{
+		Entities: map[string]map[string]any{
+			"app": {
+				"data": map[string]any{
+					"user":  "alice",
+					"token": "secret123",
+				},
+				"items": []any{
+					map[string]any{"id": 1, "secret": "s1"},
+					map[string]any{"id": 2, "secret": "s2"},
+				},
+			},
+		},
+	}
+	if err := cvp.Initialize(ctx, cfg); err != nil {
+		t.Fatalf("failed to init custom_vault: %v", err)
+	}
+
+	// 1. Exclude nested field in map: exclude_fields: ["*.token"]
+	fpMap := NewFilteringProvider(cvp, nil, []string{"*.token"})
+	resMap, err := fpMap.GetSecret(ctx, "app:data")
+	if err != nil {
+		t.Fatalf("GetSecret(app:data) failed: %v", err)
+	}
+	if strings.Contains(resMap, "secret123") {
+		t.Errorf("expected token 'secret123' to be excluded from serialized map, got: %s", resMap)
+	}
+	if !strings.Contains(resMap, "alice") {
+		t.Errorf("expected user 'alice' to be present in serialized map, got: %s", resMap)
+	}
+
+	// 2. Exclude nested field in slice: exclude_fields: ["*.secret"]
+	fpSlice := NewFilteringProvider(cvp, nil, []string{"*.secret"})
+	resSlice, err := fpSlice.GetSecret(ctx, "app:items")
+	if err != nil {
+		t.Fatalf("GetSecret(app:items) failed: %v", err)
+	}
+	if strings.Contains(resSlice, "s1") || strings.Contains(resSlice, "s2") {
+		t.Errorf("expected secrets to be excluded from serialized slice, got: %s", resSlice)
+	}
+	if !strings.Contains(resSlice, "id: 1") && !strings.Contains(resSlice, "id: 2") {
+		t.Errorf("expected ids to be retained in serialized slice, got: %s", resSlice)
+	}
+}
+
+func TestFilteringProvider_Search_StructuredProjection(t *testing.T) {
+	ctx := context.Background()
+	sp := NewSearchProvider()
+	sp.SetSearchExecutor(func(_ context.Context, _ string, _ []string, _ int) ([]SearchResult, error) {
+		return []SearchResult{
+			{
+				Vault: "source",
+				Path:  "services/api",
+				Entry: Entry{
+					Title: "api_service",
+					Attributes: map[string]any{
+						"config": map[string]any{
+							"endpoint": "https://api.internal",
+							"token":    "tok_raw_secret",
+						},
+					},
+				},
+			},
+		}, nil
+	})
+
+	// Exclude config.token via glob
+	fp := NewFilteringProvider(sp, nil, []string{"*.token"})
+	res, err := fp.GetSecret(ctx, "config")
+	if err != nil {
+		t.Fatalf("GetSecret(config) failed: %v", err)
+	}
+	if strings.Contains(res, "tok_raw_secret") {
+		t.Errorf("expected token to be excluded, got: %s", res)
+	}
+	if !strings.Contains(res, "https://api.internal") {
+		t.Errorf("expected endpoint to be preserved, got: %s", res)
+	}
+}
+
+func TestFilteringProvider_SingleEntity_RootSymmetry(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	jsonPath := filepath.Join(tmpDir, "single_entity_symmetry.json")
+
+	content := `{
+  "entities": {
+    "db": {
+      "host": "localhost",
+      "password": "secret_password"
+    }
+  }
+}`
+	if err := os.WriteFile(jsonPath, []byte(content), 0600); err != nil {
+		t.Fatalf("failed to write json fixture: %v", err)
+	}
+
+	singleEntity := true
+	p := NewJsonProvider()
+	if err := p.Initialize(ctx, ProviderConfig{
+		Settings: map[string]string{
+			"vault_path": jsonPath,
+		},
+		EntitiesRootKey: "entities",
+		SingleEntity:    &singleEntity,
+	}); err != nil {
+		t.Fatalf("failed to init single-entity JSON provider: %v", err)
+	}
+
+	// Test 1: Exclude with rooted path "entities.db.password"
+	fpRooted := NewFilteringProvider(p, nil, []string{"entities.db.password"})
+
+	// Rootless query db.password must be blocked
+	_, err := fpRooted.GetSecret(ctx, "db.password")
+	if err == nil {
+		t.Fatalf("expected error for db.password with exclude_fields: ['entities.db.password'], got nil")
+	}
+
+	// Root-prefixed query entities.db.password must also be blocked
+	_, err = fpRooted.GetSecret(ctx, "entities.db.password")
+	if err == nil {
+		t.Fatalf("expected error for entities.db.password with exclude_fields: ['entities.db.password'], got nil")
+	}
+
+	// Allowed field must succeed for both forms
+	valRootless, err := fpRooted.GetSecret(ctx, "db.host")
+	if err != nil {
+		t.Fatalf("GetSecret(db.host) failed: %v", err)
+	}
+	if valRootless != "localhost" {
+		t.Errorf("expected localhost, got %q", valRootless)
+	}
+
+	valRooted, err := fpRooted.GetSecret(ctx, "entities.db.host")
+	if err != nil {
+		t.Fatalf("GetSecret(entities.db.host) failed: %v", err)
+	}
+	if valRooted != "localhost" {
+		t.Errorf("expected localhost, got %q", valRooted)
+	}
+
+	// Test 2: Exclude with rootless path "db.password"
+	fpRootless := NewFilteringProvider(p, nil, []string{"db.password"})
+
+	// Both forms must be blocked symmetrically
+	_, err = fpRootless.GetSecret(ctx, "db.password")
+	if err == nil {
+		t.Fatalf("expected error for db.password with exclude_fields: ['db.password'], got nil")
+	}
+	_, err = fpRootless.GetSecret(ctx, "entities.db.password")
+	if err == nil {
+		t.Fatalf("expected error for entities.db.password with exclude_fields: ['db.password'], got nil")
+	}
+}

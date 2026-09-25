@@ -210,6 +210,14 @@ func (p *staticProvider) getStaticProvider() *staticProvider {
 	return p
 }
 
+// RootPrefixes returns root key prefixes for static entries if configured or inferred.
+func (p *staticProvider) RootPrefixes() []string {
+	if p.entitiesRootKey != "" && p.entitiesRootKey != "." {
+		return []string{p.entitiesRootKey}
+	}
+	return nil
+}
+
 func (p *staticProvider) GetSecret(_ context.Context, location string) (string, error) {
 	if p.singleEntity {
 		entry, ok := p.entries[""]

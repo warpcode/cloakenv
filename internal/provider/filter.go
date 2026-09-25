@@ -362,7 +362,11 @@ type SearchableFilteringProvider struct {
 	FilteringProvider
 }
 
-func (s *SearchableFilteringProvider) rootPrefixes() []string {
+// RootPrefixes returns the root key prefixes of the underlying provider, if supported.
+func (s *SearchableFilteringProvider) RootPrefixes() []string {
+	if rpProvider, ok := s.underlying.(interface{ RootPrefixes() []string }); ok {
+		return rpProvider.RootPrefixes()
+	}
 	if spAccessor, ok := s.underlying.(interface{ getStaticProvider() *staticProvider }); ok {
 		sp := spAccessor.getStaticProvider()
 		if sp != nil && sp.entitiesRootKey != "" && sp.entitiesRootKey != "." {
@@ -384,7 +388,7 @@ func (s *SearchableFilteringProvider) GetEntry(ctx context.Context, location str
 		return Entry{}, err
 	}
 
-	return FilterEntryWithPath(entry, location, s.rootPrefixes(), s.includeFields, s.excludeFields), nil
+	return FilterEntryWithPath(entry, location, s.RootPrefixes(), s.includeFields, s.excludeFields), nil
 }
 
 // Search retrieves matching entries and filters all result entry attributes according to configured glob rules.
@@ -399,7 +403,7 @@ func (s *SearchableFilteringProvider) Search(ctx context.Context, query SearchQu
 		return nil, err
 	}
 
-	rootPrefixes := s.rootPrefixes()
+	rootPrefixes := s.RootPrefixes()
 	filteredResults := make([]SearchResult, len(results))
 	for i, r := range results {
 		r.Entry = FilterEntryWithPath(r.Entry, r.Path, rootPrefixes, s.includeFields, s.excludeFields)
@@ -555,17 +559,67 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		if !isFieldAuthorized(leafAttr, candidates, f.includeFields, f.excludeFields) {
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
 		}
+
+		if cvp, ok := f.underlying.(interface {
+			GetRawAttribute(entityName, attr string) (any, error)
+		}); ok {
+			rawVal, err := cvp.GetRawAttribute(entityLoc, effectiveAttr)
+			if err != nil {
+				return "", err
+			}
+			var prefixes []string
+			if entityLoc != "" {
+				prefixes = append(prefixes, entityLoc)
+			}
+			parentIncluded := len(f.includeFields) == 0 || isContainerDirectlyIncluded(leafAttr, candidates, f.includeFields)
+			if m, isMap := normalizeEntryMap(rawVal); isMap {
+				proj, hasAllowed := projectRecursive(m, effectiveAttr, prefixes, f.includeFields, f.excludeFields, parentIncluded)
+				if !hasAllowed && len(f.includeFields) > 0 && !parentIncluded {
+					return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
+				}
+				filteredMap, _ := proj.(map[string]any)
+				if filteredMap == nil {
+					filteredMap = make(map[string]any)
+				}
+				return serializeVal(filteredMap)
+			}
+			if s, isSlice := rawVal.([]any); isSlice {
+				projSlice, hasAllowed := projectSliceRecursive(s, effectiveAttr, prefixes, f.includeFields, f.excludeFields, parentIncluded)
+				if !hasAllowed && len(f.includeFields) > 0 && !parentIncluded {
+					return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
+				}
+				if projSlice == nil {
+					projSlice = []any{}
+				}
+				return serializeVal(projSlice)
+			}
+			return serializeVal(rawVal)
+		}
 		return f.underlying.GetSecret(ctx, location)
 
 	case "search":
 		// Stored search provider:
 		// Attributes can be resolved case-insensitively, so resolve the exact result, canonical key, and result path first.
 		var canonicalField string
+		var rawVal any
 		var val string
 		var resultPath string
 		var resolved bool
+		var hasRaw bool
 
-		if csp, ok := f.underlying.(interface {
+		if rawProvider, ok := f.underlying.(interface {
+			GetSecretWithRaw(ctx context.Context, location string) (string, any, string, error)
+		}); ok {
+			key, raw, p, err := rawProvider.GetSecretWithRaw(ctx, location)
+			if err != nil {
+				return "", err
+			}
+			canonicalField = key
+			rawVal = raw
+			resultPath = p
+			resolved = true
+			hasRaw = true
+		} else if csp, ok := f.underlying.(interface {
 			GetSecretWithKey(ctx context.Context, location string) (string, string, string, error)
 		}); ok {
 			key, v, p, err := csp.GetSecretWithKey(ctx, location)
@@ -598,6 +652,10 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 					if entry, err := searchable.GetEntry(ctx, entryLoc); err == nil {
 						if key, found := getEntryAttributeKey(entry, attrName); found {
 							canonicalField = key
+							if v, ok := entry.Attributes[key]; ok {
+								rawVal = v
+								hasRaw = true
+							}
 						}
 					}
 				}
@@ -610,6 +668,10 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 					if entry, err := searchable.GetEntry(ctx, location); err == nil {
 						if key, found := getEntryAttributeKey(entry, location); found {
 							canonicalField = key
+							if v, ok := entry.Attributes[key]; ok {
+								rawVal = v
+								hasRaw = true
+							}
 						}
 					}
 				}
@@ -649,6 +711,36 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 
 		if !isFieldAuthorized(leafCanonical, candidates, f.includeFields, f.excludeFields) {
 			return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
+		}
+
+		if hasRaw {
+			var prefixes []string
+			if resultPath != "" {
+				prefixes = append(prefixes, resultPath)
+			}
+			parentIncluded := len(f.includeFields) == 0 || isContainerDirectlyIncluded(leafCanonical, candidates, f.includeFields)
+			if m, isMap := normalizeEntryMap(rawVal); isMap {
+				proj, hasAllowed := projectRecursive(m, canonicalField, prefixes, f.includeFields, f.excludeFields, parentIncluded)
+				if !hasAllowed && len(f.includeFields) > 0 && !parentIncluded {
+					return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
+				}
+				filteredMap, _ := proj.(map[string]any)
+				if filteredMap == nil {
+					filteredMap = make(map[string]any)
+				}
+				return serializeVal(filteredMap)
+			}
+			if s, isSlice := rawVal.([]any); isSlice {
+				projSlice, hasAllowed := projectSliceRecursive(s, canonicalField, prefixes, f.includeFields, f.excludeFields, parentIncluded)
+				if !hasAllowed && len(f.includeFields) > 0 && !parentIncluded {
+					return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
+				}
+				if projSlice == nil {
+					projSlice = []any{}
+				}
+				return serializeVal(projSlice)
+			}
+			return serializeVal(rawVal)
 		}
 
 		if resolved {
@@ -726,13 +818,29 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 	var rawVal any
 	var err error
 	canonicalPath := cleanLoc
+	var strippedPath string
 
 	if sp.singleEntity {
 		entry, ok := sp.entries[""]
 		if !ok {
 			return "", fmt.Errorf("%s provider: single entity not found", sp.scheme)
 		}
-		rawVal, err = resolveDotPath(entry.Attributes, cleanLoc)
+		resolvePath := cleanLoc
+		if sp.entitiesRootKey != "" && sp.entitiesRootKey != "." {
+			if strings.HasPrefix(cleanLoc, sp.entitiesRootKey+".") {
+				canonicalPath = cleanLoc
+				strippedPath = strings.TrimPrefix(cleanLoc, sp.entitiesRootKey+".")
+				resolvePath = strippedPath
+			} else {
+				canonicalPath = sp.entitiesRootKey + "." + cleanLoc
+				strippedPath = cleanLoc
+				resolvePath = cleanLoc
+			}
+		} else {
+			canonicalPath = cleanLoc
+			strippedPath = cleanLoc
+		}
+		rawVal, err = resolveDotPath(entry.Attributes, resolvePath)
 	} else {
 		if sp.rawContent == nil {
 			return "", fmt.Errorf("%s provider: not initialized or empty database", sp.scheme)
@@ -753,6 +861,11 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 		} else {
 			err = err1
 		}
+		if sp.entitiesRootKey != "" && sp.entitiesRootKey != "." {
+			if strings.HasPrefix(canonicalPath, sp.entitiesRootKey+".") {
+				strippedPath = strings.TrimPrefix(canonicalPath, sp.entitiesRootKey+".")
+			}
+		}
 	}
 
 	if err != nil {
@@ -762,13 +875,6 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 	leafAttr := canonicalPath
 	if lastDot := strings.LastIndex(canonicalPath, "."); lastDot >= 0 {
 		leafAttr = canonicalPath[lastDot+1:]
-	}
-
-	var strippedPath string
-	if !sp.singleEntity && sp.entitiesRootKey != "" && sp.entitiesRootKey != "." {
-		if strings.HasPrefix(canonicalPath, sp.entitiesRootKey+".") {
-			strippedPath = strings.TrimPrefix(canonicalPath, sp.entitiesRootKey+".")
-		}
 	}
 
 	var entityAttr string

@@ -473,3 +473,72 @@ func TestSearchProvider_AttributeMapPrecedenceOverMetadata(t *testing.T) {
 		t.Errorf("Tags = %q, want to contain 'fallback_tag' (metadata fallback)", valMetaTags)
 	}
 }
+
+func TestSearchProvider_GetSecretWithRaw(t *testing.T) {
+	ctx := context.Background()
+	p := provider.NewSearchProvider()
+	p.SetSearchExecutor(func(_ context.Context, _ string, _ []string, _ int) ([]provider.SearchResult, error) {
+		return []provider.SearchResult{
+			{
+				Vault: "source",
+				Path:  "services/api",
+				Entry: provider.Entry{
+					Title: "api_service",
+					Tags:  []string{"env:prod"},
+					Attributes: map[string]any{
+						"config": map[string]any{
+							"endpoint": "https://api.internal",
+							"token":    "tok_raw_123",
+						},
+						"tokens":   []any{"t1", "t2"},
+						"Password": "plain_password",
+					},
+				},
+			},
+		}, nil
+	})
+
+	// 1. Raw map attribute
+	key, rawVal, resPath, err := p.GetSecretWithRaw(ctx, "config")
+	if err != nil {
+		t.Fatalf("GetSecretWithRaw(config) failed: %v", err)
+	}
+	if key != "config" {
+		t.Errorf("expected canonicalKey 'config', got %q", key)
+	}
+	if resPath != "services/api" {
+		t.Errorf("expected resultPath 'services/api', got %q", resPath)
+	}
+	m, ok := rawVal.(map[string]any)
+	if !ok || m["endpoint"] != "https://api.internal" || m["token"] != "tok_raw_123" {
+		t.Errorf("unexpected rawVal: %v", rawVal)
+	}
+
+	// 2. Raw slice attribute
+	key, rawVal, resPath, err = p.GetSecretWithRaw(ctx, "tokens")
+	if err != nil {
+		t.Fatalf("GetSecretWithRaw(tokens) failed: %v", err)
+	}
+	if key != "tokens" {
+		t.Errorf("expected canonicalKey 'tokens', got %q", key)
+	}
+	if resPath != "services/api" {
+		t.Errorf("expected resultPath 'services/api', got %q", resPath)
+	}
+	s, ok := rawVal.([]any)
+	if !ok || len(s) != 2 || s[0] != "t1" {
+		t.Errorf("unexpected rawVal slice: %v", rawVal)
+	}
+
+	// 3. Default password
+	key, rawVal, resPath, err = p.GetSecretWithRaw(ctx, "default")
+	if err != nil {
+		t.Fatalf("GetSecretWithRaw(default) failed: %v", err)
+	}
+	if key != "Password" || rawVal != "plain_password" {
+		t.Errorf("unexpected default password: key=%q, rawVal=%v", key, rawVal)
+	}
+	if resPath != "services/api" {
+		t.Errorf("expected resultPath 'services/api', got %q", resPath)
+	}
+}

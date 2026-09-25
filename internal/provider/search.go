@@ -79,13 +79,12 @@ func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, err
 	return results, nil
 }
 
-// lookupEntryAttribute searches entry.Attributes first (exact match, then case-insensitive sorted),
+// lookupEntryAttributeRaw searches entry.Attributes first (exact match, then case-insensitive sorted),
 // and only falls back to Entry metadata (Title, Tags) if no attribute matches.
 // This ensures attributes named "Title" or "Tags" in entry.Attributes take precedence over Entry metadata.
-func lookupEntryAttribute(entry Entry, attrName string) (canonicalKey string, val string, found bool, err error) {
+func lookupEntryAttributeRaw(entry Entry, attrName string) (canonicalKey string, rawVal any, found bool) {
 	if v, ok := entry.Attributes[attrName]; ok {
-		sVal, err := serializeVal(v)
-		return attrName, sVal, true, err
+		return attrName, v, true
 	}
 	keys := make([]string, 0, len(entry.Attributes))
 	for k := range entry.Attributes {
@@ -94,18 +93,28 @@ func lookupEntryAttribute(entry Entry, attrName string) (canonicalKey string, va
 	sort.Strings(keys)
 	for _, k := range keys {
 		if strings.EqualFold(k, attrName) {
-			sVal, err := serializeVal(entry.Attributes[k])
-			return k, sVal, true, err
+			return k, entry.Attributes[k], true
 		}
 	}
 	if strings.EqualFold(attrName, "title") {
-		return "Title", entry.Title, true, nil
+		return "Title", entry.Title, true
 	}
 	if strings.EqualFold(attrName, "tags") {
-		sVal, err := serializeVal(entry.Tags)
-		return "Tags", sVal, true, err
+		return "Tags", entry.Tags, true
 	}
-	return "", "", false, nil
+	return "", nil, false
+}
+
+// lookupEntryAttribute searches entry.Attributes first (exact match, then case-insensitive sorted),
+// and only falls back to Entry metadata (Title, Tags) if no attribute matches.
+// This ensures attributes named "Title" or "Tags" in entry.Attributes take precedence over Entry metadata.
+func lookupEntryAttribute(entry Entry, attrName string) (canonicalKey string, val string, found bool, err error) {
+	key, rawVal, found := lookupEntryAttributeRaw(entry, attrName)
+	if !found {
+		return "", "", false, nil
+	}
+	sVal, err := serializeVal(rawVal)
+	return key, sVal, true, err
 }
 
 func getEntryAttributeKey(entry Entry, attrName string) (string, bool) {
@@ -113,16 +122,16 @@ func getEntryAttributeKey(entry Entry, attrName string) (string, bool) {
 	return key, found
 }
 
-// resolveSecretAndCanonicalKey resolves the matching entry, canonical attribute key, serialized secret value,
+// resolveSecretAndCanonicalKeyRaw resolves the matching entry, canonical attribute key, raw attribute value,
 // and result path in a single search operation to guarantee atomic snapshot consistency.
-func (s *SearchProvider) resolveSecretAndCanonicalKey(ctx context.Context, location string) (string, string, string, error) {
+func (s *SearchProvider) resolveSecretAndCanonicalKeyRaw(ctx context.Context, location string) (string, any, string, error) {
 	results, err := s.executeSearch(ctx)
 	if err != nil {
-		return "", "", "", err
+		return "", nil, "", err
 	}
 
 	if len(results) == 0 {
-		return "", "", "", fmt.Errorf("search provider %q: no entries matched stored query", s.vaultName)
+		return "", nil, "", fmt.Errorf("search provider %q: no entries matched stored query", s.vaultName)
 	}
 
 	if strings.Contains(location, ":") {
@@ -136,53 +145,55 @@ func (s *SearchProvider) resolveSecretAndCanonicalKey(ctx context.Context, locat
 		}
 
 		for _, targetResult := range matching {
-			if key, val, found, err := lookupEntryAttribute(targetResult.Entry, attrName); found {
-				if err != nil {
-					return "", "", "", err
-				}
-				return key, val, targetResult.Path, nil
+			if key, rawVal, found := lookupEntryAttributeRaw(targetResult.Entry, attrName); found {
+				return key, rawVal, targetResult.Path, nil
 			}
 		}
-		return "", "", "", fmt.Errorf("search provider %q: attribute %q not found in entry %q", s.vaultName, attrName, entryLoc)
+		return "", nil, "", fmt.Errorf("search provider %q: attribute %q not found in entry %q", s.vaultName, attrName, entryLoc)
 	}
 
 	// Single result case
 	if len(results) == 1 {
 		entry := results[0].Entry
-		if key, val, found, err := lookupEntryAttribute(entry, location); found {
-			if err != nil {
-				return "", "", "", err
-			}
-			return key, val, results[0].Path, nil
+		if key, rawVal, found := lookupEntryAttributeRaw(entry, location); found {
+			return key, rawVal, results[0].Path, nil
 		}
 
 		if location == "" || location == "default" || location == results[0].Path || location == entry.Title {
-			if key, val, found, err := lookupEntryAttribute(entry, "Password"); found {
-				if err != nil {
-					return "", "", "", err
-				}
-				return key, val, results[0].Path, nil
+			if key, rawVal, found := lookupEntryAttributeRaw(entry, "Password"); found {
+				return key, rawVal, results[0].Path, nil
 			}
 		}
 
-		return "", "", "", fmt.Errorf("search provider %q: attribute or entry %q not found", s.vaultName, location)
+		return "", nil, "", fmt.Errorf("search provider %q: attribute or entry %q not found", s.vaultName, location)
 	}
 
 	// Multiple results case
 	matching := s.findMatchingResults(results, location)
 	if len(matching) == 0 {
-		return "", "", "", fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, location)
+		return "", nil, "", fmt.Errorf("search provider %q: entry %q not found in search results", s.vaultName, location)
 	}
 
 	for _, targetResult := range matching {
-		if key, val, found, err := lookupEntryAttribute(targetResult.Entry, "Password"); found {
-			if err != nil {
-				return "", "", "", err
-			}
-			return key, val, targetResult.Path, nil
+		if key, rawVal, found := lookupEntryAttributeRaw(targetResult.Entry, "Password"); found {
+			return key, rawVal, targetResult.Path, nil
 		}
 	}
-	return "", "", "", fmt.Errorf("search provider %q: default attribute \"Password\" not found in entry %q", s.vaultName, location)
+	return "", nil, "", fmt.Errorf("search provider %q: default attribute \"Password\" not found in entry %q", s.vaultName, location)
+}
+
+// resolveSecretAndCanonicalKey resolves the matching entry, canonical attribute key, serialized secret value,
+// and result path in a single search operation to guarantee atomic snapshot consistency.
+func (s *SearchProvider) resolveSecretAndCanonicalKey(ctx context.Context, location string) (string, string, string, error) {
+	key, rawVal, path, err := s.resolveSecretAndCanonicalKeyRaw(ctx, location)
+	if err != nil {
+		return "", "", "", err
+	}
+	sVal, err := serializeVal(rawVal)
+	if err != nil {
+		return "", "", "", err
+	}
+	return key, sVal, path, nil
 }
 
 // GetSecret resolves a secret attribute from the synthetic entry view.
@@ -194,6 +205,11 @@ func (s *SearchProvider) GetSecret(ctx context.Context, location string) (string
 // GetSecretWithKey resolves the canonical attribute key, the secret value, and the result path in a single search operation.
 func (s *SearchProvider) GetSecretWithKey(ctx context.Context, location string) (string, string, string, error) {
 	return s.resolveSecretAndCanonicalKey(ctx, location)
+}
+
+// GetSecretWithRaw resolves the canonical attribute key, the raw attribute value, and the result path in a single search operation.
+func (s *SearchProvider) GetSecretWithRaw(ctx context.Context, location string) (string, any, string, error) {
+	return s.resolveSecretAndCanonicalKeyRaw(ctx, location)
 }
 
 // SetSecret is not supported for search (read-only).

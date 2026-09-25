@@ -100,22 +100,46 @@ const ContextKeyDepth ContextKey = "depth"
 
 type contextKeyFieldPolicy struct{}
 
-// FieldPolicy holds include and exclude glob patterns for attribute filtering.
+// FieldPolicy holds include layers and exclude glob patterns for attribute filtering.
 type FieldPolicy struct {
+	IncludeLayers [][]string
 	IncludeFields []string
 	ExcludeFields []string
 }
 
+// ApplyToEntry applies the composed field policy to an entry taking entryPath and rootPrefixes into account.
+// Include layers are evaluated successively to enforce set intersection across all constraining layers.
+func (fp *FieldPolicy) ApplyToEntry(entry Entry, entryPath string, rootPrefixes []string) Entry {
+	if fp == nil {
+		return entry
+	}
+	current := entry
+	for _, layer := range fp.IncludeLayers {
+		if len(layer) > 0 {
+			current = FilterEntryWithPath(current, entryPath, rootPrefixes, layer, nil)
+		}
+	}
+	if len(fp.ExcludeFields) > 0 {
+		current = FilterEntryWithPath(current, entryPath, rootPrefixes, nil, fp.ExcludeFields)
+	}
+	return current
+}
+
 // WithFieldPolicy returns a context carrying include and exclude glob field policies.
 // If ctx already carries a FieldPolicy, inherited and current policies are composed:
-// active includes intersect when both layers constrain fields, and excludes are unioned.
+// active includes preserve layers to evaluate intersection, and excludes are unioned.
 func WithFieldPolicy(ctx context.Context, includeFields, excludeFields []string) context.Context {
 	inherited := FieldPolicyFromContext(ctx)
 	if inherited == nil {
 		if len(includeFields) == 0 && len(excludeFields) == 0 {
 			return ctx
 		}
+		var layers [][]string
+		if len(includeFields) > 0 {
+			layers = append(layers, includeFields)
+		}
 		return context.WithValue(ctx, contextKeyFieldPolicy{}, &FieldPolicy{
+			IncludeLayers: layers,
 			IncludeFields: includeFields,
 			ExcludeFields: excludeFields,
 		})
@@ -136,48 +160,26 @@ func WithFieldPolicy(ctx context.Context, includeFields, excludeFields []string)
 		}
 	}
 
-	var effectiveIncludes []string
-	if len(inherited.IncludeFields) > 0 && len(includeFields) > 0 {
-		effectiveIncludes = intersectIncludeFields(inherited.IncludeFields, includeFields)
+	var effectiveIncludeLayers [][]string
+	if len(inherited.IncludeLayers) > 0 {
+		effectiveIncludeLayers = append(effectiveIncludeLayers, inherited.IncludeLayers...)
 	} else if len(inherited.IncludeFields) > 0 {
-		effectiveIncludes = inherited.IncludeFields
-	} else if len(includeFields) > 0 {
-		effectiveIncludes = includeFields
+		effectiveIncludeLayers = append(effectiveIncludeLayers, inherited.IncludeFields)
+	}
+	if len(includeFields) > 0 {
+		effectiveIncludeLayers = append(effectiveIncludeLayers, includeFields)
+	}
+
+	var effectiveIncludes []string
+	if len(effectiveIncludeLayers) == 1 {
+		effectiveIncludes = effectiveIncludeLayers[0]
 	}
 
 	return context.WithValue(ctx, contextKeyFieldPolicy{}, &FieldPolicy{
+		IncludeLayers: effectiveIncludeLayers,
 		IncludeFields: effectiveIncludes,
 		ExcludeFields: effectiveExcludes,
 	})
-}
-
-func intersectIncludeFields(a, b []string) []string {
-	var res []string
-	seen := make(map[string]bool)
-	for _, p1 := range a {
-		for _, p2 := range b {
-			if p1 == p2 {
-				if !seen[p1] {
-					seen[p1] = true
-					res = append(res, p1)
-				}
-			} else if matchPattern(p1, p2) {
-				if !seen[p2] {
-					seen[p2] = true
-					res = append(res, p2)
-				}
-			} else if matchPattern(p2, p1) {
-				if !seen[p1] {
-					seen[p1] = true
-					res = append(res, p1)
-				}
-			}
-		}
-	}
-	if len(res) == 0 {
-		return []string{"\x00"}
-	}
-	return res
 }
 
 // FieldPolicyFromContext retrieves the FieldPolicy from ctx, if present.

@@ -38,6 +38,21 @@ func (c *CustomVaultProvider) Initialize(_ context.Context, cfg ProviderConfig) 
 	return nil
 }
 
+// GetRawAttribute retrieves the raw attribute value for an entity without serialization.
+func (c *CustomVaultProvider) GetRawAttribute(entityName, attr string) (any, error) {
+	entity, ok := c.entities[entityName]
+	if !ok {
+		return nil, fmt.Errorf("custom_vault: entity %q not found", entityName)
+	}
+
+	val, ok := entity[attr]
+	if !ok {
+		return nil, fmt.Errorf("custom_vault: attribute %q not found for entity %q", attr, entityName)
+	}
+
+	return val, nil
+}
+
 // GetSecret retrieves a secret from the static inline configuration.
 func (c *CustomVaultProvider) GetSecret(_ context.Context, location string) (string, error) {
 	entityName, attr, err := parseCustomVaultLocation(location)
@@ -45,14 +60,9 @@ func (c *CustomVaultProvider) GetSecret(_ context.Context, location string) (str
 		return "", err
 	}
 
-	entity, ok := c.entities[entityName]
-	if !ok {
-		return "", fmt.Errorf("custom_vault: entity %q not found", entityName)
-	}
-
-	val, ok := entity[attr]
-	if !ok {
-		return "", fmt.Errorf("custom_vault: attribute %q not found for entity %q", attr, entityName)
+	val, err := c.GetRawAttribute(entityName, attr)
+	if err != nil {
+		return "", err
 	}
 
 	return serializeVal(val)
