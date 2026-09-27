@@ -172,7 +172,7 @@ keyring:
 				t.Setenv("HOME", tempDir)
 				t.Setenv("USERPROFILE", tempDir) // for windows
 			},
-			wantErr:    false,
+			wantErr: false,
 		},
 		{
 			name:       "Default config path fails when home dir is unknown",
@@ -181,7 +181,7 @@ keyring:
 				t.Setenv("HOME", "")
 				t.Setenv("USERPROFILE", "")
 			},
-			wantErr:    true,
+			wantErr: true,
 		},
 	}
 
