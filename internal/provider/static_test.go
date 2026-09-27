@@ -711,7 +711,7 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		p := NewJsonProvider()
 		cfg := ProviderConfig{
 			Settings: map[string]string{
-				"vault_path": "non-existent-file.json",
+				"vault_path": filepath.Join(t.TempDir(), "missing.json"),
 			},
 		}
 		err := p.Initialize(context.Background(), cfg)
@@ -803,8 +803,15 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		if !ok {
 			t.Fatal("expected single entry stored under key ''")
 		}
-		if len(entry.Attributes) == 0 {
-			t.Error("expected entry.Attributes to be populated after parseSingleEntity")
+		attrs, ok := entry.Attributes["entities"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected entry.Attributes[\"entities\"] to be the parsed map, got: %T", entry.Attributes["entities"])
+		}
+		if _, ok := attrs["e1"]; !ok {
+			t.Errorf("expected nested entry \"e1\" in parsed attributes, got: %v", attrs)
+		}
+		if entry.Title != "single_explicit" {
+			t.Errorf("expected title derived from vault file name, got %q", entry.Title)
 		}
 	})
 
@@ -980,6 +987,43 @@ entities:
 		}
 		if val != "value" {
 			t.Errorf("expected 'value', got %q", val)
+		}
+	})
+
+	t.Run("invalid json multi entities (non-map entry)", func(t *testing.T) {
+		p := NewJsonProvider()
+		f := filepath.Join(t.TempDir(), "bad_entries.json")
+		if err := os.WriteFile(f, []byte(`{"entities": {"e1": "not-a-map"}}`), 0o600); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+
+		cfg := ProviderConfig{Settings: map[string]string{"vault_path": f}}
+		err := p.Initialize(context.Background(), cfg)
+		if err == nil {
+			t.Fatal("expected error for non-map entry")
+		}
+		if !strings.Contains(err.Error(), "not a valid map") {
+			t.Errorf("expected error message to contain 'not a valid map', got: %v", err)
+		}
+	})
+
+	t.Run("invalid json multi entities (non-map root entry)", func(t *testing.T) {
+		p := NewJsonProvider()
+		f := filepath.Join(t.TempDir(), "bad_root_entries.json")
+		if err := os.WriteFile(f, []byte(`{"e1": "not-a-map"}`), 0o600); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+
+		cfg := ProviderConfig{
+			EntitiesRootKey: ".",
+			Settings:        map[string]string{"vault_path": f},
+		}
+		err := p.Initialize(context.Background(), cfg)
+		if err == nil {
+			t.Fatal("expected error for non-map entry")
+		}
+		if !strings.Contains(err.Error(), "not a valid map") {
+			t.Errorf("expected error to mention the root key, got: %v", err)
 		}
 	})
 }
