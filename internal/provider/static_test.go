@@ -762,6 +762,9 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		if !p.singleEntity {
 			t.Error("expected singleEntity to be true")
 		}
+		if p.filePath != f {
+			t.Errorf("expected filePath %q, got %q", f, p.filePath)
+		}
 		if p.rawContent["key"] != "value" {
 			t.Errorf("expected rawContent['key'] to be 'value', got: %v", p.rawContent["key"])
 		}
@@ -795,6 +798,9 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		}
 		if !p.singleEntity {
 			t.Error("expected singleEntity to be true")
+		}
+		if p.filePath != f {
+			t.Errorf("expected filePath %q, got %q", f, p.filePath)
 		}
 		if p.rawContent == nil {
 			t.Error("expected rawContent to be populated")
@@ -1050,6 +1056,9 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		}
 		if !p.singleEntity {
 			t.Error("expected singleEntity to be true")
+		}
+		if p.filePath != f {
+			t.Errorf("expected filePath %q, got %q", f, p.filePath)
 		}
 
 		val, err := p.GetSecret(context.Background(), "key")
