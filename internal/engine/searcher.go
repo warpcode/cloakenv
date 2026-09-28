@@ -150,14 +150,15 @@ func (s *Searcher) filterResultsByExpression(expressionStr string, allResults []
 	}
 
 	var matchedResults []provider.SearchResult
+	env := make(map[string]any)
 	for _, r := range allResults {
-		env := map[string]any{
-			"title": r.Entry.Title,
-			"tags":  r.Entry.Tags,
-			"path":  r.Path,
-		}
+		clear(env)
+		env["title"] = r.Entry.Title
+		env["tags"] = r.Entry.Tags
+		env["path"] = r.Path
+
 		for k, v := range r.Entry.Attributes {
-			if _, reserved := env[k]; !reserved {
+			if k != "title" && k != "tags" && k != "path" {
 				env[k] = v
 			}
 		}
