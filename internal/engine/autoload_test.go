@@ -355,3 +355,58 @@ func TestMatchCommandRule_Security(t *testing.T) {
 		}
 	})
 }
+
+func TestEscapeSubmatch(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		ctx   quoteContext
+		want  string
+	}{
+		{
+			name:  "unquoted: normal text",
+			input: "hello world",
+			ctx:   quoteUnquoted,
+			want:  "hello world",
+		},
+		{
+			name:  "unquoted: escapes backslash, double quote, single quote",
+			input: `hello \ " ' world`,
+			ctx:   quoteUnquoted,
+			want:  `hello \\ \" \' world`,
+		},
+		{
+			name:  "single quoted: normal text",
+			input: `hello \ " world`,
+			ctx:   quoteSingle,
+			want:  `hello \ " world`,
+		},
+		{
+			name:  "single quoted: escapes single quote to break out and back in",
+			input: `hello ' world`,
+			ctx:   quoteSingle,
+			want:  `hello '\'' world`,
+		},
+		{
+			name:  "double quoted: normal text",
+			input: `hello ' world`,
+			ctx:   quoteDouble,
+			want:  `hello ' world`,
+		},
+		{
+			name:  "double quoted: escapes backslash, double quote, dollar sign, backtick",
+			input: "hello \\ \" $ ` world",
+			ctx:   quoteDouble,
+			want:  "hello \\\\ \\\" \\$ \\` world",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := escapeSubmatch(tt.input, tt.ctx)
+			if got != tt.want {
+				t.Errorf("escapeSubmatch(%q, %v) = %q, want %q", tt.input, tt.ctx, got, tt.want)
+			}
+		})
+	}
+}
