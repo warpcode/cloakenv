@@ -494,6 +494,42 @@ func TestSerializeYamlVal(t *testing.T) {
 			want:    "",
 			wantErr: true,
 		},
+		{
+			name:    "Slice of Any",
+			input:   []any{"item1", "item2"},
+			want:    "- item1\n- item2",
+			wantErr: false,
+		},
+		{
+			name:    "Slice of Strings",
+			input:   []string{"a", "b"},
+			want:    "- a\n- b",
+			wantErr: false,
+		},
+		{
+			name:    "Unserializable Slice",
+			input:   []any{errorYamlMarshaler{}},
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "Scalar string",
+			input:   "scalar",
+			want:    "scalar",
+			wantErr: false,
+		},
+		{
+			name:    "Scalar int",
+			input:   42,
+			want:    "42",
+			wantErr: false,
+		},
+		{
+			name:    "Nil",
+			input:   nil,
+			want:    "",
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -501,6 +537,10 @@ func TestSerializeYamlVal(t *testing.T) {
 			got, err := serializeYamlVal(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("serializeYamlVal() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && !strings.Contains(err.Error(), "yaml serialization failed") {
+				t.Errorf("serializeYamlVal() error = %q, want error containing 'yaml serialization failed'", err.Error())
 			}
 			if !tt.wantErr && got != tt.want {
 				t.Errorf("serializeYamlVal() = %q, want %q", got, tt.want)
