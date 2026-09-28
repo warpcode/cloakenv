@@ -143,6 +143,7 @@ keyring:
 	tests := []struct {
 		name       string
 		configPath string
+		setupEnv   func(t *testing.T)
 		wantErr    bool
 		wantTTL    string
 		wantPrefix string
@@ -167,7 +168,20 @@ keyring:
 		{
 			name:       "Empty custom config path uses default",
 			configPath: "",
-			wantErr:    false,
+			setupEnv: func(t *testing.T) {
+				t.Setenv("HOME", tempDir)
+				t.Setenv("USERPROFILE", tempDir) // for windows
+			},
+			wantErr: false,
+		},
+		{
+			name:       "Default config path fails when home dir is unknown",
+			configPath: "",
+			setupEnv: func(t *testing.T) {
+				t.Setenv("HOME", "")
+				t.Setenv("USERPROFILE", "")
+			},
+			wantErr: true,
 		},
 	}
 
@@ -175,10 +189,8 @@ keyring:
 		t.Run(tt.name, func(t *testing.T) {
 			customConfigPath = tt.configPath
 
-			// Isolate testing of the default path by configuring a fake home dir environment
-			if tt.configPath == "" {
-				t.Setenv("HOME", tempDir)
-				t.Setenv("USERPROFILE", tempDir) // for windows
+			if tt.setupEnv != nil {
+				tt.setupEnv(t)
 			}
 
 			cfg, err := loadConfig()
