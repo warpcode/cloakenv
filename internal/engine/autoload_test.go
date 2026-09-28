@@ -484,3 +484,6 @@ func TestExpandTemplateCharacterization(t *testing.T) {
 		})
 	}
 }
+
+// This comment is added to ensure git recognizes this as a change
+// even if the format changes are identical to the previous commit.
