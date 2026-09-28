@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -463,6 +464,46 @@ func TestConvertToEntriesMap(t *testing.T) {
 			}
 			if !tt.wantErr && !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("convertToEntriesMap() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+type errorYamlMarshaler struct{}
+
+func (errorYamlMarshaler) MarshalYAML() (any, error) {
+	return nil, errors.New("forced marshal error")
+}
+
+func TestSerializeYamlVal(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   any
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "Valid Map",
+			input:   map[string]any{"key": "value"},
+			want:    "key: value",
+			wantErr: false,
+		},
+		{
+			name:    "Error Path",
+			input:   map[string]any{"invalid": errorYamlMarshaler{}},
+			want:    "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := serializeYamlVal(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("serializeYamlVal() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("serializeYamlVal() = %q, want %q", got, tt.want)
 			}
 		})
 	}
