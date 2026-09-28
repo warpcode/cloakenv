@@ -1,8 +1,8 @@
 package engine
 
 import (
-	"testing"
 	"regexp"
+	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
 )
@@ -356,9 +356,6 @@ func TestMatchCommandRule_Security(t *testing.T) {
 		}
 	})
 }
-
-
-
 
 func TestExpandTemplateCharacterization(t *testing.T) {
 	tests := []struct {
