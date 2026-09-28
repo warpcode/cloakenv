@@ -180,42 +180,6 @@ func escapeSubmatch(s string, ctx quoteContext) string {
 	return sb.String()
 }
 
-func appendGroup(sb *strings.Builder, src string, matchIndices []int, group int, ctx quoteContext) {
-	if group >= 0 && group*2+1 < len(matchIndices) {
-		gStart := matchIndices[2*group]
-		gEnd := matchIndices[2*group+1]
-		if gStart >= 0 && gEnd >= gStart && gEnd <= len(src) {
-			val := src[gStart:gEnd]
-			val = escapeSubmatch(val, ctx)
-			sb.WriteString(val)
-		}
-	}
-}
-
-func tryExpandBraced(sb *strings.Builder, template string, i int, names []string, src string, matchIndices []int, ctx quoteContext) (int, bool) {
-	closeIdx := strings.IndexByte(template[i+2:], '}')
-	if closeIdx != -1 {
-		nameOrNum := template[i+2 : i+2+closeIdx]
-		if isValidGroupNameOrNum(nameOrNum) {
-			group := findGroupIndex(names, nameOrNum)
-			if group >= 0 && group*2+1 < len(matchIndices) {
-				appendGroup(sb, src, matchIndices, group, ctx)
-				return i + 2 + closeIdx, true
-			}
-		}
-	}
-	return i, false
-}
-
-func tryExpandUnbraced(sb *strings.Builder, template string, i int, names []string, src string, matchIndices []int, ctx quoteContext) (int, bool) {
-	_, group, consumed := parseSubmatchRef(names, template[i+1:])
-	if group >= 0 && group*2+1 < len(matchIndices) {
-		appendGroup(sb, src, matchIndices, group, ctx)
-		return i + consumed, true
-	}
-	return i, false
-}
-
 func expandTemplate(re *regexp.Regexp, template string, src string, matchIndices []int) string {
 	names := re.SubexpNames()
 	var sb strings.Builder
@@ -275,16 +239,36 @@ func expandTemplate(re *regexp.Regexp, template string, src string, matchIndices
 		}
 
 		if next == '{' {
-			newI, expanded := tryExpandBraced(&sb, template, i, names, src, matchIndices, ctx)
-			if expanded {
-				i = newI
-				continue
+			closeIdx := strings.IndexByte(template[i+2:], '}')
+			if closeIdx != -1 {
+				nameOrNum := template[i+2 : i+2+closeIdx]
+				if isValidGroupNameOrNum(nameOrNum) {
+					group := findGroupIndex(names, nameOrNum)
+					if group >= 0 && group*2+1 < len(matchIndices) {
+						gStart := matchIndices[2*group]
+						gEnd := matchIndices[2*group+1]
+						if gStart >= 0 && gEnd >= gStart && gEnd <= len(src) {
+							val := src[gStart:gEnd]
+							val = escapeSubmatch(val, ctx)
+							sb.WriteString(val)
+						}
+						i += 2 + closeIdx
+						continue
+					}
+				}
 			}
 		}
 
-		newI, expanded := tryExpandUnbraced(&sb, template, i, names, src, matchIndices, ctx)
-		if expanded {
-			i = newI
+		_, group, consumed := parseSubmatchRef(names, template[i+1:])
+		if group >= 0 && group*2+1 < len(matchIndices) {
+			gStart := matchIndices[2*group]
+			gEnd := matchIndices[2*group+1]
+			if gStart >= 0 && gEnd >= gStart && gEnd <= len(src) {
+				val := src[gStart:gEnd]
+				val = escapeSubmatch(val, ctx)
+				sb.WriteString(val)
+			}
+			i += consumed
 			continue
 		}
 
