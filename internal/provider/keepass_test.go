@@ -292,3 +292,51 @@ func TestMatchEntryTags(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkMatchEntryTags(b *testing.B) {
+	tagString := "Work, Personal, Important, Finance, Auto, Home"
+	queryTagsLower := []string{"finance", "important"}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		matchEntryTags(tagString, queryTagsLower)
+	}
+}
+
+func TestMatchEntryTagsWhitespace(t *testing.T) {
+	tests := []struct {
+		name      string
+		tagString string
+		queryTags []string
+		want      bool
+	}{
+		{
+			name:      "whitespace at edges",
+			tagString: "  foo  , bar,  baz ",
+			queryTags: []string{"foo"},
+			want:      true,
+		},
+		{
+			name:      "whitespace inside tags is not trimmed",
+			tagString: "foo bar",
+			queryTags: []string{"foo"},
+			want:      false, // "foo bar" is one tag, "foo" doesn't match
+		},
+		{
+			name:      "empty tag segments are ignored",
+			tagString: ",foo,,bar,",
+			queryTags: []string{"foo", "bar"},
+			want:      true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := matchEntryTags(tc.tagString, tc.queryTags)
+			if got != tc.want {
+				t.Errorf("matchEntryTags(%q, %v) = %v, want %v", tc.tagString, tc.queryTags, got, tc.want)
+			}
+		})
+	}
+}

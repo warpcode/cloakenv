@@ -372,14 +372,41 @@ func matchEntryTags(tagString string, queryTagsLower []string) bool {
 		return true
 	}
 
-	entryTags := utils.ParseTagString(tagString)
-	tagMap := make(map[string]bool, len(entryTags))
-	for _, t := range entryTags {
-		tagMap[strings.ToLower(t)] = true
-	}
-
 	for _, qt := range queryTagsLower {
-		if !tagMap[qt] {
+		found := false
+		s := tagString
+		for {
+			var tag string
+			idx := strings.IndexByte(s, ',')
+			if idx == -1 {
+				tag = s
+				s = ""
+			} else {
+				tag = s[:idx]
+				s = s[idx+1:]
+			}
+
+			// Trim leading and trailing spaces without allocating
+			start := 0
+			for start < len(tag) && tag[start] == ' ' {
+				start++
+			}
+			end := len(tag)
+			for end > start && tag[end-1] == ' ' {
+				end--
+			}
+			tag = tag[start:end]
+
+			if len(tag) == len(qt) && strings.EqualFold(tag, qt) {
+				found = true
+				break
+			}
+
+			if s == "" {
+				break
+			}
+		}
+		if !found {
 			return false
 		}
 	}
