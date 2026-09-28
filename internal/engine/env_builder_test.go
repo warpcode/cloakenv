@@ -549,3 +549,25 @@ func TestNormalizeURIs(t *testing.T) {
 		})
 	}
 }
+
+func TestGetParentEnv(t *testing.T) {
+	// Do not use t.Parallel() here because t.Setenv() is incompatible with parallel subtests,
+	// and getParentEnv() reads the full os.Environ() which would cause data races.
+	t.Setenv("NORMAL_KEY", "value")
+	t.Setenv("MULTI_EQ_KEY", "value=with=equals")
+	t.Setenv("EMPTY_VAL_KEY", "")
+
+	envMap := getParentEnv()
+
+	if val, ok := envMap["NORMAL_KEY"]; !ok || val != "value" {
+		t.Errorf("expected NORMAL_KEY=value, got %q (ok: %v)", val, ok)
+	}
+
+	if val, ok := envMap["MULTI_EQ_KEY"]; !ok || val != "value=with=equals" {
+		t.Errorf("expected MULTI_EQ_KEY=value=with=equals, got %q (ok: %v)", val, ok)
+	}
+
+	if val, ok := envMap["EMPTY_VAL_KEY"]; !ok || val != "" {
+		t.Errorf("expected EMPTY_VAL_KEY=\"\", got %q (ok: %v)", val, ok)
+	}
+}
