@@ -388,16 +388,23 @@ func matchEntryTags(tagString string, queryTagsLower []string) bool {
 
 			// Trim leading and trailing spaces without allocating
 			start := 0
-			for start < len(tag) && tag[start] == ' ' {
+			for start < len(tag) && (tag[start] == ' ' || tag[start] == '\t' || tag[start] == '\n' || tag[start] == '\r' || tag[start] == '\f' || tag[start] == '\v') {
 				start++
 			}
 			end := len(tag)
-			for end > start && tag[end-1] == ' ' {
+			for end > start && (tag[end-1] == ' ' || tag[end-1] == '\t' || tag[end-1] == '\n' || tag[end-1] == '\r' || tag[end-1] == '\f' || tag[end-1] == '\v') {
 				end--
 			}
 			tag = tag[start:end]
 
-			if len(tag) == len(qt) && strings.EqualFold(tag, qt) {
+			if tag == "" {
+				if s == "" {
+					break
+				}
+				continue
+			}
+
+			if strings.EqualFold(tag, qt) {
 				found = true
 				break
 			}
