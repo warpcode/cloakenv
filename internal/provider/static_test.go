@@ -815,6 +815,89 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		}
 	})
 
+	t.Run("valid json single entity (vault_name config)", func(t *testing.T) {
+		p := NewJsonProvider()
+		f := filepath.Join(t.TempDir(), "single_vault_name")
+
+		if err := os.WriteFile(f, []byte(`{"key": "value"}`), 0o600); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path": f,
+				"vault_name": "my-vault",
+			},
+		}
+		err := p.Initialize(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+
+		entry, ok := p.entries[""]
+		if !ok {
+			t.Fatal("expected single entry stored under key ''")
+		}
+		if entry.Title != "my-vault" {
+			t.Errorf("expected title derived from vault_name setting, got %q", entry.Title)
+		}
+	})
+
+	t.Run("valid json single entity (EntityName config)", func(t *testing.T) {
+		p := NewJsonProvider()
+		f := filepath.Join(t.TempDir(), "single_entity_name")
+
+		if err := os.WriteFile(f, []byte(`{"key": "value"}`), 0o600); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+
+		cfg := ProviderConfig{
+			EntityName: "override-name",
+			Settings: map[string]string{
+				"vault_path": f,
+			},
+		}
+		err := p.Initialize(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+
+		entry, ok := p.entries[""]
+		if !ok {
+			t.Fatal("expected single entry stored under key ''")
+		}
+		if entry.Title != "override-name" {
+			t.Errorf("expected title derived from EntityName config, got %q", entry.Title)
+		}
+	})
+
+	t.Run("valid json single entity (document title)", func(t *testing.T) {
+		p := NewJsonProvider()
+		f := filepath.Join(t.TempDir(), "single_document_title")
+
+		if err := os.WriteFile(f, []byte(`{"title": "in-doc-title", "key": "value"}`), 0o600); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path": f,
+			},
+		}
+		err := p.Initialize(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+
+		entry, ok := p.entries[""]
+		if !ok {
+			t.Fatal("expected single entry stored under key ''")
+		}
+		if entry.Title != "in-doc-title" {
+			t.Errorf("expected title derived from document title key, got %q", entry.Title)
+		}
+	})
+
 	t.Run("valid json multi entities (implicit)", func(t *testing.T) {
 		p := NewJsonProvider()
 		f := filepath.Join(t.TempDir(), "multi")
@@ -852,9 +935,38 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		}
 
 		cfg := ProviderConfig{
-			EntitiesRootKey: "my_root",
 			Settings: map[string]string{
-				"vault_path": f,
+				"vault_path":        f,
+				"entities_root_key": "my_root",
+			},
+		}
+		err := p.Initialize(context.Background(), cfg)
+		if err != nil {
+			t.Fatalf("expected no error, got: %v", err)
+		}
+		if p.singleEntity {
+			t.Error("expected singleEntity to be false")
+		}
+		if len(p.entries) != 1 {
+			t.Errorf("expected 1 entry, got: %d", len(p.entries))
+		}
+		if _, ok := p.entries["e1"]; !ok {
+			t.Error("expected entry 'e1' to be present")
+		}
+	})
+
+	t.Run("valid json multi entities (explicit entries_key)", func(t *testing.T) {
+		p := NewJsonProvider()
+		f := filepath.Join(t.TempDir(), "multi_root_entries")
+
+		if err := os.WriteFile(f, []byte(`{"my_root": {"e1": {"key": "value"}}}`), 0o600); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path":  f,
+				"entries_key": "my_root",
 			},
 		}
 		err := p.Initialize(context.Background(), cfg)
@@ -1023,7 +1135,7 @@ entities:
 			t.Fatal("expected error for non-map entry")
 		}
 		if !strings.Contains(err.Error(), "not a valid map") {
-			t.Errorf("expected error to mention the root key, got: %v", err)
+			t.Errorf("expected error message to contain 'not a valid map', got: %v", err)
 		}
 	})
 }
