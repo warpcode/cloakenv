@@ -356,6 +356,49 @@ func TestMatchCommandRule_Security(t *testing.T) {
 	})
 }
 
+func TestConvertBackslashGroups(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		want     string
+	}{
+		{
+			name:     "valid groups",
+			template: `foo \1 \2 \9 bar`,
+			want:     `foo $1 $2 $9 bar`,
+		},
+		{
+			name:     "invalid groups",
+			template: `foo \0 \a \ bar`,
+			want:     `foo \0 \a \ bar`,
+		},
+		{
+			name:     "no backslash groups",
+			template: `foo bar baz`,
+			want:     `foo bar baz`,
+		},
+		{
+			name:     "backslash at end",
+			template: `foo bar \`,
+			want:     `foo bar \`,
+		},
+		{
+			name:     "multiple consecutive backslashes",
+			template: `foo \\1 bar`,
+			want:     `foo \$1 bar`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := convertBackslashGroups(tt.template)
+			if got != tt.want {
+				t.Errorf("convertBackslashGroups(%q) = %q, want %q", tt.template, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEscapeSubmatch(t *testing.T) {
 	tests := []struct {
 		name  string

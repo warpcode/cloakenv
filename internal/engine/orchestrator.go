@@ -40,113 +40,14 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	// Validate vault configurations
 	if cfg != nil {
 		for vaultName, vault := range cfg.Vaults {
-			if _, isBuiltin := builtins[vaultName]; isBuiltin {
-				return nil, fmt.Errorf("invalid config: vault name %q conflicts with built-in scheme", vaultName)
-			}
-			if vaultName == "search" {
-				return nil, fmt.Errorf("invalid config: vault name %q conflicts with reserved scheme", vaultName)
-			}
-
-			// If resolve_values is set, ask the provider whether it supports it.
-			if vault.ResolveValues {
-				p, err := newBareProvider(vault.Provider)
-				if err != nil {
-					return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
-				}
-				if _, ok := p.(provider.ValueResolvableProvider); !ok {
-					return nil, fmt.Errorf("invalid config for vault %q: provider %q does not support resolve_values", vaultName, vault.Provider)
-				}
-			}
-
-			switch vault.Provider {
-			case "keepass":
-				if vault.SingleEntity != nil && *vault.SingleEntity {
-					return nil, fmt.Errorf("invalid config for vault %q: keepass provider cannot be configured as a single-entity vault", vaultName)
-				}
-				kp := provider.NewKeePassProvider()
-				settings := map[string]string{
-					"vault_path": vault.VaultPath,
-				}
-				if err := kp.Validate(settings); err != nil {
-					return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
-				}
-			case "yaml":
-				yp := provider.NewYamlProvider()
-				settings := map[string]string{
-					"vault_path": vault.VaultPath,
-				}
-				if err := yp.Validate(settings); err != nil {
-					return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
-				}
-			case "json":
-				jp := provider.NewJsonProvider()
-				settings := map[string]string{
-					"vault_path": vault.VaultPath,
-				}
-				if err := jp.Validate(settings); err != nil {
-					return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
-				}
-			case "custom_vault":
-				// custom_vault is statically defined in config, so it is always valid.
-			case "search":
-				if vault.Searchable != nil {
-					return nil, fmt.Errorf("invalid config for vault %q: search provider does not support the searchable flag", vaultName)
-				}
-				if len(vault.SourceVaults) == 0 {
-					return nil, fmt.Errorf("invalid config for vault %q: search provider requires at least one source vault", vaultName)
-				}
-				for _, sv := range vault.SourceVaults {
-					if strings.TrimSpace(sv) == "" {
-						return nil, fmt.Errorf("invalid config for vault %q: empty source vault name", vaultName)
-					}
-					if sv == vaultName {
-						return nil, fmt.Errorf("invalid config for vault %q: search provider cannot reference itself in source_vaults", vaultName)
-					}
-					if _, exists := cfg.Vaults[sv]; !exists && !pm.HasBuiltin(sv) {
-						return nil, fmt.Errorf("invalid config for vault %q: source vault %q does not exist", vaultName, sv)
-					}
-				}
-				sp := provider.NewSearchProvider()
-				settings := map[string]string{
-					"query": vault.Query,
-				}
-				if err := sp.Validate(settings); err != nil {
-					return nil, fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
-				}
-			default:
-				return nil, fmt.Errorf("unsupported provider type %q for vault %q", vault.Provider, vaultName)
+			if err := validateVaultConfig(vaultName, vault, cfg, pm, builtins); err != nil {
+				return nil, err
 			}
 		}
 
 		// Detect cyclic dependencies among search vaults
-		for vName, vCfg := range cfg.Vaults {
-			if vCfg.Provider != "search" {
-				continue
-			}
-			var detectCycle func(name string, path []string) error
-			detectCycle = func(name string, path []string) error {
-				for _, p := range path {
-					if p == name {
-						return fmt.Errorf("invalid config for vault %q: cyclic dependency detected in search vaults (%s -> %s)", vName, strings.Join(path, " -> "), name)
-					}
-				}
-				targetCfg, exists := cfg.Vaults[name]
-				if !exists || targetCfg.Provider != "search" {
-					return nil
-				}
-				newPath := append(path, name)
-				for _, sv := range targetCfg.SourceVaults {
-					if err := detectCycle(sv, newPath); err != nil {
-						return err
-					}
-				}
-				return nil
-			}
-			for _, sv := range vCfg.SourceVaults {
-				if err := detectCycle(sv, []string{vName}); err != nil {
-					return nil, err
-				}
-			}
+		if err := detectSearchVaultCycles(cfg); err != nil {
+			return nil, err
 		}
 
 		// Validate autoload configuration rules
@@ -254,6 +155,120 @@ func (o *Orchestrator) KeyringPrefix() string {
 // CheckAccess checks if a vault is active/accessible.
 func (o *Orchestrator) CheckAccess(ctx context.Context, vaultName string) error {
 	return o.providerManager.CheckAccess(ctx, vaultName)
+}
+
+func validateVaultConfig(vaultName string, vault config.VaultConfig, cfg *config.Config, pm *ProviderManager, builtins map[string]provider.SecretProvider) error {
+	if _, isBuiltin := builtins[vaultName]; isBuiltin {
+		return fmt.Errorf("invalid config: vault name %q conflicts with built-in scheme", vaultName)
+	}
+	if vaultName == "search" {
+		return fmt.Errorf("invalid config: vault name %q conflicts with reserved scheme", vaultName)
+	}
+
+	// If resolve_values is set, ask the provider whether it supports it.
+	if vault.ResolveValues {
+		p, err := newBareProvider(vault.Provider)
+		if err != nil {
+			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
+		}
+		if _, ok := p.(provider.ValueResolvableProvider); !ok {
+			return fmt.Errorf("invalid config for vault %q: provider %q does not support resolve_values", vaultName, vault.Provider)
+		}
+	}
+
+	switch vault.Provider {
+	case "keepass":
+		if vault.SingleEntity != nil && *vault.SingleEntity {
+			return fmt.Errorf("invalid config for vault %q: keepass provider cannot be configured as a single-entity vault", vaultName)
+		}
+		kp := provider.NewKeePassProvider()
+		settings := map[string]string{
+			"vault_path": vault.VaultPath,
+		}
+		if err := kp.Validate(settings); err != nil {
+			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
+		}
+	case "yaml":
+		yp := provider.NewYamlProvider()
+		settings := map[string]string{
+			"vault_path": vault.VaultPath,
+		}
+		if err := yp.Validate(settings); err != nil {
+			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
+		}
+	case "json":
+		jp := provider.NewJsonProvider()
+		settings := map[string]string{
+			"vault_path": vault.VaultPath,
+		}
+		if err := jp.Validate(settings); err != nil {
+			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
+		}
+	case "custom_vault":
+		// custom_vault is statically defined in config, so it is always valid.
+	case "search":
+		if vault.Searchable != nil {
+			return fmt.Errorf("invalid config for vault %q: search provider does not support the searchable flag", vaultName)
+		}
+		if len(vault.SourceVaults) == 0 {
+			return fmt.Errorf("invalid config for vault %q: search provider requires at least one source vault", vaultName)
+		}
+		for _, sv := range vault.SourceVaults {
+			if strings.TrimSpace(sv) == "" {
+				return fmt.Errorf("invalid config for vault %q: empty source vault name", vaultName)
+			}
+			if sv == vaultName {
+				return fmt.Errorf("invalid config for vault %q: search provider cannot reference itself in source_vaults", vaultName)
+			}
+			if _, exists := cfg.Vaults[sv]; !exists && !pm.HasBuiltin(sv) {
+				return fmt.Errorf("invalid config for vault %q: source vault %q does not exist", vaultName, sv)
+			}
+		}
+		sp := provider.NewSearchProvider()
+		settings := map[string]string{
+			"query": vault.Query,
+		}
+		if err := sp.Validate(settings); err != nil {
+			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
+		}
+	default:
+		return fmt.Errorf("unsupported provider type %q for vault %q", vault.Provider, vaultName)
+	}
+
+	return nil
+}
+
+func detectSearchVaultCycles(cfg *config.Config) error {
+	for vName, vCfg := range cfg.Vaults {
+		if vCfg.Provider != "search" {
+			continue
+		}
+		var detectCycle func(name string, path []string) error
+		detectCycle = func(name string, path []string) error {
+			for _, p := range path {
+				if p == name {
+					return fmt.Errorf("invalid config for vault %q: cyclic dependency detected in search vaults (%s -> %s)", vName, strings.Join(path, " -> "), name)
+				}
+			}
+			targetCfg, exists := cfg.Vaults[name]
+			if !exists || targetCfg.Provider != "search" {
+				return nil
+			}
+			newPath := append(path, name)
+			for _, sv := range targetCfg.SourceVaults {
+				if err := detectCycle(sv, newPath); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		for _, sv := range vCfg.SourceVaults {
+			if err := detectCycle(sv, []string{vName}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // MatchRunAlias evaluates configured autoload/run alias rules against command arguments.

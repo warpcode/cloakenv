@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -463,6 +464,86 @@ func TestConvertToEntriesMap(t *testing.T) {
 			}
 			if !tt.wantErr && !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("convertToEntriesMap() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+type errorYamlMarshaler struct{}
+
+func (errorYamlMarshaler) MarshalYAML() (any, error) {
+	return nil, errors.New("forced marshal error")
+}
+
+func TestSerializeYamlVal(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   any
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "Valid Map",
+			input:   map[string]any{"key": "value"},
+			want:    "key: value",
+			wantErr: false,
+		},
+		{
+			name:    "Error Path",
+			input:   map[string]any{"invalid": errorYamlMarshaler{}},
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "Slice of Any",
+			input:   []any{"item1", "item2"},
+			want:    "- item1\n- item2",
+			wantErr: false,
+		},
+		{
+			name:    "Slice of Strings",
+			input:   []string{"a", "b"},
+			want:    "- a\n- b",
+			wantErr: false,
+		},
+		{
+			name:    "Unserializable Slice",
+			input:   []any{errorYamlMarshaler{}},
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "Scalar string",
+			input:   "scalar",
+			want:    "scalar",
+			wantErr: false,
+		},
+		{
+			name:    "Scalar int",
+			input:   42,
+			want:    "42",
+			wantErr: false,
+		},
+		{
+			name:    "Nil",
+			input:   nil,
+			want:    "",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := serializeYamlVal(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("serializeYamlVal() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && !strings.Contains(err.Error(), "yaml serialization failed") {
+				t.Errorf("serializeYamlVal() error = %q, want error containing 'yaml serialization failed'", err.Error())
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("serializeYamlVal() = %q, want %q", got, tt.want)
 			}
 		})
 	}
