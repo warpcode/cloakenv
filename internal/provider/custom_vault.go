@@ -139,14 +139,6 @@ func (c *CustomVaultProvider) Search(_ context.Context, query SearchQuery) ([]Se
 		lowerQueryPath = strings.ToLower(query.Path)
 	}
 
-	var lowerQueryTags []string
-	if len(query.Tags) > 0 {
-		lowerQueryTags = make([]string, len(query.Tags))
-		for i, qt := range query.Tags {
-			lowerQueryTags[i] = strings.ToLower(qt)
-		}
-	}
-
 	for name, entity := range c.entities {
 		entry := toEntry(name, entity)
 
@@ -162,14 +154,17 @@ func (c *CustomVaultProvider) Search(_ context.Context, query SearchQuery) ([]Se
 			}
 		}
 
-		if len(lowerQueryTags) > 0 {
-			tagMap := make(map[string]bool)
-			for _, t := range entry.Tags {
-				tagMap[strings.ToLower(t)] = true
-			}
+		if len(query.Tags) > 0 {
 			match := true
-			for _, qt := range lowerQueryTags {
-				if !tagMap[qt] {
+			for _, qt := range query.Tags {
+				found := false
+				for _, t := range entry.Tags {
+					if strings.EqualFold(t, qt) {
+						found = true
+						break
+					}
+				}
+				if !found {
 					match = false
 					break
 				}
