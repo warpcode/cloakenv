@@ -399,6 +399,78 @@ func TestEscapeSubmatch(t *testing.T) {
 			ctx:   quoteDouble,
 			want:  "hello \\\\ \\\" \\$ \\` world",
 		},
+		{
+			name:  "unquoted: empty string",
+			input: "",
+			ctx:   quoteUnquoted,
+			want:  "",
+		},
+		{
+			name:  "single quoted: empty string",
+			input: "",
+			ctx:   quoteSingle,
+			want:  "",
+		},
+		{
+			name:  "double quoted: empty string",
+			input: "",
+			ctx:   quoteDouble,
+			want:  "",
+		},
+		{
+			name:  "single quoted: boundary quotes",
+			input: "'single'",
+			ctx:   quoteSingle,
+			want:  `'\''single'\''`,
+		},
+		{
+			name:  "double quoted: boundary quotes",
+			input: `"double"`,
+			ctx:   quoteDouble,
+			want:  `\"double\"`,
+		},
+		{
+			name:  "single quoted: consecutive metacharacters",
+			input: "''",
+			ctx:   quoteSingle,
+			want:  `'\'''\''`,
+		},
+		{
+			name:  "double quoted: consecutive metacharacters",
+			input: `""$$`,
+			ctx:   quoteDouble,
+			want:  "\\\"\\\"\\$\\$",
+		},
+		{
+			name:  "unquoted: trailing backslash",
+			input: `path\`,
+			ctx:   quoteUnquoted,
+			want:  `path\\`,
+		},
+		{
+			name:  "double quoted: trailing backslash",
+			input: `path\`,
+			ctx:   quoteDouble,
+			want:  `path\\`,
+		},
+		{
+			name:  "unquoted: UTF-8 multi-byte characters",
+			input: `日本語 ' "$`,
+			ctx:   quoteUnquoted,
+			want:  `日本語 \' \"$`,
+		},
+		{
+			name:  "single quoted: UTF-8 multi-byte characters",
+			input: `日本語 ' "$`,
+			ctx:   quoteSingle,
+			want:  `日本語 '\'' "$`,
+		},
+		{
+			name:  "double quoted: UTF-8 multi-byte characters",
+			input: "日本語 ' \"$`",
+			ctx:   quoteDouble,
+			want:  "日本語 ' \\\"\\$\\`",
+		},
 	}
 
 	for _, tt := range tests {
