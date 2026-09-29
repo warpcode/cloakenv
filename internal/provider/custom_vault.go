@@ -129,29 +129,42 @@ func (c *CustomVaultProvider) GetEntryTitle(_ context.Context, location string) 
 func (c *CustomVaultProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
 	var results []SearchResult
 
+	var lowerQueryTitle string
+	if query.Title != "" {
+		lowerQueryTitle = strings.ToLower(query.Title)
+	}
+
+	var lowerQueryPath string
+	if query.Path != "" {
+		lowerQueryPath = strings.ToLower(query.Path)
+	}
+
 	for name, entity := range c.entities {
 		entry := toEntry(name, entity)
 
-		if query.Title != "" {
-			if !strings.Contains(strings.ToLower(entry.Title), strings.ToLower(query.Title)) {
+		if lowerQueryTitle != "" {
+			if !strings.Contains(strings.ToLower(entry.Title), lowerQueryTitle) {
 				continue
 			}
 		}
 
-		if query.Path != "" {
-			if !strings.Contains(strings.ToLower(name), strings.ToLower(query.Path)) {
+		if lowerQueryPath != "" {
+			if !strings.Contains(strings.ToLower(name), lowerQueryPath) {
 				continue
 			}
 		}
 
 		if len(query.Tags) > 0 {
-			tagMap := make(map[string]bool)
-			for _, t := range entry.Tags {
-				tagMap[strings.ToLower(t)] = true
-			}
 			match := true
 			for _, qt := range query.Tags {
-				if !tagMap[strings.ToLower(qt)] {
+				found := false
+				for _, t := range entry.Tags {
+					if strings.EqualFold(t, qt) {
+						found = true
+						break
+					}
+				}
+				if !found {
 					match = false
 					break
 				}
