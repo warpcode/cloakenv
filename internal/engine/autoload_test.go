@@ -355,3 +355,173 @@ func TestMatchCommandRule_Security(t *testing.T) {
 		}
 	})
 }
+
+func TestConvertBackslashGroups(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		want     string
+	}{
+		{
+			name:     "valid groups",
+			template: `foo \1 \2 \9 bar`,
+			want:     `foo $1 $2 $9 bar`,
+		},
+		{
+			name:     "invalid groups",
+			template: `foo \0 \a \ bar`,
+			want:     `foo \0 \a \ bar`,
+		},
+		{
+			name:     "no backslash groups",
+			template: `foo bar baz`,
+			want:     `foo bar baz`,
+		},
+		{
+			name:     "backslash at end",
+			template: `foo bar \`,
+			want:     `foo bar \`,
+		},
+		{
+			name:     "multiple consecutive backslashes",
+			template: `foo \\1 bar`,
+			want:     `foo \$1 bar`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := convertBackslashGroups(tt.template)
+			if got != tt.want {
+				t.Errorf("convertBackslashGroups(%q) = %q, want %q", tt.template, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEscapeSubmatch(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		ctx   quoteContext
+		want  string
+	}{
+		{
+			name:  "unquoted: normal text",
+			input: "hello world",
+			ctx:   quoteUnquoted,
+			want:  "hello world",
+		},
+		{
+			name:  "unquoted: escapes backslash, double quote, single quote",
+			input: `hello \ " ' world`,
+			ctx:   quoteUnquoted,
+			want:  `hello \\ \" \' world`,
+		},
+		{
+			name:  "single quoted: normal text",
+			input: `hello \ " world`,
+			ctx:   quoteSingle,
+			want:  `hello \ " world`,
+		},
+		{
+			name:  "single quoted: escapes single quote to break out and back in",
+			input: `hello ' world`,
+			ctx:   quoteSingle,
+			want:  `hello '\'' world`,
+		},
+		{
+			name:  "double quoted: normal text",
+			input: `hello ' world`,
+			ctx:   quoteDouble,
+			want:  `hello ' world`,
+		},
+		{
+			name:  "double quoted: escapes backslash, double quote, dollar sign, backtick",
+			input: "hello \\ \" $ ` world",
+			ctx:   quoteDouble,
+			want:  "hello \\\\ \\\" \\$ \\` world",
+		},
+		{
+			name:  "unquoted: empty string",
+			input: "",
+			ctx:   quoteUnquoted,
+			want:  "",
+		},
+		{
+			name:  "single quoted: empty string",
+			input: "",
+			ctx:   quoteSingle,
+			want:  "",
+		},
+		{
+			name:  "double quoted: empty string",
+			input: "",
+			ctx:   quoteDouble,
+			want:  "",
+		},
+		{
+			name:  "single quoted: boundary quotes",
+			input: "'single'",
+			ctx:   quoteSingle,
+			want:  `'\''single'\''`,
+		},
+		{
+			name:  "double quoted: boundary quotes",
+			input: `"double"`,
+			ctx:   quoteDouble,
+			want:  `\"double\"`,
+		},
+		{
+			name:  "single quoted: consecutive metacharacters",
+			input: "''",
+			ctx:   quoteSingle,
+			want:  `'\'''\''`,
+		},
+		{
+			name:  "double quoted: consecutive metacharacters",
+			input: `""$$`,
+			ctx:   quoteDouble,
+			want:  "\\\"\\\"\\$\\$",
+		},
+		{
+			name:  "unquoted: trailing backslash",
+			input: `path\`,
+			ctx:   quoteUnquoted,
+			want:  `path\\`,
+		},
+		{
+			name:  "double quoted: trailing backslash",
+			input: `path\`,
+			ctx:   quoteDouble,
+			want:  `path\\`,
+		},
+		{
+			name:  "unquoted: UTF-8 multi-byte characters",
+			input: `日本語 ' "$`,
+			ctx:   quoteUnquoted,
+			want:  `日本語 \' \"$`,
+		},
+		{
+			name:  "single quoted: UTF-8 multi-byte characters",
+			input: `日本語 ' "$`,
+			ctx:   quoteSingle,
+			want:  `日本語 '\'' "$`,
+		},
+		{
+			name:  "double quoted: UTF-8 multi-byte characters",
+			input: "日本語 ' \"$`",
+			ctx:   quoteDouble,
+			want:  "日本語 ' \\\"\\$\\`",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := escapeSubmatch(tt.input, tt.ctx)
+			if got != tt.want {
+				t.Errorf("escapeSubmatch(%q, %v) = %q, want %q", tt.input, tt.ctx, got, tt.want)
+			}
+		})
+	}
+}

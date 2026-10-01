@@ -318,6 +318,12 @@ func TestMatchEntryTagsWhitespace(t *testing.T) {
 			queryTags: []string{"foo", "bar"},
 			want:      true,
 		},
+		{
+			name:      "unicode non-breaking space trimming",
+			tagString: "\u00a0foo",
+			queryTags: []string{"foo"},
+			want:      true,
+		},
 	}
 
 	for _, tc := range tests {
