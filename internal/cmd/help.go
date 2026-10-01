@@ -32,9 +32,9 @@ Flags:
   -E              Start with an empty environment (do not inherit from parent)
   -e KEY=uri      Map an environment variable to a secret URI (repeatable)
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
-  -m entry-uri    Merge all attributes from an entry into the environment (repeatable)
-  -i KEY          Filter/whitelist keys/variables (repeatable)
-  -o, --output    Output format: plain, json, yaml, env (depends on command)
+  -m entry-uri    Merge attributes from an entry into the environment. Can target a single attribute using :attribute (repeatable)
+  -i KEY          Filter/whitelist keys or select output fields (repeatable)
+  -o, --output    Output format: keys, json, yaml, env (depends on command)
   --vault vault   Scope search to a specific vault (repeatable)
   --ttl duration  Expiration duration for cache entries (e.g. 5m, 1h, set only)
 
@@ -69,7 +69,7 @@ Flags:
   -E              Start with an empty environment (do not inherit from parent)
   -e KEY=uri      Map an environment variable to a secret URI (repeatable)
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
-  -m entry-uri    Merge all attributes from an entry into the environment (repeatable)
+  -m entry-uri    Merge attributes from an entry into the environment. Can target a single attribute using :attribute (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
   --no-autoload   Disable config command autoloading rules for this run execution`)
 }
