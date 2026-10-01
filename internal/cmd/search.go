@@ -83,34 +83,30 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 func flattenSearchResults(results []provider.SearchResult, selectedKeys []string) []map[string]any {
 	flatResults := make([]map[string]any, len(results))
 
+	// Precompute lowercased and formatted selected keys once outside the results loop
+	// to avoid per-entry allocations.
 	selectedKeysLower := make([]string, len(selectedKeys))
+	selectedKeysFormatted := make([]string, len(selectedKeys))
 	for i, field := range selectedKeys {
 		selectedKeysLower[i] = strings.ToLower(field)
+		selectedKeysFormatted[i] = utils.FormatKey(field)
 	}
 
 	for i, r := range results {
-		flatResults[i] = flattenEntry(r, selectedKeys, selectedKeysLower)
+		flatResults[i] = flattenEntry(r, selectedKeys, selectedKeysLower, selectedKeysFormatted)
 	}
 	return flatResults
 }
 
-func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
+func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string, selectedKeysFormatted []string) map[string]any {
 	if len(selectedKeys) > 0 {
-		return flattenSelectedKeys(r, selectedKeys, selectedKeysLower)
+		return flattenSelectedKeys(r, selectedKeys, selectedKeysLower, selectedKeysFormatted)
 	}
 	return flattenDefaultEntry(r)
 }
 
-func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
+func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string, selectedKeysFormatted []string) map[string]any {
 	flatRes := make(map[string]any, len(selectedKeys))
-
-	var lowerAttrs map[string]string
-	if len(r.Entry.Attributes) > 0 {
-		lowerAttrs = make(map[string]string, len(r.Entry.Attributes))
-		for k := range r.Entry.Attributes {
-			lowerAttrs[strings.ToLower(k)] = k
-		}
-	}
 
 	for j, field := range selectedKeys {
 		fieldLower := selectedKeysLower[j]
@@ -126,21 +122,26 @@ func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selecte
 		case "tags":
 			flatRes["tags"] = r.Entry.Tags
 		default:
-			key, val := resolveSelectedAttribute(r.Entry.Attributes, lowerAttrs, field, fieldLower)
-			flatRes[key] = val
+			val := resolveSelectedAttributeVal(r.Entry.Attributes, field)
+			flatRes[selectedKeysFormatted[j]] = val
 		}
 	}
 	return flatRes
 }
 
-func resolveSelectedAttribute(attributes map[string]any, lowerAttrs map[string]string, field, fieldLower string) (string, any) {
-	if origKey, ok := lowerAttrs[fieldLower]; ok {
-		return utils.FormatKey(origKey), attributes[origKey]
+func resolveSelectedAttributeVal(attributes map[string]any, field string) any {
+	if len(attributes) == 0 {
+		return nil
 	}
 	if v, ok := attributes[field]; ok {
-		return utils.FormatKey(field), v
+		return v
 	}
-	return utils.FormatKey(field), nil
+	for k, v := range attributes {
+		if strings.EqualFold(k, field) {
+			return v
+		}
+	}
+	return nil
 }
 
 func flattenDefaultEntry(r provider.SearchResult) map[string]any {
@@ -152,8 +153,7 @@ func flattenDefaultEntry(r provider.SearchResult) map[string]any {
 	flatRes["tags"] = r.Entry.Tags
 
 	for k, v := range r.Entry.Attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
+		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
 		flatRes[utils.FormatKey(k)] = v

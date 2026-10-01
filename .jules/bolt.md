@@ -1,0 +1,3 @@
+## 2026-07-03 - Avoid Per-Item Lowercase Lookup Maps in Result Processing Loops
+**Learning:** In result set flattening, creating temporary `map[string]string` maps and lowercasing strings per result item creates significant memory allocation overhead. Since attribute maps per result entry are usually small (2-10 items), pre-formatting selected keys outside the loop and using direct map lookups with fallback `strings.EqualFold` iteration is vastly faster and allocation-free.
+**Action:** When mapping or filtering slice results by user-specified keys, precompute key transformations outside the item loop and use allocation-free `strings.EqualFold` for case-insensitive matching instead of constructing per-item lookup maps.
