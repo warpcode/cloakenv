@@ -414,7 +414,6 @@ func TestJsonProviderInitialize_Errors(t *testing.T) {
 	}
 }
 
-
 func TestSerializeJsonVal(t *testing.T) {
 	tests := []struct {
 		name    string
