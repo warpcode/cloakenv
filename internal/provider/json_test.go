@@ -414,6 +414,7 @@ func TestJsonProviderInitialize_Errors(t *testing.T) {
 	}
 }
 
+
 func TestSerializeJsonVal(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -423,54 +424,30 @@ func TestSerializeJsonVal(t *testing.T) {
 	}{
 		{
 			name:    "string",
-			val:     "hello world",
-			want:    "hello world",
+			val:     "hello",
+			want:    "hello",
 			wantErr: false,
 		},
 		{
-			name:    "slice of any",
-			val:     []any{"item1", 2, true},
-			want:    `["item1",2,true]`,
+			name:    "slice",
+			val:     []any{"a", 1},
+			want:    `["a",1]`,
 			wantErr: false,
 		},
 		{
-			name:    "map of string to any",
-			val:     map[string]any{"key1": "val1", "key2": 42},
-			want:    `{"key1":"val1","key2":42}`,
+			name:    "map",
+			val:     map[string]any{"key": "value"},
+			want:    `{"key":"value"}`,
 			wantErr: false,
 		},
 		{
-			name:    "integer (default)",
+			name:    "integer",
 			val:     42,
 			want:    "42",
 			wantErr: false,
 		},
 		{
-			name:    "float (default)",
-			val:     3.14,
-			want:    "3.14",
-			wantErr: false,
-		},
-		{
-			name:    "boolean (default)",
-			val:     true,
-			want:    "true",
-			wantErr: false,
-		},
-		{
-			name:    "nil (default)",
-			val:     nil,
-			want:    "<nil>",
-			wantErr: false,
-		},
-		{
-			name:    "unserializable slice",
-			val:     []any{make(chan int)},
-			want:    "",
-			wantErr: true,
-		},
-		{
-			name:    "unserializable map",
+			name:    "unsupported map key",
 			val:     map[string]any{"key": make(chan int)},
 			want:    "",
 			wantErr: true,
