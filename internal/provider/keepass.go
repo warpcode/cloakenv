@@ -381,7 +381,7 @@ NextQueryTag:
 		s := tagString
 		for len(s) > 0 {
 			var tagSegment string
-			if idx := strings.IndexAny(s, ",;"); idx >= 0 {
+			if idx := strings.IndexByte(s, ','); idx >= 0 {
 				tagSegment = s[:idx]
 				s = s[idx+1:]
 			} else {

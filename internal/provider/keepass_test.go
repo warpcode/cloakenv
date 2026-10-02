@@ -281,18 +281,6 @@ func TestMatchEntryTags(t *testing.T) {
 			queryTags: []string{"production"},
 			want:      false,
 		},
-		{
-			name:      "semicolon delimited tags",
-			tagString: "Production; Database; Web",
-			queryTags: []string{"production", "database"},
-			want:      true,
-		},
-		{
-			name:      "mixed comma and semicolon delimited tags",
-			tagString: "Production, Database; Web",
-			queryTags: []string{"production", "web"},
-			want:      true,
-		},
 	}
 
 	for _, tc := range tests {
