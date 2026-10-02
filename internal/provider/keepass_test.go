@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/warpcode/cloakenv/internal/utils"
 	"github.com/zalando/go-keyring"
+
+	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 func TestKeePassProvider(t *testing.T) {
