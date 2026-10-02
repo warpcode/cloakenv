@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/utils"
-
 	"github.com/zalando/go-keyring"
 )
 
@@ -284,16 +283,52 @@ func TestMatchEntryTags(t *testing.T) {
 			want:      false,
 		},
 		{
-			name:      "leading trailing and unicode whitespace",
-			tagString: "  \t Production \n ,   Database \r ",
-			queryTags: []string{"production", "database"},
+			name:      "leading non-breaking space is trimmed",
+			tagString: " foo",
+			queryTags: []string{"foo"},
 			want:      true,
 		},
 		{
-			name:      "consecutive empty comma segments",
-			tagString: "Production, , , Database",
-			queryTags: []string{"production", "database"},
+			name:      "trailing non-breaking space is trimmed",
+			tagString: "foo ",
+			queryTags: []string{"foo"},
 			want:      true,
+		},
+		{
+			name:      "ideographic space is trimmed",
+			tagString: "　foo",
+			queryTags: []string{"foo"},
+			want:      true,
+		},
+		{
+			name:      "narrow no-break space is trimmed",
+			tagString: " foo",
+			queryTags: []string{"foo"},
+			want:      true,
+		},
+		{
+			name:      "non-breaking space inside tag is not removed",
+			tagString: "foo bar",
+			queryTags: []string{"foo"},
+			want:      false,
+		},
+		{
+			name:      "empty comma segments are ignored",
+			tagString: ",foo,,bar,",
+			queryTags: []string{"foo", "bar"},
+			want:      true,
+		},
+		{
+			name:      "semicolon is not a delimiter",
+			tagString: "work;home",
+			queryTags: []string{"work;home"},
+			want:      true,
+		},
+		{
+			name:      "semicolon is not a delimiter and does not match a fragment",
+			tagString: "work;home",
+			queryTags: []string{"work"},
+			want:      false,
 		},
 	}
 
@@ -307,44 +342,40 @@ func TestMatchEntryTags(t *testing.T) {
 	}
 }
 
+// TestMatchEntryTagsAgreesWithParseTagString verifies that search filtering and
+// serialization agree on what a tag is. matchEntryTags is used by Search, while
+// toEntry serializes tags via utils.ParseTagString. If these disagree, a tag can
+// be discoverable via one path and unresolvable via the other.
 func TestMatchEntryTagsAgreesWithParseTagString(t *testing.T) {
 	tagStrings := []string{
-		"Production, Database, Web",
-		"  prod , db  , web ",
-		"single",
-		"",
-		"a, b, c, d, e",
-		"prod, , db",
+		"Production, Database",
+		"  Production  ,  Database  ",
+		" Production ",
+		"　Production　",
+		"Production,　Database",
+		"work;home",
+		",foo,,bar,",
+		"\tProduction\n",
 	}
-
-	queries := [][]string{
-		{"production"},
-		{"db", "web"},
-		{"nonexistent"},
-		{"PROD", "DB"},
-		{},
-	}
+	queries := []string{"production", "database", "foo", "bar", "work", "work;home", "home"}
 
 	for _, ts := range tagStrings {
-		parsedTags := utils.ParseTagString(ts)
-		tagMap := make(map[string]bool, len(parsedTags))
-		for _, tag := range parsedTags {
-			tagMap[strings.ToLower(tag)] = true
-		}
-
+		parsed := utils.ParseTagString(ts)
 		for _, q := range queries {
-			want := true
-			for _, qt := range q {
-				if !tagMap[strings.ToLower(qt)] {
-					want = false
-					break
+			t.Run(ts+"/"+q, func(t *testing.T) {
+				searchHit := matchEntryTags(ts, []string{q})
+				serialized := false
+				for _, p := range parsed {
+					if strings.EqualFold(p, q) {
+						serialized = true
+						break
+					}
 				}
-			}
-
-			got := matchEntryTags(ts, q)
-			if got != want {
-				t.Errorf("matchEntryTags(%q, %v) = %v, want %v (agrees with ParseTagString)", ts, q, got, want)
-			}
+				if searchHit != serialized {
+					t.Errorf("disagreement for tagString=%q query=%q: Search matchEntryTags=%v but GetEntry/ParseTagString tags %q contain it=%v",
+						ts, q, searchHit, parsed, serialized)
+				}
+			})
 		}
 	}
 }
