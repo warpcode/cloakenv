@@ -420,6 +420,11 @@ func matchWildcard(pattern, text string) bool {
 	if pattern == "*" {
 		return true
 	}
+	// Fast path: if pattern contains no wildcard '*', perform direct string comparison
+	// without allocating a slice via strings.Split.
+	if !strings.Contains(pattern, "*") {
+		return pattern == text
+	}
 	parts := strings.Split(pattern, "*")
 	if len(parts) == 1 {
 		return pattern == text
