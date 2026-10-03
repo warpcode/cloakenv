@@ -187,95 +187,105 @@ func expandTemplate(re *regexp.Regexp, template string, src string, matchIndices
 	inDouble := false
 	escaped := false
 
-	for i := 0; i < len(template); i++ {
+	for i := 0; i < len(template); {
 		ch := template[i]
 
 		if escaped {
 			sb.WriteByte(ch)
 			escaped = false
+			i++
 			continue
 		}
 
 		if ch == '\\' && !inSingle {
 			sb.WriteByte(ch)
 			escaped = true
+			i++
 			continue
 		}
 
 		if ch == '\'' && !inDouble {
 			inSingle = !inSingle
 			sb.WriteByte(ch)
+			i++
 			continue
 		}
 
 		if ch == '"' && !inSingle {
 			inDouble = !inDouble
 			sb.WriteByte(ch)
+			i++
 			continue
 		}
 
 		if ch != '$' {
 			sb.WriteByte(ch)
-			continue
-		}
-
-		if i+1 >= len(template) {
-			sb.WriteByte('$')
-			break
-		}
-
-		next := template[i+1]
-		if next == '$' {
-			sb.WriteByte('$')
 			i++
 			continue
 		}
 
-		ctx := quoteUnquoted
-		if inSingle {
-			ctx = quoteSingle
-		} else if inDouble {
-			ctx = quoteDouble
-		}
-
-		if next == '{' {
-			closeIdx := strings.IndexByte(template[i+2:], '}')
-			if closeIdx != -1 {
-				nameOrNum := template[i+2 : i+2+closeIdx]
-				if isValidGroupNameOrNum(nameOrNum) {
-					group := findGroupIndex(names, nameOrNum)
-					if group >= 0 && group*2+1 < len(matchIndices) {
-						gStart := matchIndices[2*group]
-						gEnd := matchIndices[2*group+1]
-						if gStart >= 0 && gEnd >= gStart && gEnd <= len(src) {
-							val := src[gStart:gEnd]
-							val = escapeSubmatch(val, ctx)
-							sb.WriteString(val)
-						}
-						i += 2 + closeIdx
-						continue
-					}
-				}
-			}
-		}
-
-		_, group, consumed := parseSubmatchRef(names, template[i+1:])
-		if group >= 0 && group*2+1 < len(matchIndices) {
-			gStart := matchIndices[2*group]
-			gEnd := matchIndices[2*group+1]
-			if gStart >= 0 && gEnd >= gStart && gEnd <= len(src) {
-				val := src[gStart:gEnd]
-				val = escapeSubmatch(val, ctx)
-				sb.WriteString(val)
-			}
-			i += consumed
-			continue
-		}
-
-		sb.WriteByte('$')
+		ctx := getQuoteContext(inSingle, inDouble)
+		expanded, consumed := expandDollarRef(template[i:], names, src, matchIndices, ctx)
+		sb.WriteString(expanded)
+		i += consumed
 	}
 
 	return sb.String()
+}
+
+func getQuoteContext(inSingle, inDouble bool) quoteContext {
+	if inSingle {
+		return quoteSingle
+	}
+	if inDouble {
+		return quoteDouble
+	}
+	return quoteUnquoted
+}
+
+func getGroupValue(src string, matchIndices []int, group int, ctx quoteContext) (string, bool) {
+	if group < 0 || group*2+1 >= len(matchIndices) {
+		return "", false
+	}
+	gStart := matchIndices[2*group]
+	gEnd := matchIndices[2*group+1]
+	if gStart < 0 || gEnd < gStart || gEnd > len(src) {
+		return "", true
+	}
+	return escapeSubmatch(src[gStart:gEnd], ctx), true
+}
+
+// expandDollarRef handles expansion for a '$' prefix starting at s[0].
+// It returns the expanded string replacement and the total number of bytes
+// consumed from s (always >= 1).
+func expandDollarRef(s string, names []string, src string, matchIndices []int, ctx quoteContext) (string, int) {
+	if len(s) <= 1 {
+		return "$", 1
+	}
+
+	next := s[1]
+	if next == '$' {
+		return "$", 2
+	}
+
+	if next == '{' {
+		if closeIdx := strings.IndexByte(s[2:], '}'); closeIdx != -1 {
+			nameOrNum := s[2 : 2+closeIdx]
+			if isValidGroupNameOrNum(nameOrNum) {
+				group := findGroupIndex(names, nameOrNum)
+				if val, ok := getGroupValue(src, matchIndices, group, ctx); ok {
+					return val, 3 + closeIdx
+				}
+			}
+		}
+	}
+
+	_, group, consumed := parseSubmatchRef(names, s[1:])
+	if val, ok := getGroupValue(src, matchIndices, group, ctx); ok {
+		return val, 1 + consumed
+	}
+
+	return "$", 1
 }
 
 func isValidGroupNameOrNum(s string) bool {
