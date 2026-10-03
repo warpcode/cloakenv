@@ -46,6 +46,21 @@ func TestParseURI(t *testing.T) {
 			uri:     "",
 			wantErr: true,
 		},
+		{
+			name:    "null byte in scheme",
+			uri:     "key\x00ring://service/account",
+			wantErr: true,
+		},
+		{
+			name:    "null byte in location",
+			uri:     "keyring://service/acc\x00ount",
+			wantErr: true,
+		},
+		{
+			name:    "null byte in parameter",
+			uri:     "search://tags=prod\x00&title=db/Password",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
