@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/warpcode/cloakenv/internal/utils"
+
 	"github.com/zalando/go-keyring"
 )
 
@@ -281,6 +283,18 @@ func TestMatchEntryTags(t *testing.T) {
 			queryTags: []string{"production"},
 			want:      false,
 		},
+		{
+			name:      "leading trailing and unicode whitespace",
+			tagString: "  \t Production \n ,   Database \r ",
+			queryTags: []string{"production", "database"},
+			want:      true,
+		},
+		{
+			name:      "consecutive empty comma segments",
+			tagString: "Production, , , Database",
+			queryTags: []string{"production", "database"},
+			want:      true,
+		},
 	}
 
 	for _, tc := range tests {
@@ -290,5 +304,47 @@ func TestMatchEntryTags(t *testing.T) {
 				t.Errorf("matchEntryTags(%q, %v) = %v, want %v", tc.tagString, tc.queryTags, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestMatchEntryTagsAgreesWithParseTagString(t *testing.T) {
+	tagStrings := []string{
+		"Production, Database, Web",
+		"  prod , db  , web ",
+		"single",
+		"",
+		"a, b, c, d, e",
+		"prod, , db",
+	}
+
+	queries := [][]string{
+		{"production"},
+		{"db", "web"},
+		{"nonexistent"},
+		{"PROD", "DB"},
+		{},
+	}
+
+	for _, ts := range tagStrings {
+		parsedTags := utils.ParseTagString(ts)
+		tagMap := make(map[string]bool, len(parsedTags))
+		for _, tag := range parsedTags {
+			tagMap[strings.ToLower(tag)] = true
+		}
+
+		for _, q := range queries {
+			want := true
+			for _, qt := range q {
+				if !tagMap[strings.ToLower(qt)] {
+					want = false
+					break
+				}
+			}
+
+			got := matchEntryTags(ts, q)
+			if got != want {
+				t.Errorf("matchEntryTags(%q, %v) = %v, want %v (agrees with ParseTagString)", ts, q, got, want)
+			}
+		}
 	}
 }
