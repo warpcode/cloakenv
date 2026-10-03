@@ -290,7 +290,7 @@ func TestFlattenSearchResults(t *testing.T) {
 						Title: "Real Title",
 						Tags:  []string{"tag1"},
 						Attributes: map[string]any{
-							"TITLE":    "conflict_title",
+							"TİTLE":    "dotted-I-title",
 							"password": "secret_password",
 						},
 					},
@@ -327,7 +327,7 @@ func TestFlattenSearchResults(t *testing.T) {
 			selectedKeys: []string{"i", "s"},
 			want: []map[string]any{
 				{
-					"_": "dotted-I-val",
+					"I": nil,
 					"S": nil,
 				},
 			},
