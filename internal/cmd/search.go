@@ -83,32 +83,30 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 func flattenSearchResults(results []provider.SearchResult, selectedKeys []string) []map[string]any {
 	flatResults := make([]map[string]any, len(results))
 
-	var selectedKeysLower, selectedKeysFormatted []string
+	var selectedKeysLower []string
 	if len(selectedKeys) > 0 {
-		// Precompute lowercased and formatted selected keys once outside the results loop
+		// Precompute lowercased selected keys once outside the results loop
 		// to avoid per-entry allocations.
 		selectedKeysLower = make([]string, len(selectedKeys))
-		selectedKeysFormatted = make([]string, len(selectedKeys))
 		for i, field := range selectedKeys {
 			selectedKeysLower[i] = strings.ToLower(field)
-			selectedKeysFormatted[i] = utils.FormatKey(field)
 		}
 	}
 
 	for i, r := range results {
-		flatResults[i] = flattenEntry(r, selectedKeys, selectedKeysLower, selectedKeysFormatted)
+		flatResults[i] = flattenEntry(r, selectedKeys, selectedKeysLower)
 	}
 	return flatResults
 }
 
-func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string, selectedKeysFormatted []string) map[string]any {
+func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
 	if len(selectedKeys) > 0 {
-		return flattenSelectedKeys(r, selectedKeys, selectedKeysLower, selectedKeysFormatted)
+		return flattenSelectedKeys(r, selectedKeys, selectedKeysLower)
 	}
 	return flattenDefaultEntry(r)
 }
 
-func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string, selectedKeysFormatted []string) map[string]any {
+func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
 	flatRes := make(map[string]any, len(selectedKeys))
 
 	for j, field := range selectedKeys {
