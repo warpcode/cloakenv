@@ -53,7 +53,7 @@ vaults:
 
   # Defines the custom_static:// URI scheme using inline config values.
   # Useful for testing or statically configured fallback lists.
-  # resolve_values: true enables URI resolution for attribute values — whole-value only.
+  # resolve_values: true enables recursive ${scheme://...} resolution of attribute values, including inline interpolation within a larger string.
   # Example: Password below is resolved from custom_single://my_static_vault:secret_key
   custom_static:
     provider: "custom_vault"
