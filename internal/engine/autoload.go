@@ -250,7 +250,7 @@ func getGroupValue(src string, matchIndices []int, group int, ctx quoteContext) 
 	gStart := matchIndices[2*group]
 	gEnd := matchIndices[2*group+1]
 	if gStart < 0 || gEnd < gStart || gEnd > len(src) {
-		return "", false
+		return "", true
 	}
 	return escapeSubmatch(src[gStart:gEnd], ctx), true
 }

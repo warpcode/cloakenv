@@ -251,53 +251,76 @@ func TestMatchRunAlias(t *testing.T) {
 func TestExpandTemplate(t *testing.T) {
 	re := regexp.MustCompile(`^cmd\s+(?P<arg1>\S+)\s+(?P<arg2>\S+)$`)
 	src := "cmd hello world"
-	matchIndices := re.FindStringSubmatchIndex(src)
 
 	tests := []struct {
 		name     string
+		re       *regexp.Regexp
+		src      string
 		template string
 		want     string
 	}{
 		{
 			name:     "numbered group expansion",
+			re:       re,
+			src:      src,
 			template: "exec $1 $2",
 			want:     "exec hello world",
 		},
 		{
 			name:     "braced group expansion by number and name",
+			re:       re,
+			src:      src,
 			template: "exec ${1} ${arg2}",
 			want:     "exec hello world",
 		},
 		{
 			name:     "escaped dollar signs",
+			re:       re,
+			src:      src,
 			template: "exec $$ $1",
 			want:     "exec $ hello",
 		},
 		{
 			name:     "trailing dollar sign",
+			re:       re,
+			src:      src,
 			template: "exec $1$",
 			want:     "exec hello$",
 		},
 		{
 			name:     "invalid or missing group name/number fallback",
+			re:       re,
+			src:      src,
 			template: "exec $99 ${nonexistent} $",
 			want:     "exec $99 ${nonexistent} $",
 		},
 		{
 			name:     "single quote context escaping",
+			re:       re,
+			src:      src,
 			template: "exec '$1'",
 			want:     "exec 'hello'",
 		},
 		{
 			name:     "double quote context escaping",
+			re:       re,
+			src:      src,
 			template: `exec "$1"`,
 			want:     `exec "hello"`,
+		},
+		{
+			name:     "named groups that do not participate in the match",
+			re:       regexp.MustCompile(`(?P<group1>hello)|(?P<group2>world)`),
+			src:      "world",
+			template: "echo ${group1} ${group2}",
+			want:     "echo  world",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := expandTemplate(re, tt.template, src, matchIndices)
+			mIndices := tt.re.FindStringSubmatchIndex(tt.src)
+			got := expandTemplate(tt.re, tt.template, tt.src, mIndices)
 			if got != tt.want {
 				t.Errorf("expandTemplate(%q) = %q, want %q", tt.template, got, tt.want)
 			}
