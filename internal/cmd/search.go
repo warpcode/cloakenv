@@ -104,14 +104,6 @@ func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLo
 func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
 	flatRes := make(map[string]any, len(selectedKeys))
 
-	var lowerAttrs map[string]string
-	if len(r.Entry.Attributes) > 0 {
-		lowerAttrs = make(map[string]string, len(r.Entry.Attributes))
-		for k := range r.Entry.Attributes {
-			lowerAttrs[strings.ToLower(k)] = k
-		}
-	}
-
 	for j, field := range selectedKeys {
 		fieldLower := selectedKeysLower[j]
 		switch fieldLower {
@@ -126,19 +118,27 @@ func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selecte
 		case "tags":
 			flatRes["tags"] = r.Entry.Tags
 		default:
-			key, val := resolveSelectedAttribute(r.Entry.Attributes, lowerAttrs, field, fieldLower)
+			key, val := resolveSelectedAttribute(r.Entry.Attributes, field)
 			flatRes[key] = val
 		}
 	}
 	return flatRes
 }
 
-func resolveSelectedAttribute(attributes map[string]any, lowerAttrs map[string]string, field, fieldLower string) (string, any) {
-	if origKey, ok := lowerAttrs[fieldLower]; ok {
-		return utils.FormatKey(origKey), attributes[origKey]
-	}
+// resolveSelectedAttribute resolves requested fields from entry attributes.
+// To avoid per-entry map allocations (e.g. lowercasing all attribute keys),
+// it first attempts a direct map lookup. If that fails, it scans the attributes map
+// using strings.EqualFold for zero-allocation case-insensitive matching.
+func resolveSelectedAttribute(attributes map[string]any, field string) (string, any) {
+	// Fast path: exact key match.
 	if v, ok := attributes[field]; ok {
 		return utils.FormatKey(field), v
+	}
+	// Fallback path: zero-allocation case-insensitive scan.
+	for k, v := range attributes {
+		if strings.EqualFold(k, field) {
+			return utils.FormatKey(k), v
+		}
 	}
 	return utils.FormatKey(field), nil
 }
@@ -152,8 +152,8 @@ func flattenDefaultEntry(r provider.SearchResult) map[string]any {
 	flatRes["tags"] = r.Entry.Tags
 
 	for k, v := range r.Entry.Attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
+		// Use strings.EqualFold to avoid allocating a lowercased string per attribute.
+		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
 		flatRes[utils.FormatKey(k)] = v
