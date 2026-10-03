@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
@@ -245,6 +246,63 @@ func TestMatchRunAlias(t *testing.T) {
 			t.Errorf("expected IsRunAlias with empty cmdArgs to return false")
 		}
 	})
+}
+
+func TestExpandTemplate(t *testing.T) {
+	re := regexp.MustCompile(`^cmd\s+(?P<arg1>\S+)\s+(?P<arg2>\S+)$`)
+	src := "cmd hello world"
+	matchIndices := re.FindStringSubmatchIndex(src)
+
+	tests := []struct {
+		name     string
+		template string
+		want     string
+	}{
+		{
+			name:     "numbered group expansion",
+			template: "exec $1 $2",
+			want:     "exec hello world",
+		},
+		{
+			name:     "braced group expansion by number and name",
+			template: "exec ${1} ${arg2}",
+			want:     "exec hello world",
+		},
+		{
+			name:     "escaped dollar signs",
+			template: "exec $$ $1",
+			want:     "exec $ hello",
+		},
+		{
+			name:     "trailing dollar sign",
+			template: "exec $1$",
+			want:     "exec hello$",
+		},
+		{
+			name:     "invalid or missing group name/number fallback",
+			template: "exec $99 ${nonexistent} $",
+			want:     "exec $99 ${nonexistent} $",
+		},
+		{
+			name:     "single quote context escaping",
+			template: "exec '$1'",
+			want:     "exec 'hello'",
+		},
+		{
+			name:     "double quote context escaping",
+			template: `exec "$1"`,
+			want:     `exec "hello"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := expandTemplate(re, tt.template, src, matchIndices)
+			if got != tt.want {
+				t.Errorf("expandTemplate(%q) = %q, want %q", tt.template, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestMatchCommandRule_Security(t *testing.T) {
