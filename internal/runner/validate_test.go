@@ -93,6 +93,20 @@ func TestValidateCommand(t *testing.T) {
 			wantStderr: "",
 		},
 		{
+			name:       "env variable double equals only",
+			cmdArgs:    []string{"echo", "hello"},
+			env:        []string{"=="},
+			wantCode:   1,
+			wantStderr: "Invalid environment variable at index 0: missing '=' or key is empty\n",
+		},
+		{
+			name:       "windows drive env variable missing second equals",
+			cmdArgs:    []string{"echo", "hello"},
+			env:        []string{"=C:"},
+			wantCode:   1,
+			wantStderr: "Invalid environment variable at index 0: missing '=' or key is empty\n",
+		},
+		{
 			name:       "valid env variable with multiple equals",
 			cmdArgs:    []string{"echo", "hello"},
 			env:        []string{"URL=https://example.com?a=1&b=2"},
