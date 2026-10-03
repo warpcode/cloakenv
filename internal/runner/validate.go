@@ -30,6 +30,13 @@ func validateCommand(cmdArgs []string, env []string) int {
 
 	for i, e := range env {
 		key, _, ok := strings.Cut(e, "=")
+		if strings.HasPrefix(e, "=") {
+			k, _, hasVal := strings.Cut(e[1:], "=")
+			if hasVal && k != "" {
+				key = "=" + k
+				ok = true
+			}
+		}
 		if !ok || key == "" {
 			fmt.Fprintf(os.Stderr, "Invalid environment variable at index %d: missing '=' or key is empty\n", i)
 			return 1
