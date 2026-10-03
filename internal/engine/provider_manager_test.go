@@ -149,6 +149,65 @@ func TestClearCache(t *testing.T) {
 	})
 }
 
+func TestProviderManager_MappingIntegration(t *testing.T) {
+	rule1 := config.MappingRule{Match: "env:(.*)", Key: "$1"}
+	_ = rule1.Compile()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"mapped_vault": {
+				Provider: "custom_vault",
+				Mapping:  []config.MappingRule{rule1},
+				Entities: map[string]map[string]any{
+					"app": {
+						"env:OPENROUTER_API_KEY": "sk-test-secret",
+						"UNMAPPED":               "unmapped_value",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	ctx := context.Background()
+	p, isBuiltin, err := orch.providerManager.GetProvider(ctx, "mapped_vault")
+	if err != nil {
+		t.Fatalf("failed to get provider: %v", err)
+	}
+	if isBuiltin {
+		t.Error("expected isBuiltin to be false")
+	}
+
+	val, err := p.GetSecret(ctx, "app:OPENROUTER_API_KEY")
+	if err != nil {
+		t.Fatalf("GetSecret failed: %v", err)
+	}
+	if val != "sk-test-secret" {
+		t.Errorf("expected secret value 'sk-test-secret', got %q", val)
+	}
+
+	searchable, ok := p.(provider.SearchableProvider)
+	if !ok {
+		t.Fatal("expected provider to implement SearchableProvider")
+	}
+
+	entry, err := searchable.GetEntry(ctx, "app")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+
+	if entry.Attributes["OPENROUTER_API_KEY"] != "sk-test-secret" {
+		t.Errorf("expected mapped attribute OPENROUTER_API_KEY='sk-test-secret', got %v", entry.Attributes["OPENROUTER_API_KEY"])
+	}
+	if entry.Attributes["UNMAPPED"] != "unmapped_value" {
+		t.Errorf("expected unmapped attribute UNMAPPED='unmapped_value', got %v", entry.Attributes["UNMAPPED"])
+	}
+}
+
 func TestProviderManagerUnknownSchemeDoesNotAllocateLock(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
