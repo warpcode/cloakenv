@@ -98,18 +98,14 @@ func ApplyMappingAndFilteringToAttributes(
 		matched := false
 		for i := range compiledRules {
 			rule := &compiledRules[i]
-			if rule.CompiledRegex != nil {
-				loc := rule.CompiledRegex.FindStringSubmatchIndex(k)
-				if loc != nil {
-					template := convertBackslashGroups(rule.Key)
-					res := rule.CompiledRegex.ExpandString(nil, template, k, loc)
-					newKey := string(res)
-					if newKey != "" {
-						mappedList = append(mappedList, mappedItem{key: newKey, val: valToUse})
-						mappedNewKeys[newKey] = true
-						matched = true
-						break
-					}
+			if rule.CompiledRegex != nil && rule.CompiledRegex.MatchString(k) {
+				template := convertBackslashGroups(rule.Key)
+				newKey := rule.CompiledRegex.ReplaceAllString(k, template)
+				if newKey != "" {
+					mappedList = append(mappedList, mappedItem{key: newKey, val: valToUse})
+					mappedNewKeys[newKey] = true
+					matched = true
+					break
 				}
 			}
 		}
@@ -221,15 +217,54 @@ func getRawEntryWithPath(p SecretProvider, ctx context.Context, location string)
 // GetSecret resolves a secret value, querying mapped entry attributes first.
 // If an entry is found, lookup is performed exclusively in the mapped+filtered view.
 func (m *MappingProvider) GetSecret(ctx context.Context, location string) (string, error) {
+	// For search provider (virtual stored search), resolve through single snapshot
+	if rawProvider, ok := m.underlying.(interface {
+		GetSecretWithRaw(ctx context.Context, location string) (string, any, string, string, error)
+	}); ok {
+		canonicalKey, rawVal, path, title, err := rawProvider.GetSecretWithRaw(ctx, location)
+		if err != nil {
+			return "", err
+		}
+
+		var rootPrefixes []string
+		if rpProvider, ok := m.underlying.(interface{ RootPrefixes() []string }); ok {
+			rootPrefixes = rpProvider.RootPrefixes()
+		}
+
+		singleAttrMap := map[string]any{canonicalKey: rawVal}
+		mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
+			singleAttrMap,
+			m.rules,
+			m.includeFields,
+			m.excludeFields,
+			path,
+			rootPrefixes,
+			title,
+		)
+		if mapErr != nil {
+			return "", mapErr
+		}
+
+		if val, ok := mappedAttrs[canonicalKey]; ok {
+			return serializeVal(val)
+		}
+		for _, val := range mappedAttrs {
+			return serializeVal(val)
+		}
+		return "", fmt.Errorf("secret %q not found or excluded by vault configuration", location)
+	}
+
 	_, isSearchable := m.underlying.(SearchableProvider)
 
 	if isSearchable {
 		var entityLoc string
 		var attrName string
+		var hasColon bool
 		if strings.Contains(location, ":") {
 			parts := strings.SplitN(location, ":", 2)
 			entityLoc = parts[0]
 			attrName = parts[1]
+			hasColon = true
 		} else {
 			entityLoc = location
 			attrName = location
@@ -238,6 +273,42 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 		var rootPrefixes []string
 		if rpProvider, ok := m.underlying.(interface{ RootPrefixes() []string }); ok {
 			rootPrefixes = rpProvider.RootPrefixes()
+		}
+
+		checkMappedAttrs := func(mappedAttrs map[string]any, dotPath string) (string, bool) {
+			if attrName != "" {
+				if val, ok := mappedAttrs[attrName]; ok {
+					sVal, _ := serializeVal(val)
+					return sVal, true
+				}
+			}
+			if val, ok := mappedAttrs[location]; ok {
+				sVal, _ := serializeVal(val)
+				return sVal, true
+			}
+			if attrName != "" {
+				if val, err := resolveDotPath(mappedAttrs, attrName); err == nil {
+					sVal, _ := serializeVal(val)
+					return sVal, true
+				}
+			}
+			if dotPath != "" {
+				if val, err := resolveDotPath(mappedAttrs, dotPath); err == nil {
+					sVal, _ := serializeVal(val)
+					return sVal, true
+				}
+			}
+			if val, err := resolveDotPath(mappedAttrs, location); err == nil {
+				sVal, _ := serializeVal(val)
+				return sVal, true
+			}
+			if !hasColon {
+				if val, ok := mappedAttrs["Password"]; ok {
+					sVal, _ := serializeVal(val)
+					return sVal, true
+				}
+			}
+			return "", false
 		}
 
 		if entityLoc != "" {
@@ -255,27 +326,81 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 				if mapErr != nil {
 					return "", mapErr
 				}
-				if attrName != "" {
-					if val, ok := mappedAttrs[attrName]; ok {
-						return serializeVal(val)
-					}
-				}
-				if val, ok := mappedAttrs[location]; ok {
-					return serializeVal(val)
-				}
-				if attrName != "" {
-					if val, err := resolveDotPath(mappedAttrs, attrName); err == nil {
-						return serializeVal(val)
-					}
-				}
-				if val, err := resolveDotPath(mappedAttrs, location); err == nil {
-					return serializeVal(val)
+				if val, ok := checkMappedAttrs(mappedAttrs, ""); ok {
+					return val, nil
 				}
 				return "", fmt.Errorf("secret %q not found or excluded by vault configuration", location)
 			}
+
+			// Try stripping root prefixes (e.g. "hosts.ssh_host.hostname" -> "ssh_host.hostname")
+			for _, rp := range rootPrefixes {
+				if rp != "" && strings.HasPrefix(entityLoc, rp+".") {
+					stripped := strings.TrimPrefix(entityLoc, rp+".")
+					entityName := stripped
+					nestedDotPath := ""
+					if dotIdx := strings.Index(stripped, "."); dotIdx >= 0 {
+						entityName = stripped[:dotIdx]
+						nestedDotPath = stripped[dotIdx+1:]
+					}
+					if attrName != "" && hasColon {
+						if nestedDotPath != "" {
+							nestedDotPath = nestedDotPath + "." + attrName
+						} else {
+							nestedDotPath = attrName
+						}
+					}
+					rawEntry, authoritativePath, err := getRawEntryWithPath(m.underlying, ctx, entityName)
+					if err == nil && rawEntry.Attributes != nil {
+						mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
+							rawEntry.Attributes,
+							m.rules,
+							m.includeFields,
+							m.excludeFields,
+							authoritativePath,
+							rootPrefixes,
+							rawEntry.Title,
+						)
+						if mapErr != nil {
+							return "", mapErr
+						}
+						if val, ok := checkMappedAttrs(mappedAttrs, nestedDotPath); ok {
+							return val, nil
+						}
+						return "", fmt.Errorf("secret %q not found or excluded by vault configuration", location)
+					}
+				}
+			}
+
+			// Multi-entity dot path resolution without root prefix (e.g. "ssh_host.hostname" -> entity "ssh_host", path "hostname")
+			if dotIdx := strings.Index(entityLoc, "."); dotIdx >= 0 {
+				baseEntity := entityLoc[:dotIdx]
+				nestedDotPath := entityLoc[dotIdx+1:]
+				if attrName != "" && hasColon {
+					nestedDotPath = nestedDotPath + "." + attrName
+				}
+				rawEntry, authoritativePath, err := getRawEntryWithPath(m.underlying, ctx, baseEntity)
+				if err == nil && rawEntry.Attributes != nil {
+					mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
+						rawEntry.Attributes,
+						m.rules,
+						m.includeFields,
+						m.excludeFields,
+						authoritativePath,
+						rootPrefixes,
+						rawEntry.Title,
+					)
+					if mapErr != nil {
+						return "", mapErr
+					}
+					if val, ok := checkMappedAttrs(mappedAttrs, nestedDotPath); ok {
+						return val, nil
+					}
+					return "", fmt.Errorf("secret %q not found or excluded by vault configuration", location)
+				}
+			}
 		}
 
-		// Also try single-entity entry (empty location)
+		// Single-entity entry (empty location)
 		rawEntry, authoritativePath, err := getRawEntryWithPath(m.underlying, ctx, "")
 		if err == nil && rawEntry.Attributes != nil {
 			mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
@@ -290,21 +415,8 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 			if mapErr != nil {
 				return "", mapErr
 			}
-			if val, ok := mappedAttrs[location]; ok {
-				return serializeVal(val)
-			}
-			if attrName != "" {
-				if val, ok := mappedAttrs[attrName]; ok {
-					return serializeVal(val)
-				}
-			}
-			if val, err := resolveDotPath(mappedAttrs, location); err == nil {
-				return serializeVal(val)
-			}
-			if attrName != "" {
-				if val, err := resolveDotPath(mappedAttrs, attrName); err == nil {
-					return serializeVal(val)
-				}
+			if val, ok := checkMappedAttrs(mappedAttrs, ""); ok {
+				return val, nil
 			}
 			return "", fmt.Errorf("secret %q not found or excluded by vault configuration", location)
 		}

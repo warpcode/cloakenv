@@ -208,6 +208,86 @@ func TestProviderManager_MappingIntegration(t *testing.T) {
 	}
 }
 
+func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
+	rule1 := config.MappingRule{Match: "env:(.*)", Key: "$1"}
+	_ = rule1.Compile()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"composed_vault": {
+				Provider:      "custom_vault",
+				Mapping:       []config.MappingRule{rule1},
+				IncludeFields: []string{"OPENROUTER_API_KEY", "test:foo", "INCLUDED_FIELD"},
+				ExcludeFields: []string{"EXCLUDED_FIELD"},
+				Entities: map[string]map[string]any{
+					"app": {
+						"env:OPENROUTER_API_KEY": "sk-test-secret",
+						"env:test:foo":           "bar",
+						"INCLUDED_FIELD":         "included_val",
+						"EXCLUDED_FIELD":         "excluded_val",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	ctx := context.Background()
+	p, _, err := orch.providerManager.GetProvider(ctx, "composed_vault")
+	if err != nil {
+		t.Fatalf("failed to get provider: %v", err)
+	}
+
+	// 1. GetSecret for mapped key succeeds
+	val, err := p.GetSecret(ctx, "app:OPENROUTER_API_KEY")
+	if err != nil {
+		t.Fatalf("GetSecret app:OPENROUTER_API_KEY failed: %v", err)
+	}
+	if val != "sk-test-secret" {
+		t.Errorf("expected secret value 'sk-test-secret', got %q", val)
+	}
+
+	// 2. GetSecret for renamed original key fails
+	_, err = p.GetSecret(ctx, "app:env:OPENROUTER_API_KEY")
+	if err == nil {
+		t.Fatal("expected GetSecret for renamed original key to fail, got nil error")
+	}
+
+	// 3. GetSecret for excluded key fails
+	_, err = p.GetSecret(ctx, "app:EXCLUDED_FIELD")
+	if err == nil {
+		t.Fatal("expected GetSecret for excluded key to fail, got nil error")
+	}
+
+	// 4. GetEntry attributes contain mapped and included keys, but NOT excluded or renamed key
+	searchable, ok := p.(provider.SearchableProvider)
+	if !ok {
+		t.Fatal("expected provider to implement SearchableProvider")
+	}
+
+	entry, err := searchable.GetEntry(ctx, "app")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+
+	if _, ok := entry.Attributes["OPENROUTER_API_KEY"]; !ok {
+		t.Error("expected OPENROUTER_API_KEY to be present in GetEntry")
+	}
+	if _, ok := entry.Attributes["INCLUDED_FIELD"]; !ok {
+		t.Error("expected INCLUDED_FIELD to be present in GetEntry")
+	}
+	if _, ok := entry.Attributes["EXCLUDED_FIELD"]; ok {
+		t.Error("expected EXCLUDED_FIELD to be absent from GetEntry")
+	}
+	if _, ok := entry.Attributes["env:OPENROUTER_API_KEY"]; ok {
+		t.Error("expected env:OPENROUTER_API_KEY to be absent from GetEntry")
+	}
+}
+
 func TestProviderManagerUnknownSchemeDoesNotAllocateLock(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{

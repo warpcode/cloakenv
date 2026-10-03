@@ -151,11 +151,14 @@ func projectRecursive(val any, pfx string, prefixes []string, includeFields, exc
 			}
 			var childCandidates []string
 			childCandidates = append(childCandidates, childPfx, k)
+			if pfx != "" {
+				childCandidates = append(childCandidates, pfx+":"+k)
+			}
 			for _, p := range prefixes {
 				if p != "" {
-					childCandidates = append(childCandidates, p+"."+k)
+					childCandidates = append(childCandidates, p+"."+k, p+":"+k)
 					if pfx != "" {
-						childCandidates = append(childCandidates, p+"."+pfx+"."+k)
+						childCandidates = append(childCandidates, p+"."+pfx+"."+k, p+"."+pfx+":"+k)
 					}
 				}
 			}
