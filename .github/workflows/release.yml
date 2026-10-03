@@ -1,9 +1,9 @@
 name: Build & Release
 
 on:
+  schedule:
+    - cron: '0 0 * * *' # Run nightly at midnight UTC
   push:
-    branches:
-      - main
     tags:
       - 'v*' # Triggers on release tags like v1.0.0
   workflow_dispatch:
@@ -20,20 +20,43 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event_name == 'schedule' && 'main' || '' }}
           fetch-depth: 0 # Essential for tagging and tag manipulation
 
+      - name: Check for recent commits on main
+        id: check-commits
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            COMMITS=$(git log origin/main --since="24 hours ago" --oneline)
+            if [ -z "$COMMITS" ]; then
+              echo "No commits on main in the last 24 hours. Skipping nightly build."
+              echo "has_commits=false" >> $GITHUB_OUTPUT
+            else
+              echo "Found commits on main in the last 24 hours:"
+              echo "$COMMITS"
+              echo "has_commits=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "Triggered manually or via tag push."
+            echo "has_commits=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Set up Go
+        if: steps.check-commits.outputs.has_commits == 'true'
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
           cache: true
 
-      - name: Get Commit Info
+      - name: Get Commit Info & Set Dev Tag Name
+        if: steps.check-commits.outputs.has_commits == 'true'
         run: |
           echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
           echo "COMMIT_MSG=$(git log -1 --format=%s)" >> $GITHUB_ENV
+          echo "DEV_TAG=dev-$(date -u +'%Y-%m-%d')" >> $GITHUB_ENV
 
       - name: Build All Targets
+        if: steps.check-commits.outputs.has_commits == 'true'
         run: |
           mkdir -p dist
           
@@ -60,32 +83,33 @@ jobs:
           done
 
       - name: Generate Checksums
+        if: steps.check-commits.outputs.has_commits == 'true'
         run: |
           cd dist
           sha256sum cloakenv-* > checksums.txt
           cat checksums.txt
 
       # ----------------------------------------------------
-      # Mode A: Dev Release (Every push to main, or manual runs)
+      # Mode A: Dev Release (Nightly or manual dispatch)
       # ----------------------------------------------------
-      - name: Move Dev Tag
+      - name: Create Dev Tag
         if: |
-          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-          github.event_name == 'workflow_dispatch'
+          steps.check-commits.outputs.has_commits == 'true' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -f dev
-          git push --force origin dev
+          git tag -f "${DEV_TAG}"
+          git push --force origin "${DEV_TAG}"
 
       - name: Publish Dev Release
         if: |
-          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-          github.event_name == 'workflow_dispatch'
+          steps.check-commits.outputs.has_commits == 'true' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: dev
-          name: "Development Build"
+          tag_name: ${{ env.DEV_TAG }}
+          name: "Development Build (${{ env.DEV_TAG }})"
           body: |
             These are the latest development binaries of `cloakenv` compiled from `main`.
             
