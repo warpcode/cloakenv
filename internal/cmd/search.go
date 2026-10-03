@@ -83,13 +83,16 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 func flattenSearchResults(results []provider.SearchResult, selectedKeys []string) []map[string]any {
 	flatResults := make([]map[string]any, len(results))
 
-	// Precompute lowercased and formatted selected keys once outside the results loop
-	// to avoid per-entry allocations.
-	selectedKeysLower := make([]string, len(selectedKeys))
-	selectedKeysFormatted := make([]string, len(selectedKeys))
-	for i, field := range selectedKeys {
-		selectedKeysLower[i] = strings.ToLower(field)
-		selectedKeysFormatted[i] = utils.FormatKey(field)
+	var selectedKeysLower, selectedKeysFormatted []string
+	if len(selectedKeys) > 0 {
+		// Precompute lowercased and formatted selected keys once outside the results loop
+		// to avoid per-entry allocations.
+		selectedKeysLower = make([]string, len(selectedKeys))
+		selectedKeysFormatted = make([]string, len(selectedKeys))
+		for i, field := range selectedKeys {
+			selectedKeysLower[i] = strings.ToLower(field)
+			selectedKeysFormatted[i] = utils.FormatKey(field)
+		}
 	}
 
 	for i, r := range results {
