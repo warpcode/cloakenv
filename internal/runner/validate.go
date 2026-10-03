@@ -7,7 +7,8 @@ import (
 )
 
 // validateCommand performs platform-agnostic checks on cmdArgs and env.
-// It verifies that command args are non-empty, valid, and contain no null bytes.
+// It verifies that command args are non-empty, valid, and contain no null bytes,
+// and that environment variables are valid KEY=VALUE pairs with non-empty keys.
 func validateCommand(cmdArgs []string, env []string) int {
 	if len(cmdArgs) == 0 {
 		fmt.Fprintf(os.Stderr, "Command missing\n")
@@ -28,8 +29,12 @@ func validateCommand(cmdArgs []string, env []string) int {
 	}
 
 	for i, e := range env {
+		key, _, ok := strings.Cut(e, "=")
+		if !ok || key == "" {
+			fmt.Fprintf(os.Stderr, "Invalid environment variable at index %d: missing '=' or key is empty\n", i)
+			return 1
+		}
 		if strings.IndexByte(e, 0) != -1 {
-			key, _, _ := strings.Cut(e, "=")
 			fmt.Fprintf(os.Stderr, "Invalid environment variable %q at index %d: contains null byte\n", key, i)
 			return 1
 		}
