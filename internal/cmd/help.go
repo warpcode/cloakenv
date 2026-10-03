@@ -149,7 +149,7 @@ Arguments:
   <entry-uri>     The structured entry URI to retrieve
 
 Flags:
-  -m <entry-uri>  Merge entry attributes (can be specified multiple times)
+  -m entry-uri    Merge attributes from an entry. Can target a single attribute using :attribute (repeatable)
   -e KEY=uri      Explicit environment/key override (can be specified multiple times)
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
