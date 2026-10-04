@@ -26,8 +26,7 @@ func convertBackslashGroups(template string) string {
 }
 
 // ApplyMappingAndFilteringToAttributes transforms an attribute map by applying regex key mapping rules,
-// then applies include_fields and exclude_fields glob filtering to unmapped keys using path-aware filtering.
-// Mapped keys preserve their original values and are exempt from include_fields and exclude_fields filtering.
+// then applies include_fields and exclude_fields glob filtering to the mapped attributes using path-aware filtering.
 func ApplyMappingAndFilteringToAttributes(
 	attrs map[string]any,
 	rules []config.MappingRule,
@@ -56,23 +55,52 @@ func ApplyMappingAndFilteringToAttributes(
 	}
 	sort.Strings(keys)
 
+	rawUnmappedKeys := make(map[string]bool)
+	for _, k := range keys {
+		matched := false
+		for i := range compiledRules {
+			if compiledRules[i].CompiledRegex != nil && compiledRules[i].CompiledRegex.MatchString(k) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			rawUnmappedKeys[k] = true
+		}
+	}
+
 	type mappedItem struct {
 		key string
 		val any
 	}
 	var mappedList []mappedItem
 	mappedNewKeys := make(map[string]bool)
-	unmappedAttrs := make(map[string]any)
 
 	for _, k := range keys {
 		v := attrs[k]
-		valToUse := v
 
-		childPath := k
-		if entryPath != "" {
-			childPath = entryPath + "." + k
+		// Determine post-mapping key for k
+		postKey := k
+		matched := false
+		for i := range compiledRules {
+			rule := &compiledRules[i]
+			if rule.CompiledRegex != nil && rule.CompiledRegex.MatchString(k) {
+				template := convertBackslashGroups(rule.Key)
+				newKey := rule.CompiledRegex.ReplaceAllString(k, template)
+				if newKey != "" {
+					postKey = newKey
+					matched = true
+					break
+				}
+			}
 		}
 
+		childPath := postKey
+		if entryPath != "" {
+			childPath = entryPath + "." + postKey
+		}
+
+		valToUse := v
 		if m, isMap := normalizeEntryMap(v); isMap {
 			mappedSub, err := ApplyMappingAndFilteringToAttributes(m, compiledRules, includeFields, excludeFields, childPath, rootPrefixes, entryTitle)
 			if err != nil {
@@ -95,71 +123,42 @@ func ApplyMappingAndFilteringToAttributes(
 			valToUse = newSlice
 		}
 
-		matched := false
-		for i := range compiledRules {
-			rule := &compiledRules[i]
-			if rule.CompiledRegex != nil && rule.CompiledRegex.MatchString(k) {
-				template := convertBackslashGroups(rule.Key)
-				newKey := rule.CompiledRegex.ReplaceAllString(k, template)
-				if newKey != "" {
-					mappedList = append(mappedList, mappedItem{key: newKey, val: valToUse})
-					mappedNewKeys[newKey] = true
-					matched = true
-					break
-				}
-			}
-		}
-
-		if !matched {
-			unmappedAttrs[k] = valToUse
+		if matched {
+			mappedList = append(mappedList, mappedItem{key: postKey, val: valToUse})
+			mappedNewKeys[postKey] = true
+		} else {
+			mappedList = append(mappedList, mappedItem{key: k, val: valToUse})
 		}
 	}
 
-	mappedAttrs := make(map[string]any, len(mappedList))
+	postMapAttrs := make(map[string]any, len(mappedList))
 	for _, item := range mappedList {
-		if _, exists := mappedAttrs[item.key]; !exists {
-			mappedAttrs[item.key] = item.val
+		// Collision handling: if a mapped target key collides with a raw unmapped attribute name,
+		// drop the colliding mapped key so it cannot evict or substitute a real attribute.
+		if mappedNewKeys[item.key] && rawUnmappedKeys[item.key] {
+			continue
 		}
-	}
-
-	// Drop colliding unmapped keys before recording exemption
-	for k := range unmappedAttrs {
-		if mappedNewKeys[k] {
-			delete(unmappedAttrs, k)
+		if _, exists := postMapAttrs[item.key]; !exists {
+			postMapAttrs[item.key] = item.val
 		}
-	}
-
-	resultMap := make(map[string]any, len(mappedAttrs)+len(unmappedAttrs))
-	for k, v := range mappedAttrs {
-		resultMap[k] = v
 	}
 
 	if len(includeFields) == 0 && len(excludeFields) == 0 {
-		for k, v := range unmappedAttrs {
-			resultMap[k] = v
-		}
-		return resultMap, nil
+		return postMapAttrs, nil
 	}
 
-	unmappedEntry := Entry{
+	postEntry := Entry{
 		Title:      entryTitle,
-		Attributes: unmappedAttrs,
+		Attributes: postMapAttrs,
 	}
-	filteredUnmapped := FilterEntryWithPath(unmappedEntry, entryPath, rootPrefixes, includeFields, excludeFields)
-
-	for k, v := range filteredUnmapped.Attributes {
-		resultMap[k] = v
-	}
-
-	return resultMap, nil
+	filteredPost := FilterEntryWithPath(postEntry, entryPath, rootPrefixes, includeFields, excludeFields)
+	return filteredPost.Attributes, nil
 }
 
-// MappingProvider wraps a SecretProvider to perform regex key mapping and field filtering on entry attributes.
+// MappingProvider wraps a SecretProvider to perform regex key mapping on entry attributes.
 type MappingProvider struct {
-	underlying    SecretProvider
-	rules         []config.MappingRule
-	includeFields []string
-	excludeFields []string
+	underlying SecretProvider
+	rules      []config.MappingRule
 }
 
 // Scheme delegates to the underlying provider.
@@ -214,45 +213,35 @@ func getRawEntryWithPath(p SecretProvider, ctx context.Context, location string)
 	return Entry{}, "", fmt.Errorf("provider %q does not support structured entries", p.Scheme())
 }
 
+// getFilteringParams extracts include_fields and exclude_fields if the underlying provider is a FilteringProvider.
+func getFilteringParams(p SecretProvider) ([]string, []string) {
+	curr := p
+	for {
+		if fp, ok := curr.(*FilteringProvider); ok {
+			return fp.includeFields, fp.excludeFields
+		}
+		if sfp, ok := curr.(*SearchableFilteringProvider); ok {
+			return sfp.includeFields, sfp.excludeFields
+		}
+		if vfp, ok := curr.(*ValueResolvableFilteringProvider); ok {
+			return vfp.includeFields, vfp.excludeFields
+		}
+		if svfp, ok := curr.(*SearchableValueResolvableFilteringProvider); ok {
+			return svfp.includeFields, svfp.excludeFields
+		}
+		if inner, ok := curr.(interface{ Underlying() SecretProvider }); ok {
+			curr = inner.Underlying()
+		} else {
+			break
+		}
+	}
+	return nil, nil
+}
+
 // GetSecret resolves a secret value, querying mapped entry attributes first.
 // If an entry is found, lookup is performed exclusively in the mapped+filtered view.
 func (m *MappingProvider) GetSecret(ctx context.Context, location string) (string, error) {
-	// For search provider (virtual stored search), resolve through single snapshot
-	if rawProvider, ok := m.underlying.(interface {
-		GetSecretWithRaw(ctx context.Context, location string) (string, any, string, string, error)
-	}); ok {
-		canonicalKey, rawVal, path, title, err := rawProvider.GetSecretWithRaw(ctx, location)
-		if err != nil {
-			return "", err
-		}
-
-		var rootPrefixes []string
-		if rpProvider, ok := m.underlying.(interface{ RootPrefixes() []string }); ok {
-			rootPrefixes = rpProvider.RootPrefixes()
-		}
-
-		singleAttrMap := map[string]any{canonicalKey: rawVal}
-		mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
-			singleAttrMap,
-			m.rules,
-			m.includeFields,
-			m.excludeFields,
-			path,
-			rootPrefixes,
-			title,
-		)
-		if mapErr != nil {
-			return "", mapErr
-		}
-
-		if val, ok := mappedAttrs[canonicalKey]; ok {
-			return serializeVal(val)
-		}
-		for _, val := range mappedAttrs {
-			return serializeVal(val)
-		}
-		return "", fmt.Errorf("secret %q not found or excluded by vault configuration", location)
-	}
+	includeFields, excludeFields := getFilteringParams(m.underlying)
 
 	_, isSearchable := m.underlying.(SearchableProvider)
 
@@ -275,50 +264,67 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 			rootPrefixes = rpProvider.RootPrefixes()
 		}
 
-		checkMappedAttrs := func(mappedAttrs map[string]any, dotPath string) (string, bool) {
+		checkMappedAttrs := func(mappedAttrs map[string]any, dotPath string) (string, bool, error) {
 			if attrName != "" {
 				if val, ok := mappedAttrs[attrName]; ok {
-					sVal, _ := serializeVal(val)
-					return sVal, true
+					sVal, err := serializeVal(val)
+					return sVal, true, err
 				}
 			}
 			if val, ok := mappedAttrs[location]; ok {
-				sVal, _ := serializeVal(val)
-				return sVal, true
+				sVal, err := serializeVal(val)
+				return sVal, true, err
 			}
 			if attrName != "" {
 				if val, err := resolveDotPath(mappedAttrs, attrName); err == nil {
-					sVal, _ := serializeVal(val)
-					return sVal, true
+					sVal, sErr := serializeVal(val)
+					return sVal, true, sErr
 				}
 			}
 			if dotPath != "" {
 				if val, err := resolveDotPath(mappedAttrs, dotPath); err == nil {
-					sVal, _ := serializeVal(val)
-					return sVal, true
+					sVal, sErr := serializeVal(val)
+					return sVal, true, sErr
 				}
 			}
 			if val, err := resolveDotPath(mappedAttrs, location); err == nil {
-				sVal, _ := serializeVal(val)
-				return sVal, true
+				sVal, sErr := serializeVal(val)
+				return sVal, true, sErr
 			}
 			if !hasColon {
 				if val, ok := mappedAttrs["Password"]; ok {
-					sVal, _ := serializeVal(val)
-					return sVal, true
+					sVal, err := serializeVal(val)
+					return sVal, true, err
+				}
+				// Whole-entity container resolution when !hasColon
+				if val, err := resolveDotPath(mappedAttrs, entityLoc); err == nil {
+					sVal, sErr := serializeVal(val)
+					return sVal, true, sErr
+				}
+				if len(mappedAttrs) > 0 {
+					sVal, err := serializeVal(mappedAttrs)
+					if err == nil {
+						return sVal, true, nil
+					}
+					return "", true, err
 				}
 			}
-			return "", false
+			return "", false, nil
 		}
 
 		if entityLoc != "" {
 			rawEntry, authoritativePath, err := getRawEntryWithPath(m.underlying, ctx, entityLoc)
 			if err == nil && rawEntry.Attributes != nil {
+				// Reject if returned entry path/title does not match requested entity location
+				if authoritativePath != "" && !strings.EqualFold(authoritativePath, entityLoc) && !strings.EqualFold(rawEntry.Title, entityLoc) {
+					return "", fmt.Errorf("secret %q not found or excluded by vault configuration", location)
+				}
+
 				mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
 					rawEntry.Attributes,
 					m.rules,
-					m.includeFields,
-					m.excludeFields,
+					includeFields,
+					excludeFields,
 					authoritativePath,
 					rootPrefixes,
 					rawEntry.Title,
@@ -326,7 +332,10 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 				if mapErr != nil {
 					return "", mapErr
 				}
-				if val, ok := checkMappedAttrs(mappedAttrs, ""); ok {
+				if val, ok, sErr := checkMappedAttrs(mappedAttrs, ""); ok {
+					if sErr != nil {
+						return "", sErr
+					}
 					return val, nil
 				}
 				return "", fmt.Errorf("secret %q not found or excluded by vault configuration", location)
@@ -354,8 +363,8 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 						mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
 							rawEntry.Attributes,
 							m.rules,
-							m.includeFields,
-							m.excludeFields,
+							includeFields,
+							excludeFields,
 							authoritativePath,
 							rootPrefixes,
 							rawEntry.Title,
@@ -363,7 +372,10 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 						if mapErr != nil {
 							return "", mapErr
 						}
-						if val, ok := checkMappedAttrs(mappedAttrs, nestedDotPath); ok {
+						if val, ok, sErr := checkMappedAttrs(mappedAttrs, nestedDotPath); ok {
+							if sErr != nil {
+								return "", sErr
+							}
 							return val, nil
 						}
 						return "", fmt.Errorf("secret %q not found or excluded by vault configuration", location)
@@ -383,8 +395,8 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 					mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
 						rawEntry.Attributes,
 						m.rules,
-						m.includeFields,
-						m.excludeFields,
+						includeFields,
+						excludeFields,
 						authoritativePath,
 						rootPrefixes,
 						rawEntry.Title,
@@ -392,7 +404,10 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 					if mapErr != nil {
 						return "", mapErr
 					}
-					if val, ok := checkMappedAttrs(mappedAttrs, nestedDotPath); ok {
+					if val, ok, sErr := checkMappedAttrs(mappedAttrs, nestedDotPath); ok {
+						if sErr != nil {
+							return "", sErr
+						}
 						return val, nil
 					}
 					return "", fmt.Errorf("secret %q not found or excluded by vault configuration", location)
@@ -406,8 +421,8 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 			mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
 				rawEntry.Attributes,
 				m.rules,
-				m.includeFields,
-				m.excludeFields,
+				includeFields,
+				excludeFields,
 				authoritativePath,
 				rootPrefixes,
 				rawEntry.Title,
@@ -415,7 +430,10 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 			if mapErr != nil {
 				return "", mapErr
 			}
-			if val, ok := checkMappedAttrs(mappedAttrs, ""); ok {
+			if val, ok, sErr := checkMappedAttrs(mappedAttrs, ""); ok {
+				if sErr != nil {
+					return "", sErr
+				}
 				return val, nil
 			}
 			return "", fmt.Errorf("secret %q not found or excluded by vault configuration", location)
@@ -424,8 +442,8 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 		return "", fmt.Errorf("secret %q not found or excluded by vault configuration", location)
 	}
 
-	if len(m.includeFields) > 0 || len(m.excludeFields) > 0 {
-		if !isFieldOrPathAllowed("", location, m.includeFields, m.excludeFields) {
+	if len(includeFields) > 0 || len(excludeFields) > 0 {
+		if !isFieldOrPathAllowed("", location, includeFields, excludeFields) {
 			return "", fmt.Errorf("field %q is excluded by vault configuration", location)
 		}
 	}
@@ -453,12 +471,13 @@ func (s *SearchableMappingProvider) GetEntryWithPath(ctx context.Context, locati
 		return Entry{}, "", err
 	}
 
+	includeFields, excludeFields := getFilteringParams(s.underlying)
 	rootPrefixes := s.RootPrefixes()
 	mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
 		rawEntry.Attributes,
 		s.rules,
-		s.includeFields,
-		s.excludeFields,
+		includeFields,
+		excludeFields,
 		authoritativePath,
 		rootPrefixes,
 		rawEntry.Title,
@@ -479,7 +498,17 @@ func (s *SearchableMappingProvider) GetEntry(ctx context.Context, location strin
 
 // Search retrieves matching entries and applies mapping and filtering to all result entry attributes.
 func (s *SearchableMappingProvider) Search(ctx context.Context, query SearchQuery) ([]SearchResult, error) {
-	searchable, ok := s.underlying.(SearchableProvider)
+	// Query raw provider for search results
+	curr := s.underlying
+	for {
+		if inner, ok := curr.(interface{ Underlying() SecretProvider }); ok {
+			curr = inner.Underlying()
+		} else {
+			break
+		}
+	}
+
+	searchable, ok := curr.(SearchableProvider)
 	if !ok {
 		return nil, fmt.Errorf("provider %q does not support searching", s.Scheme())
 	}
@@ -489,14 +518,15 @@ func (s *SearchableMappingProvider) Search(ctx context.Context, query SearchQuer
 		return nil, err
 	}
 
+	includeFields, excludeFields := getFilteringParams(s.underlying)
 	rootPrefixes := s.RootPrefixes()
 	mappedResults := make([]SearchResult, len(results))
 	for i, r := range results {
 		mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
 			r.Entry.Attributes,
 			s.rules,
-			s.includeFields,
-			s.excludeFields,
+			includeFields,
+			excludeFields,
 			r.Path,
 			rootPrefixes,
 			r.Entry.Title,
@@ -539,7 +569,7 @@ func (s *SearchableValueResolvableMappingProvider) SupportsValueResolution() boo
 
 // NewMappingProvider constructs a new mapping provider wrapper, precompiling rules and
 // preserving optional interfaces (SearchableProvider, ValueResolvableProvider) when supported.
-func NewMappingProvider(p SecretProvider, rules []config.MappingRule, includeFields, excludeFields []string) (SecretProvider, error) {
+func NewMappingProvider(p SecretProvider, rules []config.MappingRule) (SecretProvider, error) {
 	compiledRules := make([]config.MappingRule, len(rules))
 	for i, r := range rules {
 		if err := r.Compile(); err != nil {
@@ -549,10 +579,8 @@ func NewMappingProvider(p SecretProvider, rules []config.MappingRule, includeFie
 	}
 
 	base := MappingProvider{
-		underlying:    p,
-		rules:         compiledRules,
-		includeFields: includeFields,
-		excludeFields: excludeFields,
+		underlying: p,
+		rules:      compiledRules,
 	}
 
 	_, isSearchable := p.(SearchableProvider)

@@ -2,11 +2,18 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
 )
+
+type badMarshaler struct{}
+
+func (badMarshaler) MarshalYAML() (any, error) {
+	return nil, errors.New("forced serialization error")
+}
 
 func keysOf(m map[string]any) []string {
 	keys := make([]string, 0, len(m))
@@ -114,8 +121,8 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 			"REMOVE_UNMAPPED":        "remove_val",
 		}
 
-		includeFields := []string{"KEEP_UNMAPPED"}
-		excludeFields := []string{"FOO"}
+		includeFields := []string{"KEEP_UNMAPPED", "OPENROUTER_API_KEY"}
+		excludeFields := []string{"REMOVE_UNMAPPED"}
 
 		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, includeFields, excludeFields, "", nil, "")
 		if err != nil {
@@ -125,14 +132,14 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 		if _, ok := got["OPENROUTER_API_KEY"]; !ok {
 			t.Errorf("expected mapped field OPENROUTER_API_KEY to be kept (keys: %v)", keysOf(got))
 		}
-		if _, ok := got["FOO"]; !ok {
-			t.Errorf("expected mapped field FOO to be kept despite exclude_fields (keys: %v)", keysOf(got))
+		if _, ok := got["FOO"]; ok {
+			t.Errorf("expected mapped field FOO to be filtered by include_fields (keys: %v)", keysOf(got))
 		}
 		if _, ok := got["KEEP_UNMAPPED"]; !ok {
 			t.Errorf("expected KEEP_UNMAPPED to be kept (keys: %v)", keysOf(got))
 		}
 		if _, ok := got["REMOVE_UNMAPPED"]; ok {
-			t.Error("expected REMOVE_UNMAPPED to be removed by include_fields filtering")
+			t.Error("expected REMOVE_UNMAPPED to be removed by exclude_fields filtering")
 		}
 	})
 
@@ -223,8 +230,8 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 						t.Fatalf("unexpected error: %v", err)
 					}
 
-					if got["FOO"] != "mapped_value" {
-						t.Fatalf("iter %d: expected FOO='mapped_value', got %v (keys: %v)", i, got["FOO"], keysOf(got))
+					if _, ok := got["FOO"]; ok {
+						t.Fatalf("iter %d: expected colliding keys 'FOO' to be dropped (keys: %v)", i, keysOf(got))
 					}
 				}
 			})
@@ -256,6 +263,93 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 				}
 			}
 		})
+	})
+
+	t.Run("container mapping does not exempt subtree from include_fields", func(t *testing.T) {
+		rule := config.MappingRule{Match: "raw_(.*)", Key: "$1"}
+		if err := rule.Compile(); err != nil {
+			t.Fatalf("rule.Compile failed: %v", err)
+		}
+
+		attrs := map[string]any{
+			"raw_outer": map[string]any{
+				"raw_a": "V_A",
+				"raw_b": "V_B",
+			},
+		}
+
+		includeFields := []string{"outer.a"}
+		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, includeFields, nil, "", nil, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		outerMap, ok := got["outer"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected outer map, got %v (keys: %v)", got["outer"], keysOf(got))
+		}
+		if _, ok := outerMap["a"]; !ok {
+			t.Errorf("expected outer.a to be present (keys: %v)", keysOf(outerMap))
+		}
+		if _, ok := outerMap["b"]; ok {
+			t.Errorf("expected outer.b to be filtered out by include_fields=['outer.a'] (keys: %v)", keysOf(outerMap))
+		}
+	})
+
+	t.Run("exclude_fields applies to mapped keys", func(t *testing.T) {
+		rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
+		if err := rule.Compile(); err != nil {
+			t.Fatalf("rule.Compile failed: %v", err)
+		}
+
+		attrs := map[string]any{
+			"env:SECRET_B": "V_B",
+			"PLAIN":        "V_P",
+		}
+
+		excludeFields := []string{"SECRET_B"}
+		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, nil, excludeFields, "", nil, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, ok := got["SECRET_B"]; ok {
+			t.Error("expected mapped key SECRET_B to be excluded by exclude_fields")
+		}
+		if _, ok := got["PLAIN"]; !ok {
+			t.Error("expected PLAIN to be kept")
+		}
+	})
+
+	t.Run("post-mapping path exclusions work", func(t *testing.T) {
+		rule := config.MappingRule{Match: "raw_(.*)", Key: "$1"}
+		if err := rule.Compile(); err != nil {
+			t.Fatalf("rule.Compile failed: %v", err)
+		}
+
+		attrs := map[string]any{
+			"raw_outer": map[string]any{
+				"a": "V_A",
+				"b": "V_B",
+			},
+		}
+
+		excludeFields := []string{"outer.b"}
+		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, nil, excludeFields, "", nil, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		outerMap, ok := got["outer"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected outer map, got %v (keys: %v)", got["outer"], keysOf(got))
+		}
+		if _, ok := outerMap["a"]; !ok {
+			t.Errorf("expected outer.a to be present (keys: %v)", keysOf(outerMap))
+		}
+		if _, ok := outerMap["b"]; ok {
+			t.Errorf("expected outer.b to be excluded by exclude_fields=['outer.b'] (keys: %v)", keysOf(outerMap))
+		}
 	})
 
 	t.Run("compile error propagation", func(t *testing.T) {
@@ -296,7 +390,8 @@ func TestMappingProvider_CustomVault(t *testing.T) {
 		t.Fatalf("rule.Compile failed: %v", err)
 	}
 
-	mp, err := NewMappingProvider(cp, []config.MappingRule{rule}, []string{"OPENROUTER_API_KEY", "test:foo", "Password"}, []string{"EXCLUDED_FIELD"})
+	fp := NewFilteringProvider(cp, []string{"OPENROUTER_API_KEY", "test:foo", "Password"}, []string{"EXCLUDED_FIELD"})
+	mp, err := NewMappingProvider(fp, []config.MappingRule{rule})
 	if err != nil {
 		t.Fatalf("NewMappingProvider failed: %v", err)
 	}
@@ -402,7 +497,7 @@ func TestMappingProvider_ColonQualifiedExcludeFields(t *testing.T) {
 
 	excludeFields := []string{"website/Test Website:*"}
 	fp := NewFilteringProvider(cp, nil, excludeFields)
-	mp, err := NewMappingProvider(fp, []config.MappingRule{rule}, nil, excludeFields)
+	mp, err := NewMappingProvider(fp, []config.MappingRule{rule})
 	if err != nil {
 		t.Fatalf("NewMappingProvider failed: %v", err)
 	}
@@ -428,7 +523,7 @@ func TestMappingProvider_MultiEntityYamlJsonDotPathResolution(t *testing.T) {
 	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
 	_ = rule.Compile()
 
-	mp, err := NewMappingProvider(yp, []config.MappingRule{rule}, nil, nil)
+	mp, err := NewMappingProvider(yp, []config.MappingRule{rule})
 	if err != nil {
 		t.Fatalf("NewMappingProvider failed: %v", err)
 	}
@@ -440,19 +535,19 @@ func TestMappingProvider_MultiEntityYamlJsonDotPathResolution(t *testing.T) {
 	if val == "" {
 		t.Error("expected non-empty hostname")
 	}
+
+	// Whole-entity container resolution
+	containerVal, err := mp.GetSecret(ctx, "hosts.ssh_host")
+	if err != nil {
+		t.Fatalf("whole-entity GetSecret failed: %v", err)
+	}
+	if containerVal == "" {
+		t.Error("expected non-empty container value")
+	}
 }
 
-func TestMappingProvider_SearchVaultAbsentEntryReturnsError(t *testing.T) {
+func TestMappingProvider_SearchVaultMappedKeyLookupAndRawKeyRejection(t *testing.T) {
 	ctx := context.Background()
-
-	cp := NewCustomVaultProvider()
-	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
-			"entry1": {
-				"Password": "pass1",
-			},
-		},
-	})
 
 	sp := NewSearchProvider()
 	sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
@@ -462,7 +557,7 @@ func TestMappingProvider_SearchVaultAbsentEntryReturnsError(t *testing.T) {
 				Entry: Entry{
 					Title: "entry1",
 					Attributes: map[string]any{
-						"Password": "pass1",
+						"env:API_KEY": "pass1",
 					},
 				},
 			},
@@ -479,12 +574,28 @@ func TestMappingProvider_SearchVaultAbsentEntryReturnsError(t *testing.T) {
 	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
 	_ = rule.Compile()
 
-	mp, err := NewMappingProvider(sp, []config.MappingRule{rule}, nil, nil)
+	mp, err := NewMappingProvider(sp, []config.MappingRule{rule})
 	if err != nil {
 		t.Fatalf("NewMappingProvider failed: %v", err)
 	}
 
-	_, err = mp.GetSecret(ctx, "absent_entry:Password")
+	// 1. Mapped key lookup succeeds
+	val, err := mp.GetSecret(ctx, "entry1:API_KEY")
+	if err != nil {
+		t.Fatalf("expected GetSecret for mapped key API_KEY to succeed, got %v", err)
+	}
+	if val == "" {
+		t.Error("expected non-empty secret value")
+	}
+
+	// 2. Original raw key lookup fails
+	_, err = mp.GetSecret(ctx, "entry1:env:API_KEY")
+	if err == nil {
+		t.Fatal("expected GetSecret for raw pre-mapping key 'env:API_KEY' to fail, got nil error")
+	}
+
+	// 3. Absent entry lookup fails
+	_, err = mp.GetSecret(ctx, "absent_entry:API_KEY")
 	if err == nil {
 		t.Fatal("expected search URI with absent entry to return error, got nil")
 	}
@@ -513,7 +624,8 @@ func TestMappingProvider_FilteringParityForNestedAndArrayPaths(t *testing.T) {
 	}
 
 	excludeFields := []string{"db.pass", "tokens.1"}
-	mp, err := NewMappingProvider(cp, []config.MappingRule{rule}, nil, excludeFields)
+	fp := NewFilteringProvider(cp, nil, excludeFields)
+	mp, err := NewMappingProvider(fp, []config.MappingRule{rule})
 	if err != nil {
 		t.Fatalf("NewMappingProvider failed: %v", err)
 	}
@@ -548,6 +660,34 @@ func TestMappingProvider_FilteringParityForNestedAndArrayPaths(t *testing.T) {
 	}
 }
 
+func TestMappingProvider_SerializationErrorPropagated(t *testing.T) {
+	ctx := context.Background()
+
+	cp := NewCustomVaultProvider()
+	_ = cp.Initialize(ctx, ProviderConfig{
+		Entities: map[string]map[string]any{
+			"app1": {
+				"bad": map[string]any{
+					"invalid": badMarshaler{},
+				},
+			},
+		},
+	})
+
+	rule := config.MappingRule{Match: "(.*)", Key: "$1"}
+	_ = rule.Compile()
+
+	mp, err := NewMappingProvider(cp, []config.MappingRule{rule})
+	if err != nil {
+		t.Fatalf("NewMappingProvider failed: %v", err)
+	}
+
+	_, err = mp.GetSecret(ctx, "app1:bad")
+	if err == nil {
+		t.Fatal("expected serialization error for un-serializable attribute, got nil")
+	}
+}
+
 func TestMappingProvider_InterfaceCapabilities(t *testing.T) {
 	cp := NewCustomVaultProvider()
 	rule := config.MappingRule{Match: "(.*)", Key: "$1"}
@@ -555,7 +695,7 @@ func TestMappingProvider_InterfaceCapabilities(t *testing.T) {
 		t.Fatalf("rule.Compile failed: %v", err)
 	}
 
-	p, err := NewMappingProvider(cp, []config.MappingRule{rule}, nil, nil)
+	p, err := NewMappingProvider(cp, []config.MappingRule{rule})
 	if err != nil {
 		t.Fatalf("NewMappingProvider failed: %v", err)
 	}
@@ -576,7 +716,7 @@ func TestMappingProvider_NewMappingProvider_CompileError(t *testing.T) {
 	cp := NewCustomVaultProvider()
 	invalidRule := config.MappingRule{Match: "[invalid_regex"}
 
-	_, err := NewMappingProvider(cp, []config.MappingRule{invalidRule}, nil, nil)
+	_, err := NewMappingProvider(cp, []config.MappingRule{invalidRule})
 	if err == nil {
 		t.Fatal("expected NewMappingProvider to return error for invalid regex, got nil")
 	}

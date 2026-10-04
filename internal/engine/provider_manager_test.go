@@ -286,6 +286,34 @@ func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
 	if _, ok := entry.Attributes["env:OPENROUTER_API_KEY"]; ok {
 		t.Error("expected env:OPENROUTER_API_KEY to be absent from GetEntry")
 	}
+
+	// 5. Verify that colon-qualified candidate filtering provided by FilteringProvider is active in the composed chain
+	cfg2 := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"colon_vault": {
+				Provider:      "custom_vault",
+				Mapping:       []config.MappingRule{rule1},
+				ExcludeFields: []string{"app:*"},
+				Entities: map[string]map[string]any{
+					"app": {
+						"Password": "pass_val",
+					},
+				},
+			},
+		},
+	}
+	orch2, err := NewOrchestrator(cfg2)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	p2, _, err := orch2.providerManager.GetProvider(ctx, "colon_vault")
+	if err != nil {
+		t.Fatalf("failed to get provider: %v", err)
+	}
+	_, err = p2.GetSecret(ctx, "app:Password")
+	if err == nil {
+		t.Fatal("expected colon-qualified exclusion 'app:*' enforced by FilteringProvider to block GetSecret, got nil error")
+	}
 }
 
 func TestProviderManagerUnknownSchemeDoesNotAllocateLock(t *testing.T) {
