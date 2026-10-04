@@ -6,6 +6,9 @@ import (
 )
 
 // ParseURI splits "scheme://location" into its components.
+//
+// Security: URIs containing null bytes (\x00) are explicitly rejected to prevent
+// null byte injection and string truncation attacks across downstream providers.
 // Uses strings.Cut to avoid slice allocations.
 func ParseURI(uri string) (string, string, error) {
 	if strings.IndexByte(uri, 0) != -1 {
