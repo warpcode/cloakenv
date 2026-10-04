@@ -464,6 +464,38 @@ func TestMappingProvider_CustomVault(t *testing.T) {
 		}
 	})
 
+	t.Run("GetSecret bare location with excluded Password returns error", func(t *testing.T) {
+		cp2 := NewCustomVaultProvider()
+		_ = cp2.Initialize(ctx, ProviderConfig{
+			Entities: map[string]map[string]any{
+				"app1": {
+					"Password": "secret_password",
+					"UserName": "test_user",
+				},
+			},
+		})
+
+		excludeFields := []string{"Password"}
+		fp2 := NewFilteringProvider(cp2, nil, excludeFields)
+
+		// Unmapped chain check
+		_, errUnmapped := fp2.GetSecret(ctx, "app1")
+		if errUnmapped == nil {
+			t.Fatal("expected GetSecret bare location on FilteringProvider to error when Password is excluded, got nil")
+		}
+
+		// Mapped chain check
+		mp2, errNew := NewMappingProvider(fp2, []config.MappingRule{rule})
+		if errNew != nil {
+			t.Fatalf("NewMappingProvider failed: %v", errNew)
+		}
+
+		_, errMapped := mp2.GetSecret(ctx, "app1")
+		if errMapped == nil {
+			t.Fatal("expected GetSecret bare location on MappingProvider to error when Password is excluded, got nil")
+		}
+	})
+
 	t.Run("GetSecret rejects excluded key", func(t *testing.T) {
 		_, err := mp.GetSecret(ctx, "app1:EXCLUDED_FIELD")
 		if err == nil {
