@@ -332,6 +332,29 @@ func TestFlattenSearchResults(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "deterministic resolution when multiple keys match lowercasing",
+			results: []provider.SearchResult{
+				{
+					Provider: "keepass",
+					Vault:    "myvault",
+					Path:     "path/to/entry",
+					Entry: provider.Entry{
+						Title: "Real Title",
+						Attributes: map[string]any{
+							"\u212A": "kelvin-val",
+							"k":      "plain-k-val",
+						},
+					},
+				},
+			},
+			selectedKeys: []string{"K"},
+			want: []map[string]any{
+				{
+					"K": "plain-k-val",
+				},
+			},
+		},
 	}
 
 	for _, tc := range tests {
