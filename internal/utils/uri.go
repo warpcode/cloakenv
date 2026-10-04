@@ -9,14 +9,14 @@ import (
 //
 // Security: URIs containing null bytes (\x00) are explicitly rejected to prevent
 // null byte injection and string truncation attacks across downstream providers.
+// Uses strings.Cut to avoid slice allocations.
 func ParseURI(uri string) (string, string, error) {
 	if strings.IndexByte(uri, 0) != -1 {
 		return "", "", fmt.Errorf("malformed URI: contains null byte")
 	}
-
-	parts := strings.SplitN(uri, "://", 2)
-	if len(parts) != 2 || parts[0] == "" {
+	scheme, location, ok := strings.Cut(uri, "://")
+	if !ok || scheme == "" {
 		return "", "", fmt.Errorf("malformed URI: %q (expected scheme://location)", uri)
 	}
-	return parts[0], parts[1], nil
+	return scheme, location, nil
 }
