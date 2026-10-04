@@ -714,11 +714,24 @@ func TestExpandTemplateCharacterization(t *testing.T) {
 			want:     "echo hello world",
 		},
 		{
-			name:     "braced with non-alphanumeric",
+			// Unresolvable and syntactically invalid references are already covered by
+			// "out-of-range or unmatched group indices" above, which fails if the literal
+			// is not preserved verbatim. This case is kept only because it is the one place
+			// a reader looks for isValidGroupNameOrNum coverage - and there cannot be any.
+			//
+			// isValidGroupNameOrNum accepts exactly [A-Za-z0-9_], which is precisely the set
+			// Go's regexp accepts in a capture-group name: "(?P<a-b>x" and "(?P<élan>x" are
+			// both compile errors. So for every entry in re.SubexpNames() the guard returns
+			// true, and any body it rejects is by construction not a group name - which
+			// means findGroupIndex returns -1 and getGroupValue rejects it on group < 0 with
+			// the same outcome. Neutering the function to `return true` leaves this package
+			// green, and that is expected rather than a coverage gap: the check is redundant
+			// with the getGroupValue guard, so no input can distinguish them.
+			name:     "braced with non-alphanumeric reference stays literal",
 			regex:    "(?P<group1>hello)",
-			template: "echo ${group1!}",
+			template: "echo ${group1!} ${no-such} ${} ${-1}",
 			src:      "hello world",
-			want:     "echo ${group1!}",
+			want:     "echo ${group1!} ${no-such} ${} ${-1}",
 		},
 	}
 
