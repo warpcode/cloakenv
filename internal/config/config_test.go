@@ -403,6 +403,17 @@ vaults:
 	}
 }
 
+func TestLoad_ExamplesConfigYaml(t *testing.T) {
+	examplesPath := filepath.Join("..", "..", "examples", "config.yaml")
+	cfg, err := Load(examplesPath)
+	if err != nil {
+		t.Fatalf("failed to load examples/config.yaml: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil config for examples/config.yaml")
+	}
+}
+
 func TestLoad_InvalidGlobPattern(t *testing.T) {
 	tempDir := t.TempDir()
 
