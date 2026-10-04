@@ -426,9 +426,6 @@ func matchWildcard(pattern, text string) bool {
 		return pattern == text
 	}
 	parts := strings.Split(pattern, "*")
-	if len(parts) == 1 {
-		return pattern == text
-	}
 	if !strings.HasPrefix(text, parts[0]) {
 		return false
 	}

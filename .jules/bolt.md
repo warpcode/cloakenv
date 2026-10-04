@@ -1,3 +1,0 @@
-## 2026-07-03 - Zero-Allocation Fast Paths for Core String Utilities in Cloakenv
-**Learning:** In Cloakenv, core string operations like `ExpandString` (for `${...}` template resolution), `ParseURI` (for `scheme://location` parsing), and `matchWildcard` (for autoload command matching) are executed on every secret lookup, environment build, and alias evaluation. Functions using `strings.Split` or `strings.Builder` on every string input cause unnecessary heap allocations even when no expansion, scheme delimiter, or wildcard character is present.
-**Action:** Always check for sentinel characters (`$`, `*`) before initializing string builders or splitting strings, and use `strings.Cut` instead of `strings.SplitN` for 2-way splits to eliminate slice allocations on hot paths.
