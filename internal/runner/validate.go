@@ -29,6 +29,11 @@ func validateCommand(cmdArgs []string, env []string) int {
 	}
 
 	for i, e := range env {
+		if strings.IndexByte(e, 0) != -1 {
+			key, _, _ := strings.Cut(e, "=")
+			fmt.Fprintf(os.Stderr, "Invalid environment variable %q at index %d: contains null byte\n", key, i)
+			return 1
+		}
 		key, _, ok := strings.Cut(e, "=")
 		if strings.HasPrefix(e, "=") {
 			k, _, hasVal := strings.Cut(e[1:], "=")
@@ -39,10 +44,6 @@ func validateCommand(cmdArgs []string, env []string) int {
 		}
 		if !ok || key == "" {
 			fmt.Fprintf(os.Stderr, "Invalid environment variable at index %d: missing '=' or key is empty\n", i)
-			return 1
-		}
-		if strings.IndexByte(e, 0) != -1 {
-			fmt.Fprintf(os.Stderr, "Invalid environment variable %q at index %d: contains null byte\n", key, i)
 			return 1
 		}
 	}
