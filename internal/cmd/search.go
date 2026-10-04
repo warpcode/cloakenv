@@ -132,6 +132,9 @@ func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selecte
 	return flatRes
 }
 
+// resolveSelectedAttributeVal resolves the attribute value for field in case-insensitive fashion.
+// It checks exact match first, then uses EqualFold to fast-path short-circuit non-matching keys
+// before evaluating exact ToLower equality, avoiding string lowercasing allocations for non-matching keys.
 func resolveSelectedAttributeVal(attributes map[string]any, field, fieldLower string) any {
 	if len(attributes) == 0 {
 		return nil
