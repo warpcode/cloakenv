@@ -293,6 +293,78 @@ func TestKeyringPrefix(t *testing.T) {
 	}
 }
 
+func TestLoad_Mapping(t *testing.T) {
+	tempDir := t.TempDir()
+	yamlContent := `
+vaults:
+  work:
+    provider: "keepass"
+    vault_path: "~/secrets.kdbx"
+    mapping:
+      - match: "env:(.*)"
+        key: "\\1"
+      - match: "secret_(.*)"
+        key: "$1"
+`
+	configPath := filepath.Join(tempDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write temp config file: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	v, ok := cfg.Vaults["work"]
+	if !ok {
+		t.Fatal("expected 'work' vault in config")
+	}
+
+	if len(v.Mapping) != 2 {
+		t.Fatalf("expected 2 mapping rules, got %d", len(v.Mapping))
+	}
+
+	if v.Mapping[0].Match != "env:(.*)" || v.Mapping[0].Key != "\\1" {
+		t.Errorf("unexpected mapping[0]: %+v", v.Mapping[0])
+	}
+	if v.Mapping[0].CompiledRegex == nil {
+		t.Error("expected CompiledRegex to be populated for mapping[0]")
+	}
+
+	if v.Mapping[1].Match != "secret_(.*)" || v.Mapping[1].Key != "$1" {
+		t.Errorf("unexpected mapping[1]: %+v", v.Mapping[1])
+	}
+	if v.Mapping[1].CompiledRegex == nil {
+		t.Error("expected CompiledRegex to be populated for mapping[1]")
+	}
+}
+
+func TestLoad_InvalidMappingRegex(t *testing.T) {
+	tempDir := t.TempDir()
+	yamlContent := `
+vaults:
+  work:
+    provider: "keepass"
+    vault_path: "~/secrets.kdbx"
+    mapping:
+      - match: "[invalid(regex"
+        key: "\\1"
+`
+	configPath := filepath.Join(tempDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write temp config file: %v", err)
+	}
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Fatal("expected error for invalid mapping regex, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid mapping match regex") {
+		t.Errorf("expected error message to contain 'invalid mapping match regex', got: %v", err)
+	}
+}
+
 func TestLoad_FieldFiltering(t *testing.T) {
 	tempDir := t.TempDir()
 	yamlContent := `
@@ -328,6 +400,17 @@ vaults:
 
 	if len(v.ExcludeFields) != 2 || v.ExcludeFields[0] != "*.notes" || v.ExcludeFields[1] != "secret:*" {
 		t.Errorf("unexpected ExcludeFields: %v", v.ExcludeFields)
+	}
+}
+
+func TestLoad_ExamplesConfigYaml(t *testing.T) {
+	examplesPath := filepath.Join("..", "..", "examples", "config.yaml")
+	cfg, err := Load(examplesPath)
+	if err != nil {
+		t.Fatalf("failed to load examples/config.yaml: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("expected non-nil config for examples/config.yaml")
 	}
 }
 

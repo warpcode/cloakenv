@@ -76,6 +76,34 @@ func (r *AutoloadRule) Compile() {
 	}
 }
 
+// MappingRule defines a regex-based field key renaming rule for entry attributes.
+type MappingRule struct {
+	// Match is a required regex pattern to match against field names.
+	Match string `yaml:"match"`
+
+	// Key is the target output field name template, supporting $1 or \1 capture group replacements.
+	Key string `yaml:"key"`
+
+	// CompiledRegex holds the precompiled regular expression for Match.
+	CompiledRegex *regexp.Regexp `yaml:"-"`
+}
+
+// Compile precompiles the regular expression pattern for the mapping rule if Match is non-empty.
+func (r *MappingRule) Compile() error {
+	if r == nil {
+		return nil
+	}
+	pattern := strings.TrimSpace(r.Match)
+	if pattern != "" && r.CompiledRegex == nil {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return err
+		}
+		r.CompiledRegex = re
+	}
+	return nil
+}
+
 // CacheConfig holds cache-related configuration settings.
 type CacheConfig struct {
 	DefaultTTL string `yaml:"default_ttl"`
@@ -131,6 +159,9 @@ type VaultConfig struct {
 	// ExcludeFields removes entry attributes with field names matching these glob patterns.
 	ExcludeFields []string `yaml:"exclude_fields,omitempty"`
 
+	// Mapping defines regex-based field key renaming rules for entry attributes in this vault.
+	Mapping []MappingRule `yaml:"mapping,omitempty"`
+
 	// SourceVaults specifies the list of vault names to query for search provider vaults.
 	SourceVaults []string `yaml:"source_vaults"`
 
@@ -185,7 +216,7 @@ func Load(path string) (*Config, error) {
 		cfg.Vaults[name] = vault
 	}
 
-	// Validate include_fields and exclude_fields glob patterns
+	// Validate include_fields, exclude_fields, and mapping rules
 	for vaultName, vault := range cfg.Vaults {
 		for _, pattern := range vault.IncludeFields {
 			if _, err := pathpkg.Match(pattern, ""); err != nil {
@@ -197,6 +228,12 @@ func Load(path string) (*Config, error) {
 				return nil, fmt.Errorf("vault %q: invalid exclude_fields glob pattern %q: %w", vaultName, pattern, err)
 			}
 		}
+		for i := range vault.Mapping {
+			if err := vault.Mapping[i].Compile(); err != nil {
+				return nil, fmt.Errorf("vault %q: invalid mapping match regex %q: %w", vaultName, vault.Mapping[i].Match, err)
+			}
+		}
+		cfg.Vaults[vaultName] = vault
 	}
 
 	cfg.CompileAutoloadRules()

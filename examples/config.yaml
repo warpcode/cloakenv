@@ -95,6 +95,16 @@ vaults:
   #     - "*.notes"
   #     - "secret:*"
 
+  # Example of field key mapping on any vault provider using regex rules:
+  # mapping: renames matched field keys while preserving original source field values as mapped values.
+  # Field filtering (include_fields and exclude_fields) is evaluated against post-mapping attribute key names and paths.
+  # mapped_work:
+  #   provider: "keepass"
+  #   vault_path: "~/secrets/work_vault.kdbx"
+  #   mapping:
+  #     - match: "env:(.*)"
+  #       key: "\\1"
+
 # Autoloading configuration: Automatically match commands, mask/transform command lines, and inject vault credentials
 autoload:
   # Regex matching + command transformation (Alias masking):

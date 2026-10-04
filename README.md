@@ -604,6 +604,23 @@ vaults:
       - "secret:*"
 ```
 
+#### 6. Field Key Mapping (`mapping`)
+- Supported across vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`).
+- **`match`**: Regex pattern matched against raw attribute field names. Supports capture groups (e.g., `env:(.*)`).
+- **`key`**: Target output field name template using capture group references (e.g., `$1` or `\1`).
+- **Preserved Values**: Mapped fields retain the original field value.
+- **Post-Mapping Filtering**: Field filtering (`include_fields` and `exclude_fields`) is evaluated against post-mapping attribute key names and paths.
+- Example config:
+```yaml
+vaults:
+  mapped_work:
+    provider: "keepass"
+    vault_path: "~/secrets/work_vault.kdbx"
+    mapping:
+      - match: "env:(.*)"
+        key: "\\1"
+```
+
 ---
 
 ## Command Autoloading & Alias Masking
@@ -771,6 +788,14 @@ vaults:
     provider: "search"
     source_vaults: ["work"]
     query: '"service:openrouter" in tags'
+
+  # Vault with Regex Field Key Mapping
+  mapped_vault:
+    provider: "keepass"
+    vault_path: "~/secrets/work.kdbx"
+    mapping:
+      - match: "env:(.*)"
+        key: "\\1"
 
 # ==========================================
 # Command Autoloading Rules
