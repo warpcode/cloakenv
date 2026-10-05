@@ -121,12 +121,11 @@ func Set(args []string, cfg *config.Config) int {
 	}
 
 	// Provider-specific validation: --ttl is cache:// only
-	parts := strings.SplitN(uri, "://", 2)
-	if len(parts) != 2 {
+	scheme, _, err := utils.ParseURI(uri)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid URI format: %q (expected scheme://location)\n", uri)
 		return 1
 	}
-	scheme := parts[0]
 	if scheme != "cache" && ttl > 0 {
 		fmt.Fprintf(os.Stderr, "Error: flag --ttl is only supported by the 'cache' provider, not %q\n", scheme)
 		return 1
