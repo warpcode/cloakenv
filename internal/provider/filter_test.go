@@ -2551,6 +2551,58 @@ entities:
 	}
 }
 
+func TestFilteringProvider_ColonQualifiedCandidateInclusionAndExclusion(t *testing.T) {
+	ctx := context.Background()
+
+	cp := NewCustomVaultProvider()
+	_ = cp.Initialize(ctx, ProviderConfig{
+		Entities: map[string]map[string]any{
+			"app": {
+				"Password": "secret_password",
+				"UserName": "test_user",
+			},
+		},
+	})
+
+	// 1. Colon-qualified exclude_fields: ["app:*"]
+	fpExcl := NewFilteringProvider(cp, nil, []string{"app:*"})
+	sfpExcl := fpExcl.(SearchableProvider)
+
+	entryExcl, err := sfpExcl.GetEntry(ctx, "app")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+	if len(entryExcl.Attributes) != 0 {
+		t.Errorf("expected 0 attributes when colon-qualified exclude_fields ['app:*'] is configured, got %v", entryExcl.Attributes)
+	}
+
+	resultsExcl, err := sfpExcl.Search(ctx, SearchQuery{})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(resultsExcl) != 1 {
+		t.Fatalf("expected 1 search result, got %d", len(resultsExcl))
+	}
+	if len(resultsExcl[0].Entry.Attributes) != 0 {
+		t.Errorf("expected 0 search result attributes when 'app:*' is excluded, got %v", resultsExcl[0].Entry.Attributes)
+	}
+
+	// 2. Colon-qualified include_fields: ["app:UserName"]
+	fpInc := NewFilteringProvider(cp, []string{"app:UserName"}, nil)
+	sfpInc := fpInc.(SearchableProvider)
+
+	entryInc, err := sfpInc.GetEntry(ctx, "app")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+	if entryInc.Attributes["UserName"] != "test_user" {
+		t.Errorf("expected UserName 'test_user' in GetEntry, got %v", entryInc.Attributes)
+	}
+	if _, ok := entryInc.Attributes["Password"]; ok {
+		t.Errorf("expected Password to be filtered out by colon-qualified include_fields ['app:UserName']")
+	}
+}
+
 func TestFilteringProvider_UnsupportedSchemeDenial(t *testing.T) {
 	ctx := context.Background()
 

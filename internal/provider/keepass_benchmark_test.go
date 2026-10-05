@@ -65,6 +65,19 @@ func BenchmarkKeePassProvider_Search_Binaries(b *testing.B) {
 	}
 }
 
+var benchmarkBool bool
+
+func BenchmarkMatchEntryTags(b *testing.B) {
+	tagString := "production, database, web, us-east-1, primary, v2, critical"
+	queryTagsLower := []string{"production", "database", "critical"}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		benchmarkBool = matchEntryTags(tagString, queryTagsLower)
+	}
+}
+
 func BenchmarkKeePassProviderSearch(b *testing.B) {
 	keyring.MockInit()
 	ctx := context.Background()

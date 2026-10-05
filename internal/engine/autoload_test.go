@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
@@ -279,6 +280,86 @@ func TestMatchRunAlias(t *testing.T) {
 	})
 }
 
+func TestExpandTemplate(t *testing.T) {
+	re := regexp.MustCompile(`^cmd\s+(?P<arg1>\S+)\s+(?P<arg2>\S+)$`)
+	src := "cmd hello world"
+
+	tests := []struct {
+		name     string
+		re       *regexp.Regexp
+		src      string
+		template string
+		want     string
+	}{
+		{
+			name:     "numbered group expansion",
+			re:       re,
+			src:      src,
+			template: "exec $1 $2",
+			want:     "exec hello world",
+		},
+		{
+			name:     "braced group expansion by number and name",
+			re:       re,
+			src:      src,
+			template: "exec ${1} ${arg2}",
+			want:     "exec hello world",
+		},
+		{
+			name:     "escaped dollar signs",
+			re:       re,
+			src:      src,
+			template: "exec $$ $1",
+			want:     "exec $ hello",
+		},
+		{
+			name:     "trailing dollar sign",
+			re:       re,
+			src:      src,
+			template: "exec $1$",
+			want:     "exec hello$",
+		},
+		{
+			name:     "invalid or missing group name/number fallback",
+			re:       re,
+			src:      src,
+			template: "exec $99 ${nonexistent} $",
+			want:     "exec $99 ${nonexistent} $",
+		},
+		{
+			name:     "single quote context escaping",
+			re:       re,
+			src:      src,
+			template: "exec '$1'",
+			want:     "exec 'hello'",
+		},
+		{
+			name:     "double quote context escaping",
+			re:       re,
+			src:      src,
+			template: `exec "$1"`,
+			want:     `exec "hello"`,
+		},
+		{
+			name:     "named groups that do not participate in the match",
+			re:       regexp.MustCompile(`(?P<group1>hello)|(?P<group2>world)`),
+			src:      "world",
+			template: "echo ${group1} ${group2}",
+			want:     "echo  world",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mIndices := tt.re.FindStringSubmatchIndex(tt.src)
+			got := expandTemplate(tt.re, tt.template, tt.src, mIndices)
+			if got != tt.want {
+				t.Errorf("expandTemplate(%q) = %q, want %q", tt.template, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMatchCommandRule_Security(t *testing.T) {
 	t.Run("Unquoted template expansion", func(t *testing.T) {
 		rule := config.AutoloadRule{
@@ -553,6 +634,134 @@ func TestEscapeSubmatch(t *testing.T) {
 			got := escapeSubmatch(tt.input, tt.ctx)
 			if got != tt.want {
 				t.Errorf("escapeSubmatch(%q, %v) = %q, want %q", tt.input, tt.ctx, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExpandTemplateCharacterization(t *testing.T) {
+	tests := []struct {
+		name     string
+		regex    string
+		template string
+		src      string
+		want     string
+	}{
+		{
+			name:     "braced expansion",
+			regex:    "(?P<group1>hello)",
+			template: "echo ${group1}",
+			src:      "hello world",
+			want:     "echo hello",
+		},
+		{
+			name:     "unbraced expansion",
+			regex:    "(?P<group1>hello)",
+			template: "echo $group1",
+			src:      "hello world",
+			want:     "echo hello",
+		},
+		{
+			name:     "escaped literal dollar sequences",
+			regex:    "(?P<group1>hello)",
+			template: "echo \\$group1 $$",
+			src:      "hello world",
+			want:     "echo \\$group1 $",
+		},
+		{
+			name:     "single-quoted template segments",
+			regex:    "(?P<group1>hello)",
+			template: "echo '${group1}'",
+			src:      "hello world",
+			want:     "echo 'hello'",
+		},
+		{
+			name:     "double-quoted template segments",
+			regex:    "(?P<group1>hello)",
+			template: "echo \"${group1}\"",
+			src:      "hello world",
+			want:     "echo \"hello\"",
+		},
+		{
+			name:     "named groups that do not participate in the match",
+			regex:    "(?P<group1>hello)|(?P<group2>world)",
+			template: "echo ${group1} ${group2}",
+			src:      "world",
+			want:     "echo  world",
+		},
+		{
+			name:     "out-of-range or unmatched group indices",
+			regex:    "(hello)",
+			template: "echo ${2} $3",
+			src:      "hello",
+			want:     "echo ${2} $3",
+		},
+		{
+			name:     "empty template",
+			regex:    "(hello)",
+			template: "",
+			src:      "hello",
+			want:     "",
+		},
+		{
+			name:     "no-match case",
+			regex:    "(foo)",
+			template: "echo $1",
+			src:      "hello",
+			want:     "echo $1",
+		},
+		{
+			name:     "nested quotes - double inside single",
+			regex:    "(?P<g1>hello)",
+			template: "echo '\"$g1\"'",
+			src:      "hello world",
+			want:     "echo '\"hello\"'",
+		},
+		{
+			name:     "nested quotes - single inside double",
+			regex:    "(?P<g1>hello)",
+			template: "echo \"'$g1'\"",
+			src:      "hello world",
+			want:     "echo \"'hello'\"",
+		},
+		{
+			name:     "escaped characters inside quotes",
+			regex:    "(?P<g1>hello)",
+			template: "echo \"\\$g1\" '\\$g1'",
+			src:      "hello world",
+			want:     "echo \"\\$g1\" '\\hello'",
+		},
+		{
+			name:     "numeric groups unbraced",
+			regex:    "(hello) (world)",
+			template: "echo $1 $2",
+			src:      "hello world",
+			want:     "echo hello world",
+		},
+		{
+			name:     "numeric groups braced",
+			regex:    "(hello) (world)",
+			template: "echo ${1} ${2}",
+			src:      "hello world",
+			want:     "echo hello world",
+		},
+		{
+			name:     "braced with non-alphanumeric",
+			regex:    "(?P<group1>hello)",
+			template: "echo ${group1!}",
+			src:      "hello world",
+			want:     "echo ${group1!}",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			re := regexp.MustCompile(tt.regex)
+			matchIndices := re.FindStringSubmatchIndex(tt.src)
+
+			got := expandTemplate(re, tt.template, tt.src, matchIndices)
+			if got != tt.want {
+				t.Errorf("expandTemplate() = %q, want %q", got, tt.want)
 			}
 		})
 	}

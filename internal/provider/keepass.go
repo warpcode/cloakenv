@@ -367,21 +367,38 @@ func matchSearchEntry(entry *gokeepasslib.Entry, title, entryPath string, queryT
 }
 
 // matchEntryTags checks whether all required query tags exist on the entry's tag string.
+// It scans tagString directly to avoid heap allocations from string splitting and map creation.
 func matchEntryTags(tagString string, queryTagsLower []string) bool {
 	if len(queryTagsLower) == 0 {
 		return true
 	}
-
-	entryTags := utils.ParseTagString(tagString)
-	tagMap := make(map[string]bool, len(entryTags))
-	for _, t := range entryTags {
-		tagMap[strings.ToLower(t)] = true
+	if tagString == "" {
+		return false
 	}
 
+NextQueryTag:
 	for _, qt := range queryTagsLower {
-		if !tagMap[qt] {
-			return false
+		s := tagString
+		for len(s) > 0 {
+			var tagSegment string
+			if idx := strings.IndexByte(s, ','); idx >= 0 {
+				tagSegment = s[:idx]
+				s = s[idx+1:]
+			} else {
+				tagSegment = s
+				s = ""
+			}
+
+			tagSegment = strings.TrimSpace(tagSegment)
+			if tagSegment == "" {
+				continue
+			}
+
+			if strings.EqualFold(tagSegment, qt) {
+				continue NextQueryTag
+			}
 		}
+		return false
 	}
 
 	return true
