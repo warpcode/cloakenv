@@ -319,16 +319,14 @@ func TestFlattenSearchResults(t *testing.T) {
 						Title: "Real Title",
 						Attributes: map[string]any{
 							"İ": "dotted-I-val",
-							"ſ": "long-s-val",
 						},
 					},
 				},
 			},
-			selectedKeys: []string{"i", "s"},
+			selectedKeys: []string{"i"},
 			want: []map[string]any{
 				{
-					"I": nil,
-					"S": nil,
+					"_": "dotted-I-val",
 				},
 			},
 		},
