@@ -18,7 +18,6 @@ func ExpandString(s string, configKey string, resolveFunc func(uri string) (stri
 	}
 
 	var sb strings.Builder
-	sb.Grow(len(s))
 	i := 0
 	n := len(s)
 	for i < n {

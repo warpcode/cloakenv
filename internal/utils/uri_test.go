@@ -53,7 +53,7 @@ func TestParseURI(t *testing.T) {
 		},
 		{
 			name:    "null byte in location",
-			uri:     "keyring://service\x00/account",
+			uri:     "keyring://service/acc\x00ount",
 			wantErr: true,
 		},
 		{
