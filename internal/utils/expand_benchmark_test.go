@@ -1,9 +1,7 @@
-package utils_test
+package utils
 
 import (
 	"testing"
-
-	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 func BenchmarkExpandString_NoExpansion(b *testing.B) {
@@ -11,7 +9,7 @@ func BenchmarkExpandString_NoExpansion(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for range b.N {
-		_, _ = utils.ExpandString(input, "", nil)
+		_, _ = ExpandString(input, "", nil)
 	}
 }
 
@@ -23,6 +21,6 @@ func BenchmarkExpandString_WithExpansion(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for range b.N {
-		_, _ = utils.ExpandString(input, "", resolve)
+		_, _ = ExpandString(input, "", resolve)
 	}
 }

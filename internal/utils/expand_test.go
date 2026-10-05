@@ -17,9 +17,24 @@ func TestExpandString(t *testing.T) {
 		wantErr   bool
 	}{
 		{
+			name:  "empty string",
+			input: "",
+			want:  "",
+		},
+		{
 			name:  "no expansion",
 			input: "plain string",
 			want:  "plain string",
+		},
+		{
+			name:  "single dollar sign",
+			input: "$",
+			want:  "$",
+		},
+		{
+			name:  "ends with dollar sign",
+			input: "ends with $",
+			want:  "ends with $",
 		},
 		{
 			name:  "simple expansion",

@@ -1,9 +1,7 @@
-package utils_test
+package utils
 
 import (
 	"testing"
-
-	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 func BenchmarkParseURI(b *testing.B) {
@@ -11,6 +9,6 @@ func BenchmarkParseURI(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for range b.N {
-		_, _, _ = utils.ParseURI(uri)
+		_, _, _ = ParseURI(uri)
 	}
 }

@@ -6,6 +6,38 @@ import (
 	"github.com/warpcode/cloakenv/internal/config"
 )
 
+func TestMatchWildcard(t *testing.T) {
+	tests := []struct {
+		pattern string
+		text    string
+		want    bool
+	}{
+		{pattern: "", text: "", want: true},
+		{pattern: "", text: "abc", want: false},
+		{pattern: "*", text: "anything", want: true},
+		{pattern: "aws", text: "aws", want: true},
+		{pattern: "aws", text: "kubectl", want: false},
+		{pattern: "a*b", text: "ab", want: true},
+		{pattern: "a*b", text: "a123b", want: true},
+		{pattern: "a*b", text: "a123c", want: false},
+		{pattern: "*a", text: "extra", want: true},
+		{pattern: "*a", text: "extrb", want: false},
+		{pattern: "a*", text: "abc", want: true},
+		{pattern: "a*", text: "bbc", want: false},
+		{pattern: "a**b", text: "ab", want: true},
+		{pattern: "a**b", text: "a_x_b", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.pattern+"_"+tt.text, func(t *testing.T) {
+			got := matchWildcard(tt.pattern, tt.text)
+			if got != tt.want {
+				t.Errorf("matchWildcard(%q, %q) = %v, want %v", tt.pattern, tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMatchCommand(t *testing.T) {
 	tests := []struct {
 		name        string
