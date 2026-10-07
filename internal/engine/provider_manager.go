@@ -170,6 +170,13 @@ func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName stri
 		p = provider.NewFilteringProvider(p, vault.IncludeFields, vault.ExcludeFields)
 	}
 
+	if len(vault.Mapping) > 0 {
+		p, err = provider.NewMappingProvider(p, vault.Mapping)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return p, nil
 }
 
