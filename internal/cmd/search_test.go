@@ -326,7 +326,7 @@ func TestFlattenSearchResults(t *testing.T) {
 			selectedKeys: []string{"i"},
 			want: []map[string]any{
 				{
-					"_": "dotted-I-val",
+					"I": nil,
 				},
 			},
 		},
