@@ -367,6 +367,38 @@ func TestSet(t *testing.T) {
 		}
 	})
 
+	t.Run("EmptySchemeURI", func(t *testing.T) {
+		mockStdin(t, "value")
+
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"://location"}, &config.Config{})
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 for empty scheme URI, got %d", exitCode)
+		}
+
+		if !strings.Contains(stderr, "Invalid URI format:") {
+			t.Errorf("expected Invalid URI format error, got %q", stderr)
+		}
+	})
+
+	t.Run("NullByteURI", func(t *testing.T) {
+		mockStdin(t, "value")
+
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test\x00location"}, &config.Config{})
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 for null byte URI, got %d", exitCode)
+		}
+
+		if !strings.Contains(stderr, "contains null byte") {
+			t.Errorf("expected contains null byte error message, got %q", stderr)
+		}
+	})
+
 	t.Run("TTLNotSupported", func(t *testing.T) {
 		mockStdin(t, "value")
 

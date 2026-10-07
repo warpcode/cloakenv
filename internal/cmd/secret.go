@@ -123,7 +123,7 @@ func Set(args []string, cfg *config.Config) int {
 	// Provider-specific validation: --ttl is cache:// only
 	scheme, _, err := utils.ParseURI(uri)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Invalid URI format: %q (expected scheme://location)\n", uri)
+		fmt.Fprintf(os.Stderr, "Invalid URI format: %q (%v)\n", uri, err)
 		return 1
 	}
 	if scheme != "cache" && ttl > 0 {
