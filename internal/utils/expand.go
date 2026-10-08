@@ -11,7 +11,11 @@ import (
 // without resolving it, and `$$${foo}` produces `$` followed by the resolved value.
 // If configKey is provided, it is included in error messages.
 func ExpandString(s string, configKey string, resolveFunc func(uri string) (string, error)) (string, error) {
+	if !strings.Contains(s, "$") {
+		return s, nil
+	}
 	var sb strings.Builder
+	sb.Grow(len(s))
 	i := 0
 	n := len(s)
 	for i < n {
