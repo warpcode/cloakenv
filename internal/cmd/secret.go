@@ -97,6 +97,8 @@ func Set(args []string, cfg *config.Config) int {
 	uri := posArgs[0]
 	var value string
 
+	const maxSecretSize = 1 * 1024 * 1024 // 1 MB limit for secret input to prevent memory exhaustion DoS
+
 	var b []byte
 	var readErr error
 	if term.IsTerminal(int(os.Stdin.Fd())) {
@@ -104,7 +106,7 @@ func Set(args []string, cfg *config.Config) int {
 		b, readErr = term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
 	} else {
-		b, readErr = io.ReadAll(os.Stdin)
+		b, readErr = io.ReadAll(io.LimitReader(os.Stdin, maxSecretSize+1))
 	}
 
 	if readErr != nil {
@@ -112,6 +114,11 @@ func Set(args []string, cfg *config.Config) int {
 		return 1
 	}
 	defer utils.ZeroBytes(b)
+
+	if len(b) > maxSecretSize {
+		fmt.Fprintf(os.Stderr, "Error: secret value exceeds maximum allowed size of %d bytes\n", maxSecretSize)
+		return 1
+	}
 
 	value = string(b)
 	if strings.HasSuffix(value, "\r\n") {
