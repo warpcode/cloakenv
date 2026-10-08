@@ -16,6 +16,9 @@ import (
 	"golang.org/x/term"
 )
 
+// MaxSecretSize specifies the maximum allowed size (1 MB) for secret inputs in cloakenv set.
+const MaxSecretSize = 1 * 1024 * 1024
+
 // Cache handles routing for the "cloakenv cache" subcommands.
 func Cache(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) && (len(args) < 1 || args[0] != "clear") {
@@ -97,8 +100,6 @@ func Set(args []string, cfg *config.Config) int {
 	uri := posArgs[0]
 	var value string
 
-	const maxSecretSize = 1 * 1024 * 1024 // 1 MB limit for secret input to prevent memory exhaustion DoS
-
 	var b []byte
 	var readErr error
 	if term.IsTerminal(int(os.Stdin.Fd())) {
@@ -106,7 +107,7 @@ func Set(args []string, cfg *config.Config) int {
 		b, readErr = term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
 	} else {
-		b, readErr = io.ReadAll(io.LimitReader(os.Stdin, maxSecretSize+1))
+		b, readErr = io.ReadAll(io.LimitReader(os.Stdin, MaxSecretSize+1))
 	}
 
 	if readErr != nil {
@@ -115,8 +116,8 @@ func Set(args []string, cfg *config.Config) int {
 	}
 	defer utils.ZeroBytes(b)
 
-	if len(b) > maxSecretSize {
-		fmt.Fprintf(os.Stderr, "Error: secret value exceeds maximum allowed size of %d bytes\n", maxSecretSize)
+	if len(b) > MaxSecretSize {
+		fmt.Fprintf(os.Stderr, "Error: secret value exceeds maximum allowed size of %d bytes\n", MaxSecretSize)
 		return 1
 	}
 

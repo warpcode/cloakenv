@@ -93,7 +93,7 @@ func PrintSetHelp() {
 
 Description:
   Store a secret value at a writable URI. Currently only 'keyring://' and 'cache://' schemes are writable.
-  The secret value will be securely read from standard input (stdin).
+  The secret value will be securely read from standard input (stdin) up to a maximum allowed size of 1 MB.
 
 Arguments:
   <uri>           The secret URI where the value will be stored

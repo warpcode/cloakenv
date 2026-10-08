@@ -187,21 +187,31 @@ func mockStdin(t *testing.T, content string) {
 
 	os.Stdin = rIn
 
+	var wg sync.WaitGroup
+	var writeErr, closeErr error
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, writeErr = wIn.Write([]byte(content))
+		if err := wIn.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			closeErr = err
+		}
+	}()
+
 	t.Cleanup(func() {
+		wg.Wait()
 		os.Stdin = oldStdin
-		if closeErr := rIn.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
-			t.Errorf("failed to close stdin reader pipe: %v", closeErr)
+		if err := rIn.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			t.Errorf("failed to close stdin reader pipe: %v", err)
+		}
+		if writeErr != nil {
+			t.Errorf("failed to write to stdin pipe: %v", writeErr)
+		}
+		if closeErr != nil {
+			t.Errorf("failed to close stdin writer pipe: %v", closeErr)
 		}
 	})
-
-	go func() {
-		defer func() {
-			if closeErr := wIn.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
-				t.Errorf("failed to close stdin writer pipe: %v", closeErr)
-			}
-		}()
-		_, _ = wIn.Write([]byte(content))
-	}()
 }
 
 // captureOutputWithExitCode captures stdout and stderr for the given function
@@ -478,6 +488,36 @@ func TestSet(t *testing.T) {
 		}
 	})
 
+	t.Run("AtMaxSecretSize", func(t *testing.T) {
+		keyring.MockInit()
+		cfg := &config.Config{
+			Vaults: make(map[string]config.VaultConfig),
+		}
+
+		cacheDir := t.TempDir()
+		t.Setenv("XDG_CACHE_HOME", cacheDir)
+		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+
+		// Exactly MaxSecretSize bytes
+		exactPayload := strings.Repeat("A", MaxSecretSize)
+		mockStdin(t, exactPayload)
+
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test_exact_max"}, cfg)
+		})
+
+		if exitCode != 0 {
+			t.Errorf("expected exit code 0 for payload at MaxSecretSize, got %d (stderr: %s)", exitCode, stderr)
+		}
+
+		exitCode, stdout, _ := captureOutputWithExitCode(t, func() int {
+			return Get([]string{"cache://test_exact_max"}, cfg)
+		})
+		if exitCode != 0 || stdout != exactPayload {
+			t.Errorf("expected Get output to match MaxSecretSize payload, exitCode=%d, len=%d", exitCode, len(stdout))
+		}
+	})
+
 	t.Run("ExceedsMaxSecretSize", func(t *testing.T) {
 		keyring.MockInit()
 		cfg := &config.Config{
@@ -487,8 +527,8 @@ func TestSet(t *testing.T) {
 		cacheDir := t.TempDir()
 		t.Setenv("XDG_CACHE_HOME", cacheDir)
 
-		// Generate 1 MB + 10 bytes payload
-		oversizedPayload := strings.Repeat("A", 1*1024*1024+10)
+		// Generate MaxSecretSize + 1 bytes payload
+		oversizedPayload := strings.Repeat("A", MaxSecretSize+1)
 		mockStdin(t, oversizedPayload)
 
 		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {

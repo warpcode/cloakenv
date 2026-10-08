@@ -308,13 +308,13 @@ cloakenv get "work://Infrastructure/SSH:id_rsa" > ~/.ssh/id_rsa_temp
 
 ### `set` — Write to Keyring or Cache
 
-Writes a secret to a writable provider (`keyring://` or `cache://`). The secret value is read securely from standard input (stdin) or an interactive masked prompt, preventing exposure in shell history or process lists.
+Writes a secret to a writable provider (`keyring://` or `cache://`). The secret value is read securely from standard input (stdin) or an interactive masked prompt, preventing exposure in shell history or process lists. Secret values are limited to a maximum payload size of 1 MB.
 
 ```bash
 cloakenv set <uri> [--ttl <duration>]
 ```
 
-- The secret value is securely read from standard input (stdin) or prompted interactively if running in a terminal.
+- The secret value is securely read from standard input (stdin) up to 1 MB or prompted interactively if running in a terminal.
 - `--ttl <duration>`: Optional Time-To-Live expiration (e.g. `5m`, `1h`, `24h`) for `cache://` secrets.
 
 #### Examples:
