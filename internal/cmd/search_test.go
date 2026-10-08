@@ -279,6 +279,80 @@ func TestFlattenSearchResults(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "unicode title attribute filtering in default entry",
+			results: []provider.SearchResult{
+				{
+					Provider: "keepass",
+					Vault:    "myvault",
+					Path:     "path/to/entry",
+					Entry: provider.Entry{
+						Title: "Real Title",
+						Tags:  []string{"tag1"},
+						Attributes: map[string]any{
+							"TİTLE":    "dotted-I-title",
+							"password": "secret_password",
+						},
+					},
+				},
+			},
+			selectedKeys: nil,
+			want: []map[string]any{
+				{
+					"provider": "keepass",
+					"vault":    "myvault",
+					"path":     "path/to/entry",
+					"title":    "Real Title",
+					"tags":     []string{"tag1"},
+					"PASSWORD": "secret_password",
+				},
+			},
+		},
+		{
+			name: "unicode attribute matching in selected keys",
+			results: []provider.SearchResult{
+				{
+					Provider: "keepass",
+					Vault:    "myvault",
+					Path:     "path/to/entry",
+					Entry: provider.Entry{
+						Title: "Real Title",
+						Attributes: map[string]any{
+							"İ": "dotted-I-val",
+						},
+					},
+				},
+			},
+			selectedKeys: []string{"i"},
+			want: []map[string]any{
+				{
+					"I": nil,
+				},
+			},
+		},
+		{
+			name: "deterministic resolution when multiple keys match lowercasing",
+			results: []provider.SearchResult{
+				{
+					Provider: "keepass",
+					Vault:    "myvault",
+					Path:     "path/to/entry",
+					Entry: provider.Entry{
+						Title: "Real Title",
+						Attributes: map[string]any{
+							"\u212A": "kelvin-val",
+							"k":      "plain-k-val",
+						},
+					},
+				},
+			},
+			selectedKeys: []string{"K"},
+			want: []map[string]any{
+				{
+					"K": "plain-k-val",
+				},
+			},
+		},
 	}
 
 	for _, tc := range tests {
