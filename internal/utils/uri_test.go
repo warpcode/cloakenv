@@ -57,6 +57,13 @@ func TestParseURI(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			// Same guard as the case above, but with the null byte adjacent to the
+			// scheme separator rather than inside the account name.
+			name:    "null byte immediately after scheme separator",
+			uri:     "keyring://service\x00/account",
+			wantErr: true,
+		},
+		{
 			name:    "null byte in parameter",
 			uri:     "search://tags=prod\x00&title=db/Password",
 			wantErr: true,

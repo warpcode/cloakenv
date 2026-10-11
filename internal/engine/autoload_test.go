@@ -747,3 +747,54 @@ func TestExpandTemplateCharacterization(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchWildcard(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		text    string
+		want    bool
+	}{
+		// No-wildcard patterns take the allocation-free fast path.
+		{name: "empty pattern and text", pattern: "", text: "", want: true},
+		{name: "empty pattern non-empty text", pattern: "", text: "abc", want: false},
+		{name: "exact match", pattern: "aws", text: "aws", want: true},
+		{name: "exact mismatch", pattern: "aws", text: "kubectl", want: false},
+		{name: "literal wildcard character in text", pattern: "a*b", text: "ab", want: true},
+		{name: "literal wildcard character mid text", pattern: "a*b", text: "a123b", want: true},
+		{name: "literal wildcard character not matched", pattern: "a*b", text: "a123c", want: false},
+
+		// Wildcard patterns take the strings.Split path.
+		{name: "match all", pattern: "*", text: "anything", want: true},
+		{name: "suffix wildcard", pattern: "*a", text: "extra", want: true},
+		{name: "suffix wildcard no match", pattern: "*a", text: "extrb", want: false},
+		{name: "prefix wildcard", pattern: "a*", text: "abc", want: true},
+		{name: "prefix wildcard no match", pattern: "a*", text: "bbc", want: false},
+		{name: "double wildcard collapses", pattern: "a**b", text: "ab", want: true},
+		{name: "double wildcard with infix", pattern: "a**b", text: "a_x_b", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := matchWildcard(tt.pattern, tt.text); got != tt.want {
+				t.Errorf("matchWildcard(%q, %q) = %v, want %v", tt.pattern, tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
+func BenchmarkMatchWildcard_NoWildcard(b *testing.B) {
+	for range b.N {
+		if !matchWildcard("aws.ec2.eu-west-1", "aws.ec2.eu-west-1") {
+			b.Fatal("expected match")
+		}
+	}
+}
+
+func BenchmarkMatchWildcard_Wildcard(b *testing.B) {
+	for range b.N {
+		if !matchWildcard("aws*", "aws.ec2.eu-west-1") {
+			b.Fatal("expected match")
+		}
+	}
+}
