@@ -35,7 +35,7 @@ func (p *staticProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 	}
 	p.filePath = vaultPath
 	p.entries = make(map[string]Entry)
-	data, err := os.ReadFile(vaultPath) //nolint:gosec // operator-configured vault path; validated by internal/config
+	data, err := os.ReadFile(vaultPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil

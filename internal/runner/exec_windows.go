@@ -40,7 +40,7 @@ func RunCommand(cmdArgs []string, env []string) int {
 	}
 
 	/* #nosec G204 */
-	cmd := exec.Command(absBinary, cmdArgs[1:]...) //nolint:gosec // by design; command provenance is the operator's config
+	cmd := exec.Command(absBinary, cmdArgs[1:]...)
 	cmd.Env = env
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

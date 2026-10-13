@@ -1,6 +1,6 @@
 module github.com/warpcode/cloakenv
 
-go 1.26.2
+go 1.26.0
 
 require (
 	github.com/expr-lang/expr v1.17.8

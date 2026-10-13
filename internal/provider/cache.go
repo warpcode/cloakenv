@@ -111,7 +111,7 @@ func (c *CacheProvider) GetSecret(ctx context.Context, location string) (string,
 	}
 
 	filePath := c.getCacheFilePath(location)
-	data, err := os.ReadFile(filePath) //nolint:gosec // deterministic cache path derived from sanitized key
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", fmt.Errorf("cache provider: secret %q not found in cache", location)
@@ -149,8 +149,8 @@ func (c *CacheProvider) GetSecret(ctx context.Context, location string) (string,
 
 	// Fixed-width 8-byte encoding: the uint64->int64 reinterpretation is the
 	// inverse of the PutUint64(uint64(t)) performed at write time.
-	writeTime := int64(binary.BigEndian.Uint64(plaintext[0:8])) //nolint:gosec // intentional round-trip of a fixed-width timestamp encoding
-	ttl := int64(binary.BigEndian.Uint64(plaintext[8:16]))      //nolint:gosec // intentional round-trip of a fixed-width duration encoding
+	writeTime := int64(binary.BigEndian.Uint64(plaintext[0:8]))
+	ttl := int64(binary.BigEndian.Uint64(plaintext[8:16]))
 
 	// Check TTL expiration
 	if ttl > 0 {
@@ -187,7 +187,7 @@ func (c *CacheProvider) SetSecret(ctx context.Context, location string, value st
 	writeTime := time.Now().UnixNano()
 	metadata := make([]byte, 16)
 	binary.BigEndian.PutUint64(metadata[0:8], uint64(writeTime))
-	binary.BigEndian.PutUint64(metadata[8:16], uint64(ttl.Nanoseconds())) //nolint:gosec // fixed-width wire encoding; decoded symmetrically on read
+	binary.BigEndian.PutUint64(metadata[8:16], uint64(ttl.Nanoseconds()))
 
 	valBytes := []byte(value)
 	plaintext := append(metadata, valBytes...)

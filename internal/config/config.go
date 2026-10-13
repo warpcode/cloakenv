@@ -194,7 +194,7 @@ func Load(path string) (*Config, error) {
 		cfg.ConfigPath = path
 	}
 
-	data, err := os.ReadFile(path) //nolint:gosec // operator-configured config path
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return cfg, nil

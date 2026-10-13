@@ -35,7 +35,7 @@ func RunCommand(cmdArgs []string, env []string) int {
 
 	// Executing the user-supplied command is this tool's core purpose:
 	// cloakenv wraps an arbitrary binary with a secret-injected environment.
-	err = syscall.Exec(absBinary, cmdArgs, env) //nolint:gosec // by design; command provenance is the operator's config
+	err = syscall.Exec(absBinary, cmdArgs, env)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Execution failed: %v\n", err)
 		return 1
