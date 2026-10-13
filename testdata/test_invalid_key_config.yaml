@@ -4,12 +4,12 @@ cache:
 keyring:
   prefix: "cloakenv_test"
 
-providers:
+vaults:
   invalid_repo:
     provider: "yaml"
     vault_path: "./testdata/test_hosts.yaml"
-    entries_key: "non_existent_key"
+    entities_root_key: "non_existent_key"
   valid_repo:
     provider: "yaml"
     vault_path: "./testdata/test_hosts.yaml"
-    entries_key: "hosts"
+    entities_root_key: "hosts"
