@@ -185,15 +185,17 @@ func (pm *ProviderManager) initKeePass(ctx context.Context, vaultName string, va
 	kp := provider.NewKeePassProvider()
 	err := kp.Initialize(ctx, provider.ProviderConfig{
 		Settings: map[string]string{
-			"vault_path":     vault.VaultPath,
-			"remote_name":    vaultName,
-			"keyring_prefix": pm.config.KeyringPrefix(),
+			"vault_path":         vault.VaultPath,
+			"remote_name":        vaultName,
+			"keyring_prefix":     pm.config.KeyringPrefix(),
+			"resolve_references": fmt.Sprintf("%t", vault.ResolveReferences),
 		},
-		SingleEntity:    vault.SingleEntity,
-		EntityName:      vault.EntityName,
-		Searchable:      vault.Searchable == nil || *vault.Searchable,
-		Tags:            vault.Tags,
-		EntitiesRootKey: vault.EntitiesRootKey,
+		SingleEntity:      vault.SingleEntity,
+		EntityName:        vault.EntityName,
+		Searchable:        vault.Searchable == nil || *vault.Searchable,
+		Tags:              vault.Tags,
+		EntitiesRootKey:   vault.EntitiesRootKey,
+		ResolveReferences: vault.ResolveReferences,
 	})
 	if err != nil {
 		return nil, err
@@ -427,16 +429,18 @@ func (pm *ProviderManager) Login(ctx context.Context, vaultName string) error {
 	kp := provider.NewKeePassProvider()
 	return kp.Initialize(ctx, provider.ProviderConfig{
 		Settings: map[string]string{
-			"vault_path":     vault.VaultPath,
-			"remote_name":    vaultName,
-			"keyring_prefix": pm.config.KeyringPrefix(),
-			"force_prompt":   "true",
+			"vault_path":         vault.VaultPath,
+			"remote_name":        vaultName,
+			"keyring_prefix":     pm.config.KeyringPrefix(),
+			"force_prompt":       "true",
+			"resolve_references": fmt.Sprintf("%t", vault.ResolveReferences),
 		},
-		SingleEntity:    vault.SingleEntity,
-		EntityName:      vault.EntityName,
-		Searchable:      vault.Searchable == nil || *vault.Searchable,
-		Tags:            vault.Tags,
-		EntitiesRootKey: vault.EntitiesRootKey,
+		SingleEntity:      vault.SingleEntity,
+		EntityName:        vault.EntityName,
+		Searchable:        vault.Searchable == nil || *vault.Searchable,
+		Tags:              vault.Tags,
+		EntitiesRootKey:   vault.EntitiesRootKey,
+		ResolveReferences: vault.ResolveReferences,
 	})
 }
 

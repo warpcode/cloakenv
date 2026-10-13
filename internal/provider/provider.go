@@ -44,8 +44,9 @@ type ProviderConfig struct {
 	EntitiesRootKey string
 	SourceVaults    []string
 	Query           string
-	IncludeFields   []string
-	ExcludeFields   []string
+	IncludeFields     []string
+	ExcludeFields     []string
+	ResolveReferences bool
 }
 
 // Entry represents a multi-secret credential record with metadata.
