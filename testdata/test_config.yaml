@@ -4,7 +4,7 @@ cache:
 keyring:
   prefix: "cloakenv_test"
 
-providers:
+vaults:
   testdb:
     provider: "keepass"
     vault_path: "./testdata/testDB.kdbx"

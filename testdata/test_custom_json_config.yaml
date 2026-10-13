@@ -4,8 +4,8 @@ cache:
 keyring:
   prefix: "cloakenv_test"
 
-providers:
+vaults:
   json_hosts_repo:
     provider: "json"
     vault_path: "./testdata/test_hosts.json"
-    entries_key: "hosts"
+    entities_root_key: "hosts"
