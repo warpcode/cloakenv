@@ -1,9 +1,11 @@
 package provider
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -20,19 +22,42 @@ func (k *KeePassProvider) resolveValue(entry *gokeepasslib.Entry, fieldKey strin
 	return k.resolveField(entry, fieldKey, val, 0, visited)
 }
 
-// resolveField recursively resolves placeholders and field references within a field value string.
+// resolveField recursively resolves placeholders, T-CONV text transformations, and field references within a field value string.
 // It enforces a maximum recursion depth limit of 10 and uses a visited stack to detect circular references.
 func (k *KeePassProvider) resolveField(entry *gokeepasslib.Entry, fieldKey string, val string, depth int, visited map[string]bool) (string, error) {
 	if depth >= 10 {
 		return "", errors.New("keepass reference error: maximum recursion depth (10) exceeded")
 	}
 
-	refKey := hex.EncodeToString(entry.UUID[:]) + ":" + strings.ToLower(fieldKey)
-	if visited[refKey] {
-		return "", fmt.Errorf("keepass reference error: circular reference detected for entry %q field %q", k.getEntryTitle(entry), fieldKey)
+	if fieldKey != "" {
+		refKey := hex.EncodeToString(entry.UUID[:]) + ":" + strings.ToLower(fieldKey)
+		if visited[refKey] {
+			return "", fmt.Errorf("keepass reference error: circular reference detected for entry %q field %q", k.getEntryTitle(entry), fieldKey)
+		}
+		visited[refKey] = true
+		defer delete(visited, refKey)
 	}
-	visited[refKey] = true
-	defer delete(visited, refKey)
+
+	if !strings.Contains(val, "{") || !strings.Contains(val, "}") {
+		return val, nil
+	}
+
+	// First, resolve any {T-CONV:/<text>/<method>/} placeholders from innermost to outermost
+	for {
+		match, ok := findInnermostTConv(val)
+		if !ok {
+			break
+		}
+		resolvedText, err := k.resolveField(entry, "", match.text, depth+1, visited)
+		if err != nil {
+			return "", err
+		}
+		transformed, err := applyTConvMethod(resolvedText, match.method)
+		if err != nil {
+			return "", err
+		}
+		val = val[:match.start] + transformed + val[match.end:]
+	}
 
 	if !strings.Contains(val, "{") || !strings.Contains(val, "}") {
 		return val, nil
@@ -290,5 +315,96 @@ func isStandardFieldKey(key string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+type tConvMatch struct {
+	start  int
+	end    int
+	text   string
+	method string
+}
+
+// findInnermostTConv locates the innermost {T-CONV:<sep><text><sep><method><sep>} placeholder in val.
+func findInnermostTConv(val string) (tConvMatch, bool) {
+	valLower := strings.ToLower(val)
+	searchOffset := len(val)
+
+	for {
+		idx := strings.LastIndex(valLower[:searchOffset], "{t-conv:")
+		if idx == -1 {
+			return tConvMatch{}, false
+		}
+
+		sepIdx := idx + 8 // length of "{t-conv:"
+		if sepIdx >= len(val) {
+			searchOffset = idx
+			continue
+		}
+
+		sep := val[sepIdx]
+		if sep == '}' {
+			searchOffset = idx
+			continue
+		}
+
+		// Find second separator
+		textStart := sepIdx + 1
+		nextSep := strings.IndexByte(val[textStart:], sep)
+		if nextSep == -1 {
+			searchOffset = idx
+			continue
+		}
+		textEnd := textStart + nextSep
+		text := val[textStart:textEnd]
+
+		// Find third separator
+		methodStart := textEnd + 1
+		methodSep := strings.IndexByte(val[methodStart:], sep)
+		if methodSep == -1 {
+			searchOffset = idx
+			continue
+		}
+		methodEnd := methodStart + methodSep
+		method := val[methodStart:methodEnd]
+
+		closingIdx := methodEnd + 1
+		if closingIdx >= len(val) || val[closingIdx] != '}' {
+			searchOffset = idx
+			continue
+		}
+
+		return tConvMatch{
+			start:  idx,
+			end:    closingIdx + 1,
+			text:   text,
+			method: method,
+		}, true
+	}
+}
+
+// applyTConvMethod applies a text transformation method to text.
+func applyTConvMethod(text, method string) (string, error) {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "UPPER", "U":
+		return strings.ToUpper(text), nil
+	case "LOWER", "L":
+		return strings.ToLower(text), nil
+	case "BASE64":
+		return base64.StdEncoding.EncodeToString([]byte(text)), nil
+	case "HEX":
+		return hex.EncodeToString([]byte(text)), nil
+	case "URI":
+		return url.QueryEscape(text), nil
+	case "URI-DEC", "URIDEC", "URI-DECODE":
+		res, err := url.QueryUnescape(text)
+		if err != nil {
+			return "", fmt.Errorf("keepass reference error: failed to URI decode text %q: %w", text, err)
+		}
+		return res, nil
+	case "RAW":
+		return text, nil
+	default:
+		return "", fmt.Errorf("keepass reference error: unknown T-CONV method %q", method)
 	}
 }

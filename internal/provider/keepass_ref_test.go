@@ -91,6 +91,27 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 		rootGroup.Entries = append(rootGroup.Entries, e)
 	}
 
+	// 6. TextConversions
+	tconvEntry := makeEntry("", "TextConversions", "alice_user", "SecretP@ss123!", "", "", map[string]string{
+		"Upper":           "{T-CONV:/{USERNAME}/UPPER/}",
+		"UpperShort":      "{T-CONV:/{USERNAME}/U/}",
+		"Lower":           "{T-CONV:/SECRET_VALUE/LOWER/}",
+		"LowerShort":      "{T-CONV:/SECRET_VALUE/L/}",
+		"Base64":          "{T-CONV:/{USERNAME}:{PASSWORD}/BASE64/}",
+		"Hex":             "{T-CONV:/hello world/HEX/}",
+		"URI":             "{T-CONV:/hello world & foo=bar/URI/}",
+		"URIDec":          "{T-CONV:/hello+world+%26+foo%3Dbar/URI-DEC/}",
+		"Raw":             "{T-CONV:/{USERNAME}/RAW/}",
+		"Nested":          "{T-CONV:/{T-CONV:/{USERNAME}/UPPER/}/BASE64/}",
+		"CrossEntryTConv": "{T-CONV:/{REF:U@T:TargetEntry}:{REF:P@T:TargetEntry}/BASE64/}",
+		"CustomSep":       "{T-CONV:!{USERNAME}!UPPER!}",
+		"EmptyString":     "{T-CONV://UPPER/}",
+		"SpecialChars":    "{T-CONV:/Special!@#$%^*()_+/BASE64/}",
+		"UnknownMethod":   "{T-CONV:/text/UNKNOWN/}",
+		"InvalidURIDec":   "{T-CONV:/%zz/URI-DEC/}",
+	})
+	rootGroup.Entries = append(rootGroup.Entries, tconvEntry)
+
 	db.Content.Root.Groups = []gokeepasslib.Group{rootGroup}
 	return db
 }
@@ -263,6 +284,66 @@ func TestKeePassReferences_MaxDepthLimit(t *testing.T) {
 	if !strings.Contains(err.Error(), "maximum recursion depth (10) exceeded") {
 		t.Errorf("expected 'maximum recursion depth (10) exceeded' in error, got: %v", err)
 	}
+}
+
+func TestKeePassReferences_TextConversions(t *testing.T) {
+	ctx := context.Background()
+	kp := NewKeePassProvider()
+	kp.db = createTestDBWithReferences()
+	kp.resolveReferences = true
+
+	tests := []struct {
+		name     string
+		location string
+		want     string
+	}{
+		{"Upper", "Root/TextConversions:Upper", "ALICE_USER"},
+		{"UpperShort", "Root/TextConversions:UpperShort", "ALICE_USER"},
+		{"Lower", "Root/TextConversions:Lower", "secret_value"},
+		{"LowerShort", "Root/TextConversions:LowerShort", "secret_value"},
+		{"Base64", "Root/TextConversions:Base64", "YWxpY2VfdXNlcjpTZWNyZXRQQHNzMTIzIQ=="},
+		{"Hex", "Root/TextConversions:Hex", "68656c6c6f20776f726c64"},
+		{"URI", "Root/TextConversions:URI", "hello+world+%26+foo%3Dbar"},
+		{"URIDec", "Root/TextConversions:URIDec", "hello world & foo=bar"},
+		{"Raw", "Root/TextConversions:Raw", "alice_user"},
+		{"Nested", "Root/TextConversions:Nested", "QUxJQ0VfVVNFUg=="},
+		{"CrossEntryTConv", "Root/TextConversions:CrossEntryTConv", "dGFyZ2V0dXNlcjp0YXJnZXRwYXNzd29yZCE="},
+		{"CustomSep", "Root/TextConversions:CustomSep", "ALICE_USER"},
+		{"EmptyString", "Root/TextConversions:EmptyString", ""},
+		{"SpecialChars", "Root/TextConversions:SpecialChars", "U3BlY2lhbCFAIyQlXiooKV8r"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			val, err := kp.GetSecret(ctx, tt.location)
+			if err != nil {
+				t.Fatalf("GetSecret(%q) failed: %v", tt.location, err)
+			}
+			if val != tt.want {
+				t.Errorf("GetSecret(%q) = %q, want %q", tt.location, val, tt.want)
+			}
+		})
+	}
+
+	t.Run("UnknownMethod", func(t *testing.T) {
+		_, err := kp.GetSecret(ctx, "Root/TextConversions:UnknownMethod")
+		if err == nil {
+			t.Fatal("expected error for unknown T-CONV method, got nil")
+		}
+		if !strings.Contains(err.Error(), "unknown T-CONV method") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("InvalidURIDec", func(t *testing.T) {
+		_, err := kp.GetSecret(ctx, "Root/TextConversions:InvalidURIDec")
+		if err == nil {
+			t.Fatal("expected error for invalid URI decode, got nil")
+		}
+		if !strings.Contains(err.Error(), "failed to URI decode") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
 }
 
 func TestKeePassReferences_GetEntryAndSearch(t *testing.T) {
