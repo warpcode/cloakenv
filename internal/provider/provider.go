@@ -34,16 +34,16 @@ type SecretProvider interface {
 
 // ProviderConfig carries backend-specific initialization parameters.
 type ProviderConfig struct {
-	Settings        map[string]string
-	Attributes      map[string]any
-	Entities        map[string]map[string]any
-	SingleEntity    *bool
-	EntityName      string
-	Searchable      bool
-	Tags            []string
-	EntitiesRootKey string
-	SourceVaults    []string
-	Query           string
+	Settings          map[string]string
+	Attributes        map[string]any
+	Entities          map[string]map[string]any
+	SingleEntity      *bool
+	EntityName        string
+	Searchable        bool
+	Tags              []string
+	EntitiesRootKey   string
+	SourceVaults      []string
+	Query             string
 	IncludeFields     []string
 	ExcludeFields     []string
 	ResolveReferences bool

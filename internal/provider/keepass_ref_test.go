@@ -45,33 +45,33 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 
 	// 2. LocalPlaceholders
 	localEntry := makeEntry("", "LocalPlaceholders", "{TITLE}_user", "pass_{USERNAME}", "http://{S:CustomAttr}.example.com", "User:{USERNAME},Pass:{PASSWORD}", map[string]string{
-		"CustomAttr": "localCustom",
-		"RefCustom":  "{S:CustomAttr}_extended",
+		"CustomAttr":  "localCustom",
+		"RefCustom":   "{S:CustomAttr}_extended",
 		"LowerCustom": "{s:CustomAttr}_extended",
 	})
 	rootGroup.Entries = append(rootGroup.Entries, localEntry)
 
 	// 3. CrossReferences
 	crossEntry := makeEntry("", "CrossReferences", "crossuser", "crosspass", "", "", map[string]string{
-		"PasswordByTitle":    "{REF:P@T:TargetEntry}",
-		"UsernameByTitle":    "{REF:U@T:TargetEntry}",
-		"TitleByTitle":       "{REF:T@T:TargetEntry}",
-		"URLByTitle":         "{REF:A@T:TargetEntry}",
-		"NotesByTitle":       "{REF:N@T:TargetEntry}",
-		"CustomByTitle":      "{REF:S:TargetCustom@T:TargetEntry}",
-		"ByUUID":             "{REF:P@I:102030405060708090a0b0c0d0e0f001}",
-		"ByUUIDWithHyphens":  "{REF:P@I:10203040-5060-7080-90a0-b0c0d0e0f001}",
-		"SubstringMatch":     "{REF:P@T:Target}",
-		"MatchByUsername":    "{REF:P@U:targetuser}",
-		"MatchByPassword":    "{REF:U@P:targetpassword!}",
-		"MatchByURL":         "{REF:P@A:https://target.com}",
-		"MatchByNotes":       "{REF:P@N:Target notes}",
-		"MatchByOther":       "{REF:P@O:unique_other_value}",
-		"LowerCaseRef":       "{ref:p@t:TargetEntry}",
+		"PasswordByTitle":      "{REF:P@T:TargetEntry}",
+		"UsernameByTitle":      "{REF:U@T:TargetEntry}",
+		"TitleByTitle":         "{REF:T@T:TargetEntry}",
+		"URLByTitle":           "{REF:A@T:TargetEntry}",
+		"NotesByTitle":         "{REF:N@T:TargetEntry}",
+		"CustomByTitle":        "{REF:S:TargetCustom@T:TargetEntry}",
+		"ByUUID":               "{REF:P@I:102030405060708090a0b0c0d0e0f001}",
+		"ByUUIDWithHyphens":    "{REF:P@I:10203040-5060-7080-90a0-b0c0d0e0f001}",
+		"SubstringMatch":       "{REF:P@T:Target}",
+		"MatchByUsername":      "{REF:P@U:targetuser}",
+		"MatchByPassword":      "{REF:U@P:targetpassword!}",
+		"MatchByURL":           "{REF:P@A:https://target.com}",
+		"MatchByNotes":         "{REF:P@N:Target notes}",
+		"MatchByOther":         "{REF:P@O:unique_other_value}",
+		"LowerCaseRef":         "{ref:p@t:TargetEntry}",
 		"LowerCasePlaceholder": "{s:TargetCustom}",
-		"NonExistentEntry":   "{REF:P@T:DoesNotExist}",
-		"NonExistentField":   "{REF:S:DoesNotExist@T:TargetEntry}",
-		"Compound":           "https://{REF:U@T:TargetEntry}:{REF:P@T:TargetEntry}@{REF:S:TargetCustom@T:TargetEntry}",
+		"NonExistentEntry":     "{REF:P@T:DoesNotExist}",
+		"NonExistentField":     "{REF:S:DoesNotExist@T:TargetEntry}",
+		"Compound":             "https://{REF:U@T:TargetEntry}:{REF:P@T:TargetEntry}@{REF:S:TargetCustom@T:TargetEntry}",
 	})
 	rootGroup.Entries = append(rootGroup.Entries, crossEntry)
 
@@ -82,7 +82,7 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 	rootGroup.Entries = append(rootGroup.Entries, circA, circB, selfCirc)
 
 	// 5. Deep recursion chain (11 steps: Deep0 -> Deep1 -> ... -> Deep11)
-	for i := 0; i <= 11; i++ {
+	for i := range 12 {
 		nextVal := "final_secret"
 		if i < 11 {
 			nextVal = fmt.Sprintf("{REF:P@T:Deep%d}", i+1)
