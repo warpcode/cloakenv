@@ -6,13 +6,17 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/tobischo/gokeepasslib/v3"
 )
 
-// keepassPlaceholderRegex matches same-entry placeholders like {TITLE}, {USERNAME}, {PASSWORD}, {URL}, {NOTES}, {S:custom}
-// and cross-entry field references like {REF:<WantedField>@<SearchIn>:<SearchText>}.
-var keepassPlaceholderRegex = regexp.MustCompile(`(?i)\{(?:REF:([^@]+)@([^:]+):([^}]+)|(TITLE|USERNAME|PASSWORD|URL|NOTES|S:[^}]+))\}`)
+// nowFunc returns current time. Overridden in tests for deterministic date/time placeholder testing.
+var nowFunc = time.Now
+
+// keepassPlaceholderRegex matches same-entry placeholders like {TITLE}, {USERNAME}, {PASSWORD}, {URL}, {NOTES}, {S:custom},
+// date/time placeholders (e.g. {DT_SIMPLE}, {DT_UTC_YEAR}), and cross-entry field references like {REF:<WantedField>@<SearchIn>:<SearchText>}.
+var keepassPlaceholderRegex = regexp.MustCompile(`(?i)\{(?:REF:([^@]+)@([^:]+):([^}]+)|(TITLE|USERNAME|PASSWORD|URL|NOTES|DT_SIMPLE|DT_YEAR|DT_MONTH|DT_DAY|DT_HOUR|DT_MINUTE|DT_SECOND|DT_UTC_SIMPLE|DT_UTC_YEAR|DT_UTC_MONTH|DT_UTC_DAY|DT_UTC_HOUR|DT_UTC_MINUTE|DT_UTC_SECOND|S:[^}]+))\}`)
 
 // resolveValue is the top-level entry point for resolving placeholders and references in a field value.
 func (k *KeePassProvider) resolveValue(entry *gokeepasslib.Entry, fieldKey string, val string) (string, error) {
@@ -78,8 +82,11 @@ func (k *KeePassProvider) resolveField(entry *gokeepasslib.Entry, fieldKey strin
 	return sb.String(), nil
 }
 
-// resolveSameEntryPlaceholder resolves a same-entry placeholder (e.g. {TITLE}, {PASSWORD}, {S:custom}).
+// resolveSameEntryPlaceholder resolves a same-entry placeholder (e.g. {TITLE}, {PASSWORD}, {S:custom}, {DT_SIMPLE}).
 func (k *KeePassProvider) resolveSameEntryPlaceholder(entry *gokeepasslib.Entry, placeholder string, depth int, visited map[string]bool) (string, error) {
+	if dtVal, ok := formatDateTimePlaceholder(placeholder); ok {
+		return dtVal, nil
+	}
 	targetField := mapPlaceholderToField(placeholder)
 	if targetField == "" {
 		return "{" + placeholder + "}", nil
@@ -102,6 +109,45 @@ func (k *KeePassProvider) resolveCrossReference(wantedFieldStr, searchInStr, sea
 
 	rawVal := k.getEntryRawValue(targetEntry, targetField)
 	return k.resolveField(targetEntry, targetField, rawVal, depth+1, visited)
+}
+
+// formatDateTimePlaceholder evaluates date/time placeholders (local or UTC) and returns the formatted time string.
+// If the placeholder is not a date/time placeholder, it returns ("", false).
+func formatDateTimePlaceholder(placeholder string) (string, bool) {
+	now := nowFunc()
+	up := strings.ToUpper(placeholder)
+	switch up {
+	case "DT_SIMPLE":
+		return now.Format("20060102150405"), true
+	case "DT_YEAR":
+		return now.Format("2006"), true
+	case "DT_MONTH":
+		return now.Format("01"), true
+	case "DT_DAY":
+		return now.Format("02"), true
+	case "DT_HOUR":
+		return now.Format("15"), true
+	case "DT_MINUTE":
+		return now.Format("04"), true
+	case "DT_SECOND":
+		return now.Format("05"), true
+
+	case "DT_UTC_SIMPLE":
+		return now.UTC().Format("20060102150405"), true
+	case "DT_UTC_YEAR":
+		return now.UTC().Format("2006"), true
+	case "DT_UTC_MONTH":
+		return now.UTC().Format("01"), true
+	case "DT_UTC_DAY":
+		return now.UTC().Format("02"), true
+	case "DT_UTC_HOUR":
+		return now.UTC().Format("15"), true
+	case "DT_UTC_MINUTE":
+		return now.UTC().Format("04"), true
+	case "DT_UTC_SECOND":
+		return now.UTC().Format("05"), true
+	}
+	return "", false
 }
 
 // mapPlaceholderToField converts a placeholder string (e.g. "TITLE", "USERNAME", "S:foo") to a field key.

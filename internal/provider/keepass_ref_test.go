@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tobischo/gokeepasslib/v3"
 )
@@ -221,6 +222,88 @@ func TestKeePassReferences_MissingEntryAndField(t *testing.T) {
 			t.Errorf("expected empty string for non-existent field, got %q", val)
 		}
 	})
+}
+
+func TestKeePassReferences_DateTimePlaceholders(t *testing.T) {
+	ctx := context.Background()
+
+	// Fixed time: Oct 13, 2026, 16:04:05 in UTC+5 timezone (single-digit month 10? no, 10 is 2 digits.
+	// Let's use May 3, 2026, 04:05:06 to test zero-padding for single-digit month, day, hour, min, sec!)
+	// Local: 2026-05-03 04:05:06 +0500 UTC+5
+	// UTC:   2026-05-02 23:05:06 +0000 UTC
+	fixedLocation := time.FixedZone("UTC+5", 5*3600)
+	fixedLocal := time.Date(2026, 5, 3, 4, 5, 6, 0, fixedLocation)
+
+	origNowFunc := nowFunc
+	nowFunc = func() time.Time { return fixedLocal }
+	t.Cleanup(func() { nowFunc = origNowFunc })
+
+	db := gokeepasslib.NewDatabase()
+	rootGroup := gokeepasslib.NewGroup()
+	rootGroup.Name = "Root"
+
+	entry := gokeepasslib.NewEntry()
+	entry.Values = append(entry.Values,
+		gokeepasslib.ValueData{Key: "Title", Value: gokeepasslib.V{Content: "DateTimeTest"}},
+		gokeepasslib.ValueData{Key: "DT_SIMPLE", Value: gokeepasslib.V{Content: "{DT_SIMPLE}"}},
+		gokeepasslib.ValueData{Key: "DT_YEAR", Value: gokeepasslib.V{Content: "{DT_YEAR}"}},
+		gokeepasslib.ValueData{Key: "DT_MONTH", Value: gokeepasslib.V{Content: "{DT_MONTH}"}},
+		gokeepasslib.ValueData{Key: "DT_DAY", Value: gokeepasslib.V{Content: "{DT_DAY}"}},
+		gokeepasslib.ValueData{Key: "DT_HOUR", Value: gokeepasslib.V{Content: "{DT_HOUR}"}},
+		gokeepasslib.ValueData{Key: "DT_MINUTE", Value: gokeepasslib.V{Content: "{DT_MINUTE}"}},
+		gokeepasslib.ValueData{Key: "DT_SECOND", Value: gokeepasslib.V{Content: "{DT_SECOND}"}},
+		gokeepasslib.ValueData{Key: "DT_UTC_SIMPLE", Value: gokeepasslib.V{Content: "{DT_UTC_SIMPLE}"}},
+		gokeepasslib.ValueData{Key: "DT_UTC_YEAR", Value: gokeepasslib.V{Content: "{DT_UTC_YEAR}"}},
+		gokeepasslib.ValueData{Key: "DT_UTC_MONTH", Value: gokeepasslib.V{Content: "{DT_UTC_MONTH}"}},
+		gokeepasslib.ValueData{Key: "DT_UTC_DAY", Value: gokeepasslib.V{Content: "{DT_UTC_DAY}"}},
+		gokeepasslib.ValueData{Key: "DT_UTC_HOUR", Value: gokeepasslib.V{Content: "{DT_UTC_HOUR}"}},
+		gokeepasslib.ValueData{Key: "DT_UTC_MINUTE", Value: gokeepasslib.V{Content: "{DT_UTC_MINUTE}"}},
+		gokeepasslib.ValueData{Key: "DT_UTC_SECOND", Value: gokeepasslib.V{Content: "{DT_UTC_SECOND}"}},
+		gokeepasslib.ValueData{Key: "MixedCase", Value: gokeepasslib.V{Content: "{dt_simple}_{dt_utc_year}"}},
+		gokeepasslib.ValueData{Key: "ComposedPath", Value: gokeepasslib.V{Content: "/logs/{DT_YEAR}/{DT_MONTH}/app.log"}},
+		gokeepasslib.ValueData{Key: "ComposedSession", Value: gokeepasslib.V{Content: "backup-{DT_SIMPLE}"}},
+	)
+	rootGroup.Entries = append(rootGroup.Entries, entry)
+	db.Content.Root.Groups = []gokeepasslib.Group{rootGroup}
+
+	kp := NewKeePassProvider()
+	kp.db = db
+	kp.resolveReferences = true
+
+	tests := []struct {
+		field string
+		want  string
+	}{
+		{"DT_SIMPLE", "20260503040506"},
+		{"DT_YEAR", "2026"},
+		{"DT_MONTH", "05"},
+		{"DT_DAY", "03"},
+		{"DT_HOUR", "04"},
+		{"DT_MINUTE", "05"},
+		{"DT_SECOND", "06"},
+		{"DT_UTC_SIMPLE", "20260502230506"},
+		{"DT_UTC_YEAR", "2026"},
+		{"DT_UTC_MONTH", "05"},
+		{"DT_UTC_DAY", "02"},
+		{"DT_UTC_HOUR", "23"},
+		{"DT_UTC_MINUTE", "05"},
+		{"DT_UTC_SECOND", "06"},
+		{"MixedCase", "20260503040506_2026"},
+		{"ComposedPath", "/logs/2026/05/app.log"},
+		{"ComposedSession", "backup-20260503040506"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			val, err := kp.GetSecret(ctx, "Root/DateTimeTest:"+tt.field)
+			if err != nil {
+				t.Fatalf("GetSecret(%q) failed: %v", tt.field, err)
+			}
+			if val != tt.want {
+				t.Errorf("GetSecret(%q) = %q, want %q", tt.field, val, tt.want)
+			}
+		})
+	}
 }
 
 func TestKeePassReferences_CircularReference(t *testing.T) {
