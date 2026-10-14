@@ -153,6 +153,10 @@ type VaultConfig struct {
 	// Defaults to false.
 	ResolveValues bool `yaml:"resolve_values"`
 
+	// ResolveReferences enables KeePass entry placeholder and cross-entry reference resolution.
+	// Defaults to false.
+	ResolveReferences bool `yaml:"resolve_references"`
+
 	// IncludeFields limits returned entry attributes to field names matching these glob patterns.
 	IncludeFields []string `yaml:"include_fields,omitempty"`
 

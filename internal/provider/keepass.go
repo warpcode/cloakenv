@@ -23,6 +23,8 @@ import (
 type KeePassProvider struct {
 	db *gokeepasslib.Database
 
+	resolveReferences bool
+
 	cacheMu     sync.RWMutex
 	entryCache  map[*gokeepasslib.Entry]map[string]string
 	binaryCache map[int]string
@@ -52,6 +54,8 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 	if cfg.SingleEntity != nil && *cfg.SingleEntity {
 		return errors.New("keepass provider: cannot be configured as a single-entity vault")
 	}
+
+	k.resolveReferences = cfg.ResolveReferences || cfg.Settings["resolve_references"] == "true"
 
 	vaultPath := cfg.Settings["vault_path"]
 	if vaultPath == "" {
@@ -243,9 +247,14 @@ func (k *KeePassProvider) GetSecret(_ context.Context, location string) (string,
 	}
 
 	// First, try standard string value attribute (e.g. Password, UserName)
-	val := k.getEntryValue(entry, attr)
-	if val != "" {
-		return val, nil
+	for _, v := range entry.Values {
+		if v.Key == attr || strings.EqualFold(v.Key, attr) {
+			val := v.Value.Content
+			if k.resolveReferences {
+				return k.resolveValue(entry, v.Key, val)
+			}
+			return val, nil
+		}
 	}
 
 	// If not found in Values, check if it exists in Binaries (as an attachment name)
@@ -273,7 +282,7 @@ func (k *KeePassProvider) GetEntry(_ context.Context, location string) (Entry, e
 		return Entry{}, err
 	}
 
-	return k.toEntry(entry), nil
+	return k.toEntry(entry)
 }
 
 // GetEntryTitle retrieves only the title of an entry by location without loading attributes or binary attachments.
@@ -313,8 +322,8 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 		}
 	}
 
-	var traverse func(g *gokeepasslib.Group, currentPath string)
-	traverse = func(g *gokeepasslib.Group, currentPath string) {
+	var traverse func(g *gokeepasslib.Group, currentPath string) error
+	traverse = func(g *gokeepasslib.Group, currentPath string) error {
 		var groupPath string
 		if g == rootGroup {
 			groupPath = ""
@@ -338,18 +347,27 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 				continue
 			}
 
+			e, err := k.toEntry(entry)
+			if err != nil {
+				return err
+			}
 			results = append(results, SearchResult{
 				Path:  entryPath,
-				Entry: k.toEntry(entry),
+				Entry: e,
 			})
 		}
 
 		for i := range g.Groups {
-			traverse(&g.Groups[i], groupPath)
+			if err := traverse(&g.Groups[i], groupPath); err != nil {
+				return err
+			}
 		}
+		return nil
 	}
 
-	traverse(rootGroup, "")
+	if err := traverse(rootGroup, ""); err != nil {
+		return nil, err
+	}
 	return results, nil
 }
 
@@ -405,13 +423,28 @@ NextQueryTag:
 }
 
 // toEntry converts a gokeepasslib.Entry into provider.Entry.
-func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) Entry {
+func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) (Entry, error) {
 	title := k.getEntryTitle(entry)
+	if k.resolveReferences {
+		var err error
+		title, err = k.resolveValue(entry, "Title", title)
+		if err != nil {
+			return Entry{}, err
+		}
+	}
 	tags := utils.ParseTagString(entry.Tags)
 
 	attrs := make(map[string]any)
 	for _, v := range entry.Values {
-		attrs[v.Key] = v.Value.Content
+		val := v.Value.Content
+		if k.resolveReferences {
+			var err error
+			val, err = k.resolveValue(entry, v.Key, val)
+			if err != nil {
+				return Entry{}, err
+			}
+		}
+		attrs[v.Key] = val
 	}
 
 	// Add attachments as attributes
@@ -425,7 +458,7 @@ func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) Entry {
 		Title:      title,
 		Tags:       tags,
 		Attributes: attrs,
-	}
+	}, nil
 }
 
 // parseKeePassLocation splits "Path/To/Entry:Attribute" into path and attribute.

@@ -365,6 +365,46 @@ vaults:
 	}
 }
 
+func TestLoad_ResolveReferences(t *testing.T) {
+	tempDir := t.TempDir()
+	yamlContent := `
+vaults:
+  with_refs:
+    provider: "keepass"
+    vault_path: "~/secrets.kdbx"
+    resolve_references: true
+  without_refs:
+    provider: "keepass"
+    vault_path: "~/secrets.kdbx"
+    resolve_references: false
+`
+	configPath := filepath.Join(tempDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write temp config file: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	v1, ok := cfg.Vaults["with_refs"]
+	if !ok {
+		t.Fatal("expected 'with_refs' vault in config")
+	}
+	if !v1.ResolveReferences {
+		t.Error("expected resolve_references to be true for 'with_refs'")
+	}
+
+	v2, ok := cfg.Vaults["without_refs"]
+	if !ok {
+		t.Fatal("expected 'without_refs' vault in config")
+	}
+	if v2.ResolveReferences {
+		t.Error("expected resolve_references to be false for 'without_refs'")
+	}
+}
+
 func TestLoad_FieldFiltering(t *testing.T) {
 	tempDir := t.TempDir()
 	yamlContent := `
