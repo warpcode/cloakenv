@@ -90,7 +90,7 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 
 	// 2f. DynamicURLEntry (URL composed of other placeholders)
 	dynamicURLEntry := makeEntry("", "DynamicURLEntry", "dbuser", "dbpass", "postgres://{USERNAME}:{PASSWORD}@{S:ServerHost}:5432/appdb", "", map[string]string{
-		"ServerHost": "db.internal",
+		"ServerHost":    "db.internal",
 		"ExtractedHost": "{URL:HOST}",
 		"ExtractedUser": "{URL:USERNAME}",
 		"ExtractedPass": "{URL:PASSWORD}",
