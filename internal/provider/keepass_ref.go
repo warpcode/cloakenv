@@ -4,15 +4,16 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
 	"github.com/tobischo/gokeepasslib/v3"
 )
 
-// keepassPlaceholderRegex matches same-entry placeholders like {TITLE}, {USERNAME}, {PASSWORD}, {URL}, {NOTES}, {S:custom}
+// keepassPlaceholderRegex matches same-entry placeholders like {TITLE}, {USERNAME}, {PASSWORD}, {URL}, {URL:<component>}, {NOTES}, {S:custom}
 // and cross-entry field references like {REF:<WantedField>@<SearchIn>:<SearchText>}.
-var keepassPlaceholderRegex = regexp.MustCompile(`(?i)\{(?:REF:([^@]+)@([^:]+):([^}]+)|(TITLE|USERNAME|PASSWORD|URL|NOTES|S:[^}]+))\}`)
+var keepassPlaceholderRegex = regexp.MustCompile(`(?i)\{(?:REF:([^@]+)@([^:]+):([^}]+)|(TITLE|USERNAME|PASSWORD|URL(?::[^}]+)?|NOTES|S:[^}]+))\}`)
 
 // resolveValue is the top-level entry point for resolving placeholders and references in a field value.
 func (k *KeePassProvider) resolveValue(entry *gokeepasslib.Entry, fieldKey string, val string) (string, error) {
@@ -78,8 +79,19 @@ func (k *KeePassProvider) resolveField(entry *gokeepasslib.Entry, fieldKey strin
 	return sb.String(), nil
 }
 
-// resolveSameEntryPlaceholder resolves a same-entry placeholder (e.g. {TITLE}, {PASSWORD}, {S:custom}).
+// resolveSameEntryPlaceholder resolves a same-entry placeholder (e.g. {TITLE}, {PASSWORD}, {S:custom}, {URL:HOST}).
 func (k *KeePassProvider) resolveSameEntryPlaceholder(entry *gokeepasslib.Entry, placeholder string, depth int, visited map[string]bool) (string, error) {
+	up := strings.ToUpper(placeholder)
+	if strings.HasPrefix(up, "URL:") {
+		component := placeholder[4:]
+		rawURL := k.getEntryRawValue(entry, "URL")
+		resolvedURL, err := k.resolveField(entry, "URL", rawURL, depth+1, visited)
+		if err != nil {
+			return "", err
+		}
+		return extractURLComponent(resolvedURL, component), nil
+	}
+
 	targetField := mapPlaceholderToField(placeholder)
 	if targetField == "" {
 		return "{" + placeholder + "}", nil
@@ -95,13 +107,32 @@ func (k *KeePassProvider) resolveCrossReference(wantedFieldStr, searchInStr, sea
 		return "", fmt.Errorf("keepass reference error: entry matching %s:%q not found", searchInStr, searchText)
 	}
 
+	upWanted := strings.ToUpper(wantedFieldStr)
+	var urlComponent string
+	if strings.HasPrefix(upWanted, "A:") {
+		urlComponent = wantedFieldStr[2:]
+		wantedFieldStr = "A"
+	} else if strings.HasPrefix(upWanted, "URL:") {
+		urlComponent = wantedFieldStr[4:]
+		wantedFieldStr = "URL"
+	}
+
 	targetField := mapWantedFieldToField(wantedFieldStr)
 	if targetField == "" {
 		return "", fmt.Errorf("keepass reference error: invalid WantedField %q in reference", wantedFieldStr)
 	}
 
 	rawVal := k.getEntryRawValue(targetEntry, targetField)
-	return k.resolveField(targetEntry, targetField, rawVal, depth+1, visited)
+	resolvedVal, err := k.resolveField(targetEntry, targetField, rawVal, depth+1, visited)
+	if err != nil {
+		return "", err
+	}
+
+	if urlComponent != "" {
+		return extractURLComponent(resolvedVal, urlComponent), nil
+	}
+
+	return resolvedVal, nil
 }
 
 // mapPlaceholderToField converts a placeholder string (e.g. "TITLE", "USERNAME", "S:foo") to a field key.
@@ -125,7 +156,7 @@ func mapPlaceholderToField(placeholder string) string {
 	return ""
 }
 
-// mapWantedFieldToField converts a WantedField code (e.g. "T", "U", "P", "A", "N", "S:foo") to a field key.
+// mapWantedFieldToField converts a WantedField code (e.g. "T", "U", "P", "A", "URL", "N", "S:foo") to a field key.
 func mapWantedFieldToField(wantedFieldStr string) string {
 	up := strings.ToUpper(wantedFieldStr)
 	switch up {
@@ -135,7 +166,7 @@ func mapWantedFieldToField(wantedFieldStr string) string {
 		return "UserName"
 	case "P":
 		return "Password"
-	case "A":
+	case "A", "URL":
 		return "URL"
 	case "N":
 		return "Notes"
@@ -281,6 +312,58 @@ func (k *KeePassProvider) matchSearchIn(entry *gokeepasslib.Entry, searchInStr, 
 	}
 
 	return false
+}
+
+// extractURLComponent extracts a specific component from a URL string using net/url.Parse.
+// If the URL is empty, invalid, or the component is missing/unrecognized, it returns an empty string.
+func extractURLComponent(rawURL string, component string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+
+	switch strings.ToUpper(component) {
+	case "SCM", "SCHEME":
+		return u.Scheme
+	case "HOST":
+		return u.Hostname()
+	case "PORT":
+		return u.Port()
+	case "PATH":
+		return u.Path
+	case "QUERY":
+		return u.RawQuery
+	case "FRAGMENT":
+		return u.Fragment
+	case "USERINFO":
+		if u.User != nil {
+			return u.User.String()
+		}
+		return ""
+	case "USERNAME":
+		if u.User != nil {
+			return u.User.Username()
+		}
+		return ""
+	case "PASSWORD":
+		if u.User != nil {
+			p, _ := u.User.Password()
+			return p
+		}
+		return ""
+	case "RMVSCM", "WITHOUTSCHEME":
+		if u.Scheme != "" {
+			if len(rawURL) >= len(u.Scheme)+1 && strings.EqualFold(rawURL[:len(u.Scheme)+1], u.Scheme+":") {
+				return rawURL[len(u.Scheme)+1:]
+			}
+		}
+		return rawURL
+	default:
+		return ""
+	}
 }
 
 // isStandardFieldKey checks if a field key is one of the standard KeePass entry fields.
