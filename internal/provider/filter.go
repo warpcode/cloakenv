@@ -11,12 +11,50 @@ import (
 
 // matchPattern checks if name matches the glob pattern using path.Match.
 // If the pattern is invalid syntax, it falls back to exact equality comparison.
+// Matching supports case-insensitivity.
 func matchPattern(pattern, name string) bool {
 	matched, err := path.Match(pattern, name)
-	if err != nil {
-		return pattern == name
+	if err == nil && matched {
+		return true
 	}
-	return matched
+	patternLower := strings.ToLower(pattern)
+	nameLower := strings.ToLower(name)
+	matchedLower, errLower := path.Match(patternLower, nameLower)
+	if errLower == nil && matchedLower {
+		return true
+	}
+	return strings.EqualFold(pattern, name)
+}
+
+// isDefaultFieldAllowed checks if a default metadata field (e.g. "title", "tags", "path", "vault", "provider")
+// is permitted under include_fields and exclude_fields glob patterns.
+func isDefaultFieldAllowed(fieldName string, entryPath string, rootPrefixes []string, includeFields, excludeFields []string) bool {
+	if len(includeFields) == 0 && len(excludeFields) == 0 {
+		return true
+	}
+
+	cleanPath := normalizeDotPath(entryPath)
+	var candidates []string
+	candidates = append(candidates, fieldName)
+
+	if cleanPath != "" {
+		candidates = append(candidates, cleanPath+"."+fieldName, cleanPath+":"+fieldName)
+	}
+
+	for _, rp := range rootPrefixes {
+		cleanRP := normalizeDotPath(rp)
+		if cleanRP != "" {
+			if cleanRP != fieldName {
+				candidates = append(candidates, cleanRP)
+			}
+			candidates = append(candidates, cleanRP+"."+fieldName, cleanRP+":"+fieldName)
+			if cleanPath != "" {
+				candidates = append(candidates, cleanRP+"."+cleanPath+"."+fieldName, cleanRP+"."+cleanPath+":"+fieldName)
+			}
+		}
+	}
+
+	return isFieldAuthorized(fieldName, candidates, includeFields, excludeFields)
 }
 
 // IsFieldAllowed determines whether a field name is permitted under the given
@@ -361,11 +399,14 @@ func FilterEntry(entry Entry, includeFields, excludeFields []string) Entry {
 }
 
 // FilterEntryWithPath applies path-aware recursive field filtering to an Entry's Attributes map,
-// taking entry path and root prefixes into account.
+// as well as evaluating entry.Title and entry.Tags against include_fields and exclude_fields.
 func FilterEntryWithPath(entry Entry, entryPath string, rootPrefixes []string, includeFields, excludeFields []string) Entry {
 	if len(includeFields) == 0 && len(excludeFields) == 0 {
 		return entry
 	}
+
+	origTitle := entry.Title
+
 	var prefixes []string
 	cleanPath := normalizeDotPath(entryPath)
 	if cleanPath != "" {
@@ -380,8 +421,20 @@ func FilterEntryWithPath(entry Entry, entryPath string, rootPrefixes []string, i
 			}
 		}
 	}
-	if entry.Title != "" && entry.Title != cleanPath {
-		prefixes = append(prefixes, entry.Title)
+	if origTitle != "" && origTitle != cleanPath {
+		prefixes = append(prefixes, origTitle)
+	}
+
+	titlePrefixes := rootPrefixes
+	if origTitle != "" {
+		titlePrefixes = append(rootPrefixes, origTitle)
+	}
+
+	if entry.Title != "" && !isDefaultFieldAllowed("title", entryPath, titlePrefixes, includeFields, excludeFields) {
+		entry.Title = ""
+	}
+	if len(entry.Tags) > 0 && !isDefaultFieldAllowed("tags", entryPath, titlePrefixes, includeFields, excludeFields) {
+		entry.Tags = nil
 	}
 
 	entryIncluded := len(includeFields) == 0
@@ -391,7 +444,7 @@ func FilterEntryWithPath(entry Entry, entryPath string, rootPrefixes []string, i
 				entryIncluded = true
 				break
 			}
-			if entry.Title != "" && matchPattern(pattern, entry.Title) {
+			if origTitle != "" && matchPattern(pattern, origTitle) {
 				entryIncluded = true
 				break
 			}
@@ -559,7 +612,29 @@ func (s *SearchableFilteringProvider) GetEntry(ctx context.Context, location str
 	return entry, err
 }
 
-// Search retrieves matching entries and filters all result entry attributes according to configured glob rules.
+// FilterSearchResultWithPath applies path-aware recursive field filtering to a SearchResult,
+// evaluating provider, vault, path, title, and tags against include_fields and exclude_fields.
+func FilterSearchResultWithPath(r SearchResult, rootPrefixes []string, includeFields, excludeFields []string) SearchResult {
+	if len(includeFields) == 0 && len(excludeFields) == 0 {
+		return r
+	}
+
+	origPath := r.Path
+	if r.Provider != "" && !isDefaultFieldAllowed("provider", origPath, rootPrefixes, includeFields, excludeFields) {
+		r.Provider = ""
+	}
+	if r.Vault != "" && !isDefaultFieldAllowed("vault", origPath, rootPrefixes, includeFields, excludeFields) {
+		r.Vault = ""
+	}
+	if r.Path != "" && !isDefaultFieldAllowed("path", origPath, rootPrefixes, includeFields, excludeFields) {
+		r.Path = ""
+	}
+
+	r.Entry = FilterEntryWithPath(r.Entry, origPath, rootPrefixes, includeFields, excludeFields)
+	return r
+}
+
+// Search retrieves matching entries and filters all result metadata and entry attributes according to configured glob rules.
 func (s *SearchableFilteringProvider) Search(ctx context.Context, query SearchQuery) ([]SearchResult, error) {
 	searchable, ok := s.underlying.(SearchableProvider)
 	if !ok {
@@ -574,8 +649,7 @@ func (s *SearchableFilteringProvider) Search(ctx context.Context, query SearchQu
 	rootPrefixes := s.RootPrefixes()
 	filteredResults := make([]SearchResult, len(results))
 	for i, r := range results {
-		r.Entry = FilterEntryWithPath(r.Entry, r.Path, rootPrefixes, s.includeFields, s.excludeFields)
-		filteredResults[i] = r
+		filteredResults[i] = FilterSearchResultWithPath(r, rootPrefixes, s.includeFields, s.excludeFields)
 	}
 
 	return filteredResults, nil

@@ -145,15 +145,25 @@ func resolveSelectedAttribute(attributes map[string]any, lowerAttrs map[string]s
 
 func flattenDefaultEntry(r provider.SearchResult) map[string]any {
 	flatRes := make(map[string]any, 5+len(r.Entry.Attributes))
-	flatRes["provider"] = r.Provider
-	flatRes["vault"] = r.Vault
-	flatRes["path"] = r.Path
-	flatRes["title"] = r.Entry.Title
-	flatRes["tags"] = r.Entry.Tags
+	if r.Provider != "" {
+		flatRes["provider"] = r.Provider
+	}
+	if r.Vault != "" {
+		flatRes["vault"] = r.Vault
+	}
+	if r.Path != "" {
+		flatRes["path"] = r.Path
+	}
+	if r.Entry.Title != "" {
+		flatRes["title"] = r.Entry.Title
+	}
+	if len(r.Entry.Tags) > 0 {
+		flatRes["tags"] = r.Entry.Tags
+	}
 
 	for k, v := range r.Entry.Attributes {
 		kLower := strings.ToLower(k)
-		if kLower == "title" || kLower == "tags" {
+		if (kLower == "title" && r.Entry.Title != "") || (kLower == "tags" && len(r.Entry.Tags) > 0) {
 			continue
 		}
 		flatRes[utils.FormatKey(k)] = v

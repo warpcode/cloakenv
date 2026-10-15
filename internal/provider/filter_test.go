@@ -125,11 +125,17 @@ func TestFilterAttributesAndEntry(t *testing.T) {
 	}
 
 	filteredEntry := FilterEntry(entry, includeFields, excludeFields)
-	if filteredEntry.Title != "TestEntry" {
-		t.Errorf("Title = %q, want %q", filteredEntry.Title, "TestEntry")
+	if filteredEntry.Title != "" {
+		t.Errorf("Title = %q, want %q (title not in include_fields)", filteredEntry.Title, "")
 	}
 	if len(filteredEntry.Attributes) != 2 {
 		t.Errorf("Attributes length = %d, want 2", len(filteredEntry.Attributes))
+	}
+
+	includeWithTitle := []string{"env:*", "UserName", "title"}
+	filteredEntryWithTitle := FilterEntry(entry, includeWithTitle, excludeFields)
+	if filteredEntryWithTitle.Title != "TestEntry" {
+		t.Errorf("Title = %q, want %q when title is in include_fields", filteredEntryWithTitle.Title, "TestEntry")
 	}
 }
 
@@ -883,10 +889,13 @@ func TestFilteringProvider_Search_DuplicatePath_MultiResult_MixedCase(t *testing
 			t.Errorf("expected 'val_lower', got %q", valExact)
 		}
 
-		// Case-insensitive query resolves deterministically to the sorted key
-		_, errUpper := fp.GetSecret(ctx, "app/config:API_KEY")
-		if errUpper == nil {
-			t.Errorf("API_KEY should be rejected when only api_key is included")
+		// Case-insensitive query resolves deterministically to the sorted key; case-insensitive matching allows API_KEY when api_key is included
+		valUpper, errUpper := fp.GetSecret(ctx, "app/config:API_KEY")
+		if errUpper != nil {
+			t.Fatalf("API_KEY should be matched case-insensitively when api_key is included: %v", errUpper)
+		}
+		if valUpper != "val_upper" {
+			t.Errorf("expected 'val_upper', got %q", valUpper)
 		}
 	})
 }
@@ -2629,3 +2638,105 @@ func (m *mockGenericProvider) GetSecret(_ context.Context, _ string) (string, er
 func (m *mockGenericProvider) SetSecret(_ context.Context, _, _ string) error { return nil }
 func (m *mockGenericProvider) DeleteSecret(_ context.Context, _ string) error { return nil }
 func (m *mockGenericProvider) Validate(_ map[string]string) error             { return nil }
+
+func TestDefaultFieldFiltering(t *testing.T) {
+	rawEntry := Entry{
+		Title: "App Service",
+		Tags:  []string{"prod", "backend"},
+		Attributes: map[string]any{
+			"API_KEY": "secret_123",
+			"NOTES":   "some notes",
+		},
+	}
+
+	t.Run("IncludeFieldsWithoutDefaultFieldsStripsMetadata", func(t *testing.T) {
+		includeFields := []string{"API_KEY"}
+		filtered := FilterEntryWithPath(rawEntry, "apps/app1", nil, includeFields, nil)
+
+		if filtered.Title != "" {
+			t.Errorf("expected empty Title when title not included, got %q", filtered.Title)
+		}
+		if filtered.Tags != nil {
+			t.Errorf("expected nil Tags when tags not included, got %v", filtered.Tags)
+		}
+		if _, ok := filtered.Attributes["API_KEY"]; !ok {
+			t.Errorf("expected API_KEY to be preserved")
+		}
+	})
+
+	t.Run("IncludeFieldsWithTitlePreservesTitle", func(t *testing.T) {
+		includeFields := []string{"title", "API_KEY"}
+		filtered := FilterEntryWithPath(rawEntry, "apps/app1", nil, includeFields, nil)
+
+		if filtered.Title != "App Service" {
+			t.Errorf("expected Title 'App Service', got %q", filtered.Title)
+		}
+		if filtered.Tags != nil {
+			t.Errorf("expected nil Tags, got %v", filtered.Tags)
+		}
+	})
+
+	t.Run("ExcludeFieldsDropsTitleAndTags", func(t *testing.T) {
+		excludeFields := []string{"title", "tags"}
+		filtered := FilterEntryWithPath(rawEntry, "apps/app1", nil, nil, excludeFields)
+
+		if filtered.Title != "" {
+			t.Errorf("expected empty Title, got %q", filtered.Title)
+		}
+		if filtered.Tags != nil {
+			t.Errorf("expected nil Tags, got %v", filtered.Tags)
+		}
+		if len(filtered.Attributes) != 2 {
+			t.Errorf("expected attributes preserved, got %v", filtered.Attributes)
+		}
+	})
+
+	t.Run("GlobPathPatternExcludesTags", func(t *testing.T) {
+		excludeFields := []string{"*.tags"}
+		filtered := FilterEntryWithPath(rawEntry, "apps/app1", nil, nil, excludeFields)
+
+		if filtered.Title != "App Service" {
+			t.Errorf("expected Title preserved, got %q", filtered.Title)
+		}
+		if filtered.Tags != nil {
+			t.Errorf("expected nil Tags for *.tags pattern, got %v", filtered.Tags)
+		}
+	})
+
+	t.Run("CaseInsensitiveMatchingForDefaultFields", func(t *testing.T) {
+		excludeFields := []string{"TITLE", "Tags"}
+		filtered := FilterEntryWithPath(rawEntry, "apps/app1", nil, nil, excludeFields)
+
+		if filtered.Title != "" {
+			t.Errorf("expected empty Title via case-insensitive TITLE, got %q", filtered.Title)
+		}
+		if filtered.Tags != nil {
+			t.Errorf("expected nil Tags via case-insensitive Tags, got %v", filtered.Tags)
+		}
+	})
+
+	t.Run("FilterSearchResultWithPath_MetadataFiltering", func(t *testing.T) {
+		res := SearchResult{
+			Provider: "keepass",
+			Vault:    "my_vault",
+			Path:     "apps/app1",
+			Entry:    rawEntry,
+		}
+
+		excludeFields := []string{"provider", "vault", "path"}
+		filteredRes := FilterSearchResultWithPath(res, nil, nil, excludeFields)
+
+		if filteredRes.Provider != "" {
+			t.Errorf("expected empty Provider, got %q", filteredRes.Provider)
+		}
+		if filteredRes.Vault != "" {
+			t.Errorf("expected empty Vault, got %q", filteredRes.Vault)
+		}
+		if filteredRes.Path != "" {
+			t.Errorf("expected empty Path, got %q", filteredRes.Path)
+		}
+		if filteredRes.Entry.Title != "App Service" {
+			t.Errorf("expected Title 'App Service', got %q", filteredRes.Entry.Title)
+		}
+	})
+}

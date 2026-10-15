@@ -753,3 +753,125 @@ func TestMappingProvider_NewMappingProvider_CompileError(t *testing.T) {
 		t.Fatal("expected NewMappingProvider to return error for invalid regex, got nil")
 	}
 }
+
+func TestMappingProvider_DefaultFieldsIsolationAndFiltering(t *testing.T) {
+	ctx := context.Background()
+
+	cp := NewCustomVaultProvider()
+	_ = cp.Initialize(ctx, ProviderConfig{
+		Entities: map[string]map[string]any{
+			"app1": {
+				"title":                  "Original App Title",
+				"tags":                   []string{"env:production", "org:example"},
+				"env:OPENROUTER_API_KEY": "sk-or-12345",
+				"UNMAPPED_FIELD":         "unmapped_val",
+			},
+		},
+	})
+
+	t.Run("UnmappedDefaultFieldsExcludedByDefaultWhenMappingActive", func(t *testing.T) {
+		rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
+		_ = rule.Compile()
+
+		mp, err := NewMappingProvider(cp, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		searchable := mp.(SearchableProvider)
+		entry, err := searchable.GetEntry(ctx, "app1")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		if entry.Title != "" {
+			t.Errorf("expected Title to be excluded when unmapped, got %q", entry.Title)
+		}
+		if entry.Tags != nil {
+			t.Errorf("expected Tags to be excluded when unmapped, got %v", entry.Tags)
+		}
+		if _, ok := entry.Attributes["OPENROUTER_API_KEY"]; !ok {
+			t.Errorf("expected OPENROUTER_API_KEY to be mapped")
+		}
+
+		// Search results
+		results, err := searchable.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		res := results[0]
+		if res.Provider != "" || res.Vault != "" || res.Path != "" {
+			t.Errorf("expected Provider, Vault, Path to be excluded when unmapped, got provider=%q vault=%q path=%q", res.Provider, res.Vault, res.Path)
+		}
+		if res.Entry.Title != "" || res.Entry.Tags != nil {
+			t.Errorf("expected entry Title/Tags to be excluded when unmapped")
+		}
+
+		// GetSecret for unmapped title rejects
+		_, errTitle := mp.GetSecret(ctx, "app1:title")
+		if errTitle == nil {
+			t.Fatal("expected GetSecret on unmapped title to fail, got nil")
+		}
+	})
+
+	t.Run("ExplicitlyMappedDefaultFieldPreservedAndRenamed", func(t *testing.T) {
+		ruleTitle := config.MappingRule{Match: "title", Key: "custom_title"}
+		_ = ruleTitle.Compile()
+		ruleEnv := config.MappingRule{Match: "env:(.*)", Key: "$1"}
+		_ = ruleEnv.Compile()
+
+		mp, err := NewMappingProvider(cp, []config.MappingRule{ruleTitle, ruleEnv})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		searchable := mp.(SearchableProvider)
+		entry, err := searchable.GetEntry(ctx, "app1")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		if entry.Title != "" {
+			t.Errorf("expected entry.Title to be empty because title was mapped to custom_title, got %q", entry.Title)
+		}
+		if entry.Attributes["custom_title"] != "Original App Title" {
+			t.Errorf("expected custom_title attribute = 'Original App Title', got %v", entry.Attributes["custom_title"])
+		}
+
+		// GetSecret on custom_title succeeds
+		val, errSecret := mp.GetSecret(ctx, "app1:custom_title")
+		if errSecret != nil {
+			t.Fatalf("GetSecret(app1:custom_title) failed: %v", errSecret)
+		}
+		if val != "Original App Title" {
+			t.Errorf("GetSecret custom_title = %q, want 'Original App Title'", val)
+		}
+	})
+
+	t.Run("DefaultFieldsExplicitlyAllowedInIncludeFields", func(t *testing.T) {
+		ruleEnv := config.MappingRule{Match: "env:(.*)", Key: "$1"}
+		_ = ruleEnv.Compile()
+
+		fp := NewFilteringProvider(cp, []string{"title", "OPENROUTER_API_KEY"}, nil)
+		mp, err := NewMappingProvider(fp, []config.MappingRule{ruleEnv})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		searchable := mp.(SearchableProvider)
+		entry, err := searchable.GetEntry(ctx, "app1")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		if entry.Title != "Original App Title" {
+			t.Errorf("expected Title preserved because 'title' is in include_fields, got %q", entry.Title)
+		}
+		if entry.Tags != nil {
+			t.Errorf("expected Tags excluded because 'tags' not in include_fields, got %v", entry.Tags)
+		}
+	})
+}

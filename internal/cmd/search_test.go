@@ -279,6 +279,29 @@ func TestFlattenSearchResults(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "flattenDefaultEntry omits empty default metadata fields",
+			results: []provider.SearchResult{
+				{
+					Provider: "", // cleared
+					Vault:    "", // cleared
+					Path:     "", // cleared
+					Entry: provider.Entry{
+						Title: "",  // cleared
+						Tags:  nil, // cleared
+						Attributes: map[string]any{
+							"API_KEY": "sk-12345",
+						},
+					},
+				},
+			},
+			selectedKeys: nil,
+			want: []map[string]any{
+				{
+					"API_KEY": "sk-12345",
+				},
+			},
+		},
 	}
 
 	for _, tc := range tests {
