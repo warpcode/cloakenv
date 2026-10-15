@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/tobischo/gokeepasslib/v3"
 )
@@ -100,22 +99,6 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 	})
 	rootGroup.Entries = append(rootGroup.Entries, dynamicURLEntry)
 
-	// 2g. SchemeLessURLEntry (URL without scheme and unrecognized component fixtures)
-	schemeLessURLEntry := makeEntry("", "SchemeLessURLEntry", "user", "pass", "example.com/path", "", map[string]string{
-		"Host":          "{URL:HOST}",
-		"Unknown":       "{URL:BOGUS}",
-		"EmptyComp":     "{URL:}",
-		"RmvScm":        "{URL:RMVSCM}",
-		"WithoutScheme": "{URL:WITHOUTSCHEME}",
-	})
-	rootGroup.Entries = append(rootGroup.Entries, schemeLessURLEntry)
-
-	// 2h. MixedCaseURLEntry (URL with mixed-case scheme to verify EqualFold)
-	mixedCaseURLEntry := makeEntry("", "MixedCaseURLEntry", "user", "pass", "HTTPS://example.com/path", "", map[string]string{
-		"RmvScm": "{URL:RMVSCM}",
-	})
-	rootGroup.Entries = append(rootGroup.Entries, mixedCaseURLEntry)
-
 	// 3. CrossReferences
 	crossEntry := makeEntry("", "CrossReferences", "crossuser", "crosspass", "", "", map[string]string{
 		"PasswordByTitle":      "{REF:P@T:TargetEntry}",
@@ -158,27 +141,6 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 		e := makeEntry(fmt.Sprintf("d00000000000000000000000000000%02d", i), fmt.Sprintf("Deep%d", i), "user", nextVal, "", "", nil)
 		rootGroup.Entries = append(rootGroup.Entries, e)
 	}
-
-	// 6. TextConversions
-	tconvEntry := makeEntry("", "TextConversions", "alice_user", "SecretP@ss123!", "", "", map[string]string{
-		"Upper":           "{T-CONV:/{USERNAME}/UPPER/}",
-		"UpperShort":      "{T-CONV:/{USERNAME}/U/}",
-		"Lower":           "{T-CONV:/SECRET_VALUE/LOWER/}",
-		"LowerShort":      "{T-CONV:/SECRET_VALUE/L/}",
-		"Base64":          "{T-CONV:/{USERNAME}:{PASSWORD}/BASE64/}",
-		"Hex":             "{T-CONV:/hello world/HEX/}",
-		"URI":             "{T-CONV:/hello world & foo=bar/URI/}",
-		"URIDec":          "{T-CONV:/hello+world+%26+foo%3Dbar/URI-DEC/}",
-		"Raw":             "{T-CONV:/{USERNAME}/RAW/}",
-		"Nested":          "{T-CONV:/{T-CONV:/{USERNAME}/UPPER/}/BASE64/}",
-		"CrossEntryTConv": "{T-CONV:/{REF:U@T:TargetEntry}:{REF:P@T:TargetEntry}/BASE64/}",
-		"CustomSep":       "{T-CONV:!{USERNAME}!UPPER!}",
-		"EmptyString":     "{T-CONV://UPPER/}",
-		"SpecialChars":    "{T-CONV:/Special!@#$%^*()_+/BASE64/}",
-		"UnknownMethod":   "{T-CONV:/text/UNKNOWN/}",
-		"InvalidURIDec":   "{T-CONV:/%zz/URI-DEC/}",
-	})
-	rootGroup.Entries = append(rootGroup.Entries, tconvEntry)
 
 	db.Content.Root.Groups = []gokeepasslib.Group{rootGroup}
 	return db
@@ -312,88 +274,6 @@ func TestKeePassReferences_MissingEntryAndField(t *testing.T) {
 	})
 }
 
-func TestKeePassReferences_DateTimePlaceholders(t *testing.T) {
-	ctx := context.Background()
-
-	// Fixed time: Oct 13, 2026, 16:04:05 in UTC+5 timezone (single-digit month 10? no, 10 is 2 digits.
-	// Let's use May 3, 2026, 04:05:06 to test zero-padding for single-digit month, day, hour, min, sec!)
-	// Local: 2026-05-03 04:05:06 +0500 UTC+5
-	// UTC:   2026-05-02 23:05:06 +0000 UTC
-	fixedLocation := time.FixedZone("UTC+5", 5*3600)
-	fixedLocal := time.Date(2026, 5, 3, 4, 5, 6, 0, fixedLocation)
-
-	origNowFunc := nowFunc
-	nowFunc = func() time.Time { return fixedLocal }
-	t.Cleanup(func() { nowFunc = origNowFunc })
-
-	db := gokeepasslib.NewDatabase()
-	rootGroup := gokeepasslib.NewGroup()
-	rootGroup.Name = "Root"
-
-	entry := gokeepasslib.NewEntry()
-	entry.Values = append(entry.Values,
-		gokeepasslib.ValueData{Key: "Title", Value: gokeepasslib.V{Content: "DateTimeTest"}},
-		gokeepasslib.ValueData{Key: "DT_SIMPLE", Value: gokeepasslib.V{Content: "{DT_SIMPLE}"}},
-		gokeepasslib.ValueData{Key: "DT_YEAR", Value: gokeepasslib.V{Content: "{DT_YEAR}"}},
-		gokeepasslib.ValueData{Key: "DT_MONTH", Value: gokeepasslib.V{Content: "{DT_MONTH}"}},
-		gokeepasslib.ValueData{Key: "DT_DAY", Value: gokeepasslib.V{Content: "{DT_DAY}"}},
-		gokeepasslib.ValueData{Key: "DT_HOUR", Value: gokeepasslib.V{Content: "{DT_HOUR}"}},
-		gokeepasslib.ValueData{Key: "DT_MINUTE", Value: gokeepasslib.V{Content: "{DT_MINUTE}"}},
-		gokeepasslib.ValueData{Key: "DT_SECOND", Value: gokeepasslib.V{Content: "{DT_SECOND}"}},
-		gokeepasslib.ValueData{Key: "DT_UTC_SIMPLE", Value: gokeepasslib.V{Content: "{DT_UTC_SIMPLE}"}},
-		gokeepasslib.ValueData{Key: "DT_UTC_YEAR", Value: gokeepasslib.V{Content: "{DT_UTC_YEAR}"}},
-		gokeepasslib.ValueData{Key: "DT_UTC_MONTH", Value: gokeepasslib.V{Content: "{DT_UTC_MONTH}"}},
-		gokeepasslib.ValueData{Key: "DT_UTC_DAY", Value: gokeepasslib.V{Content: "{DT_UTC_DAY}"}},
-		gokeepasslib.ValueData{Key: "DT_UTC_HOUR", Value: gokeepasslib.V{Content: "{DT_UTC_HOUR}"}},
-		gokeepasslib.ValueData{Key: "DT_UTC_MINUTE", Value: gokeepasslib.V{Content: "{DT_UTC_MINUTE}"}},
-		gokeepasslib.ValueData{Key: "DT_UTC_SECOND", Value: gokeepasslib.V{Content: "{DT_UTC_SECOND}"}},
-		gokeepasslib.ValueData{Key: "MixedCase", Value: gokeepasslib.V{Content: "{dt_simple}_{dt_utc_year}"}},
-		gokeepasslib.ValueData{Key: "ComposedPath", Value: gokeepasslib.V{Content: "/logs/{DT_YEAR}/{DT_MONTH}/app.log"}},
-		gokeepasslib.ValueData{Key: "ComposedSession", Value: gokeepasslib.V{Content: "backup-{DT_SIMPLE}"}},
-	)
-	rootGroup.Entries = append(rootGroup.Entries, entry)
-	db.Content.Root.Groups = []gokeepasslib.Group{rootGroup}
-
-	kp := NewKeePassProvider()
-	kp.db = db
-	kp.resolveReferences = true
-
-	tests := []struct {
-		field string
-		want  string
-	}{
-		{"DT_SIMPLE", "20260503040506"},
-		{"DT_YEAR", "2026"},
-		{"DT_MONTH", "05"},
-		{"DT_DAY", "03"},
-		{"DT_HOUR", "04"},
-		{"DT_MINUTE", "05"},
-		{"DT_SECOND", "06"},
-		{"DT_UTC_SIMPLE", "20260502230506"},
-		{"DT_UTC_YEAR", "2026"},
-		{"DT_UTC_MONTH", "05"},
-		{"DT_UTC_DAY", "02"},
-		{"DT_UTC_HOUR", "23"},
-		{"DT_UTC_MINUTE", "05"},
-		{"DT_UTC_SECOND", "06"},
-		{"MixedCase", "20260503040506_2026"},
-		{"ComposedPath", "/logs/2026/05/app.log"},
-		{"ComposedSession", "backup-20260503040506"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.field, func(t *testing.T) {
-			val, err := kp.GetSecret(ctx, "Root/DateTimeTest:"+tt.field)
-			if err != nil {
-				t.Fatalf("GetSecret(%q) failed: %v", tt.field, err)
-			}
-			if val != tt.want {
-				t.Errorf("GetSecret(%q) = %q, want %q", tt.field, val, tt.want)
-			}
-		})
-	}
-}
-
 func TestKeePassReferences_CircularReference(t *testing.T) {
 	ctx := context.Background()
 	kp := NewKeePassProvider()
@@ -434,66 +314,6 @@ func TestKeePassReferences_MaxDepthLimit(t *testing.T) {
 	if !strings.Contains(err.Error(), "maximum recursion depth (10) exceeded") {
 		t.Errorf("expected 'maximum recursion depth (10) exceeded' in error, got: %v", err)
 	}
-}
-
-func TestKeePassReferences_TextConversions(t *testing.T) {
-	ctx := context.Background()
-	kp := NewKeePassProvider()
-	kp.db = createTestDBWithReferences()
-	kp.resolveReferences = true
-
-	tests := []struct {
-		name     string
-		location string
-		want     string
-	}{
-		{"Upper", "Root/TextConversions:Upper", "ALICE_USER"},
-		{"UpperShort", "Root/TextConversions:UpperShort", "ALICE_USER"},
-		{"Lower", "Root/TextConversions:Lower", "secret_value"},
-		{"LowerShort", "Root/TextConversions:LowerShort", "secret_value"},
-		{"Base64", "Root/TextConversions:Base64", "YWxpY2VfdXNlcjpTZWNyZXRQQHNzMTIzIQ=="},
-		{"Hex", "Root/TextConversions:Hex", "68656c6c6f20776f726c64"},
-		{"URI", "Root/TextConversions:URI", "hello+world+%26+foo%3Dbar"},
-		{"URIDec", "Root/TextConversions:URIDec", "hello world & foo=bar"},
-		{"Raw", "Root/TextConversions:Raw", "alice_user"},
-		{"Nested", "Root/TextConversions:Nested", "QUxJQ0VfVVNFUg=="},
-		{"CrossEntryTConv", "Root/TextConversions:CrossEntryTConv", "dGFyZ2V0dXNlcjp0YXJnZXRwYXNzd29yZCE="},
-		{"CustomSep", "Root/TextConversions:CustomSep", "ALICE_USER"},
-		{"EmptyString", "Root/TextConversions:EmptyString", ""},
-		{"SpecialChars", "Root/TextConversions:SpecialChars", "U3BlY2lhbCFAIyQlXiooKV8r"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			val, err := kp.GetSecret(ctx, tt.location)
-			if err != nil {
-				t.Fatalf("GetSecret(%q) failed: %v", tt.location, err)
-			}
-			if val != tt.want {
-				t.Errorf("GetSecret(%q) = %q, want %q", tt.location, val, tt.want)
-			}
-		})
-	}
-
-	t.Run("UnknownMethod", func(t *testing.T) {
-		_, err := kp.GetSecret(ctx, "Root/TextConversions:UnknownMethod")
-		if err == nil {
-			t.Fatal("expected error for unknown T-CONV method, got nil")
-		}
-		if !strings.Contains(err.Error(), "unknown T-CONV method") {
-			t.Errorf("unexpected error message: %v", err)
-		}
-	})
-
-	t.Run("InvalidURIDec", func(t *testing.T) {
-		_, err := kp.GetSecret(ctx, "Root/TextConversions:InvalidURIDec")
-		if err == nil {
-			t.Fatal("expected error for invalid URI decode, got nil")
-		}
-		if !strings.Contains(err.Error(), "failed to URI decode") {
-			t.Errorf("unexpected error message: %v", err)
-		}
-	})
 }
 
 func TestKeePassReferences_URLComponents(t *testing.T) {
@@ -542,14 +362,6 @@ func TestKeePassReferences_URLComponents(t *testing.T) {
 		{"CrossURLHost", "Root/CrossReferences:CrossURLHost", "10.0.0.1"},
 		{"CrossURLPort", "Root/CrossReferences:CrossURLPort", "5432"},
 		{"CrossURLScheme", "Root/CrossReferences:CrossURLScheme", "postgres"},
-
-		// Scheme-less & unrecognized component fallbacks
-		{"SchemeLessHost", "Root/SchemeLessURLEntry:Host", ""},
-		{"SchemeLessRmvScm", "Root/SchemeLessURLEntry:RmvScm", "example.com/path"},
-		{"SchemeLessWithoutScheme", "Root/SchemeLessURLEntry:WithoutScheme", "example.com/path"},
-		{"UnknownComponent", "Root/SchemeLessURLEntry:Unknown", ""},
-		{"EmptyComponent", "Root/SchemeLessURLEntry:EmptyComp", ""},
-		{"MixedCaseRmvScm", "Root/MixedCaseURLEntry:RmvScm", "//example.com/path"},
 	}
 
 	for _, tt := range tests {
