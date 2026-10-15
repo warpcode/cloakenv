@@ -1,19 +1,24 @@
 package provider
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/tobischo/gokeepasslib/v3"
 )
 
-// keepassPlaceholderRegex matches same-entry placeholders like {TITLE}, {USERNAME}, {PASSWORD}, {URL}, {URL:<component>}, {NOTES}, {S:custom}
-// and cross-entry field references like {REF:<WantedField>@<SearchIn>:<SearchText>}.
-var keepassPlaceholderRegex = regexp.MustCompile(`(?i)\{(?:REF:([^@]+)@([^:]+):([^}]+)|(TITLE|USERNAME|PASSWORD|URL(?::[^}]+)?|NOTES|S:[^}]+))\}`)
+// nowFunc returns current time. Overridden in tests for deterministic date/time placeholder testing.
+var nowFunc = time.Now
+
+// keepassPlaceholderRegex matches same-entry placeholders like {TITLE}, {USERNAME}, {PASSWORD}, {URL}, {URL:<component>}, {NOTES}, {S:custom},
+// date/time placeholders (e.g. {DT_SIMPLE}, {DT_UTC_YEAR}), and cross-entry field references like {REF:<WantedField>@<SearchIn>:<SearchText>}.
+var keepassPlaceholderRegex = regexp.MustCompile(`(?i)\{(?:REF:([^@]+)@([^:]+):([^}]+)|(TITLE|USERNAME|PASSWORD|URL(?::[^}]*)?|NOTES|DT_SIMPLE|DT_YEAR|DT_MONTH|DT_DAY|DT_HOUR|DT_MINUTE|DT_SECOND|DT_UTC_SIMPLE|DT_UTC_YEAR|DT_UTC_MONTH|DT_UTC_DAY|DT_UTC_HOUR|DT_UTC_MINUTE|DT_UTC_SECOND|S:[^}]+))\}`)
 
 // resolveValue is the top-level entry point for resolving placeholders and references in a field value.
 func (k *KeePassProvider) resolveValue(entry *gokeepasslib.Entry, fieldKey string, val string) (string, error) {
@@ -21,19 +26,42 @@ func (k *KeePassProvider) resolveValue(entry *gokeepasslib.Entry, fieldKey strin
 	return k.resolveField(entry, fieldKey, val, 0, visited)
 }
 
-// resolveField recursively resolves placeholders and field references within a field value string.
+// resolveField recursively resolves placeholders, T-CONV text transformations, and field references within a field value string.
 // It enforces a maximum recursion depth limit of 10 and uses a visited stack to detect circular references.
 func (k *KeePassProvider) resolveField(entry *gokeepasslib.Entry, fieldKey string, val string, depth int, visited map[string]bool) (string, error) {
 	if depth >= 10 {
 		return "", errors.New("keepass reference error: maximum recursion depth (10) exceeded")
 	}
 
-	refKey := hex.EncodeToString(entry.UUID[:]) + ":" + strings.ToLower(fieldKey)
-	if visited[refKey] {
-		return "", fmt.Errorf("keepass reference error: circular reference detected for entry %q field %q", k.getEntryTitle(entry), fieldKey)
+	if fieldKey != "" {
+		refKey := hex.EncodeToString(entry.UUID[:]) + ":" + strings.ToLower(fieldKey)
+		if visited[refKey] {
+			return "", fmt.Errorf("keepass reference error: circular reference detected for entry %q field %q", k.getEntryTitle(entry), fieldKey)
+		}
+		visited[refKey] = true
+		defer delete(visited, refKey)
 	}
-	visited[refKey] = true
-	defer delete(visited, refKey)
+
+	if !strings.Contains(val, "{") || !strings.Contains(val, "}") {
+		return val, nil
+	}
+
+	// First, resolve any {T-CONV:/<text>/<method>/} placeholders from innermost to outermost
+	for {
+		match, ok := findInnermostTConv(val)
+		if !ok {
+			break
+		}
+		resolvedText, err := k.resolveField(entry, "", match.text, depth+1, visited)
+		if err != nil {
+			return "", err
+		}
+		transformed, err := applyTConvMethod(resolvedText, match.method)
+		if err != nil {
+			return "", err
+		}
+		val = val[:match.start] + transformed + val[match.end:]
+	}
 
 	if !strings.Contains(val, "{") || !strings.Contains(val, "}") {
 		return val, nil
@@ -79,8 +107,11 @@ func (k *KeePassProvider) resolveField(entry *gokeepasslib.Entry, fieldKey strin
 	return sb.String(), nil
 }
 
-// resolveSameEntryPlaceholder resolves a same-entry placeholder (e.g. {TITLE}, {PASSWORD}, {S:custom}, {URL:HOST}).
+// resolveSameEntryPlaceholder resolves a same-entry placeholder (e.g. {TITLE}, {PASSWORD}, {S:custom}, {DT_SIMPLE}, {URL:HOST}).
 func (k *KeePassProvider) resolveSameEntryPlaceholder(entry *gokeepasslib.Entry, placeholder string, depth int, visited map[string]bool) (string, error) {
+	if dtVal, ok := formatDateTimePlaceholder(placeholder); ok {
+		return dtVal, nil
+	}
 	up := strings.ToUpper(placeholder)
 	if strings.HasPrefix(up, "URL:") {
 		component := placeholder[4:]
@@ -91,7 +122,6 @@ func (k *KeePassProvider) resolveSameEntryPlaceholder(entry *gokeepasslib.Entry,
 		}
 		return extractURLComponent(resolvedURL, component), nil
 	}
-
 	targetField := mapPlaceholderToField(placeholder)
 	if targetField == "" {
 		return "{" + placeholder + "}", nil
@@ -133,6 +163,45 @@ func (k *KeePassProvider) resolveCrossReference(wantedFieldStr, searchInStr, sea
 	}
 
 	return resolvedVal, nil
+}
+
+// formatDateTimePlaceholder evaluates date/time placeholders (local or UTC) and returns the formatted time string.
+// If the placeholder is not a date/time placeholder, it returns ("", false).
+func formatDateTimePlaceholder(placeholder string) (string, bool) {
+	now := nowFunc()
+	up := strings.ToUpper(placeholder)
+	switch up {
+	case "DT_SIMPLE":
+		return now.Format("20060102150405"), true
+	case "DT_YEAR":
+		return now.Format("2006"), true
+	case "DT_MONTH":
+		return now.Format("01"), true
+	case "DT_DAY":
+		return now.Format("02"), true
+	case "DT_HOUR":
+		return now.Format("15"), true
+	case "DT_MINUTE":
+		return now.Format("04"), true
+	case "DT_SECOND":
+		return now.Format("05"), true
+
+	case "DT_UTC_SIMPLE":
+		return now.UTC().Format("20060102150405"), true
+	case "DT_UTC_YEAR":
+		return now.UTC().Format("2006"), true
+	case "DT_UTC_MONTH":
+		return now.UTC().Format("01"), true
+	case "DT_UTC_DAY":
+		return now.UTC().Format("02"), true
+	case "DT_UTC_HOUR":
+		return now.UTC().Format("15"), true
+	case "DT_UTC_MINUTE":
+		return now.UTC().Format("04"), true
+	case "DT_UTC_SECOND":
+		return now.UTC().Format("05"), true
+	}
+	return "", false
 }
 
 // mapPlaceholderToField converts a placeholder string (e.g. "TITLE", "USERNAME", "S:foo") to a field key.
@@ -373,5 +442,96 @@ func isStandardFieldKey(key string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+type tConvMatch struct {
+	start  int
+	end    int
+	text   string
+	method string
+}
+
+// findInnermostTConv locates the innermost {T-CONV:<sep><text><sep><method><sep>} placeholder in val.
+func findInnermostTConv(val string) (tConvMatch, bool) {
+	valLower := strings.ToLower(val)
+	searchOffset := len(val)
+
+	for {
+		idx := strings.LastIndex(valLower[:searchOffset], "{t-conv:")
+		if idx == -1 {
+			return tConvMatch{}, false
+		}
+
+		sepIdx := idx + 8 // length of "{t-conv:"
+		if sepIdx >= len(val) {
+			searchOffset = idx
+			continue
+		}
+
+		sep := val[sepIdx]
+		if sep == '}' {
+			searchOffset = idx
+			continue
+		}
+
+		// Find second separator
+		textStart := sepIdx + 1
+		nextSep := strings.IndexByte(val[textStart:], sep)
+		if nextSep == -1 {
+			searchOffset = idx
+			continue
+		}
+		textEnd := textStart + nextSep
+		text := val[textStart:textEnd]
+
+		// Find third separator
+		methodStart := textEnd + 1
+		methodSep := strings.IndexByte(val[methodStart:], sep)
+		if methodSep == -1 {
+			searchOffset = idx
+			continue
+		}
+		methodEnd := methodStart + methodSep
+		method := val[methodStart:methodEnd]
+
+		closingIdx := methodEnd + 1
+		if closingIdx >= len(val) || val[closingIdx] != '}' {
+			searchOffset = idx
+			continue
+		}
+
+		return tConvMatch{
+			start:  idx,
+			end:    closingIdx + 1,
+			text:   text,
+			method: method,
+		}, true
+	}
+}
+
+// applyTConvMethod applies a text transformation method to text.
+func applyTConvMethod(text, method string) (string, error) {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "UPPER", "U":
+		return strings.ToUpper(text), nil
+	case "LOWER", "L":
+		return strings.ToLower(text), nil
+	case "BASE64":
+		return base64.StdEncoding.EncodeToString([]byte(text)), nil
+	case "HEX":
+		return hex.EncodeToString([]byte(text)), nil
+	case "URI":
+		return url.QueryEscape(text), nil
+	case "URI-DEC", "URIDEC", "URI-DECODE":
+		res, err := url.QueryUnescape(text)
+		if err != nil {
+			return "", fmt.Errorf("keepass reference error: failed to URI decode text %q: %w", text, err)
+		}
+		return res, nil
+	case "RAW":
+		return text, nil
+	default:
+		return "", fmt.Errorf("keepass reference error: unknown T-CONV method %q", method)
 	}
 }
