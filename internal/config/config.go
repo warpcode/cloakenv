@@ -51,6 +51,9 @@ type AutoloadRule struct {
 
 	// CompiledRegex holds the precompiled regular expression for Match.
 	CompiledRegex *regexp.Regexp `yaml:"-"`
+
+	// MatchLower holds the lowercased, trimmed Match string for fast evaluation.
+	MatchLower string `yaml:"-"`
 }
 
 // CompileAutoloadRules precompiles regular expressions for all autoload rules in the configuration.
@@ -69,6 +72,7 @@ func (r *AutoloadRule) Compile() {
 		return
 	}
 	pattern := strings.TrimSpace(r.Match)
+	r.MatchLower = strings.ToLower(pattern)
 	if pattern != "" && r.CompiledRegex == nil {
 		if re, err := regexp.Compile(pattern); err == nil {
 			r.CompiledRegex = re

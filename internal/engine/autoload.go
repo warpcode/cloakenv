@@ -83,12 +83,9 @@ func matchPreparedCommandRule(rule config.AutoloadRule, cmdArgs []string, parsed
 		return false, cmdArgs, nil
 	}
 
-	pattern := strings.TrimSpace(rule.Match)
-	if pattern == "" {
+	if rule.MatchLower == "" {
 		return false, cmdArgs, nil
 	}
-
-	ruleLower := strings.ToLower(pattern)
 
 	var re *regexp.Regexp
 	var matchIndices []int
@@ -110,9 +107,9 @@ func matchPreparedCommandRule(rule config.AutoloadRule, cmdArgs []string, parsed
 
 	// 2. Fallback to basename / glob / prefix matching if regex didn't match
 	if !isMatched {
-		if parsed.execBaseLower == ruleLower || parsed.execPathLower == ruleLower || parsed.fullCmdLower == ruleLower ||
-			strings.HasPrefix(parsed.fullCmdLower, ruleLower+" ") || strings.HasPrefix(parsed.fullCmdLower, ruleLower+"\t") ||
-			matchWildcard(ruleLower, parsed.execBaseLower) || matchWildcard(ruleLower, parsed.execPathLower) || matchWildcard(ruleLower, parsed.fullCmdLower) {
+		if parsed.execBaseLower == rule.MatchLower || parsed.execPathLower == rule.MatchLower || parsed.fullCmdLower == rule.MatchLower ||
+			strings.HasPrefix(parsed.fullCmdLower, rule.MatchLower+" ") || strings.HasPrefix(parsed.fullCmdLower, rule.MatchLower+"\t") ||
+			matchWildcard(rule.MatchLower, parsed.execBaseLower) || matchWildcard(rule.MatchLower, parsed.execPathLower) || matchWildcard(rule.MatchLower, parsed.fullCmdLower) {
 			isMatched = true
 		}
 	}
