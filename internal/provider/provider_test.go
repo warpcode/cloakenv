@@ -15,7 +15,7 @@ func TestFieldPolicy_ApplyToEntry(t *testing.T) {
 			"c": 3,
 		},
 	}
-	
+
 	t.Run("nil policy", func(t *testing.T) {
 		var fp *FieldPolicy
 		got := fp.ApplyToEntry(entry, "", nil)
@@ -40,7 +40,7 @@ func TestFieldPolicy_ApplyToEntry(t *testing.T) {
 			t.Errorf("ApplyToEntry() attributes = %v, want %v", got.Attributes, want.Attributes)
 		}
 	})
-	
+
 	t.Run("exclude only", func(t *testing.T) {
 		fp := &FieldPolicy{
 			ExcludeFields: []string{"b"},
@@ -57,7 +57,7 @@ func TestFieldPolicy_ApplyToEntry(t *testing.T) {
 			t.Errorf("ApplyToEntry() attributes = %v, want %v", got.Attributes, want.Attributes)
 		}
 	})
-	
+
 	t.Run("include and exclude", func(t *testing.T) {
 		fp := &FieldPolicy{
 			IncludeLayers: [][]string{{"a", "b", "c"}},
@@ -75,7 +75,7 @@ func TestFieldPolicy_ApplyToEntry(t *testing.T) {
 			t.Errorf("ApplyToEntry() attributes = %v, want %v", got.Attributes, want.Attributes)
 		}
 	})
-	
+
 	t.Run("multiple include layers", func(t *testing.T) {
 		fp := &FieldPolicy{
 			IncludeLayers: [][]string{{"a", "b", "c"}, {"a", "b"}, {"a"}},
@@ -91,7 +91,7 @@ func TestFieldPolicy_ApplyToEntry(t *testing.T) {
 			t.Errorf("ApplyToEntry() attributes = %v, want %v", got.Attributes, want.Attributes)
 		}
 	})
-	
+
 	t.Run("empty include layer drops everything", func(t *testing.T) {
 		// Note: FilterEntryWithPath with empty include drops all unless matched, let's see how it behaves
 		fp := &FieldPolicy{
@@ -131,16 +131,16 @@ func TestWithFieldPolicy(t *testing.T) {
 	t.Run("append to existing policy", func(t *testing.T) {
 		ctx1 := WithFieldPolicy(ctx, []string{"a", "b"}, []string{"exc1"})
 		ctx2 := WithFieldPolicy(ctx1, []string{"b", "c"}, []string{"exc2", "exc1"})
-		
+
 		fp := FieldPolicyFromContext(ctx2)
 		if fp == nil {
 			t.Fatal("Expected FieldPolicy, got nil")
 		}
-		
+
 		if len(fp.IncludeLayers) != 2 {
 			t.Errorf("Expected 2 include layers, got %d", len(fp.IncludeLayers))
 		}
-		
+
 		// check deduping in exclude
 		if len(fp.ExcludeFields) != 2 {
 			t.Errorf("Expected 2 exclude fields, got %d: %v", len(fp.ExcludeFields), fp.ExcludeFields)
@@ -154,7 +154,7 @@ func TestFieldPolicyFromContext(t *testing.T) {
 			t.Errorf("Expected nil, got %v", fp)
 		}
 	})
-	
+
 	t.Run("context without policy", func(t *testing.T) {
 		if fp := FieldPolicyFromContext(context.Background()); fp != nil {
 			t.Errorf("Expected nil, got %v", fp)
