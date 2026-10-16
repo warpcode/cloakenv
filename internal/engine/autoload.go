@@ -83,12 +83,14 @@ func matchPreparedCommandRule(rule config.AutoloadRule, cmdArgs []string, parsed
 		return false, cmdArgs, nil
 	}
 
-	pattern := strings.TrimSpace(rule.Match)
-	if pattern == "" {
-		return false, cmdArgs, nil
+	ruleLower := rule.MatchLower
+	if ruleLower == "" {
+		pattern := strings.TrimSpace(rule.Match)
+		if pattern == "" {
+			return false, cmdArgs, nil
+		}
+		ruleLower = strings.ToLower(pattern)
 	}
-
-	ruleLower := strings.ToLower(pattern)
 
 	var re *regexp.Regexp
 	var matchIndices []int

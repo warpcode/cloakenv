@@ -28,6 +28,7 @@ func TestOrchestratorBuildEnvMerges(t *testing.T) {
 			},
 		},
 	}
+	cfg.CompileAutoloadRules()
 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
@@ -145,6 +146,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 			},
 		},
 	}
+	cfg.CompileAutoloadRules()
 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
