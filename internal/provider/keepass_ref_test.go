@@ -52,6 +52,72 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 	})
 	rootGroup.Entries = append(rootGroup.Entries, localEntry)
 
+	// 2b. URLEntry (Full database URI with userinfo, port, path, query, fragment)
+	urlEntry := makeEntry("", "URLEntry", "admin", "secret123", "postgres://admin:secret123@10.0.0.1:5432/mydb?key=val&flag=1#section2", "", map[string]string{
+		"Scm":           "{URL:SCM}",
+		"Scheme":        "{URL:SCHEME}",
+		"Host":          "{URL:HOST}",
+		"Port":          "{URL:PORT}",
+		"Path":          "{URL:PATH}",
+		"Query":         "{URL:QUERY}",
+		"Fragment":      "{URL:FRAGMENT}",
+		"UserInfo":      "{URL:USERINFO}",
+		"UserNameURL":   "{URL:USERNAME}",
+		"PasswordURL":   "{URL:PASSWORD}",
+		"RmvScm":        "{URL:RMVSCM}",
+		"WithoutScheme": "{URL:WITHOUTSCHEME}",
+		"TConvScheme":   "{T-CONV:/{URL:SCHEME}/Upper/}",
+		"TConvHost":     "{T-CONV:/{URL:HOST}/Base64/}",
+	})
+	rootGroup.Entries = append(rootGroup.Entries, urlEntry)
+
+	// 2c. IPv6URLEntry
+	ipv6Entry := makeEntry("", "IPv6URLEntry", "user", "pass", "http://[2001:db8::1]:8080/path", "", map[string]string{
+		"Host": "{URL:HOST}",
+		"Port": "{URL:PORT}",
+	})
+	rootGroup.Entries = append(rootGroup.Entries, ipv6Entry)
+
+	// 2d. EmptyURLEntry
+	emptyURLEntry := makeEntry("", "EmptyURLEntry", "user", "pass", "", "", map[string]string{
+		"Host": "{URL:HOST}",
+		"Port": "{URL:PORT}",
+	})
+	rootGroup.Entries = append(rootGroup.Entries, emptyURLEntry)
+
+	// 2e. InvalidURLEntry
+	invalidURLEntry := makeEntry("", "InvalidURLEntry", "user", "pass", "http://invalid url: %%%", "", map[string]string{
+		"Host": "{URL:HOST}",
+	})
+	rootGroup.Entries = append(rootGroup.Entries, invalidURLEntry)
+
+	// 2f. DynamicURLEntry (URL composed of other placeholders)
+	dynamicURLEntry := makeEntry("", "DynamicURLEntry", "dbuser", "dbpass", "postgres://{USERNAME}:{PASSWORD}@{S:ServerHost}:5432/appdb", "", map[string]string{
+		"ServerHost":    "db.internal",
+		"ExtractedHost": "{URL:HOST}",
+		"ExtractedUser": "{URL:USERNAME}",
+		"ExtractedPass": "{URL:PASSWORD}",
+		"ExtractedPort": "{URL:PORT}",
+		"ExtractedPath": "{URL:PATH}",
+	})
+	rootGroup.Entries = append(rootGroup.Entries, dynamicURLEntry)
+
+	// 2g. SchemeLessURLEntry (URL without scheme and unrecognized component fixtures)
+	schemeLessURLEntry := makeEntry("", "SchemeLessURLEntry", "user", "pass", "example.com/path", "", map[string]string{
+		"Host":          "{URL:HOST}",
+		"Unknown":       "{URL:BOGUS}",
+		"EmptyComp":     "{URL:}",
+		"RmvScm":        "{URL:RMVSCM}",
+		"WithoutScheme": "{URL:WITHOUTSCHEME}",
+	})
+	rootGroup.Entries = append(rootGroup.Entries, schemeLessURLEntry)
+
+	// 2h. MixedCaseURLEntry (URL with mixed-case scheme to verify EqualFold)
+	mixedCaseURLEntry := makeEntry("", "MixedCaseURLEntry", "user", "pass", "HTTPS://example.com/path", "", map[string]string{
+		"RmvScm": "{URL:RMVSCM}",
+	})
+	rootGroup.Entries = append(rootGroup.Entries, mixedCaseURLEntry)
+
 	// 3. CrossReferences
 	crossEntry := makeEntry("", "CrossReferences", "crossuser", "crosspass", "", "", map[string]string{
 		"PasswordByTitle":      "{REF:P@T:TargetEntry}",
@@ -73,6 +139,11 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 		"NonExistentEntry":     "{REF:P@T:DoesNotExist}",
 		"NonExistentField":     "{REF:S:DoesNotExist@T:TargetEntry}",
 		"Compound":             "https://{REF:U@T:TargetEntry}:{REF:P@T:TargetEntry}@{REF:S:TargetCustom@T:TargetEntry}",
+		"CrossURLHost":         "{REF:A:HOST@T:URLEntry}",
+		"CrossURLPort":         "{REF:URL:PORT@T:URLEntry}",
+		"CrossURLScheme":       "{REF:URL:SCHEME@T:URLEntry}",
+		"CrossURLEmptyComp":    "{REF:URL:@T:URLEntry}",
+		"CrossAEmptyComp":      "{REF:A:@T:URLEntry}",
 	})
 	rootGroup.Entries = append(rootGroup.Entries, crossEntry)
 
@@ -427,6 +498,79 @@ func TestKeePassReferences_TextConversions(t *testing.T) {
 			t.Errorf("unexpected error message: %v", err)
 		}
 	})
+}
+
+func TestKeePassReferences_URLComponents(t *testing.T) {
+	ctx := context.Background()
+	kp := NewKeePassProvider()
+	kp.db = createTestDBWithReferences()
+	kp.resolveReferences = true
+
+	tests := []struct {
+		name     string
+		location string
+		want     string
+	}{
+		{"SCM", "Root/URLEntry:Scm", "postgres"},
+		{"SCHEME", "Root/URLEntry:Scheme", "postgres"},
+		{"HOST", "Root/URLEntry:Host", "10.0.0.1"},
+		{"PORT", "Root/URLEntry:Port", "5432"},
+		{"PATH", "Root/URLEntry:Path", "/mydb"},
+		{"QUERY", "Root/URLEntry:Query", "key=val&flag=1"},
+		{"FRAGMENT", "Root/URLEntry:Fragment", "section2"},
+		{"USERINFO", "Root/URLEntry:UserInfo", "admin:secret123"},
+		{"USERNAME", "Root/URLEntry:UserNameURL", "admin"},
+		{"PASSWORD", "Root/URLEntry:PasswordURL", "secret123"},
+		{"RMVSCM", "Root/URLEntry:RmvScm", "//admin:secret123@10.0.0.1:5432/mydb?key=val&flag=1#section2"},
+		{"WITHOUTSCHEME", "Root/URLEntry:WithoutScheme", "//admin:secret123@10.0.0.1:5432/mydb?key=val&flag=1#section2"},
+		{"TConvScheme", "Root/URLEntry:TConvScheme", "POSTGRES"},
+		{"TConvHost", "Root/URLEntry:TConvHost", "MTAuMC4wLjE="},
+
+		// IPv6
+		{"IPv6Host", "Root/IPv6URLEntry:Host", "2001:db8::1"},
+		{"IPv6Port", "Root/IPv6URLEntry:Port", "8080"},
+
+		// Empty URL
+		{"EmptyURLHost", "Root/EmptyURLEntry:Host", ""},
+		{"EmptyURLPort", "Root/EmptyURLEntry:Port", ""},
+
+		// Invalid URL
+		{"InvalidURLHost", "Root/InvalidURLEntry:Host", ""},
+
+		// Dynamic URL (built from other placeholders)
+		{"DynamicHost", "Root/DynamicURLEntry:ExtractedHost", "db.internal"},
+		{"DynamicUser", "Root/DynamicURLEntry:ExtractedUser", "dbuser"},
+		{"DynamicPass", "Root/DynamicURLEntry:ExtractedPass", "dbpass"},
+		{"DynamicPort", "Root/DynamicURLEntry:ExtractedPort", "5432"},
+		{"DynamicPath", "Root/DynamicURLEntry:ExtractedPath", "/appdb"},
+
+		// Cross-entry URL component references
+		{"CrossURLHost", "Root/CrossReferences:CrossURLHost", "10.0.0.1"},
+		{"CrossURLPort", "Root/CrossReferences:CrossURLPort", "5432"},
+		{"CrossURLScheme", "Root/CrossReferences:CrossURLScheme", "postgres"},
+		{"CrossURLEmptyComp", "Root/CrossReferences:CrossURLEmptyComp", ""},
+		{"CrossAEmptyComp", "Root/CrossReferences:CrossAEmptyComp", ""},
+
+		// Scheme-less & unrecognized component fallbacks
+		{"SchemeLessHost", "Root/SchemeLessURLEntry:Host", ""},
+		{"SchemeLessRmvScm", "Root/SchemeLessURLEntry:RmvScm", "example.com/path"},
+		{"SchemeLessWithoutScheme", "Root/SchemeLessURLEntry:WithoutScheme", "example.com/path"},
+		{"UnknownComponent", "Root/SchemeLessURLEntry:Unknown", ""},
+		{"EmptyComponent", "Root/SchemeLessURLEntry:EmptyComp", ""},
+		{"MixedCaseRmvScm", "Root/MixedCaseURLEntry:RmvScm", "//example.com/path"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			val, err := kp.GetSecret(ctx, tt.location)
+			if err != nil {
+				t.Fatalf("GetSecret(%q) failed: %v", tt.location, err)
+			}
+			if val != tt.want {
+				t.Errorf("GetSecret(%q) = %q, want %q", tt.location, val, tt.want)
+			}
+		})
+	}
 }
 
 func TestKeePassReferences_GetEntryAndSearch(t *testing.T) {
