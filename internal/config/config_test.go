@@ -502,3 +502,14 @@ vaults:
 		})
 	}
 }
+
+func TestAutoloadRule_Compile(t *testing.T) {
+	rule := AutoloadRule{Match: "  DePlOy  "}
+	rule.Compile()
+	if rule.MatchLower != "deploy" {
+		t.Errorf("expected MatchLower %q, got %q", "deploy", rule.MatchLower)
+	}
+	if rule.CompiledRegex == nil {
+		t.Error("expected CompiledRegex to be non-nil")
+	}
+}
