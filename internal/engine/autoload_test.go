@@ -798,3 +798,16 @@ func BenchmarkMatchWildcard_Wildcard(b *testing.B) {
 		}
 	}
 }
+
+func TestMatchCommandRule_Uncompiled(t *testing.T) {
+	rule := config.AutoloadRule{Match: "deploy"}
+	// Deliberately DO NOT call rule.Compile()
+
+	matched, _, err := MatchCommandRule(rule, []string{"deploy", "--flag"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !matched {
+		t.Errorf("expected MatchCommandRule to match 'deploy' even if uncompiled")
+	}
+}
