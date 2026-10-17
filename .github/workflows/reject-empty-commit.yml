@@ -21,12 +21,18 @@ jobs:
 
       - name: Fail when any commit introduces no file changes
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.after }}
         run: |
           set -euo pipefail
 
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            base_sha="${{ github.event.pull_request.base.sha }}"
-            head_sha="${{ github.event.pull_request.head.sha }}"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base_sha="$PR_BASE_SHA"
+            head_sha="$PR_HEAD_SHA"
 
             if ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
               git fetch origin "$base_sha" --depth=50
@@ -60,8 +66,8 @@ jobs:
             exit 0
           fi
 
-          before_sha="${{ github.event.before }}"
-          after_sha="${{ github.event.after }}"
+          before_sha="$BEFORE_SHA"
+          after_sha="$AFTER_SHA"
 
           if [[ -z "$before_sha" || "$before_sha" =~ ^0+$ ]]; then
             if git rev-list --count HEAD | grep -q '^1$'; then
