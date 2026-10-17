@@ -142,6 +142,8 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 		"CrossURLHost":         "{REF:A:HOST@T:URLEntry}",
 		"CrossURLPort":         "{REF:URL:PORT@T:URLEntry}",
 		"CrossURLScheme":       "{REF:URL:SCHEME@T:URLEntry}",
+		"CrossURLEmptyComp":    "{REF:URL:@T:URLEntry}",
+		"CrossAEmptyComp":      "{REF:A:@T:URLEntry}",
 	})
 	rootGroup.Entries = append(rootGroup.Entries, crossEntry)
 
@@ -546,6 +548,8 @@ func TestKeePassReferences_URLComponents(t *testing.T) {
 		{"CrossURLHost", "Root/CrossReferences:CrossURLHost", "10.0.0.1"},
 		{"CrossURLPort", "Root/CrossReferences:CrossURLPort", "5432"},
 		{"CrossURLScheme", "Root/CrossReferences:CrossURLScheme", "postgres"},
+		{"CrossURLEmptyComp", "Root/CrossReferences:CrossURLEmptyComp", ""},
+		{"CrossAEmptyComp", "Root/CrossReferences:CrossAEmptyComp", ""},
 
 		// Scheme-less & unrecognized component fallbacks
 		{"SchemeLessHost", "Root/SchemeLessURLEntry:Host", ""},
