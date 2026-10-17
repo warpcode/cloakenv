@@ -66,6 +66,8 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 		"PasswordURL":   "{URL:PASSWORD}",
 		"RmvScm":        "{URL:RMVSCM}",
 		"WithoutScheme": "{URL:WITHOUTSCHEME}",
+		"TConvScheme":   "{T-CONV:/{URL:SCHEME}/Upper/}",
+		"TConvHost":     "{T-CONV:/{URL:HOST}/Base64/}",
 	})
 	rootGroup.Entries = append(rootGroup.Entries, urlEntry)
 
@@ -519,6 +521,8 @@ func TestKeePassReferences_URLComponents(t *testing.T) {
 		{"PASSWORD", "Root/URLEntry:PasswordURL", "secret123"},
 		{"RMVSCM", "Root/URLEntry:RmvScm", "//admin:secret123@10.0.0.1:5432/mydb?key=val&flag=1#section2"},
 		{"WITHOUTSCHEME", "Root/URLEntry:WithoutScheme", "//admin:secret123@10.0.0.1:5432/mydb?key=val&flag=1#section2"},
+		{"TConvScheme", "Root/URLEntry:TConvScheme", "POSTGRES"},
+		{"TConvHost", "Root/URLEntry:TConvHost", "MTAuMC4wLjE="},
 
 		// IPv6
 		{"IPv6Host", "Root/IPv6URLEntry:Host", "2001:db8::1"},
