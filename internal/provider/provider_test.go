@@ -92,14 +92,14 @@ func TestFieldPolicy_ApplyToEntry(t *testing.T) {
 		}
 	})
 
-	t.Run("empty include layer drops everything", func(t *testing.T) {
+	t.Run("empty include layer preserves all attributes", func(t *testing.T) {
 		// Note: FilterEntryWithPath with empty include drops all unless matched, let's see how it behaves
 		fp := &FieldPolicy{
 			IncludeLayers: [][]string{{}},
 		}
 		got := fp.ApplyToEntry(entry, "", nil)
-		if len(got.Attributes) != 0 {
-			t.Errorf("ApplyToEntry() attributes len = %d, want 0", len(got.Attributes))
+		if !reflect.DeepEqual(got.Attributes, entry.Attributes) {
+			t.Errorf("ApplyToEntry() attributes = %v, want %v", got.Attributes, entry.Attributes)
 		}
 	})
 }
