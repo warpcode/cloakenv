@@ -66,6 +66,8 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 		"PasswordURL":   "{URL:PASSWORD}",
 		"RmvScm":        "{URL:RMVSCM}",
 		"WithoutScheme": "{URL:WITHOUTSCHEME}",
+		"TConvScheme":   "{T-CONV:/{URL:SCHEME}/Upper/}",
+		"TConvHost":     "{T-CONV:/{URL:HOST}/Base64/}",
 	})
 	rootGroup.Entries = append(rootGroup.Entries, urlEntry)
 
@@ -140,6 +142,8 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 		"CrossURLHost":         "{REF:A:HOST@T:URLEntry}",
 		"CrossURLPort":         "{REF:URL:PORT@T:URLEntry}",
 		"CrossURLScheme":       "{REF:URL:SCHEME@T:URLEntry}",
+		"CrossURLEmptyComp":    "{REF:URL:@T:URLEntry}",
+		"CrossAEmptyComp":      "{REF:A:@T:URLEntry}",
 	})
 	rootGroup.Entries = append(rootGroup.Entries, crossEntry)
 
@@ -519,6 +523,8 @@ func TestKeePassReferences_URLComponents(t *testing.T) {
 		{"PASSWORD", "Root/URLEntry:PasswordURL", "secret123"},
 		{"RMVSCM", "Root/URLEntry:RmvScm", "//admin:secret123@10.0.0.1:5432/mydb?key=val&flag=1#section2"},
 		{"WITHOUTSCHEME", "Root/URLEntry:WithoutScheme", "//admin:secret123@10.0.0.1:5432/mydb?key=val&flag=1#section2"},
+		{"TConvScheme", "Root/URLEntry:TConvScheme", "POSTGRES"},
+		{"TConvHost", "Root/URLEntry:TConvHost", "MTAuMC4wLjE="},
 
 		// IPv6
 		{"IPv6Host", "Root/IPv6URLEntry:Host", "2001:db8::1"},
@@ -542,6 +548,8 @@ func TestKeePassReferences_URLComponents(t *testing.T) {
 		{"CrossURLHost", "Root/CrossReferences:CrossURLHost", "10.0.0.1"},
 		{"CrossURLPort", "Root/CrossReferences:CrossURLPort", "5432"},
 		{"CrossURLScheme", "Root/CrossReferences:CrossURLScheme", "postgres"},
+		{"CrossURLEmptyComp", "Root/CrossReferences:CrossURLEmptyComp", ""},
+		{"CrossAEmptyComp", "Root/CrossReferences:CrossAEmptyComp", ""},
 
 		// Scheme-less & unrecognized component fallbacks
 		{"SchemeLessHost", "Root/SchemeLessURLEntry:Host", ""},

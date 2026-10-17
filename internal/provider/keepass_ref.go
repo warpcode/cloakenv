@@ -139,12 +139,15 @@ func (k *KeePassProvider) resolveCrossReference(wantedFieldStr, searchInStr, sea
 
 	upWanted := strings.ToUpper(wantedFieldStr)
 	var urlComponent string
+	hasURLComponent := false
 	if strings.HasPrefix(upWanted, "A:") {
 		urlComponent = wantedFieldStr[2:]
 		wantedFieldStr = "A"
+		hasURLComponent = true
 	} else if strings.HasPrefix(upWanted, "URL:") {
 		urlComponent = wantedFieldStr[4:]
 		wantedFieldStr = "URL"
+		hasURLComponent = true
 	}
 
 	targetField := mapWantedFieldToField(wantedFieldStr)
@@ -158,7 +161,7 @@ func (k *KeePassProvider) resolveCrossReference(wantedFieldStr, searchInStr, sea
 		return "", err
 	}
 
-	if urlComponent != "" {
+	if hasURLComponent {
 		return extractURLComponent(resolvedVal, urlComponent), nil
 	}
 
