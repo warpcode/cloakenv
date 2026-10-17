@@ -117,6 +117,8 @@ func (fp *FieldPolicy) ApplyToEntry(entry Entry, entryPath string, rootPrefixes 
 	for _, layer := range fp.IncludeLayers {
 		if len(layer) > 0 {
 			current = FilterEntryWithPath(current, entryPath, rootPrefixes, layer, nil)
+		} else if layer != nil {
+			current.Attributes = make(map[string]any)
 		}
 	}
 	if len(fp.ExcludeFields) > 0 {
