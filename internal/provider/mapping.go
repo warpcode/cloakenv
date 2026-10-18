@@ -264,11 +264,34 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 			rootPrefixes = rpProvider.RootPrefixes()
 		}
 
-		checkMappedAttrs := func(mappedAttrs map[string]any, dotPath string) (string, bool, error) {
+		checkMappedAttrs := func(rawEntry Entry, authoritativePath string, mappedAttrs map[string]any, dotPath string) (string, bool, error) {
 			if attrName != "" {
 				if val, ok := mappedAttrs[attrName]; ok {
 					sVal, err := serializeVal(val)
 					return sVal, true, err
+				}
+				if strings.EqualFold(attrName, "title") {
+					allowed := false
+					if len(m.rules) > 0 {
+						allowed = isDefaultFieldMappedOrIncluded("title", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title)
+					} else {
+						allowed = isDefaultFieldAllowed("title", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields)
+					}
+					if allowed && rawEntry.Title != "" {
+						return rawEntry.Title, true, nil
+					}
+				}
+				if strings.EqualFold(attrName, "tags") {
+					allowed := false
+					if len(m.rules) > 0 {
+						allowed = isDefaultFieldMappedOrIncluded("tags", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title)
+					} else {
+						allowed = isDefaultFieldAllowed("tags", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields)
+					}
+					if allowed && len(rawEntry.Tags) > 0 {
+						sVal, err := serializeVal(rawEntry.Tags)
+						return sVal, true, err
+					}
 				}
 			}
 			if val, ok := mappedAttrs[location]; ok {
@@ -335,7 +358,7 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 				if mapErr != nil {
 					return "", mapErr
 				}
-				if val, ok, sErr := checkMappedAttrs(mappedAttrs, ""); ok {
+				if val, ok, sErr := checkMappedAttrs(rawEntry, authoritativePath, mappedAttrs, ""); ok {
 					if sErr != nil {
 						return "", sErr
 					}
@@ -375,7 +398,7 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 						if mapErr != nil {
 							return "", mapErr
 						}
-						if val, ok, sErr := checkMappedAttrs(mappedAttrs, nestedDotPath); ok {
+						if val, ok, sErr := checkMappedAttrs(rawEntry, authoritativePath, mappedAttrs, nestedDotPath); ok {
 							if sErr != nil {
 								return "", sErr
 							}
@@ -407,7 +430,7 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 					if mapErr != nil {
 						return "", mapErr
 					}
-					if val, ok, sErr := checkMappedAttrs(mappedAttrs, nestedDotPath); ok {
+					if val, ok, sErr := checkMappedAttrs(rawEntry, authoritativePath, mappedAttrs, nestedDotPath); ok {
 						if sErr != nil {
 							return "", sErr
 						}
@@ -433,7 +456,7 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 			if mapErr != nil {
 				return "", mapErr
 			}
-			if val, ok, sErr := checkMappedAttrs(mappedAttrs, ""); ok {
+			if val, ok, sErr := checkMappedAttrs(rawEntry, authoritativePath, mappedAttrs, ""); ok {
 				if sErr != nil {
 					return "", sErr
 				}
@@ -467,6 +490,53 @@ func (s *SearchableMappingProvider) RootPrefixes() []string {
 	return nil
 }
 
+// isDefaultFieldMappedOrIncluded checks whether a default metadata field
+// ("title", "tags", "path", "vault", "provider") is produced/mapped by mapping rules
+// or explicitly included in includeFields.
+func isDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule, includeFields, excludeFields []string, entryPath string, rootPrefixes []string, entryTitle string) bool {
+	if len(excludeFields) > 0 {
+		if !isDefaultFieldAllowed(fieldName, entryPath, rootPrefixes, entryTitle, nil, excludeFields) {
+			return false
+		}
+	}
+
+	fieldLower := strings.ToLower(fieldName)
+
+	if len(includeFields) > 0 {
+		candidates := buildDefaultFieldCandidates(fieldName, entryPath, rootPrefixes, entryTitle)
+		for _, pattern := range includeFields {
+			for _, c := range candidates {
+				if matchPatternCaseInsensitive(pattern, c) {
+					return true
+				}
+			}
+		}
+	}
+
+	for _, r := range rules {
+		if r.CompiledRegex == nil {
+			_ = r.Compile()
+		}
+		if r.Key != "" && strings.EqualFold(r.Key, fieldLower) {
+			return true
+		}
+		if r.CompiledRegex != nil {
+			candidates := buildDefaultFieldCandidates(fieldName, entryPath, rootPrefixes, entryTitle)
+			for _, c := range candidates {
+				if r.CompiledRegex.MatchString(c) {
+					template := convertBackslashGroups(r.Key)
+					newKey := r.CompiledRegex.ReplaceAllString(c, template)
+					if newKey != "" && strings.EqualFold(newKey, fieldLower) {
+						return true
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
 // GetEntryWithPath retrieves a structured entry and applies mapping and filtering to its attributes.
 func (s *SearchableMappingProvider) GetEntryWithPath(ctx context.Context, location string) (Entry, string, error) {
 	rawEntry, authoritativePath, err := getRawEntryWithPath(s.underlying, ctx, location)
@@ -476,6 +546,7 @@ func (s *SearchableMappingProvider) GetEntryWithPath(ctx context.Context, locati
 
 	includeFields, excludeFields := getFilteringParams(s.underlying)
 	rootPrefixes := s.RootPrefixes()
+
 	mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
 		rawEntry.Attributes,
 		s.rules,
@@ -490,6 +561,23 @@ func (s *SearchableMappingProvider) GetEntryWithPath(ctx context.Context, locati
 	}
 
 	rawEntry.Attributes = mappedAttrs
+
+	if len(s.rules) > 0 {
+		if !isDefaultFieldMappedOrIncluded("title", s.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title) {
+			rawEntry.Title = ""
+		}
+		if !isDefaultFieldMappedOrIncluded("tags", s.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title) {
+			rawEntry.Tags = nil
+		}
+	} else {
+		if !isDefaultFieldAllowed("title", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields) {
+			rawEntry.Title = ""
+		}
+		if !isDefaultFieldAllowed("tags", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields) {
+			rawEntry.Tags = nil
+		}
+	}
+
 	return rawEntry, authoritativePath, nil
 }
 
@@ -538,6 +626,41 @@ func (s *SearchableMappingProvider) Search(ctx context.Context, query SearchQuer
 			return nil, mapErr
 		}
 		r.Entry.Attributes = mappedAttrs
+
+		if len(s.rules) > 0 {
+			if !isDefaultFieldMappedOrIncluded("title", s.rules, includeFields, excludeFields, r.Path, rootPrefixes, r.Entry.Title) {
+				r.Entry.Title = ""
+			}
+			if !isDefaultFieldMappedOrIncluded("tags", s.rules, includeFields, excludeFields, r.Path, rootPrefixes, r.Entry.Title) {
+				r.Entry.Tags = nil
+			}
+			if !isDefaultFieldMappedOrIncluded("path", s.rules, includeFields, excludeFields, r.Path, rootPrefixes, r.Entry.Title) {
+				r.Path = ""
+			}
+			if !isDefaultFieldMappedOrIncluded("vault", s.rules, includeFields, excludeFields, r.Path, rootPrefixes, r.Entry.Title) {
+				r.Vault = ""
+			}
+			if !isDefaultFieldMappedOrIncluded("provider", s.rules, includeFields, excludeFields, r.Path, rootPrefixes, r.Entry.Title) {
+				r.Provider = ""
+			}
+		} else {
+			if !isDefaultFieldAllowed("title", r.Path, rootPrefixes, r.Entry.Title, includeFields, excludeFields) {
+				r.Entry.Title = ""
+			}
+			if !isDefaultFieldAllowed("tags", r.Path, rootPrefixes, r.Entry.Title, includeFields, excludeFields) {
+				r.Entry.Tags = nil
+			}
+			if !isDefaultFieldAllowed("path", r.Path, rootPrefixes, r.Entry.Title, includeFields, excludeFields) {
+				r.Path = ""
+			}
+			if !isDefaultFieldAllowed("vault", r.Path, rootPrefixes, r.Entry.Title, includeFields, excludeFields) {
+				r.Vault = ""
+			}
+			if !isDefaultFieldAllowed("provider", r.Path, rootPrefixes, r.Entry.Title, includeFields, excludeFields) {
+				r.Provider = ""
+			}
+		}
+
 		mappedResults[i] = r
 	}
 

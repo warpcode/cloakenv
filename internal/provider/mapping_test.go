@@ -753,3 +753,105 @@ func TestMappingProvider_NewMappingProvider_CompileError(t *testing.T) {
 		t.Fatal("expected NewMappingProvider to return error for invalid regex, got nil")
 	}
 }
+
+func TestMappingIsolationForDefaultFields(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("DefaultFieldsExcludedWhenMappingIsActive", func(t *testing.T) {
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Provider: "keepass",
+					Vault:    "main_vault",
+					Path:     "services/api",
+					Entry: Entry{
+						Title: "API Key Service",
+						Tags:  []string{"prod", "backend"},
+						Attributes: map[string]any{
+							"env:API_KEY": "secret_key_123",
+						},
+					},
+				},
+			}, nil
+		})
+
+		rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
+		if err := rule.Compile(); err != nil {
+			t.Fatalf("rule.Compile failed: %v", err)
+		}
+
+		mp, err := NewMappingProvider(sp, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		smp := mp.(SearchableProvider)
+		results, err := smp.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+
+		res := results[0]
+		if res.Provider != "" || res.Vault != "" || res.Path != "" || res.Entry.Title != "" || res.Entry.Tags != nil {
+			t.Errorf("expected all default fields excluded by mapping isolation, got Provider=%q Vault=%q Path=%q Title=%q Tags=%v",
+				res.Provider, res.Vault, res.Path, res.Entry.Title, res.Entry.Tags)
+		}
+		if res.Entry.Attributes["API_KEY"] != "secret_key_123" {
+			t.Errorf("expected API_KEY to be mapped, got %v", res.Entry.Attributes["API_KEY"])
+		}
+
+		// Rejects GetSecret for title/tags
+		_, errTitle := mp.GetSecret(ctx, "services/api:title")
+		if errTitle == nil {
+			t.Errorf("expected error for unmapped title under mapping isolation, got nil")
+		}
+	})
+
+	t.Run("DefaultFieldsPreservedWhenMappedOrIncluded", func(t *testing.T) {
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Provider: "keepass",
+					Vault:    "main_vault",
+					Path:     "services/api",
+					Entry: Entry{
+						Title: "API Key Service",
+						Tags:  []string{"prod"},
+						Attributes: map[string]any{
+							"env:API_KEY": "secret_key_123",
+						},
+					},
+				},
+			}, nil
+		})
+
+		// Mapping rule explicitly maps title and tags
+		ruleTitle := config.MappingRule{Match: "^title$", Key: "title"}
+		ruleTag := config.MappingRule{Match: "^tags$", Key: "tags"}
+		ruleKey := config.MappingRule{Match: "env:(.*)", Key: "$1"}
+
+		mp, err := NewMappingProvider(sp, []config.MappingRule{ruleTitle, ruleTag, ruleKey})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		smp := mp.(SearchableProvider)
+		results, err := smp.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+
+		res := results[0]
+		if res.Entry.Title != "API Key Service" {
+			t.Errorf("expected Title 'API Key Service', got %q", res.Entry.Title)
+		}
+		if len(res.Entry.Tags) != 1 || res.Entry.Tags[0] != "prod" {
+			t.Errorf("expected Tags ['prod'], got %v", res.Entry.Tags)
+		}
+	})
+}
