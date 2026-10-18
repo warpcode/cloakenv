@@ -529,7 +529,7 @@ func applyTConvMethod(text, method string) (string, error) {
 	case "URI-DEC", "URIDEC", "URI-DECODE":
 		res, err := url.QueryUnescape(text)
 		if err != nil {
-			return "", fmt.Errorf("keepass reference error: failed to URI decode text %q: %w", text, err)
+			return "", fmt.Errorf("keepass reference error: failed to URI decode: %w", err)
 		}
 		return res, nil
 	case "RAW":

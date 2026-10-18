@@ -184,6 +184,12 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 	})
 	rootGroup.Entries = append(rootGroup.Entries, tconvEntry)
 
+	// 7. Leak entry with invalid URL escape in resolved field value
+	leakEntry := makeEntry("", "Leak", "user", "dummy-value%zz", "", "", map[string]string{
+		"Boom": "{T-CONV:/{PASSWORD}/URI-DEC/}",
+	})
+	rootGroup.Entries = append(rootGroup.Entries, leakEntry)
+
 	db.Content.Root.Groups = []gokeepasslib.Group{rootGroup}
 	return db
 }
@@ -496,6 +502,19 @@ func TestKeePassReferences_TextConversions(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "failed to URI decode") {
 			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("NoSecretLeakInURIDecError", func(t *testing.T) {
+		_, err := kp.GetSecret(ctx, "Root/Leak:Boom")
+		if err == nil {
+			t.Fatal("expected error for invalid URI decode, got nil")
+		}
+		if !strings.Contains(err.Error(), "failed to URI decode") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+		if strings.Contains(err.Error(), "dummy-value") {
+			t.Errorf("resolved value leaked into error message: %v", err)
 		}
 	})
 }
