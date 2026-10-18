@@ -18,11 +18,13 @@ vaults:
   keepass_dev:
     provider: "keepass"
     vault_path: "./examples/providers/keepass/database.kdbx"
+    # resolve_references: true  # Enables KeePass entry placeholder and cross-entry reference resolution ({TITLE}, {REF:...}, {T-CONV:...}, {URL:...})
 
   # Defines the work:// URI scheme (KeePass provider, multiple-entity by default)
   work:
     provider: "keepass"
     vault_path: "~/secrets/work_vault.kdbx"
+    # resolve_references: true
 
   # Defines the home:// URI scheme (KeePass provider, excluded from dynamic searches)
   home:

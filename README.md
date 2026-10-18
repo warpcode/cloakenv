@@ -33,6 +33,7 @@
 - [Secret Providers & Schemes](#secret-providers--schemes)
   - [Built-In Providers (Zero Setup)](#built-in-providers-zero-setup)
   - [Configured Vaults](#configured-vaults)
+    - [KeePass Placeholders & Cross-Entry References](#7-keepass-placeholders--cross-entry-references-resolve_references)
 - [Command Autoloading & Alias Masking](#command-autoloading--alias-masking)
 - [Search Query Language Reference](#search-query-language-reference)
 - [Configuration Reference (`config.yaml`)](#configuration-reference-configyaml)
@@ -552,6 +553,7 @@ vaults:
 - Path traversal: `vault://Folder/SubFolder/EntryName[:Attribute]`.
 - Defaults to `:Password` attribute if omitted.
 - **File Attachments**: Directly stream binary attachments by name (e.g. `vault://SSH/Keys:id_rsa`).
+- **Placeholder & Reference Resolution**: Set `resolve_references: true` in `config.yaml` to enable `{TITLE}`, `{REF:...}`, `{T-CONV:...}`, `{URL:...}`, and date/time expansion (see [KeePass Placeholders & Cross-Entry References](#7-keepass-placeholders--cross-entry-references-resolve_references)).
 
 #### 2. YAML (`yaml`) & JSON (`json`)
 - Reads static structured YAML or JSON files.
@@ -620,6 +622,132 @@ vaults:
       - match: "env:(.*)"
         key: "\\1"
 ```
+
+#### 7. KeePass Placeholders & Cross-Entry References (`resolve_references`)
+Supported on `keepass` vaults when `resolve_references: true` is configured in `config.yaml`. Allows KeePass entries to dynamically reference fields within the same entry, calculate timestamps, perform text transformations, parse URL components, or pull attributes from other entries across the database.
+
+##### Enabling Placeholder Resolution
+Placeholder resolution is disabled by default (`false`) to ensure string literals containing `{...}` remain untouched. Enable it per-vault in `config.yaml`:
+```yaml
+vaults:
+  work:
+    provider: "keepass"
+    vault_path: "~/secrets/work_vault.kdbx"
+    resolve_references: true
+```
+
+##### Same-Entry Placeholders
+Interpolates standard or custom fields from the current entry:
+| Placeholder | Description | Example Output |
+|---|---|---|
+| `{TITLE}` | Entry Title | `Database Server` |
+| `{USERNAME}` | Entry UserName | `admin_user` |
+| `{PASSWORD}` | Entry Password | `s3cr3t_p@ss` |
+| `{URL}` | Entry URL | `https://db.example.com:5432/mydb` |
+| `{NOTES}` | Entry Notes | `Production DB notes` |
+| `{S:<custom>}` | Custom string attribute named `<custom>` | `{S:api_key}` $\rightarrow$ `sk_live_12345` |
+
+##### Date/Time Placeholders
+Generates current timestamp components. Local variants (`DT_*`) use the host system's local timezone (`time.Now()`), while `DT_UTC_*` variants use UTC.
+| Local Placeholder | UTC Placeholder | Format / Description | Example Output |
+|---|---|---|---|
+| `{DT_SIMPLE}` | `{DT_UTC_SIMPLE}` | Full timestamp (`YYYYMMDDHHMMSS`) | `20260330143000` |
+| `{DT_YEAR}` | `{DT_UTC_YEAR}` | 4-digit year (`YYYY`) | `2026` |
+| `{DT_MONTH}` | `{DT_UTC_MONTH}` | 2-digit month (`MM`) | `03` |
+| `{DT_DAY}` | `{DT_UTC_DAY}` | 2-digit day (`DD`) | `30` |
+| `{DT_HOUR}` | `{DT_UTC_HOUR}` | 2-digit 24-hour (`HH`) | `14` |
+| `{DT_MINUTE}` | `{DT_UTC_MINUTE}` | 2-digit minute (`MM`) | `30` |
+| `{DT_SECOND}` | `{DT_UTC_SECOND}` | 2-digit second (`SS`) | `00` |
+
+##### Text Transformations (`T-CONV`)
+Transforms inner text using a specified method.
+- **Syntax**: `{T-CONV:<sep><text><sep><METHOD><sep>}`
+- **Configurable Separator**: The character `<sep>` following `T-CONV:` defines the delimiter (e.g. `/`, `!`, `#`). This allows transforming text containing slashes without syntax errors (e.g., `{T-CONV:!usr/bin!UPPER!}`).
+- **Examples**:
+  - `{T-CONV:/hello world/UPPER/}` $\rightarrow$ `HELLO WORLD`
+  - `{T-CONV:!admin:secret!BASE64!}` $\rightarrow$ `YWRtaW46c2VjcmV0`
+
+| Method / Aliases | Description | Example Input $\rightarrow$ Output |
+|---|---|---|
+| `UPPER`, `U` | Convert text to uppercase | `foo` $\rightarrow$ `FOO` |
+| `LOWER`, `L` | Convert text to lowercase | `FOO` $\rightarrow$ `foo` |
+| `BASE64` | Standard Base64 encode | `admin:pass` $\rightarrow$ `YWRtaW46cGFzcw==` |
+| `HEX` | Lowercase hexadecimal encode | `abc` $\rightarrow$ `616263` |
+| `URI` | Percent-encode for URI queries | `user@host` $\rightarrow$ `user%40host` |
+| `URI-DEC`, `URIDEC`, `URI-DECODE` | Percent-decode URI query text | `user%40host` $\rightarrow$ `user@host` |
+| `RAW` | Return raw text unchanged | `text` $\rightarrow$ `text` |
+
+##### URL Component Extraction
+Extracts individual URL components from an entry's `URL` field using `{URL:<component>}` for the current entry, or `{REF:A:<component>@...}` / `{REF:URL:<component>@...}` for cross-entry references.
+
+Given an entry URL `https://admin:secret123@db.example.com:5432/app_db?ssl=true#main`:
+| Component / Aliases | Extracted Part | Example Output |
+|---|---|---|
+| `SCM`, `SCHEME` | Scheme | `https` |
+| `HOST` | Hostname (excluding port) | `db.example.com` |
+| `PORT` | Port number | `5432` |
+| `PATH` | Path | `/app_db` |
+| `QUERY` | Query string | `ssl=true` |
+| `FRAGMENT` | Fragment / anchor | `main` |
+| `USERINFO` | User info (`username:password`) | `admin:secret123` |
+| `USERNAME` | Username from userinfo | `admin` |
+| `PASSWORD` | Password from userinfo | `secret123` |
+| `RMVSCM`, `WITHOUTSCHEME` | URL with `scheme:` prefix removed | `//admin:secret123@db.example.com:5432/app_db?ssl=true#main` |
+
+##### Cross-Entry Field References (`REF`)
+References field values from another entry in the database.
+- **Syntax**: `{REF:<WantedField>@<SearchIn>:<SearchText>}`
+
+**`WantedField` Codes (Field to Extract)**:
+- `T`: Title
+- `U`: UserName
+- `P`: Password
+- `A` or `URL`: URL (or `A:<component>` / `URL:<component>`, e.g. `A:HOST`, `URL:PORT`)
+- `N`: Notes
+- `S:<custom>`: Custom string attribute named `<custom>`
+
+**`SearchIn` Codes (Field to Search In)**:
+- `I`: Entry UUID (32-character hex string, with or without hyphens)
+- `T`: Title
+- `U`: UserName
+- `P`: Password
+- `A`: URL
+- `N`: Notes
+- `O`: Custom attributes ("Other")
+
+**Entry Search Matching**:
+`cloakenv` performs a two-pass search across all entries in the database:
+1. **Pass 1 (Exact Match)**: Checks for an exact string match in `SearchIn`.
+2. **Pass 2 (Case-Insensitive Substring Match)**: If no exact match is found, falls back to a case-insensitive substring search in `SearchIn`.
+
+**Examples**:
+- `{REF:P@T:PostgreSQL Production}`: Fetches Password of entry titled `PostgreSQL Production`.
+- `{REF:U@I:10203040-5060-7080-90a0-b0c0d0e0f001}`: Fetches UserName of entry with specified UUID.
+- `{REF:S:api_key@U:service_acct}`: Fetches custom attribute `api_key` from entry with UserName `service_acct`.
+- `{REF:A:HOST@T:Staging DB}`: Extracts `HOST` component from URL of `Staging DB` entry.
+
+##### Recursion Depth Limits & Circular Reference Protection
+- **Max Depth Limit**: References and placeholders can be chained up to a maximum recursion depth of **10**. Exceeding depth 10 returns an error (`maximum recursion depth (10) exceeded`).
+- **Circular Reference Detection**: `cloakenv` tracks visited entry fields (`<UUID>:<fieldKey>`). If circular dependencies are detected (e.g. Entry A $\rightarrow$ Entry B $\rightarrow$ Entry A), an error is raised immediately.
+
+##### Security Warning & Secret Exposure Caveat
+> [!CAUTION]
+> **Secret Exposure Warning**:
+> Extracting sensitive URL components (such as `{URL:PASSWORD}`, `{URL:USERINFO}`), transforming passwords (e.g. `{T-CONV:/{PASSWORD}/BASE64/}`), or referencing passwords across entries (`{REF:P@...}`) in non-sensitive or exposed fields (such as `Notes`, `URL`, or custom fields) causes entry secrets to be evaluated and stored in those derived fields.
+>
+> When entries are exported or merged (e.g. via `cloakenv show` or `cloakenv run -m`), all attributes are exposed by default.
+>
+> **Mitigation**: Combine `resolve_references: true` with [Field Filtering](#5-field-filtering-include_fields-and-exclude_fields) (`exclude_fields` / `include_fields`) to constrain the blast radius and prevent secret fields from being exported:
+> ```yaml
+> vaults:
+>   work:
+>     provider: "keepass"
+>     vault_path: "~/secrets/work_vault.kdbx"
+>     resolve_references: true
+>     exclude_fields:
+>       - "*.notes"
+>       - "raw_*"
+> ```
 
 ---
 
@@ -752,6 +880,7 @@ vaults:
     provider: "keepass"
     vault_path: "~/secrets/work.kdbx"
     searchable: true
+    resolve_references: true # Enable KeePass entry placeholder & cross-entry reference resolution
 
   # YAML File Vault (multiple entities)
   infra_yaml:
