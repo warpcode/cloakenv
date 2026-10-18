@@ -181,6 +181,8 @@ func createTestDBWithReferences() *gokeepasslib.Database {
 		"SpecialChars":    "{T-CONV:/Special!@#$%^*()_+/BASE64/}",
 		"UnknownMethod":   "{T-CONV:/text/UNKNOWN/}",
 		"InvalidURIDec":   "{T-CONV:/%zz/URI-DEC/}",
+		"ChainedTConv1":   "{T-CONV:/{USERNAME}/UPPER/}",
+		"ChainedTConv2":   "{T-CONV:/{S:ChainedTConv1}/LOWER/}",
 	})
 	rootGroup.Entries = append(rootGroup.Entries, tconvEntry)
 
@@ -465,6 +467,7 @@ func TestKeePassReferences_TextConversions(t *testing.T) {
 		{"CustomSep", "Root/TextConversions:CustomSep", "ALICE_USER"},
 		{"EmptyString", "Root/TextConversions:EmptyString", ""},
 		{"SpecialChars", "Root/TextConversions:SpecialChars", "U3BlY2lhbCFAIyQlXiooKV8r"},
+		{"ChainedTConvFields", "Root/TextConversions:ChainedTConv2", "alice_user"},
 	}
 
 	for _, tt := range tests {
