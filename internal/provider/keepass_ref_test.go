@@ -316,6 +316,45 @@ func TestKeePassReferences_MissingEntryAndField(t *testing.T) {
 	})
 }
 
+func TestKeePassReferences_TConvWorstCase(t *testing.T) {
+	ctx := context.Background()
+	kp := NewKeePassProvider()
+	kp.resolveReferences = true
+
+	db := gokeepasslib.NewDatabase()
+	rootGroup := gokeepasslib.NewGroup()
+	rootGroup.Name = "Root"
+
+	// Construct a value with 8,000 placeholders
+	n := 8000
+	placeholder := "{T-CONV:/x/RAW/}"
+	val := strings.Repeat(placeholder, n)
+	want := strings.Repeat("x", n)
+
+	entry := gokeepasslib.NewEntry()
+	entry.Values = []gokeepasslib.ValueData{
+		{Key: "Title", Value: gokeepasslib.V{Content: "WorstCaseEntry"}},
+		{Key: "Password", Value: gokeepasslib.V{Content: val}},
+	}
+	rootGroup.Entries = append(rootGroup.Entries, entry)
+	db.Content.Root.Groups = []gokeepasslib.Group{rootGroup}
+	kp.db = db
+
+	start := time.Now()
+	res, err := kp.GetSecret(ctx, "Root/WorstCaseEntry:Password")
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("GetSecret failed: %v", err)
+	}
+	if res != want {
+		t.Errorf("GetSecret length = %d, want %d", len(res), len(want))
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("GetSecret with %d placeholders took %v, want < 100ms", n, elapsed)
+	}
+}
+
 func TestKeePassReferences_DateTimePlaceholders(t *testing.T) {
 	ctx := context.Background()
 

@@ -47,20 +47,33 @@ func (k *KeePassProvider) resolveField(entry *gokeepasslib.Entry, fieldKey strin
 	}
 
 	// First, resolve any {T-CONV:/<text>/<method>/} placeholders from innermost to outermost
-	for {
-		match, ok := findInnermostTConv(val)
-		if !ok {
+	for iterations := 0; ; iterations++ {
+		if iterations >= 1000 {
+			return "", errors.New("keepass reference error: maximum T-CONV substitution iterations (1000) exceeded")
+		}
+		matches := findAllInnermostTConv(val)
+		if len(matches) == 0 {
 			break
 		}
-		resolvedText, err := k.resolveField(entry, "", match.text, depth+1, visited)
-		if err != nil {
-			return "", err
+		var sb strings.Builder
+		sb.Grow(len(val))
+		lastIdx := 0
+		for _, match := range matches {
+			sb.WriteString(val[lastIdx:match.start])
+			lastIdx = match.end
+
+			resolvedText, err := k.resolveField(entry, "", match.text, depth+1, visited)
+			if err != nil {
+				return "", err
+			}
+			transformed, err := applyTConvMethod(resolvedText, match.method)
+			if err != nil {
+				return "", err
+			}
+			sb.WriteString(transformed)
 		}
-		transformed, err := applyTConvMethod(resolvedText, match.method)
-		if err != nil {
-			return "", err
-		}
-		val = val[:match.start] + transformed + val[match.end:]
+		sb.WriteString(val[lastIdx:])
+		val = sb.String()
 	}
 
 	if !strings.Contains(val, "{") || !strings.Contains(val, "}") {
@@ -455,62 +468,83 @@ type tConvMatch struct {
 	method string
 }
 
-// findInnermostTConv locates the innermost {T-CONV:<sep><text><sep><method><sep>} placeholder in val.
-func findInnermostTConv(val string) (tConvMatch, bool) {
+// findAllInnermostTConv locates all non-overlapping innermost {T-CONV:<sep><text><sep><method><sep>} placeholders in val in a single left-to-right pass.
+func findAllInnermostTConv(val string) []tConvMatch {
 	valLower := strings.ToLower(val)
-	searchOffset := len(val)
+	var matches []tConvMatch
+	curr := 0
 
 	for {
-		idx := strings.LastIndex(valLower[:searchOffset], "{t-conv:")
+		idx := strings.Index(valLower[curr:], "{t-conv:")
 		if idx == -1 {
-			return tConvMatch{}, false
+			break
 		}
+		idx += curr
 
-		sepIdx := idx + 8 // length of "{t-conv:"
-		if sepIdx >= len(val) {
-			searchOffset = idx
+		match, ok := parseTConvAt(val, idx)
+		if !ok {
+			curr = idx + 8
 			continue
 		}
 
-		sep := val[sepIdx]
-		if sep == '}' {
-			searchOffset = idx
+		// Check if match contains another "{t-conv:" inside it (meaning it's not innermost)
+		if strings.Contains(valLower[idx+8:match.end], "{t-conv:") {
+			curr = idx + 8
 			continue
 		}
 
-		// Find second separator
-		textStart := sepIdx + 1
-		nextSep := strings.IndexByte(val[textStart:], sep)
-		if nextSep == -1 {
-			searchOffset = idx
-			continue
-		}
-		textEnd := textStart + nextSep
-		text := val[textStart:textEnd]
-
-		// Find third separator
-		methodStart := textEnd + 1
-		methodSep := strings.IndexByte(val[methodStart:], sep)
-		if methodSep == -1 {
-			searchOffset = idx
-			continue
-		}
-		methodEnd := methodStart + methodSep
-		method := val[methodStart:methodEnd]
-
-		closingIdx := methodEnd + 1
-		if closingIdx >= len(val) || val[closingIdx] != '}' {
-			searchOffset = idx
-			continue
-		}
-
-		return tConvMatch{
-			start:  idx,
-			end:    closingIdx + 1,
-			text:   text,
-			method: method,
-		}, true
+		matches = append(matches, match)
+		curr = match.end
 	}
+
+	return matches
+}
+
+// parseTConvAt attempts to parse a {T-CONV:<sep><text><sep><method><sep>} placeholder starting at idx in val.
+func parseTConvAt(val string, idx int) (tConvMatch, bool) {
+	sepIdx := idx + 8 // length of "{t-conv:"
+	if sepIdx >= len(val) {
+		return tConvMatch{}, false
+	}
+
+	sep := val[sepIdx]
+	if sep == '}' {
+		return tConvMatch{}, false
+	}
+
+	textStart := sepIdx + 1
+	if textStart > len(val) {
+		return tConvMatch{}, false
+	}
+	nextSep := strings.IndexByte(val[textStart:], sep)
+	if nextSep == -1 {
+		return tConvMatch{}, false
+	}
+	textEnd := textStart + nextSep
+	text := val[textStart:textEnd]
+
+	methodStart := textEnd + 1
+	if methodStart > len(val) {
+		return tConvMatch{}, false
+	}
+	methodSep := strings.IndexByte(val[methodStart:], sep)
+	if methodSep == -1 {
+		return tConvMatch{}, false
+	}
+	methodEnd := methodStart + methodSep
+	method := val[methodStart:methodEnd]
+
+	closingIdx := methodEnd + 1
+	if closingIdx >= len(val) || val[closingIdx] != '}' {
+		return tConvMatch{}, false
+	}
+
+	return tConvMatch{
+		start:  idx,
+		end:    closingIdx + 1,
+		text:   text,
+		method: method,
+	}, true
 }
 
 // applyTConvMethod applies a text transformation method to text.

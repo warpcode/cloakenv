@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/tobischo/gokeepasslib/v3"
@@ -62,6 +64,45 @@ func BenchmarkKeePassProvider_Search_Binaries(b *testing.B) {
 			b.Fatal(err)
 		}
 		benchmarkResult = res
+	}
+}
+
+func BenchmarkKeePassTConvResolution(b *testing.B) {
+	sizes := []int{1000, 2000, 4000, 8000}
+	for _, n := range sizes {
+		b.Run(fmt.Sprintf("Placeholders_%d", n), func(b *testing.B) {
+			kp := NewKeePassProvider()
+			kp.resolveReferences = true
+			db := gokeepasslib.NewDatabase()
+			rootGroup := gokeepasslib.NewGroup()
+			rootGroup.Name = "Root"
+
+			placeholder := "{T-CONV:/x/RAW/}"
+			val := strings.Repeat(placeholder, n)
+
+			entry := gokeepasslib.NewEntry()
+			entry.Values = []gokeepasslib.ValueData{
+				{Key: "Title", Value: gokeepasslib.V{Content: "BenchEntry"}},
+				{Key: "Password", Value: gokeepasslib.V{Content: val}},
+			}
+			rootGroup.Entries = append(rootGroup.Entries, entry)
+			db.Content.Root.Groups = []gokeepasslib.Group{rootGroup}
+			kp.db = db
+
+			ctx := context.Background()
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				res, err := kp.GetSecret(ctx, "Root/BenchEntry:Password")
+				if err != nil {
+					b.Fatalf("GetSecret failed: %v", err)
+				}
+				if len(res) != n {
+					b.Fatalf("expected length %d, got %d", n, len(res))
+				}
+			}
+		})
 	}
 }
 
