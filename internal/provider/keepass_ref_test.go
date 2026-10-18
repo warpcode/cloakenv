@@ -319,10 +319,9 @@ func TestKeePassReferences_MissingEntryAndField(t *testing.T) {
 func TestKeePassReferences_DateTimePlaceholders(t *testing.T) {
 	ctx := context.Background()
 
-	// Fixed time: Oct 13, 2026, 16:04:05 in UTC+5 timezone (single-digit month 10? no, 10 is 2 digits.
-	// Let's use May 3, 2026, 04:05:06 to test zero-padding for single-digit month, day, hour, min, sec!)
-	// Local: 2026-05-03 04:05:06 +0500 UTC+5
-	// UTC:   2026-05-02 23:05:06 +0000 UTC
+	// Fixed instant chosen so every field is single-digit (exercising zero-padding) and so the
+	// local (+0500) and UTC renderings differ in day and hour.
+	// Local: 2026-05-03 04:05:06 +0500   UTC: 2026-05-02 23:05:06 +0000
 	fixedLocation := time.FixedZone("UTC+5", 5*3600)
 	fixedLocal := time.Date(2026, 5, 3, 4, 5, 6, 0, fixedLocation)
 
