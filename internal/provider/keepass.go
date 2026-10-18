@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/warpcode/cloakenv/internal/utils"
 
@@ -24,6 +25,7 @@ type KeePassProvider struct {
 	db *gokeepasslib.Database
 
 	resolveReferences bool
+	now               func() time.Time
 
 	cacheMu     sync.RWMutex
 	entryCache  map[*gokeepasslib.Entry]map[string]string

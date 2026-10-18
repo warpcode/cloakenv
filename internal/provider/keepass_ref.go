@@ -13,8 +13,6 @@ import (
 	"github.com/tobischo/gokeepasslib/v3"
 )
 
-// nowFunc returns current time. Overridden in tests for deterministic date/time placeholder testing.
-var nowFunc = time.Now
 
 // keepassPlaceholderRegex matches same-entry placeholders like {TITLE}, {USERNAME}, {PASSWORD}, {URL}, {URL:<component>}, {NOTES}, {S:custom},
 // date/time placeholders (e.g. {DT_SIMPLE}, {DT_UTC_YEAR}), and cross-entry field references like {REF:<WantedField>@<SearchIn>:<SearchText>}.
@@ -107,9 +105,16 @@ func (k *KeePassProvider) resolveField(entry *gokeepasslib.Entry, fieldKey strin
 	return sb.String(), nil
 }
 
+func (k *KeePassProvider) currentTime() time.Time {
+	if k.now != nil {
+		return k.now()
+	}
+	return time.Now()
+}
+
 // resolveSameEntryPlaceholder resolves a same-entry placeholder (e.g. {TITLE}, {PASSWORD}, {S:custom}, {DT_SIMPLE}, {URL:HOST}).
 func (k *KeePassProvider) resolveSameEntryPlaceholder(entry *gokeepasslib.Entry, placeholder string, depth int, visited map[string]bool) (string, error) {
-	if dtVal, ok := formatDateTimePlaceholder(placeholder); ok {
+	if dtVal, ok := k.formatDateTimePlaceholder(placeholder); ok {
 		return dtVal, nil
 	}
 	up := strings.ToUpper(placeholder)
@@ -170,8 +175,8 @@ func (k *KeePassProvider) resolveCrossReference(wantedFieldStr, searchInStr, sea
 
 // formatDateTimePlaceholder evaluates date/time placeholders (local or UTC) and returns the formatted time string.
 // If the placeholder is not a date/time placeholder, it returns ("", false).
-func formatDateTimePlaceholder(placeholder string) (string, bool) {
-	now := nowFunc()
+func (k *KeePassProvider) formatDateTimePlaceholder(placeholder string) (string, bool) {
+	now := k.currentTime()
 	up := strings.ToUpper(placeholder)
 	switch up {
 	case "DT_SIMPLE":
