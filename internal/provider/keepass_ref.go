@@ -13,7 +13,6 @@ import (
 	"github.com/tobischo/gokeepasslib/v3"
 )
 
-
 // keepassPlaceholderRegex matches same-entry placeholders like {TITLE}, {USERNAME}, {PASSWORD}, {URL}, {URL:<component>}, {NOTES}, {S:custom},
 // date/time placeholders (e.g. {DT_SIMPLE}, {DT_UTC_YEAR}), and cross-entry field references like {REF:<WantedField>@<SearchIn>:<SearchText>}.
 var keepassPlaceholderRegex = regexp.MustCompile(`(?i)\{(?:REF:([^@]+)@([^:]+):([^}]+)|(TITLE|USERNAME|PASSWORD|URL(?::[^}]*)?|NOTES|DT_SIMPLE|DT_YEAR|DT_MONTH|DT_DAY|DT_HOUR|DT_MINUTE|DT_SECOND|DT_UTC_SIMPLE|DT_UTC_YEAR|DT_UTC_MONTH|DT_UTC_DAY|DT_UTC_HOUR|DT_UTC_MINUTE|DT_UTC_SECOND|S:[^}]+))\}`)
