@@ -371,10 +371,6 @@ func TestKeePassReferences_DateTimePlaceholders(t *testing.T) {
 	fixedLocation := time.FixedZone("UTC+5", 5*3600)
 	fixedLocal := time.Date(2026, 5, 3, 4, 5, 6, 0, fixedLocation)
 
-	origNowFunc := nowFunc
-	nowFunc = func() time.Time { return fixedLocal }
-	t.Cleanup(func() { nowFunc = origNowFunc })
-
 	db := gokeepasslib.NewDatabase()
 	rootGroup := gokeepasslib.NewGroup()
 	rootGroup.Name = "Root"
@@ -406,6 +402,7 @@ func TestKeePassReferences_DateTimePlaceholders(t *testing.T) {
 	kp := NewKeePassProvider()
 	kp.db = db
 	kp.resolveReferences = true
+	kp.now = func() time.Time { return fixedLocal }
 
 	tests := []struct {
 		field string
