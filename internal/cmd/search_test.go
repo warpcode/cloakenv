@@ -196,6 +196,42 @@ func TestParseSearchArgs(t *testing.T) {
 	}
 }
 
+func TestFlattenDefaultEntry_FilteredMetadata(t *testing.T) {
+	entryFiltered := provider.SearchResult{
+		Provider: "",
+		Vault:    "",
+		Path:     "",
+		Entry: provider.Entry{
+			Title: "",
+			Tags:  nil,
+			Attributes: map[string]any{
+				"API_KEY": "secret_val_123",
+			},
+		},
+	}
+
+	flat := flattenDefaultEntry(entryFiltered)
+
+	if _, ok := flat["provider"]; ok {
+		t.Errorf("expected 'provider' to be omitted when empty")
+	}
+	if _, ok := flat["vault"]; ok {
+		t.Errorf("expected 'vault' to be omitted when empty")
+	}
+	if _, ok := flat["path"]; ok {
+		t.Errorf("expected 'path' to be omitted when empty")
+	}
+	if _, ok := flat["title"]; ok {
+		t.Errorf("expected 'title' to be omitted when empty")
+	}
+	if _, ok := flat["tags"]; ok {
+		t.Errorf("expected 'tags' to be omitted when empty")
+	}
+	if flat["API_KEY"] != "secret_val_123" {
+		t.Errorf("expected API_KEY = 'secret_val_123', got %v", flat["API_KEY"])
+	}
+}
+
 func TestFlattenSearchResults(t *testing.T) {
 	entry := provider.SearchResult{
 		Provider: "keepass",
