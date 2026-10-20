@@ -33,6 +33,12 @@ func (k *KeePassProvider) resolveField(entry *gokeepasslib.Entry, fieldKey strin
 		return "", errors.New("keepass reference error: maximum recursion depth (10) exceeded")
 	}
 
+	// Only track named field resolution in the visited stack.
+	// Anonymous resolutions (where fieldKey == "") occur during T-CONV text evaluation.
+	// Skipping visited tracking when fieldKey == "" prevents false-positive circular reference
+	// detections when a T-CONV payload references another field that also contains a T-CONV expression.
+	// Field-level circular references are tracked by uuid:fieldKey, while anonymous T-CONV evaluations
+	// rely on findInnermostTConv innermost/rightmost-first evaluation order and are bounded by depth >= 10.
 	if fieldKey != "" {
 		refKey := hex.EncodeToString(entry.UUID[:]) + ":" + strings.ToLower(fieldKey)
 		if visited[refKey] {
