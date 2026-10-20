@@ -553,6 +553,31 @@ vaults:
 - Defaults to `:Password` attribute if omitted.
 - **File Attachments**: Directly stream binary attachments by name (e.g. `vault://SSH/Keys:id_rsa`).
 
+##### Placeholder Expansion & Field References
+`cloakenv` supports resolving field placeholders and cross-entry references embedded inside KeePass field values:
+
+1. **Standard KeePass Placeholders** (Upstream Compatible):
+   - **Standard Fields**: `{TITLE}`, `{USERNAME}`, `{PASSWORD}`, `{URL}`, `{NOTES}`.
+   - **Custom String Attributes**: `{S:<AttributeName>}` (e.g., `{S:api_key}`).
+   - **Date/Time Placeholders**: Local (`{DT_SIMPLE}`, `{DT_YEAR}`, `{DT_MONTH}`, `{DT_DAY}`, `{DT_HOUR}`, `{DT_MINUTE}`, `{DT_SECOND}`) and UTC (`{DT_UTC_SIMPLE}`, `{DT_UTC_YEAR}`, `{DT_UTC_MONTH}`, `{DT_UTC_DAY}`, `{DT_UTC_HOUR}`, `{DT_UTC_MINUTE}`, `{DT_UTC_SECOND}`).
+   - **Cross-Entry References**: `{REF:<WantedField>@<SearchIn>:<SearchText>}` where `WantedField` uses single-letter codes (`T` Title, `U` Username, `P` Password, `A` URL, `N` Notes) or `{REF:S:<custom>@...}`. `SearchIn` can be `I` (UUID), `T`, `U`, `P`, `A`, `N`, or `O` (Custom/Other fields).
+
+2. **`cloakenv` Placeholder Extensions** (Divergence from Upstream KeePass):
+   - **Text Transformation**: `{T-CONV:<sep><text><sep><method><sep>}` (e.g., `{T-CONV:/{USERNAME}/UPPER/}`). The character following `{T-CONV:` acts as a configurable delimiter (such as `/` or `!`). Supported methods include `UPPER` (`U`), `LOWER` (`L`), `BASE64`, `HEX`, `URI`, `URI-DEC`, and `RAW`.
+   - **Same-Entry URL Component Extraction**: `{URL:<component>}` (e.g., `{URL:HOST}`, `{URL:PORT}`, `{URL:SCHEME}`, `{URL:PATH}`).
+   - **Cross-Entry URL Component Extraction**: `{REF:A:<component>@<SearchIn>:<SearchText>}` or `{REF:URL:<component>@<SearchIn>:<SearchText>}` (e.g., `{REF:A:HOST@T:DatabaseEntry}`).
+
+3. **Field Disambiguation Rule (`URL` vs `S:URL`)**:
+   - In cross-references, `{REF:URL@<SearchIn>:<SearchText>}` (or `{REF:A@...}`) always resolves to the standard KeePass `URL` field.
+   - If a KeePass entry defines a custom string attribute whose name is literally `URL`, you **must** use `{REF:S:URL@<SearchIn>:<SearchText>}` to target the custom attribute.
+
+> [!WARNING]
+> **Portability Warning & Authoring Tips (see #234)**:
+> `cloakenv` extensions (`{T-CONV:...}`, `{URL:<component>}`, `{REF:A:<component>@...}`, `{REF:URL:<component>@...}`) are non-standard constructs with no upstream counterpart in KeePass or KeePassXC.
+> - **Silent Expansion Failure**: Databases containing these extensions will silently fail to expand them when opened in KeePass or KeePassXC, leaving the literal placeholder text.
+> - **Accidental Overwrite Risk**: Users opening the database in KeePass/KeePassXC may see unexpanded text and attempt to "correct" or overwrite the field, accidentally destroying the placeholder logic.
+> - **Authoring Recommendation**: Keep `cloakenv`-specific extension placeholders out of fields that you also view or edit interactively within KeePass or KeePassXC.
+
 #### 2. YAML (`yaml`) & JSON (`json`)
 - Reads static structured YAML or JSON files.
 - Supports dot-separated object navigation (`vault://servers.bastion.hostname`) and array index addressing (`vault://servers.bastion.public_keys.0`).
