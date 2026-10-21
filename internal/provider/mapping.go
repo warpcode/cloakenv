@@ -503,22 +503,27 @@ func isDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule
 	fieldLower := strings.ToLower(fieldName)
 
 	if len(includeFields) > 0 {
+		matchedInclude := false
 		candidates := buildDefaultFieldCandidates(fieldName, entryPath, rootPrefixes, entryTitle)
 		for _, pattern := range includeFields {
 			for _, c := range candidates {
-				if matchPatternCaseInsensitive(pattern, c) {
-					return true
+				if matchPattern(pattern, c) {
+					matchedInclude = true
+					break
 				}
 			}
+			if matchedInclude {
+				break
+			}
+		}
+		if !matchedInclude {
+			return false
 		}
 	}
 
 	for _, r := range rules {
 		if r.CompiledRegex == nil {
 			_ = r.Compile()
-		}
-		if r.Key != "" && strings.EqualFold(r.Key, fieldLower) {
-			return true
 		}
 		if r.CompiledRegex != nil {
 			candidates := buildDefaultFieldCandidates(fieldName, entryPath, rootPrefixes, entryTitle)
@@ -613,14 +618,17 @@ func (s *SearchableMappingProvider) Search(ctx context.Context, query SearchQuer
 	rootPrefixes := s.RootPrefixes()
 	mappedResults := make([]SearchResult, len(results))
 	for i, r := range results {
+		origTitle := r.Entry.Title
+		origPath := r.Path
+
 		mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
 			r.Entry.Attributes,
 			s.rules,
 			includeFields,
 			excludeFields,
-			r.Path,
+			origPath,
 			rootPrefixes,
-			r.Entry.Title,
+			origTitle,
 		)
 		if mapErr != nil {
 			return nil, mapErr
@@ -628,35 +636,35 @@ func (s *SearchableMappingProvider) Search(ctx context.Context, query SearchQuer
 		r.Entry.Attributes = mappedAttrs
 
 		if len(s.rules) > 0 {
-			if !isDefaultFieldMappedOrIncluded("title", s.rules, includeFields, excludeFields, r.Path, rootPrefixes, r.Entry.Title) {
+			if !isDefaultFieldMappedOrIncluded("title", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
 				r.Entry.Title = ""
 			}
-			if !isDefaultFieldMappedOrIncluded("tags", s.rules, includeFields, excludeFields, r.Path, rootPrefixes, r.Entry.Title) {
+			if !isDefaultFieldMappedOrIncluded("tags", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
 				r.Entry.Tags = nil
 			}
-			if !isDefaultFieldMappedOrIncluded("path", s.rules, includeFields, excludeFields, r.Path, rootPrefixes, r.Entry.Title) {
+			if !isDefaultFieldMappedOrIncluded("path", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
 				r.Path = ""
 			}
-			if !isDefaultFieldMappedOrIncluded("vault", s.rules, includeFields, excludeFields, r.Path, rootPrefixes, r.Entry.Title) {
+			if !isDefaultFieldMappedOrIncluded("vault", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
 				r.Vault = ""
 			}
-			if !isDefaultFieldMappedOrIncluded("provider", s.rules, includeFields, excludeFields, r.Path, rootPrefixes, r.Entry.Title) {
+			if !isDefaultFieldMappedOrIncluded("provider", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
 				r.Provider = ""
 			}
 		} else {
-			if !isDefaultFieldAllowed("title", r.Path, rootPrefixes, r.Entry.Title, includeFields, excludeFields) {
+			if !isDefaultFieldAllowed("title", origPath, rootPrefixes, origTitle, includeFields, excludeFields) {
 				r.Entry.Title = ""
 			}
-			if !isDefaultFieldAllowed("tags", r.Path, rootPrefixes, r.Entry.Title, includeFields, excludeFields) {
+			if !isDefaultFieldAllowed("tags", origPath, rootPrefixes, origTitle, includeFields, excludeFields) {
 				r.Entry.Tags = nil
 			}
-			if !isDefaultFieldAllowed("path", r.Path, rootPrefixes, r.Entry.Title, includeFields, excludeFields) {
+			if !isDefaultFieldAllowed("path", origPath, rootPrefixes, origTitle, includeFields, excludeFields) {
 				r.Path = ""
 			}
-			if !isDefaultFieldAllowed("vault", r.Path, rootPrefixes, r.Entry.Title, includeFields, excludeFields) {
+			if !isDefaultFieldAllowed("vault", origPath, rootPrefixes, origTitle, includeFields, excludeFields) {
 				r.Vault = ""
 			}
-			if !isDefaultFieldAllowed("provider", r.Path, rootPrefixes, r.Entry.Title, includeFields, excludeFields) {
+			if !isDefaultFieldAllowed("provider", origPath, rootPrefixes, origTitle, includeFields, excludeFields) {
 				r.Provider = ""
 			}
 		}

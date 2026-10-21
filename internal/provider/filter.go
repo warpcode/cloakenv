@@ -90,11 +90,11 @@ func isFieldOrPathAllowed(fullPath, leafAttr string, includeFields, excludeField
 func isFieldAuthorized(leafAttr string, candidates []string, includeFields, excludeFields []string) bool {
 	if len(excludeFields) > 0 {
 		for _, pattern := range excludeFields {
-			if matchPatternCaseInsensitive(pattern, leafAttr) {
+			if matchPattern(pattern, leafAttr) {
 				return false
 			}
 			for _, c := range candidates {
-				if c != "" && matchPatternCaseInsensitive(pattern, c) {
+				if c != "" && matchPattern(pattern, c) {
 					return false
 				}
 			}
@@ -104,12 +104,12 @@ func isFieldAuthorized(leafAttr string, candidates []string, includeFields, excl
 	if len(includeFields) > 0 {
 		matched := false
 		for _, pattern := range includeFields {
-			if matchPatternCaseInsensitive(pattern, leafAttr) {
+			if matchPattern(pattern, leafAttr) {
 				matched = true
 				break
 			}
 			for _, c := range candidates {
-				if c != "" && matchPatternCaseInsensitive(pattern, c) {
+				if c != "" && matchPattern(pattern, c) {
 					matched = true
 					break
 				}
@@ -129,15 +129,14 @@ func isFieldAuthorized(leafAttr string, candidates []string, includeFields, excl
 // buildDefaultFieldCandidates creates candidate paths for a default field name (e.g. "title", "tags", "path", "vault", "provider").
 func buildDefaultFieldCandidates(fieldName, entryPath string, rootPrefixes []string, entryTitle string) []string {
 	fieldLower := strings.ToLower(fieldName)
-	fieldTitle := strings.Title(fieldLower)
 	fieldUpper := strings.ToUpper(fieldLower)
 
 	var candidates []string
-	candidates = append(candidates, fieldLower, fieldTitle, fieldUpper)
+	candidates = append(candidates, fieldLower, fieldUpper)
 
 	cleanPath := normalizeDotPath(entryPath)
 	if cleanPath != "" {
-		candidates = append(candidates, cleanPath+"."+fieldLower, cleanPath+"."+fieldTitle, cleanPath+":"+fieldLower)
+		candidates = append(candidates, cleanPath+"."+fieldLower, cleanPath+":"+fieldLower)
 	}
 
 	for _, rp := range rootPrefixes {
@@ -657,15 +656,22 @@ func FilterSearchResult(r SearchResult, rootPrefixes []string, includeFields, ex
 		return r
 	}
 
+	origTitle := r.Entry.Title
+	origPath := r.Path
+
 	r.Entry = FilterEntryWithPath(r.Entry, r.Path, rootPrefixes, includeFields, excludeFields)
 
-	if !isDefaultFieldAllowed("path", r.Path, rootPrefixes, r.Entry.Title, includeFields, excludeFields) {
+	clearPath := !isDefaultFieldAllowed("path", origPath, rootPrefixes, origTitle, includeFields, excludeFields)
+	clearVault := !isDefaultFieldAllowed("vault", origPath, rootPrefixes, origTitle, includeFields, excludeFields)
+	clearProvider := !isDefaultFieldAllowed("provider", origPath, rootPrefixes, origTitle, includeFields, excludeFields)
+
+	if clearPath {
 		r.Path = ""
 	}
-	if !isDefaultFieldAllowed("vault", r.Path, rootPrefixes, r.Entry.Title, includeFields, excludeFields) {
+	if clearVault {
 		r.Vault = ""
 	}
-	if !isDefaultFieldAllowed("provider", r.Path, rootPrefixes, r.Entry.Title, includeFields, excludeFields) {
+	if clearProvider {
 		r.Provider = ""
 	}
 
@@ -956,6 +962,18 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 			entryTitle = title
 		} else {
 			return "", fmt.Errorf("search provider %q: unsupported search provider implementation", f.underlying.Scheme())
+		}
+
+		rootPrefixes := []string{}
+		if rpProvider, ok := f.underlying.(interface{ RootPrefixes() []string }); ok {
+			rootPrefixes = rpProvider.RootPrefixes()
+		}
+
+		switch strings.ToLower(canonicalField) {
+		case "title", "tags", "path", "vault", "provider":
+			if !isDefaultFieldAllowed(strings.ToLower(canonicalField), resultPath, rootPrefixes, entryTitle, f.includeFields, f.excludeFields) {
+				return "", fmt.Errorf("field %q is excluded by vault configuration", canonicalField)
+			}
 		}
 
 		leafCanonical := canonicalField

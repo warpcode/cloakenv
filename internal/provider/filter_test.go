@@ -883,13 +883,10 @@ func TestFilteringProvider_Search_DuplicatePath_MultiResult_MixedCase(t *testing
 			t.Errorf("expected 'val_lower', got %q", valExact)
 		}
 
-		// Case-insensitive query resolves deterministically to the sorted key
-		valUpper, errUpper := fp.GetSecret(ctx, "app/config:API_KEY")
-		if errUpper != nil {
-			t.Fatalf("failed to get API_KEY under case-insensitive include: %v", errUpper)
-		}
-		if valUpper != "val_upper" {
-			t.Errorf("expected 'val_upper', got %q", valUpper)
+		// Case-mismatched query is rejected because include filter is case-sensitive
+		_, errUpper := fp.GetSecret(ctx, "app/config:API_KEY")
+		if errUpper == nil {
+			t.Fatalf("expected error for API_KEY under case-sensitive include, got nil")
 		}
 	})
 }
