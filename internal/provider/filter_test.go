@@ -97,7 +97,7 @@ func TestFilterAttributesAndEntry(t *testing.T) {
 		"secret:token": "bearerABC",
 	}
 
-	includeFields := []string{"env:*", "UserName"}
+	includeFields := []string{"env:*", "UserName", "title"}
 	excludeFields := []string{"*.notes", "secret:*"}
 
 	filtered := FilterAttributes(attrs, includeFields, excludeFields)
@@ -883,10 +883,10 @@ func TestFilteringProvider_Search_DuplicatePath_MultiResult_MixedCase(t *testing
 			t.Errorf("expected 'val_lower', got %q", valExact)
 		}
 
-		// Case-insensitive query resolves deterministically to the sorted key
+		// Case-mismatched query is rejected because include filter is case-sensitive
 		_, errUpper := fp.GetSecret(ctx, "app/config:API_KEY")
 		if errUpper == nil {
-			t.Errorf("API_KEY should be rejected when only api_key is included")
+			t.Fatalf("expected error for API_KEY under case-sensitive include, got nil")
 		}
 	})
 }
@@ -2629,3 +2629,142 @@ func (m *mockGenericProvider) GetSecret(_ context.Context, _ string) (string, er
 func (m *mockGenericProvider) SetSecret(_ context.Context, _, _ string) error { return nil }
 func (m *mockGenericProvider) DeleteSecret(_ context.Context, _ string) error { return nil }
 func (m *mockGenericProvider) Validate(_ map[string]string) error             { return nil }
+
+func TestDefaultFieldsFiltering(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("ExcludeFields_DefaultMetadataFields", func(t *testing.T) {
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Provider: "keepass",
+					Vault:    "main_vault",
+					Path:     "services/api",
+					Entry: Entry{
+						Title: "API Key Service",
+						Tags:  []string{"prod", "backend"},
+						Attributes: map[string]any{
+							"api_key": "secret_key_123",
+						},
+					},
+				},
+			}, nil
+		})
+
+		// exclude_fields: ["tags", "title", "path", "vault", "provider"]
+		fp := NewFilteringProvider(sp, nil, []string{"tags", "Title", "*path", "vault", "PROVIDER"})
+		sfp := fp.(SearchableProvider)
+
+		results, err := sfp.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+
+		res := results[0]
+		if res.Provider != "" {
+			t.Errorf("expected Provider to be excluded, got %q", res.Provider)
+		}
+		if res.Vault != "" {
+			t.Errorf("expected Vault to be excluded, got %q", res.Vault)
+		}
+		if res.Path != "" {
+			t.Errorf("expected Path to be excluded, got %q", res.Path)
+		}
+		if res.Entry.Title != "" {
+			t.Errorf("expected Title to be excluded, got %q", res.Entry.Title)
+		}
+		if res.Entry.Tags != nil {
+			t.Errorf("expected Tags to be excluded, got %v", res.Entry.Tags)
+		}
+		if res.Entry.Attributes["api_key"] != "secret_key_123" {
+			t.Errorf("expected api_key to be preserved, got %v", res.Entry.Attributes["api_key"])
+		}
+	})
+
+	t.Run("IncludeFields_StripsDefaultFieldsIfNotMatched", func(t *testing.T) {
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Provider: "keepass",
+					Vault:    "main_vault",
+					Path:     "services/api",
+					Entry: Entry{
+						Title: "API Key Service",
+						Tags:  []string{"prod"},
+						Attributes: map[string]any{
+							"api_key": "secret_key_123",
+						},
+					},
+				},
+			}, nil
+		})
+
+		// include_fields: ["api_key"] -> title, tags, path, vault, provider must be stripped
+		fp := NewFilteringProvider(sp, []string{"api_key"}, nil)
+		sfp := fp.(SearchableProvider)
+
+		results, err := sfp.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+
+		res := results[0]
+		if res.Provider != "" || res.Vault != "" || res.Path != "" || res.Entry.Title != "" || res.Entry.Tags != nil {
+			t.Errorf("expected default fields stripped, got Provider=%q Vault=%q Path=%q Title=%q Tags=%v",
+				res.Provider, res.Vault, res.Path, res.Entry.Title, res.Entry.Tags)
+		}
+
+		// include_fields: ["title", "api_key"] -> title kept, others stripped
+		fp2 := NewFilteringProvider(sp, []string{"Title", "api_key"}, nil)
+		sfp2 := fp2.(SearchableProvider)
+
+		results2, err := sfp2.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+
+		res2 := results2[0]
+		if res2.Entry.Title != "API Key Service" {
+			t.Errorf("expected Title 'API Key Service', got %q", res2.Entry.Title)
+		}
+		if res2.Entry.Tags != nil {
+			t.Errorf("expected Tags stripped, got %v", res2.Entry.Tags)
+		}
+	})
+
+	t.Run("GetSecret_RejectsExcludedTitleAndTags", func(t *testing.T) {
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Vault: "main_vault",
+					Path:  "services/api",
+					Entry: Entry{
+						Title: "API Key Service",
+						Tags:  []string{"prod"},
+						Attributes: map[string]any{
+							"api_key": "secret_key_123",
+						},
+					},
+				},
+			}, nil
+		})
+
+		fp := NewFilteringProvider(sp, nil, []string{"*.tags", "title"})
+
+		_, errTitle := fp.GetSecret(ctx, "services/api:title")
+		if errTitle == nil {
+			t.Errorf("expected error for excluded title, got nil")
+		}
+
+		_, errTags := fp.GetSecret(ctx, "services/api:tags")
+		if errTags == nil {
+			t.Errorf("expected error for excluded tags, got nil")
+		}
+	})
+}
