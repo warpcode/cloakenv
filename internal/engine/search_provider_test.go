@@ -16,7 +16,7 @@ func TestSearchProviderIntegration_EndToEnd(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"work": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"openrouter_key": {
 						"title":   "OpenRouter Key",
 						"tags":    []string{"service:openrouter", "prod"},
@@ -27,7 +27,7 @@ func TestSearchProviderIntegration_EndToEnd(t *testing.T) {
 						"tags":  []string{"service:github"},
 						"token": "ghp_test123",
 					},
-				},
+				}),
 			},
 			"openrouter_vault": {
 				Provider:     "search",
@@ -121,23 +121,23 @@ func TestSearchProviderIntegration_MultiSourceVaults(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"vault_a": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"key_a": {
 						"title":    "Key A",
 						"tags":     []string{"service:openrouter"},
 						"Password": "pass_a",
 					},
-				},
+				}),
 			},
 			"vault_b": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"key_b": {
 						"title":    "Key B",
 						"tags":     []string{"service:openrouter"},
 						"Password": "pass_b",
 					},
-				},
+				}),
 			},
 			"combined": {
 				Provider:     "search",
@@ -250,14 +250,14 @@ func TestSearchProviderIntegration_MappingWithExcludeAllFields(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"kp": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"my_entry": {
 						"title":       "My Entry",
 						"tags":        []string{"dotenv:jules"},
 						"env:API_KEY": "sk-jules-secret",
 						"OTHER":       "unmapped_val",
 					},
-				},
+				}),
 			},
 			"jules": {
 				Provider:      "search",
@@ -349,14 +349,14 @@ func TestSearchProviderIntegration_IncludeAboveExclude(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"kp": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"my_entry": {
 						"title":       "My Entry",
 						"tags":        []string{"dotenv:jules"},
 						"env:API_KEY": "sk-jules-secret",
 						"OTHER":       "unmapped_val",
 					},
-				},
+				}),
 			},
 			"jules": {
 				Provider:      "search",
@@ -443,14 +443,14 @@ func TestSearchProviderIntegration_MappingOnlyKeepsDefaultFields(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"kp": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"my_entry": {
 						"title":       "My Entry",
 						"tags":        []string{"dotenv:jules"},
 						"env:API_KEY": "sk-jules-secret",
 						"OTHER":       "unmapped_val",
 					},
-				},
+				}),
 			},
 			"jules": {
 				Provider:     "search",

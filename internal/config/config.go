@@ -13,19 +13,44 @@ import (
 	"regexp"
 	"strings"
 
+	goyaml "gopkg.in/yaml.v3"
+
 	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 var userHomeDir = os.UserHomeDir
 
+// TemplateConfig defines a top-level reusable template entry.
+// It can be specified as either an inline template string or a structured object with path or template fields.
+type TemplateConfig struct {
+	Path     string `yaml:"path,omitempty"`
+	Template string `yaml:"template,omitempty"`
+}
+
+// UnmarshalYAML implements custom unmarshaling for TemplateConfig to support scalar strings and structs.
+func (t *TemplateConfig) UnmarshalYAML(value *goyaml.Node) error {
+	if value.Kind == goyaml.ScalarNode {
+		t.Template = value.Value
+		return nil
+	}
+	type rawTemplate TemplateConfig
+	var raw rawTemplate
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	*t = TemplateConfig(raw)
+	return nil
+}
+
 // Config is the top-level configuration structure.
 type Config struct {
 	// ConfigPath is the absolute path to the configuration file.
-	ConfigPath string                 `yaml:"-"`
-	Cache      CacheConfig            `yaml:"cache"`
-	Keyring    KeyringConfig          `yaml:"keyring"`
-	Vaults     map[string]VaultConfig `yaml:"vaults"`
-	Autoload   []AutoloadRule         `yaml:"autoload"`
+	ConfigPath string                    `yaml:"-"`
+	Cache      CacheConfig               `yaml:"cache"`
+	Keyring    KeyringConfig             `yaml:"keyring"`
+	Templates  map[string]TemplateConfig `yaml:"templates,omitempty"`
+	Vaults     map[string]VaultConfig    `yaml:"vaults"`
+	Autoload   []AutoloadRule            `yaml:"autoload"`
 }
 
 // AutoloadRule defines rules for matching, masking, and autoloading secret vaults/URIs/env vars
@@ -115,6 +140,99 @@ type KeyringConfig struct {
 	Isolate bool   `yaml:"isolate"`
 }
 
+// CustomEntityConfig defines a composed or flat entity within a custom_vault.
+type CustomEntityConfig struct {
+	// IsComposed indicates whether the entity was defined using composition keys.
+	IsComposed bool `yaml:"-"`
+
+	Merge         []string       `yaml:"merge,omitempty"`
+	Attributes    map[string]any `yaml:"attributes,omitempty"`
+	Mapping       []MappingRule  `yaml:"mapping,omitempty"`
+	IncludeFields []string       `yaml:"include_fields,omitempty"`
+	ExcludeFields []string       `yaml:"exclude_fields,omitempty"`
+	KeyFormat     string         `yaml:"key_format,omitempty"`
+	ResolveValues *bool          `yaml:"resolve_values,omitempty"`
+}
+
+// ToCustomEntityMap converts a map of raw attribute maps into a map of CustomEntityConfig.
+func ToCustomEntityMap(m map[string]map[string]any) map[string]CustomEntityConfig {
+	if m == nil {
+		return nil
+	}
+	res := make(map[string]CustomEntityConfig, len(m))
+	for k, v := range m {
+		res[k] = CustomEntityConfig{Attributes: v}
+	}
+	return res
+}
+
+// Compile precompiles regular expressions for mapping rules in the entity configuration.
+func (c *CustomEntityConfig) Compile() error {
+	if c == nil {
+		return nil
+	}
+	for i := range c.Mapping {
+		if err := c.Mapping[i].Compile(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// UnmarshalYAML implements custom unmarshaling for CustomEntityConfig.
+// It differentiates between legacy flat attribute maps and composed entities.
+func (c *CustomEntityConfig) UnmarshalYAML(value *goyaml.Node) error {
+	if value.Kind != goyaml.MappingNode {
+		return errors.New("custom_vault entity must be a map")
+	}
+
+	compositionKeys := map[string]bool{
+		"merge":          true,
+		"attributes":     true,
+		"mapping":        true,
+		"include_fields": true,
+		"exclude_fields": true,
+		"key_format":     true,
+		"resolve_values": true,
+	}
+
+	var keyNames []string
+	hasCompositionKey := false
+
+	for i := 0; i < len(value.Content); i += 2 {
+		keyName := value.Content[i].Value
+		keyNames = append(keyNames, keyName)
+		if compositionKeys[keyName] {
+			hasCompositionKey = true
+		}
+	}
+
+	if !hasCompositionKey {
+		c.IsComposed = false
+		c.Attributes = make(map[string]any)
+		if err := value.Decode(&c.Attributes); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	c.IsComposed = true
+	for _, keyName := range keyNames {
+		if !compositionKeys[keyName] {
+			return fmt.Errorf("unknown field %q in composed custom_vault entity", keyName)
+		}
+	}
+
+	type rawEntity CustomEntityConfig
+	var raw rawEntity
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	*c = CustomEntityConfig(raw)
+	c.IsComposed = true
+	return nil
+}
+
 // VaultConfig defines a named secret vault backend and its configuration options.
 type VaultConfig struct {
 	// Provider identifies the provider backend type (e.g., "keepass", "custom_vault").
@@ -144,7 +262,7 @@ type VaultConfig struct {
 	Attributes map[string]any `yaml:"attributes"`
 
 	// Entities holds inline entities for custom_vault (SingleEntity: false).
-	Entities map[string]map[string]any `yaml:"entities"`
+	Entities map[string]CustomEntityConfig `yaml:"entities"`
 
 	// ResolveValues enables URI resolution for attribute values within this vault.
 	// When true, any attribute value that is a valid URI referencing a registered
@@ -225,6 +343,31 @@ func Load(path string) (*Config, error) {
 		cfg.Vaults[name] = vault
 	}
 
+	if cfg.Templates == nil {
+		cfg.Templates = make(map[string]TemplateConfig)
+	}
+
+	// Process templates: expand path, read file if path is specified, and validate
+	for tmplName, tmpl := range cfg.Templates {
+		if tmpl.Path != "" {
+			expandedPath := expandHome(tmpl.Path)
+			if !filepath.IsAbs(expandedPath) && cfg.ConfigPath != "" {
+				baseDir := filepath.Dir(cfg.ConfigPath)
+				expandedPath = filepath.Join(baseDir, expandedPath)
+			}
+			data, err := os.ReadFile(expandedPath) //nolint:gosec
+			if err != nil {
+				return nil, fmt.Errorf("template %q: failed to read path %q: %w", tmplName, tmpl.Path, err)
+			}
+			tmpl.Template = string(data)
+			tmpl.Path = expandedPath
+		}
+		if tmpl.Template == "" {
+			return nil, fmt.Errorf("template %q: template content is empty", tmplName)
+		}
+		cfg.Templates[tmplName] = tmpl
+	}
+
 	// Validate include_fields, exclude_fields, and mapping rules
 	for vaultName, vault := range cfg.Vaults {
 		for _, pattern := range vault.IncludeFields {
@@ -248,6 +391,30 @@ func Load(path string) (*Config, error) {
 		default:
 			return nil, fmt.Errorf("vault %q: invalid key_format %q (must be one of: none, env, snake, kebab)", vaultName, vault.KeyFormat)
 		}
+
+		for entityName, entity := range vault.Entities {
+			for _, pattern := range entity.IncludeFields {
+				if _, err := pathpkg.Match(pattern, ""); err != nil {
+					return nil, fmt.Errorf("vault %q entity %q: invalid include_fields glob pattern %q: %w", vaultName, entityName, pattern, err)
+				}
+			}
+			for _, pattern := range entity.ExcludeFields {
+				if _, err := pathpkg.Match(pattern, ""); err != nil {
+					return nil, fmt.Errorf("vault %q entity %q: invalid exclude_fields glob pattern %q: %w", vaultName, entityName, pattern, err)
+				}
+			}
+			if err := entity.Compile(); err != nil {
+				return nil, fmt.Errorf("vault %q entity %q: invalid mapping match regex: %w", vaultName, entityName, err)
+			}
+			switch entity.KeyFormat {
+			case "", "none", "env", "snake", "kebab":
+				// valid key format
+			default:
+				return nil, fmt.Errorf("vault %q entity %q: invalid key_format %q (must be one of: none, env, snake, kebab)", vaultName, entityName, entity.KeyFormat)
+			}
+			vault.Entities[entityName] = entity
+		}
+
 		cfg.Vaults[vaultName] = vault
 	}
 

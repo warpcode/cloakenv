@@ -158,12 +158,12 @@ func TestProviderManager_MappingIntegration(t *testing.T) {
 			"mapped_vault": {
 				Provider: "custom_vault",
 				Mapping:  []config.MappingRule{rule1},
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"env:OPENROUTER_API_KEY": "sk-test-secret",
 						"UNMAPPED":               "unmapped_value",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -219,14 +219,14 @@ func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
 				Mapping:       []config.MappingRule{rule1},
 				IncludeFields: []string{"OPENROUTER_API_KEY", "test:foo", "INCLUDED_FIELD"},
 				ExcludeFields: []string{"EXCLUDED_FIELD"},
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"env:OPENROUTER_API_KEY": "sk-test-secret",
 						"env:test:foo":           "bar",
 						"INCLUDED_FIELD":         "included_val",
 						"EXCLUDED_FIELD":         "excluded_val",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -294,11 +294,11 @@ func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
 				Provider:      "custom_vault",
 				Mapping:       []config.MappingRule{rule1},
 				ExcludeFields: []string{"app:*"},
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"Password": "pass_val",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -327,13 +327,13 @@ func TestProviderManager_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 				Mapping:       []config.MappingRule{rule1},
 				IncludeFields: []string{"UNMAPPED_KEPT"},
 				ExcludeFields: []string{"UNMAPPED_DROPPED", "MAPPED_KEY"},
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"service": {
 						"env:MAPPED_KEY":   "mapped_secret_value",
 						"UNMAPPED_KEPT":    "kept_val",
 						"UNMAPPED_DROPPED": "dropped_val",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -387,12 +387,12 @@ func TestProviderManager_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 				Provider:      "custom_vault",
 				Mapping:       []config.MappingRule{rule1},
 				ExcludeFields: []string{"*"},
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"service": {
 						"env:MAPPED_KEY": "wildcard_secret",
 						"OTHER_FIELD":    "other_val",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -505,11 +505,11 @@ func TestProviderManagerConcurrentInitialization(t *testing.T) {
 			Vaults: map[string]config.VaultConfig{
 				"test_vault": {
 					Provider: "custom_vault",
-					Entities: map[string]map[string]any{
+					Entities: config.ToCustomEntityMap(map[string]map[string]any{
 						"app": {
 							"KEY": "val",
 						},
-					},
+					}),
 				},
 			},
 		}

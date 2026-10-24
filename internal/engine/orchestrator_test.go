@@ -71,13 +71,13 @@ func TestOrchestratorFacade(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"test_vault": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"service_a": {
 						"API_KEY": "secret-api-key",
 						"tags":    []string{"prod", "api"},
 						"title":   "Service A",
 					},
-				},
+				}),
 			},
 		},
 		Autoload: []config.AutoloadRule{
@@ -253,7 +253,7 @@ func TestOrchestrator_FieldFiltering(t *testing.T) {
 					"*.notes",
 					"secret:*",
 				},
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app_config": {
 						"UserName":        "app_admin",
 						"Password":        "super_secret_pw",
@@ -263,7 +263,7 @@ func TestOrchestrator_FieldFiltering(t *testing.T) {
 						"secret:token":    "bearer_12345",
 						"db.notes":        "production database notes",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -426,13 +426,13 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 				Provider:        "custom_vault",
 				ResolveValues:   true,
 				EntitiesRootKey: "entities",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"entry1": {
 						"safe_field":            "safe_value",
 						"excluded_field":        "${tripwire://must_not_be_called}",
 						"rooted_excluded_field": "${tripwire://must_not_be_called_rooted}",
 					},
-				},
+				}),
 			},
 			"virtual_search": {
 				Provider:      "search",
@@ -472,12 +472,12 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 				Provider:        "custom_vault",
 				ResolveValues:   true,
 				EntitiesRootKey: "entities",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"entry1": {
 						"safe_field":     "safe_value",
 						"excluded_field": "${tripwire://must_not_be_called}",
 					},
-				},
+				}),
 			},
 			"query_leak_search": {
 				Provider:      "search",
@@ -512,13 +512,13 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 			"source_vault": {
 				Provider:      "custom_vault",
 				ResolveValues: true,
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"entry1": {
 						"safe_field":     "safe_value",
 						"outer_excluded": "${tripwire://outer_leak}",
 						"inner_excluded": "${tripwire://inner_leak}",
 					},
-				},
+				}),
 			},
 			"inner_search": {
 				Provider:      "search",
@@ -564,12 +564,12 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 			"source_vault": {
 				Provider:      "custom_vault",
 				ResolveValues: true,
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"entry1": {
 						"safe_field":     "safe_value",
 						"outer_excluded": "${tripwire://outer_leak}",
 					},
-				},
+				}),
 			},
 			"inner_search_leak": {
 				Provider:     "search",

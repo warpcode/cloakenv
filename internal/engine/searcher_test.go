@@ -214,22 +214,22 @@ servers:
 		Vaults: map[string]config.VaultConfig{
 			"custom_static": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"custom1": {
 						"username": "custom_user",
 						"Password": "custom_password",
 					},
-				},
+				}),
 			},
 			"custom_single": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"Static_Flat": {
 						"db_user": "postgres",
 						"db_port": 5432,
 						"tags":    []any{"static", "local"},
 					},
-				},
+				}),
 			},
 			"flat_file": {
 				Provider:     "yaml",
@@ -241,11 +241,11 @@ servers:
 			"non_searchable": {
 				Provider:   "custom_vault",
 				Searchable: &isFalse,
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"secret_entry": {
 						"Password": "hidden_pass",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -440,11 +440,11 @@ func TestSearchConcurrentCompilation(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"vault1": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"item1": {
 						"Password": "pass",
 					},
-				},
+				}),
 			},
 		},
 	}
