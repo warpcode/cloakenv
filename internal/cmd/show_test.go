@@ -451,6 +451,10 @@ func TestShow_KeePassMetadataOutput(t *testing.T) {
 		t.Fatalf("failed to read from pipe: %v", err)
 	}
 
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", exitCode)
+	}
+
 	keysOutput := buf2.String()
 	if strings.Contains(keysOutput, "uuid") || strings.Contains(keysOutput, "group") {
 		t.Errorf("expected keys output to NOT include uuid or group, got: %s", keysOutput)
