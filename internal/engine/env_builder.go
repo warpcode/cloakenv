@@ -69,13 +69,17 @@ type envKV struct {
 	v string
 }
 
-func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, whitelist []string) ([][]envKV, error) {
+func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, whitelist []string, keyFormat string) ([][]envKV, error) {
 	if len(merges) == 0 {
 		return nil, nil
+	}
+	if keyFormat == "" {
+		keyFormat = "env"
 	}
 
 	whitelistSet := make(map[string]bool)
 	for _, k := range whitelist {
+		whitelistSet[utils.FormatKeyWithFormat(k, keyFormat)] = true
 		whitelistSet[utils.FormatKey(k)] = true
 	}
 	hasWhitelist := len(whitelist) > 0
@@ -103,8 +107,8 @@ func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, 
 				if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 					continue
 				}
-				formattedKey := utils.FormatKey(k)
-				if hasWhitelist && !whitelistSet[formattedKey] {
+				formattedKey := utils.FormatKeyWithFormat(k, keyFormat)
+				if hasWhitelist && !whitelistSet[formattedKey] && !whitelistSet[utils.FormatKey(k)] {
 					continue
 				}
 				strVal, err := utils.SerializeAttrValue(v)
@@ -126,9 +130,12 @@ func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, 
 	return loaded, nil
 }
 
-func (eb *EnvBuilder) resolveExplicitMappings(ctx context.Context, explicit map[string]string) (map[string]string, error) {
+func (eb *EnvBuilder) resolveExplicitMappings(ctx context.Context, explicit map[string]string, keyFormat string) (map[string]string, error) {
 	if len(explicit) == 0 {
 		return nil, nil
+	}
+	if keyFormat == "" {
+		keyFormat = "env"
 	}
 
 	resolved := make(map[string]string)
@@ -151,7 +158,7 @@ func (eb *EnvBuilder) resolveExplicitMappings(ctx context.Context, explicit map[
 				return
 			}
 			mu.Lock()
-			resolved[utils.FormatKey(k)] = val
+			resolved[utils.FormatKeyWithFormat(k, keyFormat)] = val
 			mu.Unlock()
 		}(k, uri)
 	}
@@ -169,6 +176,7 @@ type EnvConfig struct {
 	Merges    []string
 	Whitelist []string
 	EmptyEnv  bool
+	KeyFormat string
 }
 
 // BuildEnv constructs the full environment block without command autoloading.
@@ -284,7 +292,12 @@ func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cfg EnvConfig) ([]
 		finalEnv = make(map[string]string)
 	}
 
-	mergedSources, err := eb.resolveMergeSources(ctx, combinedMerges, combinedWhitelist)
+	keyFormat := cfg.KeyFormat
+	if keyFormat == "" {
+		keyFormat = "env"
+	}
+
+	mergedSources, err := eb.resolveMergeSources(ctx, combinedMerges, combinedWhitelist, keyFormat)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -295,7 +308,7 @@ func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cfg EnvConfig) ([]
 		}
 	}
 
-	explicitResolved, err := eb.resolveExplicitMappings(ctx, combinedExplicit)
+	explicitResolved, err := eb.resolveExplicitMappings(ctx, combinedExplicit, keyFormat)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -18,6 +18,7 @@ type showOptions struct {
 	explicit      map[string]string
 	whitelist     []string
 	outputFormat  string
+	keyFormat     string
 	positionalURI string
 }
 
@@ -25,9 +26,10 @@ func parseShowFlags(args []string) (*showOptions, error) {
 	opts := &showOptions{
 		explicit:     make(map[string]string),
 		outputFormat: "yaml",
+		keyFormat:    "env",
 	}
 
-	usageMsg := "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]"
+	usageMsg := "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys] [-f none | env | snake | kebab]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [-f none | env | snake | kebab]"
 
 	parser := NewFlagParser()
 	parser.Var([]string{"-o", "--output"}, true, "", func(name, val string) error {
@@ -35,6 +37,13 @@ func parseShowFlags(args []string) (*showOptions, error) {
 			return fmt.Errorf("invalid output format %q (expected yaml, json, env, or keys)", val)
 		}
 		opts.outputFormat = val
+		return nil
+	})
+	parser.Var([]string{"-f", "--key-format"}, true, "", func(name, val string) error {
+		if err := utils.ValidateKeyFormat(val); err != nil {
+			return err
+		}
+		opts.keyFormat = val
 		return nil
 	})
 	parser.StringSlice([]string{"-m"}, &opts.merges, "")
@@ -81,13 +90,13 @@ func parseShowFlags(args []string) (*showOptions, error) {
 	return opts, nil
 }
 
-func buildMergedEntry(ctx context.Context, orch *engine.Orchestrator, merges []string, whitelist []string, explicit map[string]string) (provider.Entry, error) {
+func buildMergedEntry(ctx context.Context, orch *engine.Orchestrator, merges []string, whitelist []string, explicit map[string]string, keyFormat string) (provider.Entry, error) {
 	entries, err := resolveMergedEntries(ctx, orch, merges)
 	if err != nil {
 		return provider.Entry{}, err
 	}
 
-	tags, attributes := mergeTagsAndAttributes(entries, whitelist)
+	tags, attributes := mergeTagsAndAttributes(entries, whitelist, keyFormat)
 
 	explicitResolved, err := resolveExplicitMappings(ctx, orch, explicit)
 	if err != nil {
@@ -139,9 +148,10 @@ func resolveMergedEntries(ctx context.Context, orch *engine.Orchestrator, merges
 	return entries, nil
 }
 
-func mergeTagsAndAttributes(entries []provider.Entry, whitelist []string) ([]string, map[string]any) {
+func mergeTagsAndAttributes(entries []provider.Entry, whitelist []string, keyFormat string) ([]string, map[string]any) {
 	whitelistSet := make(map[string]bool)
 	for _, k := range whitelist {
+		whitelistSet[utils.FormatKeyWithFormat(k, keyFormat)] = true
 		whitelistSet[utils.FormatKey(k)] = true
 	}
 	hasWhitelist := len(whitelist) > 0
@@ -157,8 +167,8 @@ func mergeTagsAndAttributes(entries []provider.Entry, whitelist []string) ([]str
 			if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 				continue
 			}
-			formattedKey := utils.FormatKey(k)
-			if hasWhitelist && !whitelistSet[formattedKey] {
+			formattedKey := utils.FormatKeyWithFormat(k, keyFormat)
+			if hasWhitelist && !whitelistSet[formattedKey] && !whitelistSet[utils.FormatKey(k)] {
 				continue
 			}
 			attributes[k] = v
@@ -236,20 +246,20 @@ func Show(args []string, cfg *config.Config) int {
 			return 1
 		}
 	} else {
-		entry, err = buildMergedEntry(ctx, orch, opts.merges, opts.whitelist, opts.explicit)
+		entry, err = buildMergedEntry(ctx, orch, opts.merges, opts.whitelist, opts.explicit, opts.keyFormat)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 	}
 
-	// Format all keys in entry.Attributes by default
+	// Format all keys in entry.Attributes according to opts.keyFormat
 	formattedAttributes := make(map[string]any)
 	for k, v := range entry.Attributes {
 		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
-		formattedAttributes[utils.FormatKey(k)] = v
+		formattedAttributes[utils.FormatKeyWithFormat(k, opts.keyFormat)] = utils.FormatValueWithKeyFormat(v, opts.keyFormat)
 	}
 	entry.Attributes = formattedAttributes
 

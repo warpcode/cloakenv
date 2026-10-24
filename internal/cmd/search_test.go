@@ -32,6 +32,15 @@ func TestParseSearchArgs(t *testing.T) {
 			wantErrMsg:       "",
 		},
 		{
+			name:             "key format flag",
+			args:             []string{"-f", "kebab"},
+			wantQuery:        "",
+			wantRepoScopes:   nil,
+			wantSelectedKeys: nil,
+			wantOutputFormat: "yaml",
+			wantErrMsg:       "",
+		},
+		{
 			name:             "just query",
 			args:             []string{"myquery"},
 			wantQuery:        "myquery",
@@ -161,7 +170,7 @@ func TestParseSearchArgs(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			query, repoScopes, selectedKeys, outputFormat, err := parseSearchArgs(tc.args)
+			query, repoScopes, selectedKeys, outputFormat, keyFormat, err := parseSearchArgs(tc.args)
 
 			if tc.wantErrMsg != "" {
 				if err == nil {
@@ -192,6 +201,60 @@ func TestParseSearchArgs(t *testing.T) {
 			if outputFormat != tc.wantOutputFormat {
 				t.Errorf("outputFormat = %q, want %q", outputFormat, tc.wantOutputFormat)
 			}
+			_ = keyFormat
+		})
+	}
+}
+
+func TestSearch_KeyFormatOptions(t *testing.T) {
+	entry := provider.SearchResult{
+		Provider: "custom",
+		Vault:    "myvault",
+		Path:     "entry1",
+		Entry: provider.Entry{
+			Title: "My Entry",
+			Tags:  []string{"tag1"},
+			Attributes: map[string]any{
+				"User-Name": "john",
+				"API_KEY":   "secret",
+			},
+		},
+	}
+
+	tests := []struct {
+		name      string
+		keyFormat string
+		wantKeys  map[string]bool
+	}{
+		{
+			name:      "kebab format preserves metadata and formats attributes",
+			keyFormat: "kebab",
+			wantKeys:  map[string]bool{"title": true, "provider": true, "vault": true, "path": true, "tags": true, "user-name": true, "api-key": true},
+		},
+		{
+			name:      "snake format preserves metadata and formats attributes",
+			keyFormat: "snake",
+			wantKeys:  map[string]bool{"title": true, "provider": true, "vault": true, "path": true, "tags": true, "user_name": true, "api_key": true},
+		},
+		{
+			name:      "none format preserves metadata and raw attribute keys",
+			keyFormat: "none",
+			wantKeys:  map[string]bool{"title": true, "provider": true, "vault": true, "path": true, "tags": true, "User-Name": true, "API_KEY": true},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := flattenSearchResults([]provider.SearchResult{entry}, nil, tc.keyFormat)
+			if len(res) != 1 {
+				t.Fatalf("expected 1 result, got %d", len(res))
+			}
+			m := res[0]
+			for k := range m {
+				if !tc.wantKeys[k] {
+					t.Errorf("unexpected key %q in result for format %s", k, tc.keyFormat)
+				}
+			}
 		})
 	}
 }
@@ -210,7 +273,7 @@ func TestFlattenDefaultEntry_FilteredMetadata(t *testing.T) {
 		},
 	}
 
-	flat := flattenDefaultEntry(entryFiltered)
+	flat := flattenDefaultEntry(entryFiltered, "env")
 
 	if _, ok := flat["provider"]; ok {
 		t.Errorf("expected 'provider' to be omitted when empty")
@@ -319,7 +382,7 @@ func TestFlattenSearchResults(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := flattenSearchResults(tc.results, tc.selectedKeys)
+			got := flattenSearchResults(tc.results, tc.selectedKeys, "env")
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("flattenSearchResults() = %v, want %v", got, tc.want)
 			}

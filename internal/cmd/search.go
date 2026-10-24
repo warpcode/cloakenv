@@ -12,14 +12,14 @@ import (
 	"github.com/warpcode/cloakenv/internal/utils"
 )
 
-// Search handles "cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]"
+// Search handles "cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json] [-f none | env | snake | kebab]"
 func Search(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
 		PrintSearchHelp()
 		return 0
 	}
 
-	query, repoScopes, selectedKeys, outputFormat, err := parseSearchArgs(args)
+	query, repoScopes, selectedKeys, outputFormat, keyFormat, err := parseSearchArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -38,7 +38,7 @@ func Search(args []string, cfg *config.Config) int {
 		return 1
 	}
 
-	flatResults := flattenSearchResults(results, selectedKeys)
+	flatResults := flattenSearchResults(results, selectedKeys, keyFormat)
 
 	asJSON := (outputFormat == "json")
 	if err := utils.RenderOutput(flatResults, asJSON, "results"); err != nil {
@@ -49,8 +49,9 @@ func Search(args []string, cfg *config.Config) int {
 	return 0
 }
 
-func parseSearchArgs(args []string) (query string, repoScopes []string, selectedKeys []string, outputFormat string, err error) {
+func parseSearchArgs(args []string) (query string, repoScopes []string, selectedKeys []string, outputFormat string, keyFormat string, err error) {
 	outputFormat = "yaml" // default
+	keyFormat = "env"     // default
 
 	parser := NewFlagParser()
 	parser.Var([]string{"-o", "--output"}, true, "flag -o/--output requires an argument", func(name, val string) error {
@@ -58,6 +59,13 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 			return fmt.Errorf("invalid output format %q (expected yaml or json)", val)
 		}
 		outputFormat = val
+		return nil
+	})
+	parser.Var([]string{"-f", "--key-format"}, true, "flag -f/--key-format requires an argument", func(name, val string) error {
+		if err := utils.ValidateKeyFormat(val); err != nil {
+			return err
+		}
+		keyFormat = val
 		return nil
 	})
 	parser.StringSlice([]string{"--vault"}, &repoScopes, "flag --vault requires an argument")
@@ -74,13 +82,13 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 	}
 
 	if _, err := parser.Parse(args); err != nil {
-		return "", nil, nil, "", err
+		return "", nil, nil, "", "", err
 	}
 
-	return query, repoScopes, selectedKeys, outputFormat, nil
+	return query, repoScopes, selectedKeys, outputFormat, keyFormat, nil
 }
 
-func flattenSearchResults(results []provider.SearchResult, selectedKeys []string) []map[string]any {
+func flattenSearchResults(results []provider.SearchResult, selectedKeys []string, keyFormat string) []map[string]any {
 	flatResults := make([]map[string]any, len(results))
 
 	selectedKeysLower := make([]string, len(selectedKeys))
@@ -89,19 +97,28 @@ func flattenSearchResults(results []provider.SearchResult, selectedKeys []string
 	}
 
 	for i, r := range results {
-		flatResults[i] = flattenEntry(r, selectedKeys, selectedKeysLower)
+		flatResults[i] = flattenEntry(r, selectedKeys, selectedKeysLower, keyFormat)
 	}
 	return flatResults
 }
 
-func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
+func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string, keyFormat string) map[string]any {
 	if len(selectedKeys) > 0 {
-		return flattenSelectedKeys(r, selectedKeys, selectedKeysLower)
+		return flattenSelectedKeys(r, selectedKeys, selectedKeysLower, keyFormat)
 	}
-	return flattenDefaultEntry(r)
+	return flattenDefaultEntry(r, keyFormat)
 }
 
-func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
+func isMetadataKey(key string) bool {
+	switch strings.ToLower(key) {
+	case "title", "tags", "uuid", "group", "path", "vault", "provider":
+		return true
+	default:
+		return false
+	}
+}
+
+func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string, keyFormat string) map[string]any {
 	flatRes := make(map[string]any, len(selectedKeys))
 
 	var lowerAttrs map[string]string
@@ -131,33 +148,51 @@ func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selecte
 			if r.Entry.Title != "" {
 				flatRes["title"] = r.Entry.Title
 			} else if origKey, ok := lowerAttrs["title"]; ok {
-				flatRes["title"] = r.Entry.Attributes[origKey]
+				flatRes["title"] = utils.FormatValueWithKeyFormat(r.Entry.Attributes[origKey], keyFormat)
 			}
 		case "tags":
 			if len(r.Entry.Tags) > 0 {
 				flatRes["tags"] = r.Entry.Tags
 			} else if origKey, ok := lowerAttrs["tags"]; ok {
-				flatRes["tags"] = r.Entry.Attributes[origKey]
+				flatRes["tags"] = utils.FormatValueWithKeyFormat(r.Entry.Attributes[origKey], keyFormat)
+			}
+		case "uuid":
+			if origKey, ok := lowerAttrs["uuid"]; ok {
+				flatRes["uuid"] = utils.FormatValueWithKeyFormat(r.Entry.Attributes[origKey], keyFormat)
+			}
+		case "group":
+			if origKey, ok := lowerAttrs["group"]; ok {
+				flatRes["group"] = utils.FormatValueWithKeyFormat(r.Entry.Attributes[origKey], keyFormat)
 			}
 		default:
-			key, val := resolveSelectedAttribute(r.Entry.Attributes, lowerAttrs, field, fieldLower)
+			key, val := resolveSelectedAttribute(r.Entry.Attributes, lowerAttrs, field, fieldLower, keyFormat)
 			flatRes[key] = val
 		}
 	}
 	return flatRes
 }
 
-func resolveSelectedAttribute(attributes map[string]any, lowerAttrs map[string]string, field, fieldLower string) (string, any) {
+func resolveSelectedAttribute(attributes map[string]any, lowerAttrs map[string]string, field, fieldLower string, keyFormat string) (string, any) {
+	if isMetadataKey(field) {
+		if origKey, ok := lowerAttrs[fieldLower]; ok {
+			return fieldLower, utils.FormatValueWithKeyFormat(attributes[origKey], keyFormat)
+		}
+		if v, ok := attributes[field]; ok {
+			return fieldLower, utils.FormatValueWithKeyFormat(v, keyFormat)
+		}
+		return fieldLower, nil
+	}
+
 	if origKey, ok := lowerAttrs[fieldLower]; ok {
-		return utils.FormatKey(origKey), attributes[origKey]
+		return utils.FormatKeyWithFormat(origKey, keyFormat), utils.FormatValueWithKeyFormat(attributes[origKey], keyFormat)
 	}
 	if v, ok := attributes[field]; ok {
-		return utils.FormatKey(field), v
+		return utils.FormatKeyWithFormat(field, keyFormat), utils.FormatValueWithKeyFormat(v, keyFormat)
 	}
-	return utils.FormatKey(field), nil
+	return utils.FormatKeyWithFormat(field, keyFormat), nil
 }
 
-func flattenDefaultEntry(r provider.SearchResult) map[string]any {
+func flattenDefaultEntry(r provider.SearchResult, keyFormat string) map[string]any {
 	flatRes := make(map[string]any, 5+len(r.Entry.Attributes))
 	if r.Provider != "" {
 		flatRes["provider"] = r.Provider
@@ -183,7 +218,11 @@ func flattenDefaultEntry(r provider.SearchResult) map[string]any {
 		if kLower == "tags" && len(r.Entry.Tags) > 0 {
 			continue
 		}
-		flatRes[utils.FormatKey(k)] = v
+		if isMetadataKey(k) {
+			flatRes[kLower] = utils.FormatValueWithKeyFormat(v, keyFormat)
+		} else {
+			flatRes[utils.FormatKeyWithFormat(k, keyFormat)] = utils.FormatValueWithKeyFormat(v, keyFormat)
+		}
 	}
 	return flatRes
 }

@@ -25,9 +25,17 @@ func Run(args []string, cfg *config.Config) int {
 		cmdArgs     []string
 		noAutoload  bool
 		emptyEnv    bool
+		keyFormat   string
 	)
 
 	parser := NewFlagParser()
+	parser.Var([]string{"-f", "--key-format"}, true, "", func(name, val string) error {
+		if err := utils.ValidateKeyFormat(val); err != nil {
+			return err
+		}
+		keyFormat = val
+		return nil
+	})
 	parser.StopAtNonFlag = true
 	parser.Bool([]string{"-E"}, &emptyEnv)
 	parser.Bool([]string{"--no-autoload", "--skip-autoload"}, &noAutoload)
@@ -83,6 +91,7 @@ func Run(args []string, cfg *config.Config) int {
 		Merges:    merges,
 		Whitelist: whitelist,
 		EmptyEnv:  emptyEnv,
+		KeyFormat: keyFormat,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Secret resolution failed: %v\n", err)

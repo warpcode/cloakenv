@@ -106,6 +106,72 @@ func TestRenderOutput(t *testing.T) {
 	}
 }
 
+func TestValidateKeyFormat(t *testing.T) {
+	valid := []string{"none", "env", "snake", "kebab"}
+	for _, f := range valid {
+		if err := ValidateKeyFormat(f); err != nil {
+			t.Errorf("ValidateKeyFormat(%q) returned unexpected error: %v", f, err)
+		}
+	}
+
+	invalid := []string{"invalid", "UPPER", "camel", ""}
+	for _, f := range invalid {
+		if err := ValidateKeyFormat(f); err == nil {
+			t.Errorf("ValidateKeyFormat(%q) expected error, got nil", f)
+		}
+	}
+}
+
+func TestFormatKeyWithFormat(t *testing.T) {
+	tests := []struct {
+		key      string
+		format   string
+		expected string
+	}{
+		{"my-key.name", "none", "my-key.name"},
+		{"my-key.name", "env", "MY_KEY_NAME"},
+		{"my-key.name", "snake", "my_key_name"},
+		{"my-key.name", "kebab", "my-key-name"},
+		{"MyKey_Name123", "snake", "mykey_name123"},
+		{"MyKey_Name123", "kebab", "mykey-name123"},
+		{"MyKey_Name123", "env", "MYKEY_NAME123"},
+		{"--leading--trailing--", "kebab", "-leading-trailing-"},
+		{"--leading--trailing--", "snake", "_leading_trailing_"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.key+"_"+tc.format, func(t *testing.T) {
+			got := FormatKeyWithFormat(tc.key, tc.format)
+			if got != tc.expected {
+				t.Errorf("FormatKeyWithFormat(%q, %q) = %q; expected %q", tc.key, tc.format, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestFormatValueWithKeyFormat(t *testing.T) {
+	nestedMap := map[string]any{
+		"Outer-Key": map[string]any{
+			"Inner.Key": "value",
+		},
+		"Array-Key": []any{
+			map[string]any{"Sub-Item": 1},
+		},
+	}
+
+	formatted := FormatValueWithKeyFormat(nestedMap, "kebab").(map[string]any)
+	outer := formatted["outer-key"].(map[string]any)
+	if outer["inner-key"] != "value" {
+		t.Errorf("expected outer['inner-key'] == 'value', got %v", outer["inner-key"])
+	}
+
+	arr := formatted["array-key"].([]any)
+	subItem := arr[0].(map[string]any)
+	if subItem["sub-item"] != 1 {
+		t.Errorf("expected subItem['sub-item'] == 1, got %v", subItem["sub-item"])
+	}
+}
+
 func TestFormatKey(t *testing.T) {
 	tests := []struct {
 		name     string

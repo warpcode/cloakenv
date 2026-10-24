@@ -65,6 +65,12 @@ func TestRun_Errors(t *testing.T) {
 			wantExit: 1,
 			wantErr:  "this_command_should_not_exist_xyz123",
 		},
+		{
+			name:     "Invalid Key Format",
+			args:     []string{"-f", "invalid_fmt", "--", "echo", "1"},
+			wantExit: 1,
+			wantErr:  "invalid key format \"invalid_fmt\"",
+		},
 	}
 
 	for _, tc := range tests {

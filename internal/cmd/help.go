@@ -8,7 +8,7 @@ import (
 const generalUsage = `cloakenv — pluggable secret orchestrator & runtime injector
 
 Usage:
-  cloakenv [-c config_path] run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] -- <command> [args]
+  cloakenv [-c config_path] run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [-f none|env|snake|kebab] -- <command> [args]
   cloakenv [-c config_path] get <uri>
   cloakenv [-c config_path] set <uri> [--ttl <duration>]
   cloakenv [-c config_path] delete <uri>
@@ -34,6 +34,7 @@ Flags:
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -m entry-uri    Merge attributes from an entry into the environment. Can target a single attribute using :attribute (repeatable)
   -i KEY          Filter/whitelist keys or select output fields (repeatable)
+  -f, --key-format Key formatting style: none, env, snake, or kebab (depends on command)
   -o, --output    Output format: keys, json, yaml, env (depends on command)
   --vault vault   Scope search to a specific vault (repeatable)
   --ttl duration  Expiration duration for cache entries (e.g. 5m, 1h, set only)
@@ -58,7 +59,7 @@ func PrintUsageStdout() {
 // PrintRunHelp prints usage help for the run subcommand.
 func PrintRunHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] -- <command> [args]
+  cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [-f none|env|snake|kebab] [--no-autoload] -- <command> [args]
 
 Description:
   Wrap a binary execution, resolving and injecting secret environment variables.
@@ -71,6 +72,7 @@ Flags:
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -m entry-uri    Merge attributes from an entry into the environment. Can target a single attribute using :attribute (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
+  -f, --key-format Key formatting style: none, env, snake, or kebab (default: env)
   --no-autoload   Disable config command autoloading rules for this run execution`)
 }
 
@@ -139,8 +141,8 @@ Description:
 // PrintShowHelp prints usage help for the show subcommand.
 func PrintShowHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]
-  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]
+  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [-f none | env | snake | kebab]
+  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [-f none | env | snake | kebab]
 
 Description:
   Retrieve and display a structured entry, or merge multiple entries/explicit mapping values.
@@ -153,13 +155,14 @@ Flags:
   -e KEY=uri      Explicit environment/key override (can be specified multiple times)
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
+  -f, --key-format Key formatting style: none, env, snake, or kebab (default: env)
   -o, --output    Output format: yaml, json, env, or keys (default: yaml)`)
 }
 
 // PrintSearchHelp prints usage help for the search subcommand.
 func PrintSearchHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]
+  cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json] [-f none | env | snake | kebab]
 
 Description:
   Search for structured entries matching the query.
@@ -170,6 +173,7 @@ Arguments:
 Flags:
   --vault vault   Scope search to a specific vault (repeatable)
   -i KEY          Select output fields/keys to return (repeatable)
+  -f, --key-format Key formatting style: none, env, snake, or kebab (default: env)
   -o, --output    Output format: yaml or json (default: yaml)`)
 }
 
