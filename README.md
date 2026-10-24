@@ -377,6 +377,7 @@ cloakenv show -m <entry-uri> [-m <entry-uri> ...] [flags]
 - `-e KEY=uri`: Explicit key override (repeatable).
 - `-t template_path`: Load template `.env` file (repeatable).
 - `-i KEY`: Whitelist filter keys (repeatable).
+- `--show-meta`: Include vault and provider metadata under `_meta_` object.
 
 #### Output Formats:
 1. **`yaml`** (Default): Formatted YAML document.
@@ -417,6 +418,7 @@ cloakenv search "[query_expression]" [flags]
 - `--vault <vault_name>`: Scope the search to one or more specific vaults (repeatable).
 - `-i KEY`: Select only specific attributes/fields in the output (repeatable).
 - `-o, --output`: Output format: `yaml` (default) or `json`.
+- `--show-meta`: Include vault and provider metadata under `_meta_` object.
 
 #### Examples:
 
@@ -432,6 +434,9 @@ cloakenv search 'title startsWith "Staging"' --vault work
 
 # Return only the hostnames and usernames from matching entries
 cloakenv search '"env:prod" in tags' -i title -i hostname -i username -o yaml
+
+# Include metadata block in search output
+cloakenv search 'title contains "Database"' --show-meta
 ```
 
 ---

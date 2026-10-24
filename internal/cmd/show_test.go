@@ -320,3 +320,128 @@ func TestBuildMergedEntry(t *testing.T) {
 		}
 	})
 }
+
+func TestShow_ShowMetaFlag(t *testing.T) {
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"testvault": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"myentry": {
+						"user": "alice",
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("Default show omits _meta_", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+
+		exitCode := Show([]string{"testvault://myentry", "-o", "yaml"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		out := buf.String()
+
+		if strings.Contains(out, "_meta_") {
+			t.Errorf("expected output not to contain '_meta_', got: %s", out)
+		}
+	})
+
+	t.Run("Show with --show-meta in YAML includes _meta_", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+
+		exitCode := Show([]string{"testvault://myentry", "-o", "yaml", "--show-meta"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		out := buf.String()
+
+		if !strings.Contains(out, "_meta_:") || !strings.Contains(out, "vault: testvault") || !strings.Contains(out, "provider: custom_vault") {
+			t.Errorf("expected output to contain _meta_ block with vault and provider, got: %s", out)
+		}
+	})
+
+	t.Run("Show with --show-meta in JSON includes _meta_", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+
+		exitCode := Show([]string{"testvault://myentry", "-o", "json", "--show-meta"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		out := buf.String()
+
+		if !strings.Contains(out, `"_meta_":`) || !strings.Contains(out, `"vault": "testvault"`) || !strings.Contains(out, `"provider": "custom_vault"`) {
+			t.Errorf("expected output to contain _meta_ json object, got: %s", out)
+		}
+	})
+
+	t.Run("Show in env format omits _meta_ even with --show-meta", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+
+		exitCode := Show([]string{"testvault://myentry", "-o", "env", "--show-meta"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		out := buf.String()
+
+		if strings.Contains(out, "_meta_") {
+			t.Errorf("expected env format to omit '_meta_', got: %s", out)
+		}
+	})
+
+	t.Run("Show in keys format omits _meta_ even with --show-meta", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, _ := os.Pipe()
+		os.Stdout = w
+
+		exitCode := Show([]string{"testvault://myentry", "-o", "keys", "--show-meta"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		out := buf.String()
+
+		if strings.Contains(out, "_meta_") {
+			t.Errorf("expected keys format to omit '_meta_', got: %s", out)
+		}
+	})
+}
