@@ -336,6 +336,19 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 					sVal, err := serializeVal(val)
 					return sVal, true, err
 				}
+				// Deterministic case-insensitive lookup on mappedAttrs so custom attributes
+				// take precedence over entry metadata even when casing differs (e.g. :uuid vs UUID).
+				keys := make([]string, 0, len(mappedAttrs))
+				for k := range mappedAttrs {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					if strings.EqualFold(k, attrName) {
+						sVal, err := serializeVal(mappedAttrs[k])
+						return sVal, true, err
+					}
+				}
 				if strings.EqualFold(attrName, "title") {
 					allowed := false
 					if len(m.rules) > 0 {
@@ -357,6 +370,51 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 					if allowed && len(rawEntry.Tags) > 0 {
 						sVal, err := serializeVal(rawEntry.Tags)
 						return sVal, true, err
+					}
+				}
+				if strings.EqualFold(attrName, "uuid") {
+					allowed := false
+					if len(m.rules) > 0 {
+						allowed = isDefaultFieldMappedOrIncluded("uuid", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title)
+					} else {
+						allowed = isDefaultFieldAllowed("uuid", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields)
+					}
+					if allowed && rawEntry.UUID != "" {
+						return rawEntry.UUID, true, nil
+					}
+				}
+				if strings.EqualFold(attrName, "group") || strings.EqualFold(attrName, "group_name") {
+					allowed := false
+					field := strings.ToLower(attrName)
+					if len(m.rules) > 0 {
+						allowed = isDefaultFieldMappedOrIncluded(field, m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title)
+					} else {
+						allowed = isDefaultFieldAllowed(field, authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields)
+					}
+					if allowed && rawEntry.Group != nil && rawEntry.Group.Name != "" {
+						return rawEntry.Group.Name, true, nil
+					}
+				}
+				if strings.EqualFold(attrName, "group_uuid") {
+					allowed := false
+					if len(m.rules) > 0 {
+						allowed = isDefaultFieldMappedOrIncluded("group_uuid", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title)
+					} else {
+						allowed = isDefaultFieldAllowed("group_uuid", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields)
+					}
+					if allowed && rawEntry.Group != nil && rawEntry.Group.UUID != "" {
+						return rawEntry.Group.UUID, true, nil
+					}
+				}
+				if strings.EqualFold(attrName, "group_path") {
+					allowed := false
+					if len(m.rules) > 0 {
+						allowed = isDefaultFieldMappedOrIncluded("group_path", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title)
+					} else {
+						allowed = isDefaultFieldAllowed("group_path", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields)
+					}
+					if allowed && rawEntry.Group != nil && rawEntry.Group.Path != "" {
+						return rawEntry.Group.Path, true, nil
 					}
 				}
 			}
@@ -620,12 +678,24 @@ func (s *SearchableMappingProvider) GetEntryWithPath(ctx context.Context, locati
 		if !isDefaultFieldMappedOrIncluded("tags", s.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title) {
 			rawEntry.Tags = nil
 		}
+		if !isDefaultFieldMappedOrIncluded("uuid", s.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title) {
+			rawEntry.UUID = ""
+		}
+		if !isDefaultFieldMappedOrIncluded("group", s.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title) {
+			rawEntry.Group = nil
+		}
 	} else {
 		if !isDefaultFieldAllowed("title", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields) {
 			rawEntry.Title = ""
 		}
 		if !isDefaultFieldAllowed("tags", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields) {
 			rawEntry.Tags = nil
+		}
+		if !isDefaultFieldAllowed("uuid", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields) {
+			rawEntry.UUID = ""
+		}
+		if !isDefaultFieldAllowed("group", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields) {
+			rawEntry.Group = nil
 		}
 	}
 
@@ -688,6 +758,12 @@ func (s *SearchableMappingProvider) Search(ctx context.Context, query SearchQuer
 			if !isDefaultFieldMappedOrIncluded("tags", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
 				r.Entry.Tags = nil
 			}
+			if !isDefaultFieldMappedOrIncluded("uuid", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
+				r.Entry.UUID = ""
+			}
+			if !isDefaultFieldMappedOrIncluded("group", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
+				r.Entry.Group = nil
+			}
 			if !isDefaultFieldMappedOrIncluded("path", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
 				r.Path = ""
 			}
@@ -703,6 +779,12 @@ func (s *SearchableMappingProvider) Search(ctx context.Context, query SearchQuer
 			}
 			if !isDefaultFieldAllowed("tags", origPath, rootPrefixes, origTitle, includeFields, excludeFields) {
 				r.Entry.Tags = nil
+			}
+			if !isDefaultFieldAllowed("uuid", origPath, rootPrefixes, origTitle, includeFields, excludeFields) {
+				r.Entry.UUID = ""
+			}
+			if !isDefaultFieldAllowed("group", origPath, rootPrefixes, origTitle, includeFields, excludeFields) {
+				r.Entry.Group = nil
 			}
 			if !isDefaultFieldAllowed("path", origPath, rootPrefixes, origTitle, includeFields, excludeFields) {
 				r.Path = ""

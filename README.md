@@ -369,6 +369,7 @@ cloakenv cache clear
 ### `show` — Inspect & Export Structured Records
 
 Retrieves and formats a structured credential record (or multiple merged records).
+KeePass entries include `uuid` and `group` (`name`, `uuid`, `path`) in search results and `show -o yaml|json` outputs, and support selection via `-i uuid`, `-i group_name`, `-i group_uuid`, `-i group_path`.
 
 ```bash
 cloakenv show <entry-uri> [flags]
@@ -412,7 +413,7 @@ cloakenv show \
 
 ### `search` — Dynamic Querying Across Vaults
 
-Searches for structured entries across all configured searchable vaults using Go `expr` query syntax.
+Searches for structured entries across all configured searchable vaults using Go `expr` query syntax. `uuid` and `group` (`name`, `uuid`, `path`) are included in search results, can be selected via `-i uuid`, `-i group_name`, `-i group_uuid`, `-i group_path`, and can be queried in search expressions (e.g. `uuid == '...'`, `group.name == '...'`, `group.path == '...'`).
 
 ```bash
 cloakenv search "[query_expression]" [flags]
@@ -557,6 +558,7 @@ vaults:
 - Points to any KeePass 2.x `.kdbx` file.
 - Path traversal: `vault://Folder/SubFolder/EntryName[:Attribute]`.
 - Defaults to `:Password` attribute if omitted.
+- **Virtual Metadata Attributes**: KeePass entries expose virtual metadata attributes via `GetSecret` (e.g. `work://website/Test Website:UUID`, `work://website/Test Website:uuid`, `work://website/Test Website:group`, `work://website/Test Website:group_name`, `work://website/Test Website:group_uuid`, `work://website/Test Website:group_path`). Custom string fields take precedence over virtual metadata attributes.
 - **File Attachments**: Directly stream binary attachments by name (e.g. `vault://SSH/Keys:id_rsa`).
 - **Placeholder & Reference Resolution**: Set `resolve_references: true` in `config.yaml` to enable `{TITLE}`, `{REF:...}`, `{T-CONV:...}`, `{URL:...}`, and date/time expansion (see [KeePass Placeholders & Cross-Entry References](#7-keepass-placeholders--cross-entry-references-resolve_references)).
 
@@ -609,6 +611,7 @@ vaults:
 
 #### 5. Field Filtering (`include_fields` and `exclude_fields`)
 - Supported across structured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`).
+- **Default Metadata Fields**: Default metadata fields (`title`, `tags`, `uuid`, `group`, `group_name`, `group_uuid`, `group_path`, `path`, `vault`, `provider`) are treated as default metadata fields and are included by default alongside entry attributes.
 - **`include_fields`**: When configured, restricts returned entry attributes to fields matching at least one glob pattern. **Include rules always take precedence over exclude rules** (evaluated first). An **empty list means filtering is disabled** (all unexcluded attributes allowed), not deny-all.
 - **`exclude_fields`**: Drops attributes matching any configured glob pattern before returning secrets when not explicitly permitted by include rules.
 - **Case-Sensitivity**: Glob patterns are evaluated **case-sensitively** (via Go's `path.Match`). A pattern like `"password"` will not match an attribute named `"Password"`. Ensure pattern casing matches the provider's attribute names.

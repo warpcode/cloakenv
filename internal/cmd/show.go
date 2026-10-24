@@ -264,8 +264,23 @@ func Show(args []string, cfg *config.Config) int {
 		return 0
 	}
 
+	out := make(map[string]any, len(entry.Attributes)+2)
+	for k, v := range entry.Attributes {
+		out[k] = v
+	}
+	if entry.UUID != "" {
+		if _, exists := out["uuid"]; !exists {
+			out["uuid"] = entry.UUID
+		}
+	}
+	if entry.Group != nil {
+		if _, exists := out["group"]; !exists {
+			out["group"] = entry.Group
+		}
+	}
+
 	asJSON := (opts.outputFormat == "json")
-	if err := utils.RenderOutput(entry.Attributes, asJSON, "entry"); err != nil {
+	if err := utils.RenderOutput(out, asJSON, "entry"); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}

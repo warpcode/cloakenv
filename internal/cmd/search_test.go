@@ -315,6 +315,37 @@ func TestFlattenSearchResults(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "uuid and group metadata keys",
+			results: []provider.SearchResult{
+				{
+					Provider: "keepass",
+					Vault:    "myvault",
+					Path:     "websites/Test",
+					Entry: provider.Entry{
+						Title: "Test",
+						UUID:  "1234567890abcdef1234567890abcdef",
+						Group: &provider.GroupInfo{
+							Name: "websites",
+							UUID: "fedcba0987654321fedcba0987654321",
+							Path: "websites",
+						},
+						Attributes: map[string]any{
+							"password": "secret",
+						},
+					},
+				},
+			},
+			selectedKeys: []string{"uuid", "group_name", "group_uuid", "group_path"},
+			want: []map[string]any{
+				{
+					"uuid":       "1234567890abcdef1234567890abcdef",
+					"group_name": "websites",
+					"group_uuid": "fedcba0987654321fedcba0987654321",
+					"group_path": "websites",
+				},
+			},
+		},
 	}
 
 	for _, tc := range tests {

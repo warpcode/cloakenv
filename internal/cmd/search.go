@@ -139,6 +139,36 @@ func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selecte
 			} else if origKey, ok := lowerAttrs["tags"]; ok {
 				flatRes["tags"] = r.Entry.Attributes[origKey]
 			}
+		case "uuid":
+			if r.Entry.UUID != "" {
+				flatRes["uuid"] = r.Entry.UUID
+			} else if origKey, ok := lowerAttrs["uuid"]; ok {
+				flatRes["uuid"] = r.Entry.Attributes[origKey]
+			}
+		case "group":
+			if r.Entry.Group != nil {
+				flatRes["group"] = r.Entry.Group
+			} else if origKey, ok := lowerAttrs["group"]; ok {
+				flatRes["group"] = r.Entry.Attributes[origKey]
+			}
+		case "group_name":
+			if r.Entry.Group != nil && r.Entry.Group.Name != "" {
+				flatRes["group_name"] = r.Entry.Group.Name
+			} else if origKey, ok := lowerAttrs["group_name"]; ok {
+				flatRes["group_name"] = r.Entry.Attributes[origKey]
+			}
+		case "group_uuid":
+			if r.Entry.Group != nil && r.Entry.Group.UUID != "" {
+				flatRes["group_uuid"] = r.Entry.Group.UUID
+			} else if origKey, ok := lowerAttrs["group_uuid"]; ok {
+				flatRes["group_uuid"] = r.Entry.Attributes[origKey]
+			}
+		case "group_path":
+			if r.Entry.Group != nil && r.Entry.Group.Path != "" {
+				flatRes["group_path"] = r.Entry.Group.Path
+			} else if origKey, ok := lowerAttrs["group_path"]; ok {
+				flatRes["group_path"] = r.Entry.Attributes[origKey]
+			}
 		default:
 			key, val := resolveSelectedAttribute(r.Entry.Attributes, lowerAttrs, field, fieldLower)
 			flatRes[key] = val
@@ -158,7 +188,7 @@ func resolveSelectedAttribute(attributes map[string]any, lowerAttrs map[string]s
 }
 
 func flattenDefaultEntry(r provider.SearchResult) map[string]any {
-	flatRes := make(map[string]any, 5+len(r.Entry.Attributes))
+	flatRes := make(map[string]any, 7+len(r.Entry.Attributes))
 	if r.Provider != "" {
 		flatRes["provider"] = r.Provider
 	}
@@ -174,6 +204,12 @@ func flattenDefaultEntry(r provider.SearchResult) map[string]any {
 	if len(r.Entry.Tags) > 0 {
 		flatRes["tags"] = r.Entry.Tags
 	}
+	if r.Entry.UUID != "" {
+		flatRes["uuid"] = r.Entry.UUID
+	}
+	if r.Entry.Group != nil {
+		flatRes["group"] = r.Entry.Group
+	}
 
 	for k, v := range r.Entry.Attributes {
 		kLower := strings.ToLower(k)
@@ -181,6 +217,12 @@ func flattenDefaultEntry(r provider.SearchResult) map[string]any {
 			continue
 		}
 		if kLower == "tags" && len(r.Entry.Tags) > 0 {
+			continue
+		}
+		if kLower == "uuid" && r.Entry.UUID != "" {
+			continue
+		}
+		if kLower == "group" && r.Entry.Group != nil {
 			continue
 		}
 		flatRes[k] = v

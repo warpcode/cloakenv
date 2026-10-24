@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -188,17 +189,17 @@ func (k *KeePassProvider) unlock(vaultPath string, password []byte) error {
 	return nil
 }
 
-// findEntry locates an entry and returns it along with the parsed attribute.
-func (k *KeePassProvider) findEntry(location string) (*gokeepasslib.Entry, string, error) {
+// findEntry locates an entry and returns it along with its parent group, resolved group path, and parsed attribute.
+func (k *KeePassProvider) findEntry(location string) (*gokeepasslib.Entry, *gokeepasslib.Group, string, string, error) {
 	path, attr := parseKeePassLocation(location)
 	segments := strings.Split(path, "/")
 
 	if len(segments) == 0 {
-		return nil, "", errors.New("keepass provider: empty path")
+		return nil, nil, "", "", errors.New("keepass provider: empty path")
 	}
 
 	if len(k.db.Content.Root.Groups) == 0 {
-		return nil, "", errors.New("keepass provider: database has no root group")
+		return nil, nil, "", "", errors.New("keepass provider: database has no root group")
 	}
 
 	// Navigate through groups to reach the parent group of the target entry
@@ -206,6 +207,7 @@ func (k *KeePassProvider) findEntry(location string) (*gokeepasslib.Entry, strin
 	groupPath := segments[:len(segments)-1]
 	entryTitle := segments[len(segments)-1]
 
+	var resolvedSegments []string
 	if len(groupPath) > 0 && groupPath[0] == currentGroup.Name {
 		groupPath = groupPath[1:]
 	}
@@ -215,24 +217,27 @@ func (k *KeePassProvider) findEntry(location string) (*gokeepasslib.Entry, strin
 		for i := range currentGroup.Groups {
 			if currentGroup.Groups[i].Name == groupName {
 				currentGroup = &currentGroup.Groups[i]
+				resolvedSegments = append(resolvedSegments, currentGroup.Name)
 				found = true
 				break
 			}
 		}
 		if !found {
-			return nil, "", fmt.Errorf("keepass provider: group not found: %s", groupName)
+			return nil, nil, "", "", fmt.Errorf("keepass provider: group not found: %s", groupName)
 		}
 	}
+
+	resolvedGroupPath := strings.Join(resolvedSegments, "/")
 
 	// Find the entry by title within the target group
 	for i := range currentGroup.Entries {
 		entry := &currentGroup.Entries[i]
 		if k.getEntryTitle(entry) == entryTitle {
-			return entry, attr, nil
+			return entry, currentGroup, resolvedGroupPath, attr, nil
 		}
 	}
 
-	return nil, "", fmt.Errorf("keepass provider: entry not found: %s", entryTitle)
+	return nil, nil, "", "", fmt.Errorf("keepass provider: entry not found: %s", entryTitle)
 }
 
 // GetSecret retrieves a secret from the decrypted KeePass database.
@@ -243,7 +248,7 @@ func (k *KeePassProvider) GetSecret(_ context.Context, location string) (string,
 		return "", errors.New("keepass provider: not initialized")
 	}
 
-	entry, attr, err := k.findEntry(location)
+	entry, parentGroup, groupPath, attr, err := k.findEntry(location)
 	if err != nil {
 		return "", err
 	}
@@ -270,21 +275,58 @@ func (k *KeePassProvider) GetSecret(_ context.Context, location string) (string,
 		}
 	}
 
+	// Virtual metadata attributes
+	switch strings.ToLower(attr) {
+	case "uuid":
+		return hex.EncodeToString(entry.UUID[:]), nil
+	case "group", "group_name":
+		if parentGroup != nil {
+			return parentGroup.Name, nil
+		}
+		return "", nil
+	case "group_uuid":
+		if parentGroup != nil {
+			return hex.EncodeToString(parentGroup.UUID[:]), nil
+		}
+		return "", nil
+	case "group_path":
+		return groupPath, nil
+	}
+
 	return "", fmt.Errorf("keepass provider: attribute %q is empty or not found for entry %q", attr, k.getEntryTitle(entry))
 }
 
 // GetEntry retrieves a complete structured entry by location.
-func (k *KeePassProvider) GetEntry(_ context.Context, location string) (Entry, error) {
+func (k *KeePassProvider) GetEntry(ctx context.Context, location string) (Entry, error) {
+	entry, _, err := k.GetEntryWithPath(ctx, location)
+	return entry, err
+}
+
+// GetEntryWithPath retrieves a structured entry along with its authoritative canonical path.
+func (k *KeePassProvider) GetEntryWithPath(_ context.Context, location string) (Entry, string, error) {
 	if k.db == nil {
-		return Entry{}, errors.New("keepass provider: not initialized")
+		return Entry{}, "", errors.New("keepass provider: not initialized")
 	}
 
-	entry, _, err := k.findEntry(location)
+	entry, parentGroup, groupPath, _, err := k.findEntry(location)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, "", err
 	}
 
-	return k.toEntry(entry)
+	title := k.getEntryTitle(entry)
+	var authoritativePath string
+	if groupPath == "" {
+		authoritativePath = title
+	} else {
+		authoritativePath = groupPath + "/" + title
+	}
+
+	e, err := k.toEntry(entry, parentGroup, groupPath)
+	if err != nil {
+		return Entry{}, "", err
+	}
+
+	return e, authoritativePath, nil
 }
 
 // GetEntryTitle retrieves only the title of an entry by location without loading attributes or binary attachments.
@@ -293,7 +335,7 @@ func (k *KeePassProvider) GetEntryTitle(_ context.Context, location string) (str
 		return "", errors.New("keepass provider: not initialized")
 	}
 
-	entry, _, err := k.findEntry(location)
+	entry, _, _, _, err := k.findEntry(location)
 	if err != nil {
 		return "", err
 	}
@@ -349,7 +391,7 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 				continue
 			}
 
-			e, err := k.toEntry(entry)
+			e, err := k.toEntry(entry, g, groupPath)
 			if err != nil {
 				return err
 			}
@@ -424,8 +466,8 @@ NextQueryTag:
 	return true
 }
 
-// toEntry converts a gokeepasslib.Entry into provider.Entry.
-func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) (Entry, error) {
+// toEntry converts a gokeepasslib.Entry into provider.Entry with UUID and parent group metadata.
+func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry, parentGroup *gokeepasslib.Group, groupPath string) (Entry, error) {
 	title := k.getEntryTitle(entry)
 	if k.resolveReferences {
 		var err error
@@ -456,9 +498,20 @@ func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry) (Entry, error) {
 		}
 	}
 
+	var groupInfo *GroupInfo
+	if parentGroup != nil {
+		groupInfo = &GroupInfo{
+			Name: parentGroup.Name,
+			UUID: hex.EncodeToString(parentGroup.UUID[:]),
+			Path: groupPath,
+		}
+	}
+
 	return Entry{
 		Title:      title,
 		Tags:       tags,
+		UUID:       hex.EncodeToString(entry.UUID[:]),
+		Group:      groupInfo,
 		Attributes: attrs,
 	}, nil
 }

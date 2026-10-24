@@ -78,8 +78,8 @@ func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, err
 }
 
 // lookupEntryAttributeRaw searches entry.Attributes first (exact match, then case-insensitive sorted),
-// and only falls back to Entry metadata (Title, Tags) if no attribute matches.
-// This ensures attributes named "Title" or "Tags" in entry.Attributes take precedence over Entry metadata.
+// and only falls back to Entry metadata (Title, Tags, UUID, Group) if no attribute matches.
+// This ensures attributes named "Title", "Tags", "UUID", etc. in entry.Attributes take precedence over Entry metadata.
 func lookupEntryAttributeRaw(entry Entry, attrName string) (canonicalKey string, rawVal any, found bool) {
 	if v, ok := entry.Attributes[attrName]; ok {
 		return attrName, v, true
@@ -99,6 +99,18 @@ func lookupEntryAttributeRaw(entry Entry, attrName string) (canonicalKey string,
 	}
 	if strings.EqualFold(attrName, "tags") {
 		return "Tags", entry.Tags, true
+	}
+	if strings.EqualFold(attrName, "uuid") && entry.UUID != "" {
+		return "uuid", entry.UUID, true
+	}
+	if (strings.EqualFold(attrName, "group") || strings.EqualFold(attrName, "group_name")) && entry.Group != nil && entry.Group.Name != "" {
+		return strings.ToLower(attrName), entry.Group.Name, true
+	}
+	if strings.EqualFold(attrName, "group_uuid") && entry.Group != nil && entry.Group.UUID != "" {
+		return "group_uuid", entry.Group.UUID, true
+	}
+	if strings.EqualFold(attrName, "group_path") && entry.Group != nil && entry.Group.Path != "" {
+		return "group_path", entry.Group.Path, true
 	}
 	return "", nil, false
 }

@@ -2850,3 +2850,378 @@ func TestDefaultFieldsFiltering(t *testing.T) {
 		}
 	})
 }
+
+func TestFilterEntryWithPath_UUIDAndGroup(t *testing.T) {
+	baseEntry := Entry{
+		Title: "Test Entry",
+		Tags:  []string{"prod", "web"},
+		UUID:  "12345678123456781234567812345678",
+		Group: &GroupInfo{
+			Name: "mygroup",
+			UUID: "87654321876543218765432187654321",
+			Path: "mygroup",
+		},
+		Attributes: map[string]any{
+			"username": "admin",
+		},
+	}
+
+	t.Run("exclude_fields uuid case-insensitive", func(t *testing.T) {
+		res := FilterEntryWithPath(baseEntry, "folder/entry", nil, nil, []string{"uuid"})
+		if res.UUID != "" {
+			t.Errorf("expected UUID stripped, got %q", res.UUID)
+		}
+		if res.Group == nil || res.Group.Name != "mygroup" {
+			t.Errorf("expected Group preserved, got %+v", res.Group)
+		}
+
+		resUpper := FilterEntryWithPath(baseEntry, "folder/entry", nil, nil, []string{"UUID"})
+		if resUpper.UUID != "" {
+			t.Errorf("expected UUID stripped by uppercase pattern, got %q", resUpper.UUID)
+		}
+	})
+
+	t.Run("exclude_fields group wildcard", func(t *testing.T) {
+		res := FilterEntryWithPath(baseEntry, "folder/entry", nil, nil, []string{"group*"})
+		if res.Group != nil {
+			t.Errorf("expected Group stripped, got %+v", res.Group)
+		}
+		if res.UUID != baseEntry.UUID {
+			t.Errorf("expected UUID preserved, got %q", res.UUID)
+		}
+	})
+
+	t.Run("include_fields uuid", func(t *testing.T) {
+		res := FilterEntryWithPath(baseEntry, "folder/entry", nil, []string{"uuid"}, nil)
+		if res.UUID != baseEntry.UUID {
+			t.Errorf("expected UUID preserved, got %q", res.UUID)
+		}
+		if res.Group != nil {
+			t.Errorf("expected Group stripped, got %+v", res.Group)
+		}
+		if res.Title != "" {
+			t.Errorf("expected Title stripped, got %q", res.Title)
+		}
+	})
+
+	t.Run("include_fields group", func(t *testing.T) {
+		res := FilterEntryWithPath(baseEntry, "folder/entry", nil, []string{"group"}, nil)
+		if res.Group == nil || res.Group.Name != "mygroup" {
+			t.Errorf("expected Group preserved, got %+v", res.Group)
+		}
+		if res.UUID != "" {
+			t.Errorf("expected UUID stripped, got %q", res.UUID)
+		}
+	})
+
+	t.Run("include takes precedence over wildcard exclude", func(t *testing.T) {
+		res := FilterEntryWithPath(baseEntry, "folder/entry", nil, []string{"uuid"}, []string{"*"})
+		if res.UUID != baseEntry.UUID {
+			t.Errorf("expected UUID preserved when included alongside '*', got %q", res.UUID)
+		}
+		if res.Group != nil {
+			t.Errorf("expected Group stripped by '*', got %+v", res.Group)
+		}
+	})
+}
+
+func TestFilteringProvider_KeePass_UUIDAndGroup(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	ctx := context.Background()
+	if err := keyring.Set("cloakenv", "provider/testkp_meta", "password123"); err != nil {
+		t.Fatalf("failed to set mock credentials: %v", err)
+	}
+
+	kp := NewKeePassProvider()
+	if err := kp.Initialize(ctx, ProviderConfig{
+		Settings: map[string]string{
+			"vault_path":  "../../testdata/testDB.kdbx",
+			"remote_name": "testkp_meta",
+		},
+	}); err != nil {
+		t.Fatalf("failed to initialize KeePass provider: %v", err)
+	}
+
+	t.Run("exclude_fields uuid blocks both :UUID and :uuid", func(t *testing.T) {
+		fp := NewFilteringProvider(kp, nil, []string{"uuid"})
+
+		_, errUpper := fp.GetSecret(ctx, "website/Test Website:UUID")
+		if errUpper == nil || !strings.Contains(errUpper.Error(), "excluded") {
+			t.Errorf("expected error for :UUID when uuid excluded, got: %v", errUpper)
+		}
+
+		_, errLower := fp.GetSecret(ctx, "website/Test Website:uuid")
+		if errLower == nil || !strings.Contains(errLower.Error(), "excluded") {
+			t.Errorf("expected error for :uuid when uuid excluded, got: %v", errLower)
+		}
+
+		grp, err := fp.GetSecret(ctx, "website/Test Website:group")
+		if err != nil || grp != "website" {
+			t.Errorf("expected group 'website', got %q, err: %v", grp, err)
+		}
+
+		sfp := fp.(SearchableProvider)
+		entry, err := sfp.GetEntry(ctx, "website/Test Website")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entry.UUID != "" {
+			t.Errorf("expected UUID stripped in GetEntry, got %q", entry.UUID)
+		}
+		if entry.Group == nil || entry.Group.Name != "website" {
+			t.Errorf("expected Group preserved in GetEntry, got %+v", entry.Group)
+		}
+
+		results, err := sfp.Search(ctx, SearchQuery{Title: "Test Website"})
+		if err != nil || len(results) == 0 {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if results[0].Entry.UUID != "" {
+			t.Errorf("expected UUID stripped in Search, got %q", results[0].Entry.UUID)
+		}
+		if results[0].Entry.Group == nil || results[0].Entry.Group.Name != "website" {
+			t.Errorf("expected Group preserved in Search, got %+v", results[0].Entry.Group)
+		}
+	})
+
+	t.Run("exclude_fields group wildcard blocks group selectors and strips Group", func(t *testing.T) {
+		fp := NewFilteringProvider(kp, nil, []string{"group*"})
+
+		selectors := []string{"group", "group_name", "group_uuid", "group_path"}
+		for _, sel := range selectors {
+			_, err := fp.GetSecret(ctx, "website/Test Website:"+sel)
+			if err == nil || !strings.Contains(err.Error(), "excluded") {
+				t.Errorf("expected error for :%s when group* excluded, got: %v", sel, err)
+			}
+		}
+
+		uVal, err := fp.GetSecret(ctx, "website/Test Website:uuid")
+		if err != nil || len(uVal) != 32 {
+			t.Errorf("expected 32-char hex UUID, got %q, err: %v", uVal, err)
+		}
+
+		sfp := fp.(SearchableProvider)
+		entry, err := sfp.GetEntry(ctx, "website/Test Website")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entry.Group != nil {
+			t.Errorf("expected Group stripped in GetEntry, got %+v", entry.Group)
+		}
+		if len(entry.UUID) != 32 {
+			t.Errorf("expected UUID preserved in GetEntry, got %q", entry.UUID)
+		}
+
+		results, err := sfp.Search(ctx, SearchQuery{Title: "Test Website"})
+		if err != nil || len(results) == 0 {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if results[0].Entry.Group != nil {
+			t.Errorf("expected Group stripped in Search, got %+v", results[0].Entry.Group)
+		}
+		if len(results[0].Entry.UUID) != 32 {
+			t.Errorf("expected UUID preserved in Search, got %q", results[0].Entry.UUID)
+		}
+	})
+
+	t.Run("include_fields uuid allows :UUID and :uuid, blocks group", func(t *testing.T) {
+		fp := NewFilteringProvider(kp, []string{"uuid"}, nil)
+
+		uVal, err := fp.GetSecret(ctx, "website/Test Website:UUID")
+		if err != nil || len(uVal) != 32 {
+			t.Errorf("expected :UUID allowed, got %q, err: %v", uVal, err)
+		}
+
+		_, errGrp := fp.GetSecret(ctx, "website/Test Website:group")
+		if errGrp == nil || !strings.Contains(errGrp.Error(), "excluded") {
+			t.Errorf("expected group excluded when only uuid included, got: %v", errGrp)
+		}
+
+		sfp := fp.(SearchableProvider)
+		entry, err := sfp.GetEntry(ctx, "website/Test Website")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if len(entry.UUID) != 32 {
+			t.Errorf("expected UUID preserved, got %q", entry.UUID)
+		}
+		if entry.Group != nil {
+			t.Errorf("expected Group stripped, got %+v", entry.Group)
+		}
+	})
+
+	t.Run("include_fields group_name allows :group_name", func(t *testing.T) {
+		fp := NewFilteringProvider(kp, []string{"group_name"}, nil)
+
+		grp, err := fp.GetSecret(ctx, "website/Test Website:group_name")
+		if err != nil || grp != "website" {
+			t.Errorf("expected group_name 'website', got %q, err: %v", grp, err)
+		}
+
+		_, errUUID := fp.GetSecret(ctx, "website/Test Website:uuid")
+		if errUUID == nil || !strings.Contains(errUUID.Error(), "excluded") {
+			t.Errorf("expected uuid excluded when only group_name included, got: %v", errUUID)
+		}
+	})
+}
+
+func TestFilteringProvider_Search_UUIDAndGroup(t *testing.T) {
+	ctx := context.Background()
+
+	newMockSearchProvider := func() *SearchProvider {
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Provider: "mock",
+					Vault:    "main_vault",
+					Path:     "services/api",
+					Entry: Entry{
+						Title: "API Service",
+						Tags:  []string{"prod"},
+						UUID:  "mock-entry-uuid-1234",
+						Group: &GroupInfo{
+							Name: "infra",
+							UUID: "mock-group-uuid-5678",
+							Path: "infra",
+						},
+						Attributes: map[string]any{
+							"api_key": "secret123",
+						},
+					},
+				},
+			}, nil
+		})
+		return sp
+	}
+
+	t.Run("exclude_fields uuid blocks :UUID and :uuid", func(t *testing.T) {
+		sp := newMockSearchProvider()
+		fp := NewFilteringProvider(sp, nil, []string{"uuid"})
+
+		_, errUpper := fp.GetSecret(ctx, "services/api:UUID")
+		if errUpper == nil || !strings.Contains(errUpper.Error(), "excluded") {
+			t.Errorf("expected error for :UUID when uuid excluded, got: %v", errUpper)
+		}
+
+		_, errLower := fp.GetSecret(ctx, "services/api:uuid")
+		if errLower == nil || !strings.Contains(errLower.Error(), "excluded") {
+			t.Errorf("expected error for :uuid when uuid excluded, got: %v", errLower)
+		}
+
+		grp, err := fp.GetSecret(ctx, "services/api:group")
+		if err != nil || grp != "infra" {
+			t.Errorf("expected group 'infra', got %q, err: %v", grp, err)
+		}
+
+		sfp := fp.(SearchableProvider)
+		entry, err := sfp.GetEntry(ctx, "services/api")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entry.UUID != "" {
+			t.Errorf("expected UUID stripped in GetEntry, got %q", entry.UUID)
+		}
+		if entry.Group == nil || entry.Group.Name != "infra" {
+			t.Errorf("expected Group preserved in GetEntry, got %+v", entry.Group)
+		}
+
+		results, err := sfp.Search(ctx, SearchQuery{})
+		if err != nil || len(results) == 0 {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if results[0].Entry.UUID != "" {
+			t.Errorf("expected UUID stripped in Search, got %q", results[0].Entry.UUID)
+		}
+		if results[0].Entry.Group == nil || results[0].Entry.Group.Name != "infra" {
+			t.Errorf("expected Group preserved in Search, got %+v", results[0].Entry.Group)
+		}
+	})
+
+	t.Run("exclude_fields group wildcard blocks group selectors and strips Group", func(t *testing.T) {
+		sp := newMockSearchProvider()
+		fp := NewFilteringProvider(sp, nil, []string{"group*"})
+
+		selectors := []string{"group", "group_name", "group_uuid", "group_path"}
+		for _, sel := range selectors {
+			_, err := fp.GetSecret(ctx, "services/api:"+sel)
+			if err == nil || !strings.Contains(err.Error(), "excluded") {
+				t.Errorf("expected error for :%s when group* excluded, got: %v", sel, err)
+			}
+		}
+
+		uVal, err := fp.GetSecret(ctx, "services/api:uuid")
+		if err != nil || uVal != "mock-entry-uuid-1234" {
+			t.Errorf("expected UUID allowed, got %q, err: %v", uVal, err)
+		}
+
+		sfp := fp.(SearchableProvider)
+		entry, err := sfp.GetEntry(ctx, "services/api")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entry.Group != nil {
+			t.Errorf("expected Group stripped in GetEntry, got %+v", entry.Group)
+		}
+		if entry.UUID != "mock-entry-uuid-1234" {
+			t.Errorf("expected UUID preserved in GetEntry, got %q", entry.UUID)
+		}
+
+		results, err := sfp.Search(ctx, SearchQuery{})
+		if err != nil || len(results) == 0 {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if results[0].Entry.Group != nil {
+			t.Errorf("expected Group stripped in Search, got %+v", results[0].Entry.Group)
+		}
+		if results[0].Entry.UUID != "mock-entry-uuid-1234" {
+			t.Errorf("expected UUID preserved in Search, got %q", results[0].Entry.UUID)
+		}
+	})
+
+	t.Run("include_fields uuid allows :UUID and :uuid, blocks group", func(t *testing.T) {
+		sp := newMockSearchProvider()
+		fp := NewFilteringProvider(sp, []string{"uuid"}, nil)
+
+		uVal, err := fp.GetSecret(ctx, "services/api:UUID")
+		if err != nil || uVal != "mock-entry-uuid-1234" {
+			t.Errorf("expected :UUID allowed, got %q, err: %v", uVal, err)
+		}
+
+		_, errGrp := fp.GetSecret(ctx, "services/api:group")
+		if errGrp == nil || !strings.Contains(errGrp.Error(), "excluded") {
+			t.Errorf("expected group excluded when only uuid included, got: %v", errGrp)
+		}
+
+		sfp := fp.(SearchableProvider)
+		entry, err := sfp.GetEntry(ctx, "services/api")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entry.UUID != "mock-entry-uuid-1234" {
+			t.Errorf("expected UUID preserved, got %q", entry.UUID)
+		}
+		if entry.Group != nil {
+			t.Errorf("expected Group stripped, got %+v", entry.Group)
+		}
+	})
+
+	t.Run("include_fields group_name allows :group_name", func(t *testing.T) {
+		sp := newMockSearchProvider()
+		fp := NewFilteringProvider(sp, []string{"group_name"}, nil)
+
+		grp, err := fp.GetSecret(ctx, "services/api:group_name")
+		if err != nil || grp != "infra" {
+			t.Errorf("expected group_name 'infra', got %q, err: %v", grp, err)
+		}
+
+		_, errUUID := fp.GetSecret(ctx, "services/api:uuid")
+		if errUUID == nil || !strings.Contains(errUUID.Error(), "excluded") {
+			t.Errorf("expected uuid excluded when only group_name included, got: %v", errUUID)
+		}
+	})
+}

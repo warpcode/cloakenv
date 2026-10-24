@@ -136,6 +136,8 @@ func (s *Searcher) filterResultsByExpression(ctx context.Context, expressionStr 
 				"title": "",
 				"tags":  []string{},
 				"path":  "",
+				"uuid":  "",
+				"group": map[string]any{"name": "", "uuid": "", "path": ""},
 			}
 
 			program, err = expr.Compile(expressionStr, expr.Env(sampleEnv), expr.AllowUndefinedVariables())
@@ -158,9 +160,18 @@ func (s *Searcher) filterResultsByExpression(ctx context.Context, expressionStr 
 		env["title"] = r.Entry.Title
 		env["tags"] = r.Entry.Tags
 		env["path"] = r.Path
+		env["uuid"] = r.Entry.UUID
+
+		groupMap := map[string]any{"name": "", "uuid": "", "path": ""}
+		if r.Entry.Group != nil {
+			groupMap["name"] = r.Entry.Group.Name
+			groupMap["uuid"] = r.Entry.Group.UUID
+			groupMap["path"] = r.Entry.Group.Path
+		}
+		env["group"] = groupMap
 
 		for k, v := range r.Entry.Attributes {
-			if k != "title" && k != "tags" && k != "path" {
+			if k != "title" && k != "tags" && k != "path" && (k != "uuid" || r.Entry.UUID == "") && (k != "group" || r.Entry.Group == nil) {
 				env[k] = v
 			}
 		}

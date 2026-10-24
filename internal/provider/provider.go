@@ -54,10 +54,19 @@ type ProviderConfig struct {
 	ResolveReferences bool
 }
 
+// GroupInfo captures hierarchical folder/group metadata for an entry.
+type GroupInfo struct {
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
+	UUID string `json:"uuid,omitempty" yaml:"uuid,omitempty"`
+	Path string `json:"path,omitempty" yaml:"path,omitempty"`
+}
+
 // Entry represents a multi-secret credential record with metadata.
 type Entry struct {
 	Title      string         `json:"title" yaml:"title"`
 	Tags       []string       `json:"tags" yaml:"tags"`
+	UUID       string         `json:"uuid,omitempty" yaml:"uuid,omitempty"`
+	Group      *GroupInfo     `json:"group,omitempty" yaml:"group,omitempty"`
 	Attributes map[string]any `json:"attributes" yaml:"attributes"`
 }
 
@@ -116,13 +125,15 @@ type FieldPolicy struct {
 // ApplyToEntry applies the composed field policy to an entry taking entryPath and rootPrefixes into account.
 // Include layers are evaluated successively to enforce set intersection across all constraining layers.
 // Attributes matching mapping rules are preserved and bypass include/exclude filters.
-// Entry Title and Tags are preserved so search queries and entry matching can evaluate metadata.
+// Entry Title, Tags, UUID, and Group are preserved so search queries and entry matching can evaluate metadata.
 func (fp *FieldPolicy) ApplyToEntry(entry Entry, entryPath string, rootPrefixes []string) Entry {
 	if fp == nil {
 		return entry
 	}
 	origTitle := entry.Title
 	origTags := entry.Tags
+	origUUID := entry.UUID
+	origGroup := entry.Group
 
 	if len(fp.MappingRules) == 0 {
 		current := entry
@@ -137,6 +148,8 @@ func (fp *FieldPolicy) ApplyToEntry(entry Entry, entryPath string, rootPrefixes 
 		}
 		current.Title = origTitle
 		current.Tags = origTags
+		current.UUID = origUUID
+		current.Group = origGroup
 		return current
 	}
 
@@ -172,6 +185,9 @@ func (fp *FieldPolicy) ApplyToEntry(entry Entry, entryPath string, rootPrefixes 
 
 	unmappedEntry := Entry{
 		Title:      origTitle,
+		Tags:       origTags,
+		UUID:       origUUID,
+		Group:      origGroup,
 		Attributes: unmappedAttrs,
 	}
 	if len(fp.IncludeLayers) > 0 {
@@ -195,6 +211,8 @@ func (fp *FieldPolicy) ApplyToEntry(entry Entry, entryPath string, rootPrefixes 
 	return Entry{
 		Title:      origTitle,
 		Tags:       origTags,
+		UUID:       origUUID,
+		Group:      origGroup,
 		Attributes: resultAttrs,
 	}
 }

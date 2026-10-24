@@ -1136,3 +1136,312 @@ func TestMappingProvider_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 		}
 	})
 }
+
+func TestFieldPolicy_ApplyToEntry_PreservesUUIDAndGroup(t *testing.T) {
+	origEntry := Entry{
+		Title: "Test Entry",
+		Tags:  []string{"prod", "web"},
+		UUID:  "orig-uuid-12345",
+		Group: &GroupInfo{
+			Name: "mygroup",
+			UUID: "group-uuid-67890",
+			Path: "mygroup",
+		},
+		Attributes: map[string]any{
+			"api_key": "secret_val",
+			"db_pass": "pass_val",
+		},
+	}
+
+	t.Run("without mapping rules", func(t *testing.T) {
+		fp := &FieldPolicy{
+			ExcludeFields: []string{"*"},
+		}
+		res := fp.ApplyToEntry(origEntry, "services/api", nil)
+		if res.UUID != "orig-uuid-12345" {
+			t.Errorf("expected UUID preserved, got %q", res.UUID)
+		}
+		if res.Group == nil || res.Group.Name != "mygroup" || res.Group.UUID != "group-uuid-67890" {
+			t.Errorf("expected Group preserved, got %+v", res.Group)
+		}
+		if res.Title != "Test Entry" {
+			t.Errorf("expected Title preserved, got %q", res.Title)
+		}
+		if len(res.Tags) != 2 {
+			t.Errorf("expected Tags preserved, got %v", res.Tags)
+		}
+		if len(res.Attributes) != 0 {
+			t.Errorf("expected Attributes filtered by '*', got %v", res.Attributes)
+		}
+	})
+
+	t.Run("with mapping rules", func(t *testing.T) {
+		rule := config.MappingRule{Match: "^api_(.*)", Key: "$1"}
+		if err := rule.Compile(); err != nil {
+			t.Fatalf("Compile failed: %v", err)
+		}
+		fp := &FieldPolicy{
+			MappingRules:  []config.MappingRule{rule},
+			ExcludeFields: []string{"*"},
+		}
+		res := fp.ApplyToEntry(origEntry, "services/api", nil)
+		if res.UUID != "orig-uuid-12345" {
+			t.Errorf("expected UUID preserved with mapping rules, got %q", res.UUID)
+		}
+		if res.Group == nil || res.Group.Name != "mygroup" || res.Group.UUID != "group-uuid-67890" {
+			t.Errorf("expected Group preserved with mapping rules, got %+v", res.Group)
+		}
+		if res.Title != "Test Entry" {
+			t.Errorf("expected Title preserved, got %q", res.Title)
+		}
+		if len(res.Tags) != 2 {
+			t.Errorf("expected Tags preserved, got %v", res.Tags)
+		}
+		// "api_key" matches mapping rule and should be preserved (bypassing exclusion)
+		if res.Attributes["api_key"] != "secret_val" {
+			t.Errorf("expected preserved 'api_key' in Attributes, got %v", res.Attributes)
+		}
+		if _, ok := res.Attributes["db_pass"]; ok {
+			t.Errorf("expected 'db_pass' excluded, got %v", res.Attributes["db_pass"])
+		}
+	})
+}
+
+func TestMappingProvider_UUIDAndGroup(t *testing.T) {
+	ctx := context.Background()
+
+	newMockProvider := func(attrs map[string]any) *SearchProvider {
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Provider: "mock",
+					Vault:    "main_vault",
+					Path:     "services/api",
+					Entry: Entry{
+						Title: "API Service",
+						Tags:  []string{"prod"},
+						UUID:  "mock-entry-uuid-1234",
+						Group: &GroupInfo{
+							Name: "infra",
+							UUID: "mock-group-uuid-5678",
+							Path: "infra",
+						},
+						Attributes: attrs,
+					},
+				},
+			}, nil
+		})
+		return sp
+	}
+
+	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
+	_ = rule.Compile()
+
+	t.Run("preserves UUID and Group when mapping rules active without filters", func(t *testing.T) {
+		sp := newMockProvider(map[string]any{"env:API_KEY": "sk-123"})
+		mp, err := NewMappingProvider(sp, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		smp := mp.(SearchableProvider)
+		entry, err := smp.GetEntry(ctx, "services/api")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entry.UUID != "mock-entry-uuid-1234" {
+			t.Errorf("expected UUID preserved, got %q", entry.UUID)
+		}
+		if entry.Group == nil || entry.Group.Name != "infra" {
+			t.Errorf("expected Group preserved, got %+v", entry.Group)
+		}
+
+		results, err := smp.Search(ctx, SearchQuery{})
+		if err != nil || len(results) == 0 {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if results[0].Entry.UUID != "mock-entry-uuid-1234" {
+			t.Errorf("expected UUID in search result, got %q", results[0].Entry.UUID)
+		}
+		if results[0].Entry.Group == nil || results[0].Entry.Group.Name != "infra" {
+			t.Errorf("expected Group in search result, got %+v", results[0].Entry.Group)
+		}
+	})
+
+	t.Run("strips UUID and Group when exclude_fields: [*] is set", func(t *testing.T) {
+		sp := newMockProvider(map[string]any{"env:API_KEY": "sk-123"})
+		fp := NewFilteringProvider(sp, nil, []string{"*"})
+		mp, err := NewMappingProvider(fp, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		smp := mp.(SearchableProvider)
+		entry, err := smp.GetEntry(ctx, "services/api")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entry.UUID != "" {
+			t.Errorf("expected UUID stripped, got %q", entry.UUID)
+		}
+		if entry.Group != nil {
+			t.Errorf("expected Group stripped, got %+v", entry.Group)
+		}
+
+		results, err := smp.Search(ctx, SearchQuery{})
+		if err != nil || len(results) == 0 {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if results[0].Entry.UUID != "" {
+			t.Errorf("expected UUID stripped in search, got %q", results[0].Entry.UUID)
+		}
+		if results[0].Entry.Group != nil {
+			t.Errorf("expected Group stripped in search, got %+v", results[0].Entry.Group)
+		}
+	})
+
+	t.Run("strips UUID and Group when exclude_fields: [uuid, group] is set", func(t *testing.T) {
+		sp := newMockProvider(map[string]any{"env:API_KEY": "sk-123"})
+		fp := NewFilteringProvider(sp, nil, []string{"uuid", "group*"})
+		mp, err := NewMappingProvider(fp, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		smp := mp.(SearchableProvider)
+		entry, err := smp.GetEntry(ctx, "services/api")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entry.UUID != "" {
+			t.Errorf("expected UUID stripped, got %q", entry.UUID)
+		}
+		if entry.Group != nil {
+			t.Errorf("expected Group stripped, got %+v", entry.Group)
+		}
+
+		results, err := smp.Search(ctx, SearchQuery{})
+		if err != nil || len(results) == 0 {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if results[0].Entry.UUID != "" {
+			t.Errorf("expected UUID stripped in search, got %q", results[0].Entry.UUID)
+		}
+		if results[0].Entry.Group != nil {
+			t.Errorf("expected Group stripped in search, got %+v", results[0].Entry.Group)
+		}
+	})
+
+	t.Run("preserves UUID and Group when mapped or included", func(t *testing.T) {
+		sp := newMockProvider(map[string]any{"env:API_KEY": "sk-123"})
+		ruleUUID := config.MappingRule{Match: "^uuid$", Key: "uuid"}
+		ruleGroup := config.MappingRule{Match: "^group$", Key: "group"}
+
+		// Mapped default fields show even when excluded by wildcard
+		fp := NewFilteringProvider(sp, nil, []string{"*"})
+		mp, err := NewMappingProvider(fp, []config.MappingRule{ruleUUID, ruleGroup, rule})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		smp := mp.(SearchableProvider)
+		entry, err := smp.GetEntry(ctx, "services/api")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entry.UUID != "mock-entry-uuid-1234" {
+			t.Errorf("expected mapped UUID preserved, got %q", entry.UUID)
+		}
+		if entry.Group == nil || entry.Group.Name != "infra" {
+			t.Errorf("expected mapped Group preserved, got %+v", entry.Group)
+		}
+
+		// Included default fields show when include_fields configured
+		fp2 := NewFilteringProvider(sp, []string{"uuid", "group"}, []string{"*"})
+		mp2, err := NewMappingProvider(fp2, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+		smp2 := mp2.(SearchableProvider)
+		entry2, err := smp2.GetEntry(ctx, "services/api")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entry2.UUID != "mock-entry-uuid-1234" {
+			t.Errorf("expected included UUID preserved, got %q", entry2.UUID)
+		}
+		if entry2.Group == nil || entry2.Group.Name != "infra" {
+			t.Errorf("expected included Group preserved, got %+v", entry2.Group)
+		}
+	})
+
+	t.Run("resolves :uuid, :group, :group_name, :group_uuid, :group_path via GetSecret", func(t *testing.T) {
+		sp := newMockProvider(map[string]any{"env:API_KEY": "sk-123"})
+		mp, err := NewMappingProvider(sp, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		tests := []struct {
+			selector string
+			want     string
+		}{
+			{"services/api:uuid", "mock-entry-uuid-1234"},
+			{"services/api:UUID", "mock-entry-uuid-1234"},
+			{"services/api:group", "infra"},
+			{"services/api:group_name", "infra"},
+			{"services/api:group_uuid", "mock-group-uuid-5678"},
+			{"services/api:group_path", "infra"},
+		}
+
+		for _, tt := range tests {
+			got, err := mp.GetSecret(ctx, tt.selector)
+			if err != nil {
+				t.Errorf("GetSecret(%q) failed: %v", tt.selector, err)
+			}
+			if got != tt.want {
+				t.Errorf("GetSecret(%q) = %q, want %q", tt.selector, got, tt.want)
+			}
+		}
+	})
+
+	t.Run("custom UUID attribute takes precedence over entry.UUID case-insensitively", func(t *testing.T) {
+		// Custom attribute with uppercase key "UUID"
+		spUpper := newMockProvider(map[string]any{
+			"UUID": "custom-override-upper",
+		})
+		mpUpper, err := NewMappingProvider(spUpper, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		// Both :UUID and :uuid must return the custom attribute, NOT entry.UUID ("mock-entry-uuid-1234")
+		valUpper1, err := mpUpper.GetSecret(ctx, "services/api:UUID")
+		if err != nil || valUpper1 != "custom-override-upper" {
+			t.Errorf("GetSecret :UUID = %q, want 'custom-override-upper', err: %v", valUpper1, err)
+		}
+		valLower1, err := mpUpper.GetSecret(ctx, "services/api:uuid")
+		if err != nil || valLower1 != "custom-override-upper" {
+			t.Errorf("GetSecret :uuid = %q, want 'custom-override-upper', err: %v", valLower1, err)
+		}
+
+		// Custom attribute with lowercase key "uuid"
+		spLower := newMockProvider(map[string]any{
+			"uuid": "custom-override-lower",
+		})
+		mpLower, err := NewMappingProvider(spLower, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		valUpper2, err := mpLower.GetSecret(ctx, "services/api:UUID")
+		if err != nil || valUpper2 != "custom-override-lower" {
+			t.Errorf("GetSecret :UUID = %q, want 'custom-override-lower', err: %v", valUpper2, err)
+		}
+		valLower2, err := mpLower.GetSecret(ctx, "services/api:uuid")
+		if err != nil || valLower2 != "custom-override-lower" {
+			t.Errorf("GetSecret :uuid = %q, want 'custom-override-lower', err: %v", valLower2, err)
+		}
+	})
+}

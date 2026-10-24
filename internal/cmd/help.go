@@ -144,9 +144,10 @@ func PrintShowHelp() {
 
 Description:
   Retrieve and display a structured entry, or merge multiple entries/explicit mapping values.
+  KeePass entries expose virtual metadata attributes (:UUID/:uuid, :group/:group_name, :group_uuid, :group_path) and fields (uuid, group, group_name, group_uuid, group_path).
 
 Arguments:
-  <entry-uri>     The structured entry URI to retrieve
+  <entry-uri>     The structured entry URI to retrieve (e.g. keepass://website/Test Website, work://website/Test Website:UUID)
 
 Flags:
   -m entry-uri    Merge attributes from an entry. Can target a single attribute using :attribute (repeatable)
@@ -162,14 +163,14 @@ func PrintSearchHelp() {
   cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]
 
 Description:
-  Search for structured entries matching the query.
+  Search for structured entries matching the query (supporting query expressions on title, tags, uuid, group.name, group.path, etc.).
 
 Arguments:
-  [query]         Optional query string to filter entries by title, tags, or fields
+  [query]         Optional query string to filter entries by title, tags, uuid, group, or fields
 
 Flags:
   --vault vault   Scope search to a specific vault (repeatable)
-  -i KEY          Select output fields/keys to return (repeatable)
+  -i KEY          Select output fields/keys to return (e.g. uuid, group_name, group_uuid, group_path) (repeatable)
   -o, --output    Output format: yaml or json (default: yaml)`)
 }
 

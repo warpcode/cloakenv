@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/expr-lang/expr/ast"
+	"github.com/zalando/go-keyring"
 
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/provider"
@@ -759,4 +760,52 @@ func TestSearcher_OverlappingIncludeLayers(t *testing.T) {
 	if _, ok := filtered.Attributes["something"]; ok {
 		t.Errorf("expected something to be excluded")
 	}
+}
+
+func TestSearcher_UUIDAndGroupExpression(t *testing.T) {
+	keyring.MockInit()
+	if err := keyring.Set("cloakenv", "provider/testdb", "password123"); err != nil {
+		t.Fatalf("failed to set mock credentials: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+	t.Setenv("XDG_CACHE_HOME", tempDir)
+	t.Setenv("LocalAppData", tempDir)
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"testdb": {
+				Provider:  "keepass",
+				VaultPath: "../../testdata/testDB.kdbx",
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	ctx := context.Background()
+
+	t.Run("SearchByUUID", func(t *testing.T) {
+		results, err := orch.Search(ctx, `uuid != ""`, nil)
+		if err != nil {
+			t.Fatalf("Search by uuid failed: %v", err)
+		}
+		if len(results) == 0 {
+			t.Errorf("expected results matching uuid != \"\", got 0")
+		}
+	})
+
+	t.Run("SearchByGroup", func(t *testing.T) {
+		results, err := orch.Search(ctx, `group.name == "website"`, nil)
+		if err != nil {
+			t.Fatalf("Search by group.name failed: %v", err)
+		}
+		if len(results) == 0 {
+			t.Errorf("expected results matching group.name == \"website\", got 0")
+		}
+	})
 }

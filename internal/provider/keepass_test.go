@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tobischo/gokeepasslib/v3"
 	"github.com/zalando/go-keyring"
 
 	"github.com/warpcode/cloakenv/internal/utils"
@@ -146,6 +147,36 @@ func TestKeePassProvider(t *testing.T) {
 				}
 			})
 		}
+
+		// Virtual metadata attribute tests
+		entry, err := kp.GetEntry(ctx, "website/Test Website")
+		if err != nil {
+			t.Fatalf("failed to retrieve entry for GetSecret test: %v", err)
+		}
+		uuidVal, err := kp.GetSecret(ctx, "website/Test Website:UUID")
+		if err != nil || uuidVal != entry.UUID {
+			t.Errorf("GetSecret :UUID = %q, want %q, err: %v", uuidVal, entry.UUID, err)
+		}
+		uuidLowerVal, err := kp.GetSecret(ctx, "website/Test Website:uuid")
+		if err != nil || uuidLowerVal != entry.UUID {
+			t.Errorf("GetSecret :uuid = %q, want %q, err: %v", uuidLowerVal, entry.UUID, err)
+		}
+		grpVal, err := kp.GetSecret(ctx, "website/Test Website:group")
+		if err != nil || grpVal != "website" {
+			t.Errorf("GetSecret :group = %q, want 'website', err: %v", grpVal, err)
+		}
+		grpNameVal, err := kp.GetSecret(ctx, "website/Test Website:group_name")
+		if err != nil || grpNameVal != "website" {
+			t.Errorf("GetSecret :group_name = %q, want 'website', err: %v", grpNameVal, err)
+		}
+		grpUUIDVal, err := kp.GetSecret(ctx, "website/Test Website:group_uuid")
+		if err != nil || grpUUIDVal != entry.Group.UUID {
+			t.Errorf("GetSecret :group_uuid = %q, want %q, err: %v", grpUUIDVal, entry.Group.UUID, err)
+		}
+		grpPathVal, err := kp.GetSecret(ctx, "website/Test Website:group_path")
+		if err != nil || grpPathVal != "website" {
+			t.Errorf("GetSecret :group_path = %q, want 'website', err: %v", grpPathVal, err)
+		}
 	})
 
 	t.Run("GetEntry", func(t *testing.T) {
@@ -155,6 +186,21 @@ func TestKeePassProvider(t *testing.T) {
 		}
 		if entry.Title != "Test Website" {
 			t.Errorf("expected title 'Test Website', got %q", entry.Title)
+		}
+		if len(entry.UUID) != 32 {
+			t.Errorf("expected 32-character hex UUID, got %q", entry.UUID)
+		}
+		if entry.Group == nil {
+			t.Fatalf("expected non-nil Group")
+		}
+		if entry.Group.Name != "website" {
+			t.Errorf("expected group name 'website', got %q", entry.Group.Name)
+		}
+		if entry.Group.Path != "website" {
+			t.Errorf("expected group path 'website', got %q", entry.Group.Path)
+		}
+		if len(entry.Group.UUID) != 32 {
+			t.Errorf("expected 32-character hex Group UUID, got %q", entry.Group.UUID)
 		}
 	})
 
@@ -205,6 +251,14 @@ func TestKeePassProvider(t *testing.T) {
 				}
 				if tc.wantFirstPath != "" && results[0].Path != tc.wantFirstPath {
 					t.Errorf("expected path %q, got %q", tc.wantFirstPath, results[0].Path)
+				}
+				if tc.wantCount > 0 {
+					if len(results[0].Entry.UUID) != 32 {
+						t.Errorf("expected 32-character hex UUID in search result, got %q", results[0].Entry.UUID)
+					}
+					if results[0].Entry.Group == nil || results[0].Entry.Group.Name == "" {
+						t.Errorf("expected populated Group in search result, got %+v", results[0].Entry.Group)
+					}
 				}
 			})
 		}
@@ -378,5 +432,74 @@ func TestMatchEntryTagsAgreesWithParseTagString(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestKeePassProvider_CustomUUIDAttributePrecedence(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	ctx := context.Background()
+	if err := keyring.Set("cloakenv", "provider/testdb_custom_uuid", "password123"); err != nil {
+		t.Fatalf("failed to set mock credentials: %v", err)
+	}
+
+	kp := NewKeePassProvider()
+	cfg := ProviderConfig{
+		Settings: map[string]string{
+			"vault_path":  "../../testdata/testDB.kdbx",
+			"remote_name": "testdb_custom_uuid",
+		},
+	}
+	if err := kp.Initialize(ctx, cfg); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	entry, _, _, _, err := kp.findEntry("website/Test Website")
+	if err != nil {
+		t.Fatalf("failed to find entry: %v", err)
+	}
+	origValues := entry.Values
+	defer func() {
+		entry.Values = origValues
+	}()
+
+	entry.Values = append(entry.Values, gokeepasslib.ValueData{
+		Key:   "UUID",
+		Value: gokeepasslib.V{Content: "custom-override-uuid"},
+	})
+
+	// GetSecret for both :UUID and :uuid returns "custom-override-uuid" rather than entry XML UUID
+	valUpper, err := kp.GetSecret(ctx, "website/Test Website:UUID")
+	if err != nil {
+		t.Fatalf("GetSecret :UUID failed: %v", err)
+	}
+	if valUpper != "custom-override-uuid" {
+		t.Errorf("GetSecret :UUID = %q, want 'custom-override-uuid'", valUpper)
+	}
+
+	valLower, err := kp.GetSecret(ctx, "website/Test Website:uuid")
+	if err != nil {
+		t.Fatalf("GetSecret :uuid failed: %v", err)
+	}
+	if valLower != "custom-override-uuid" {
+		t.Errorf("GetSecret :uuid = %q, want 'custom-override-uuid'", valLower)
+	}
+
+	// GetEntry still populates entry.UUID with 32-char hex XML UUID and entry.Attributes["UUID"] with "custom-override-uuid"
+	e, err := kp.GetEntry(ctx, "website/Test Website")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+	if len(e.UUID) != 32 {
+		t.Errorf("expected 32-char hex XML UUID in entry.UUID, got %q", e.UUID)
+	}
+	if e.UUID == "custom-override-uuid" {
+		t.Errorf("e.UUID should be XML UUID, not custom attribute")
+	}
+	if e.Attributes["UUID"] != "custom-override-uuid" {
+		t.Errorf("e.Attributes[\"UUID\"] = %v, want 'custom-override-uuid'", e.Attributes["UUID"])
 	}
 }

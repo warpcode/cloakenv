@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zalando/go-keyring"
+
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/engine"
 )
@@ -379,4 +381,72 @@ func TestBuildMergedEntry(t *testing.T) {
 			t.Errorf("expected error when resolving invalid explicit mapping, got nil")
 		}
 	})
+}
+
+func TestShow_KeePassMetadataOutput(t *testing.T) {
+	keyring.MockInit()
+	if err := keyring.Set("cloakenv", "provider/testdb", "password123"); err != nil {
+		t.Fatalf("failed to set mock credentials: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+	t.Setenv("XDG_CACHE_HOME", tempDir)
+	t.Setenv("LocalAppData", tempDir)
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"testdb": {
+				Provider:  "keepass",
+				VaultPath: "../../testdata/testDB.kdbx",
+			},
+		},
+	}
+
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	// Test -o json output includes uuid and group
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	exitCode := Show([]string{"testdb://website/Test Website", "-o", "json"}, cfg)
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("failed to read from pipe: %v", err)
+	}
+
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", exitCode)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, "uuid") || !strings.Contains(output, "group") {
+		t.Errorf("expected json output to include uuid and group, got: %s", output)
+	}
+
+	// Test -o keys output does NOT include uuid or group
+	r2, w2, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w2
+
+	exitCode = Show([]string{"testdb://website/Test Website", "-o", "keys"}, cfg)
+	_ = w2.Close()
+
+	var buf2 bytes.Buffer
+	if _, err := io.Copy(&buf2, r2); err != nil {
+		t.Fatalf("failed to read from pipe: %v", err)
+	}
+
+	keysOutput := buf2.String()
+	if strings.Contains(keysOutput, "uuid") || strings.Contains(keysOutput, "group") {
+		t.Errorf("expected keys output to NOT include uuid or group, got: %s", keysOutput)
+	}
 }

@@ -462,12 +462,18 @@ func FilterEntryWithPath(entry Entry, entryPath string, rootPrefixes []string, i
 
 	originalTitle := entry.Title
 
-	// Filter entry.Title and entry.Tags against field policies
+	// Filter entry.Title, entry.Tags, entry.UUID, and entry.Group against field policies
 	if !isDefaultFieldAllowed("title", entryPath, rootPrefixes, originalTitle, includeFields, excludeFields) {
 		entry.Title = ""
 	}
 	if !isDefaultFieldAllowed("tags", entryPath, rootPrefixes, originalTitle, includeFields, excludeFields) {
 		entry.Tags = nil
+	}
+	if !isDefaultFieldAllowed("uuid", entryPath, rootPrefixes, originalTitle, includeFields, excludeFields) {
+		entry.UUID = ""
+	}
+	if !isDefaultFieldAllowed("group", entryPath, rootPrefixes, originalTitle, includeFields, excludeFields) {
+		entry.Group = nil
 	}
 
 	var prefixes []string
@@ -837,8 +843,18 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 			}
 		}
 
-		if !isFieldAuthorized(leafAttr, candidates, f.includeFields, f.excludeFields) {
-			return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
+		switch strings.ToLower(leafAttr) {
+		case "uuid", "group", "group_name", "group_uuid", "group_path":
+			if !isDefaultFieldAllowed(strings.ToLower(leafAttr), entryPath, nil, entryTitle, f.includeFields, f.excludeFields) {
+				return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
+			}
+			if len(f.includeFields) == 0 && !isFieldAuthorized(leafAttr, candidates, nil, f.excludeFields) {
+				return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
+			}
+		default:
+			if !isFieldAuthorized(leafAttr, candidates, f.includeFields, f.excludeFields) {
+				return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
+			}
 		}
 		return f.underlying.GetSecret(ctx, location)
 
@@ -983,7 +999,7 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		}
 
 		switch strings.ToLower(canonicalField) {
-		case "title", "tags", "path", "vault", "provider":
+		case "title", "tags", "path", "vault", "provider", "uuid", "group", "group_uuid", "group_path", "group_name":
 			if !isDefaultFieldAllowed(strings.ToLower(canonicalField), resultPath, rootPrefixes, entryTitle, f.includeFields, f.excludeFields) {
 				return "", fmt.Errorf("field %q is excluded by vault configuration", canonicalField)
 			}
@@ -1037,8 +1053,15 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 			}
 		}
 
-		if !isFieldAuthorized(leafCanonical, candidates, f.includeFields, f.excludeFields) {
-			return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
+		switch strings.ToLower(canonicalField) {
+		case "title", "tags", "path", "vault", "provider", "uuid", "group", "group_uuid", "group_path", "group_name":
+			if len(f.includeFields) == 0 && !isFieldAuthorized(leafCanonical, candidates, nil, f.excludeFields) {
+				return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
+			}
+		default:
+			if !isFieldAuthorized(leafCanonical, candidates, f.includeFields, f.excludeFields) {
+				return "", fmt.Errorf("field %q is excluded by vault configuration", leafCanonical)
+			}
 		}
 
 		var prefixes []string
