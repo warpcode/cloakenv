@@ -106,8 +106,68 @@ func TestShow_KeysFormattingBehavior(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(actualOutput), "\n")
 
 	expectedKeys := map[string]bool{
-		"DB_USER":              true,
+		"db-user":                true,
+		"api--key":               true,
+		"multiple___underscores": true,
+	}
+
+	if len(lines) != len(expectedKeys) {
+		t.Fatalf("expected %d keys, got %d. Output: %q", len(expectedKeys), len(lines), actualOutput)
+	}
+
+	for _, line := range lines {
+		if !expectedKeys[line] {
+			t.Errorf("unexpected formatted key in output: %q", line)
+		}
+	}
+}
+
+func TestShow_VaultKeyFormat(t *testing.T) {
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	// Custom vault with key_format: "env"
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"env_vault": {
+				Provider:  "custom_vault",
+				KeyFormat: "env",
+				Entities: map[string]map[string]any{
+					"item": {
+						"api-key":                "val1",
+						"database.user_name":     "val2",
+						"multiple___underscores": "val3",
+					},
+				},
+			},
+		},
+	}
+
+	exitCode := Show([]string{"env_vault://item", "-o", "keys"}, cfg)
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("failed to read from pipe: %v", err)
+	}
+
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", exitCode)
+	}
+
+	actualOutput := buf.String()
+	actualOutput = strings.ReplaceAll(actualOutput, "\r\n", "\n")
+	lines := strings.Split(strings.TrimSpace(actualOutput), "\n")
+
+	expectedKeys := map[string]bool{
 		"API_KEY":              true,
+		"DATABASE_USER_NAME":   true,
 		"MULTIPLE_UNDERSCORES": true,
 	}
 

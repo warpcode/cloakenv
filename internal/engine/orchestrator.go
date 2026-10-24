@@ -165,6 +165,13 @@ func validateVaultConfig(vaultName string, vault config.VaultConfig, cfg *config
 		return fmt.Errorf("invalid config: vault name %q conflicts with reserved scheme", vaultName)
 	}
 
+	switch vault.KeyFormat {
+	case "", "none", "env", "snake", "kebab":
+		// valid
+	default:
+		return fmt.Errorf("invalid config for vault %q: invalid key_format %q (must be one of: none, env, snake, kebab)", vaultName, vault.KeyFormat)
+	}
+
 	// If resolve_values is set, ask the provider whether it supports it.
 	if vault.ResolveValues {
 		p, err := newBareProvider(vault.Provider)

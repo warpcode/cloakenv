@@ -166,6 +166,11 @@ type VaultConfig struct {
 	// Mapping defines regex-based field key renaming rules for entry attributes in this vault.
 	Mapping []MappingRule `yaml:"mapping,omitempty"`
 
+	// KeyFormat specifies the key transformation format for attributes returned by this vault.
+	// Options: "none" (default, passes original key name), "env" (UPPERCASE_WITH_UNDERSCORES),
+	// "snake" (lowercase_with_underscores), "kebab" (lowercase-with-hyphens).
+	KeyFormat string `yaml:"key_format,omitempty"`
+
 	// SourceVaults specifies the list of vault names to query for search provider vaults.
 	SourceVaults []string `yaml:"source_vaults"`
 
@@ -236,6 +241,12 @@ func Load(path string) (*Config, error) {
 			if err := vault.Mapping[i].Compile(); err != nil {
 				return nil, fmt.Errorf("vault %q: invalid mapping match regex %q: %w", vaultName, vault.Mapping[i].Match, err)
 			}
+		}
+		switch vault.KeyFormat {
+		case "", "none", "env", "snake", "kebab":
+			// valid key format
+		default:
+			return nil, fmt.Errorf("vault %q: invalid key_format %q (must be one of: none, env, snake, kebab)", vaultName, vault.KeyFormat)
 		}
 		cfg.Vaults[vaultName] = vault
 	}

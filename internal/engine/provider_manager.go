@@ -177,6 +177,10 @@ func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName stri
 		}
 	}
 
+	if vault.KeyFormat != "" && vault.KeyFormat != "none" {
+		p = provider.NewKeyFormatProvider(p, vault.KeyFormat)
+	}
+
 	return p, nil
 }
 

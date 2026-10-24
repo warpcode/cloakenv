@@ -273,9 +273,9 @@ func TestFlattenSearchResults(t *testing.T) {
 					"path":     "path/to/entry",
 					"title":    "My Title",
 					"tags":     []string{"tag1", "tag2"},
-					"PASSWORD": "secret_password",
+					"password": "secret_password",
 					"USERNAME": "admin",
-					"SOME_KEY": "value",
+					"some-key": "value",
 				},
 			},
 		},
@@ -299,9 +299,9 @@ func TestFlattenSearchResults(t *testing.T) {
 			selectedKeys: []string{"password", "username", "some-key"},
 			want: []map[string]any{
 				{
-					"PASSWORD": "secret_password",
+					"password": "secret_password",
 					"USERNAME": "admin",
-					"SOME_KEY": "value",
+					"some-key": "value",
 				},
 			},
 		},
@@ -311,7 +311,7 @@ func TestFlattenSearchResults(t *testing.T) {
 			selectedKeys: []string{"nonexistent"},
 			want: []map[string]any{
 				{
-					"NONEXISTENT": nil,
+					"nonexistent": nil,
 				},
 			},
 		},
@@ -530,11 +530,11 @@ func TestSearch(t *testing.T) {
 		}
 		output := buf.String()
 
-		if !strings.Contains(output, "title") || !strings.Contains(output, "USERNAME") {
-			t.Errorf("expected output to contain selected keys 'title' and 'USERNAME', got %s", output)
+		if !strings.Contains(output, "title") || !strings.Contains(output, "username") {
+			t.Errorf("expected output to contain selected keys 'title' and 'username', got %s", output)
 		}
-		if strings.Contains(output, "BIT_STRENGTH") {
-			t.Errorf("did not expect output to contain 'BIT_STRENGTH', got %s", output)
+		if strings.Contains(output, "bit_strength") {
+			t.Errorf("did not expect output to contain 'bit_strength', got %s", output)
 		}
 	})
 
@@ -572,6 +572,43 @@ func TestSearch(t *testing.T) {
 
 		if !strings.Contains(output, "title: Production SSH Key") {
 			t.Errorf("expected yaml output to contain 'title: Production SSH Key', got %s", output)
+		}
+	})
+
+	t.Run("VaultKeyFormatEnv", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		defer func() { os.Stdout = oldStdout }()
+		defer func() { _ = w.Close() }()
+		os.Stdout = w
+
+		args := []string{"title == 'Production SSH Key'", "-o", "json"}
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"my_yaml": {
+					Provider:  "yaml",
+					VaultPath: "../../testdata/test_entries.yaml",
+					KeyFormat: "env",
+				},
+			},
+		}
+		exitCode := Search(args, cfg)
+		if exitCode != 0 {
+			t.Errorf("expected exit code 0, got %d", exitCode)
+		}
+
+		var buf bytes.Buffer
+		_ = w.Close()
+		if _, err := io.Copy(&buf, r); err != nil {
+			t.Fatalf("failed to copy: %v", err)
+		}
+		output := buf.String()
+
+		if !strings.Contains(output, "USERNAME") || !strings.Contains(output, "BIT_STRENGTH") {
+			t.Errorf("expected env formatted keys USERNAME and BIT_STRENGTH, got %s", output)
 		}
 	})
 }

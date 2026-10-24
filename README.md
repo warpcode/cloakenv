@@ -199,17 +199,22 @@ cloakenv run -e DATABASE_URL="postgres://${env://DB_USER}:${keyring://pg/passwor
 
 ---
 
-### Automatic Environment Key Formatting
+### Vault Key Formatting (`key_format`)
 
-When using `-m` (entry merge) or `-e` (explicit mapping), `cloakenv` normalizes attribute and key names to standard uppercase environment variable format:
-- Lowercase characters become **UPPERCASE**.
-- Non-alphanumeric characters (spaces, hyphens, dots, multiple underscores) become a **single underscore (`_`)**.
+By default (`none`), `cloakenv` passes through original attribute key names unmodified as stored in the vault backend.
 
-| Original Attribute Name | Exported Environment Variable |
-|---|---|
-| `api-key` | `API_KEY` |
-| `database.user_name` | `DATABASE_USER_NAME` |
-| `custom---token` | `CUSTOM_TOKEN` |
+Per vault, you can configure `key_format` in `config.yaml` to standardize attribute keys:
+- **`none`** (default): Passes through the original key name unmodified.
+- **`env`**: Uppercase with non-alphanumeric runs collapsed to a single underscore (`_`).
+- **`snake`**: Lowercase with non-alphanumeric runs collapsed to a single underscore (`_`).
+- **`kebab`**: Lowercase with non-alphanumeric runs collapsed to a single hyphen (`-`).
+
+| Original Attribute Name | `none` (Default) | `env` | `snake` | `kebab` |
+|---|---|---|---|---|
+| `api-key` | `api-key` | `API_KEY` | `api_key` | `api-key` |
+| `database.user_name` | `database.user_name` | `DATABASE_USER_NAME` | `database_user_name` | `database-user-name` |
+| `UserName` | `UserName` | `USERNAME` | `username` | `username` |
+| `custom---token` | `custom---token` | `CUSTOM_TOKEN` | `custom_token` | `custom-token` |
 
 ---
 
@@ -648,7 +653,22 @@ vaults:
         key: "\\1"
 ```
 
-#### 7. KeePass Placeholders & Cross-Entry References (`resolve_references`)
+#### 7. Key Formatting (`key_format`)
+Supported across all configured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`). Transforms entry attribute keys to a consistent casing and separator format:
+- `none` (default): Passes through the original key name unmodified.
+- `env`: UPPERCASE_WITH_UNDERSCORES.
+- `snake`: lowercase_with_underscores.
+- `kebab`: lowercase-with-hyphens.
+- Example config:
+```yaml
+vaults:
+  snake_vault:
+    provider: "keepass"
+    vault_path: "~/secrets/work_vault.kdbx"
+    key_format: "snake"
+```
+
+#### 8. KeePass Placeholders & Cross-Entry References (`resolve_references`)
 Supported on `keepass` vaults when `resolve_references: true` is configured in `config.yaml`. Allows KeePass entries to dynamically reference fields within the same entry, calculate timestamps, perform text transformations, parse URL components, or pull attributes from other entries across the database.
 
 ##### Enabling Placeholder Resolution
@@ -943,10 +963,11 @@ vaults:
     source_vaults: ["work"]
     query: '"service:openrouter" in tags'
 
-  # Vault with Regex Field Key Mapping
+  # Vault with Regex Field Key Mapping & Key Formatting
   mapped_vault:
     provider: "keepass"
     vault_path: "~/secrets/work.kdbx"
+    key_format: "env"
     mapping:
       - match: "env:(.*)"
         key: "\\1"

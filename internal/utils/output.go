@@ -32,28 +32,52 @@ func RenderOutput(data any, asJSON bool, errorLabel string) error {
 	return nil
 }
 
-// FormatKey formats a key to THIS_KEY format: uppercase with non-alphanumeric
-// runs replaced by a single underscore.
-func FormatKey(key string) string {
-	if key == "" {
-		return ""
+// Key format identifiers.
+const (
+	KeyFormatNone  = "none"
+	KeyFormatEnv   = "env"
+	KeyFormatSnake = "snake"
+	KeyFormatKebab = "kebab"
+)
+
+// FormatKeyWithFormat transforms key according to the specified format:
+// - "none" (default): returns key unmodified
+// - "env": uppercase with non-alphanumeric runs replaced by a single underscore
+// - "snake": lowercase with non-alphanumeric runs replaced by a single underscore
+// - "kebab": lowercase with non-alphanumeric runs replaced by a single hyphen
+func FormatKeyWithFormat(key string, format string) string {
+	if key == "" || format == "" || format == KeyFormatNone {
+		return key
+	}
+
+	sep := byte('_')
+	toUpper := false
+	if format == KeyFormatEnv {
+		toUpper = true
+	} else if format == KeyFormatKebab {
+		sep = '-'
 	}
 
 	needsTransform := false
 	inNonAlpha := false
 	for i := range len(key) {
 		c := key[i]
-		if ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9') {
-			inNonAlpha = false
-		} else if 'a' <= c && c <= 'z' {
-			needsTransform = true
-			break
-		} else {
-			if inNonAlpha {
+		if 'A' <= c && c <= 'Z' {
+			if !toUpper {
 				needsTransform = true
 				break
 			}
-			if c != '_' {
+			inNonAlpha = false
+		} else if 'a' <= c && c <= 'z' {
+			if toUpper {
+				needsTransform = true
+				break
+			}
+			inNonAlpha = false
+		} else if '0' <= c && c <= '9' {
+			inNonAlpha = false
+		} else {
+			if inNonAlpha || c != sep {
 				needsTransform = true
 				break
 			}
@@ -69,20 +93,35 @@ func FormatKey(key string) string {
 	inNonAlpha = false
 	for i := range len(key) {
 		c := key[i]
-		if ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9') {
-			if 'a' <= c && c <= 'z' {
+		if 'a' <= c && c <= 'z' {
+			if toUpper {
 				c = c - 'a' + 'A'
 			}
 			b = append(b, c)
 			inNonAlpha = false
+		} else if 'A' <= c && c <= 'Z' {
+			if !toUpper {
+				c = c - 'A' + 'a'
+			}
+			b = append(b, c)
+			inNonAlpha = false
+		} else if '0' <= c && c <= '9' {
+			b = append(b, c)
+			inNonAlpha = false
 		} else {
 			if !inNonAlpha {
-				b = append(b, '_')
+				b = append(b, sep)
 				inNonAlpha = true
 			}
 		}
 	}
 	return string(b)
+}
+
+// FormatKey formats a key to THIS_KEY format: uppercase with non-alphanumeric
+// runs replaced by a single underscore.
+func FormatKey(key string) string {
+	return FormatKeyWithFormat(key, KeyFormatEnv)
 }
 
 // SerializeAttrValue converts an attribute value into a string representation for environment usage.

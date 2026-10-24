@@ -107,6 +107,17 @@ vaults:
   #     - match: "env:(.*)"
   #       key: "\\1"
 
+  # Example of per-vault key formatting:
+  # key_format: transforms entry attribute names. Available options:
+  #   - none: (default) passes through original key name unmodified
+  #   - env: UPPERCASE_WITH_UNDERSCORES
+  #   - snake: lowercase_with_underscores
+  #   - kebab: lowercase-with-hyphens
+  # formatted_work:
+  #   provider: "keepass"
+  #   vault_path: "~/secrets/work_vault.kdbx"
+  #   key_format: "snake"
+
 # Autoloading configuration: Automatically match commands, mask/transform command lines, and inject vault credentials
 autoload:
   # Regex matching + command transformation (Alias masking):

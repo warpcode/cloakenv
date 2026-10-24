@@ -224,6 +224,63 @@ func TestFormatKey(t *testing.T) {
 	}
 }
 
+func TestFormatKeyWithFormat(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		format   string
+		expected string
+	}{
+		// none format (passes through original key)
+		{"none_empty", "", KeyFormatNone, ""},
+		{"none_kebab", "api-key", KeyFormatNone, "api-key"},
+		{"none_dot", "database.user_name", KeyFormatNone, "database.user_name"},
+		{"none_mixed_case", "UserName", KeyFormatNone, "UserName"},
+		{"none_underscores", "multiple___underscores", KeyFormatNone, "multiple___underscores"},
+		{"none_leading_special", "__foo", KeyFormatNone, "__foo"},
+		{"none_blank_string", "any-key", "", "any-key"},
+
+		// env format (uppercase with underscores)
+		{"env_kebab", "api-key", KeyFormatEnv, "API_KEY"},
+		{"env_dot", "database.user_name", KeyFormatEnv, "DATABASE_USER_NAME"},
+		{"env_mixed_case", "UserName", KeyFormatEnv, "USERNAME"},
+		{"env_consecutive_hyphens", "my--key", KeyFormatEnv, "MY_KEY"},
+		{"env_leading_trailing", "  foo_bar  ", KeyFormatEnv, "_FOO_BAR_"},
+		{"env_already_env", "API_KEY", KeyFormatEnv, "API_KEY"},
+
+		// snake format (lowercase with underscores)
+		{"snake_kebab", "api-key", KeyFormatSnake, "api_key"},
+		{"snake_dot", "database.user_name", KeyFormatSnake, "database_user_name"},
+		{"snake_mixed_case", "UserName", KeyFormatSnake, "username"},
+		{"snake_pascal_case_multi", "already_Format_Key", KeyFormatSnake, "already_format_key"},
+		{"snake_consecutive_hyphens", "my--key", KeyFormatSnake, "my_key"},
+		{"snake_leading_underscores", "__foo", KeyFormatSnake, "_foo"},
+		{"snake_trailing_underscores", "foo__", KeyFormatSnake, "foo_"},
+		{"snake_uppercase_input", "API_KEY_123", KeyFormatSnake, "api_key_123"},
+		{"snake_special_chars", "special$#@char", KeyFormatSnake, "special_char"},
+
+		// kebab format (lowercase with hyphens)
+		{"kebab_kebab", "api-key", KeyFormatKebab, "api-key"},
+		{"kebab_dot", "database.user_name", KeyFormatKebab, "database-user-name"},
+		{"kebab_mixed_case", "UserName", KeyFormatKebab, "username"},
+		{"kebab_pascal_case_multi", "already_Format_Key", KeyFormatKebab, "already-format-key"},
+		{"kebab_consecutive_hyphens", "my--key", KeyFormatKebab, "my-key"},
+		{"kebab_leading_underscores", "__foo", KeyFormatKebab, "-foo"},
+		{"kebab_trailing_underscores", "foo__", KeyFormatKebab, "foo-"},
+		{"kebab_uppercase_input", "API_KEY_123", KeyFormatKebab, "api-key-123"},
+		{"kebab_special_chars", "special$#@char", KeyFormatKebab, "special-char"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := FormatKeyWithFormat(tc.input, tc.format)
+			if got != tc.expected {
+				t.Errorf("FormatKeyWithFormat(%q, %q) = %q; expected %q", tc.input, tc.format, got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestSerializeAttrValue(t *testing.T) {
 	tests := []struct {
 		name     string

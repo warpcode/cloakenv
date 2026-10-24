@@ -483,6 +483,16 @@ vaults:
       - "bad[pattern"
 `,
 		},
+		{
+			name: "invalid key_format value",
+			content: `
+vaults:
+  work:
+    provider: "keepass"
+    vault_path: "~/secrets.kdbx"
+    key_format: "camel"
+`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -494,10 +504,35 @@ vaults:
 
 			_, err := Load(configPath)
 			if err == nil {
-				t.Fatalf("expected error for invalid glob pattern, got nil")
+				t.Fatalf("expected error for %s, got nil", tt.name)
 			}
 			if !strings.Contains(err.Error(), "invalid") {
 				t.Errorf("expected error message to contain 'invalid', got: %v", err)
+			}
+		})
+	}
+
+	// Test valid key_format values
+	validFormats := []string{"", "none", "env", "snake", "kebab"}
+	for _, fmtVal := range validFormats {
+		t.Run("valid_key_format_"+fmtVal, func(t *testing.T) {
+			content := fmt.Sprintf(`
+vaults:
+  work:
+    provider: "keepass"
+    vault_path: "~/secrets.kdbx"
+    key_format: %q
+`, fmtVal)
+			configPath := filepath.Join(tempDir, "valid_"+fmtVal+".yaml")
+			if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+				t.Fatalf("failed to write config file: %v", err)
+			}
+			cfg, err := Load(configPath)
+			if err != nil {
+				t.Fatalf("unexpected error for valid key_format %q: %v", fmtVal, err)
+			}
+			if cfg.Vaults["work"].KeyFormat != fmtVal {
+				t.Errorf("expected KeyFormat %q, got %q", fmtVal, cfg.Vaults["work"].KeyFormat)
 			}
 		})
 	}

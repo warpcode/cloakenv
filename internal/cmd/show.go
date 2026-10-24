@@ -142,7 +142,9 @@ func resolveMergedEntries(ctx context.Context, orch *engine.Orchestrator, merges
 func mergeTagsAndAttributes(entries []provider.Entry, whitelist []string) ([]string, map[string]any) {
 	whitelistSet := make(map[string]bool)
 	for _, k := range whitelist {
+		whitelistSet[k] = true
 		whitelistSet[utils.FormatKey(k)] = true
+		whitelistSet[strings.ToLower(k)] = true
 	}
 	hasWhitelist := len(whitelist) > 0
 
@@ -157,8 +159,7 @@ func mergeTagsAndAttributes(entries []provider.Entry, whitelist []string) ([]str
 			if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 				continue
 			}
-			formattedKey := utils.FormatKey(k)
-			if hasWhitelist && !whitelistSet[formattedKey] {
+			if hasWhitelist && !whitelistSet[k] && !whitelistSet[utils.FormatKey(k)] && !whitelistSet[strings.ToLower(k)] {
 				continue
 			}
 			attributes[k] = v
@@ -243,13 +244,13 @@ func Show(args []string, cfg *config.Config) int {
 		}
 	}
 
-	// Format all keys in entry.Attributes by default
+	// Strip internal metadata keys from entry.Attributes
 	formattedAttributes := make(map[string]any)
 	for k, v := range entry.Attributes {
 		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
-		formattedAttributes[utils.FormatKey(k)] = v
+		formattedAttributes[k] = v
 	}
 	entry.Attributes = formattedAttributes
 

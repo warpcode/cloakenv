@@ -571,3 +571,133 @@ func TestGetParentEnv(t *testing.T) {
 		t.Errorf("expected EMPTY_VAL_KEY=\"\", got %q (ok: %v)", val, ok)
 	}
 }
+
+func TestEnvBuilder_VaultKeyFormat(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"vault_none": {
+				Provider:  "custom_vault",
+				KeyFormat: "none",
+				Entities: map[string]map[string]any{
+					"app": {
+						"api-key":  "secret1",
+						"db.user":  "user1",
+						"UserName": "admin1",
+					},
+				},
+			},
+			"vault_env": {
+				Provider:  "custom_vault",
+				KeyFormat: "env",
+				Entities: map[string]map[string]any{
+					"app": {
+						"api-key":  "secret2",
+						"db.user":  "user2",
+						"UserName": "admin2",
+					},
+				},
+			},
+			"vault_snake": {
+				Provider:  "custom_vault",
+				KeyFormat: "snake",
+				Entities: map[string]map[string]any{
+					"app": {
+						"api-key":  "secret3",
+						"db.user":  "user3",
+						"UserName": "admin3",
+					},
+				},
+			},
+			"vault_kebab": {
+				Provider:  "custom_vault",
+				KeyFormat: "kebab",
+				Entities: map[string]map[string]any{
+					"app": {
+						"api-key":  "secret4",
+						"db.user":  "user4",
+						"UserName": "admin4",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("none", func(t *testing.T) {
+		res, err := orch.BuildEnv(ctx, EnvConfig{
+			Merges:   []string{"vault_none://app"},
+			EmptyEnv: true,
+		})
+		if err != nil {
+			t.Fatalf("BuildEnv failed: %v", err)
+		}
+		envMap := make(map[string]string)
+		for _, item := range res {
+			k, v, _ := strings.Cut(item, "=")
+			envMap[k] = v
+		}
+		if envMap["api-key"] != "secret1" || envMap["db.user"] != "user1" || envMap["UserName"] != "admin1" {
+			t.Errorf("expected original keys preserved for none, got %v", envMap)
+		}
+	})
+
+	t.Run("env", func(t *testing.T) {
+		res, err := orch.BuildEnv(ctx, EnvConfig{
+			Merges:   []string{"vault_env://app"},
+			EmptyEnv: true,
+		})
+		if err != nil {
+			t.Fatalf("BuildEnv failed: %v", err)
+		}
+		envMap := make(map[string]string)
+		for _, item := range res {
+			k, v, _ := strings.Cut(item, "=")
+			envMap[k] = v
+		}
+		if envMap["API_KEY"] != "secret2" || envMap["DB_USER"] != "user2" || envMap["USERNAME"] != "admin2" {
+			t.Errorf("expected env formatted keys, got %v", envMap)
+		}
+	})
+
+	t.Run("snake", func(t *testing.T) {
+		res, err := orch.BuildEnv(ctx, EnvConfig{
+			Merges:   []string{"vault_snake://app"},
+			EmptyEnv: true,
+		})
+		if err != nil {
+			t.Fatalf("BuildEnv failed: %v", err)
+		}
+		envMap := make(map[string]string)
+		for _, item := range res {
+			k, v, _ := strings.Cut(item, "=")
+			envMap[k] = v
+		}
+		if envMap["api_key"] != "secret3" || envMap["db_user"] != "user3" || envMap["username"] != "admin3" {
+			t.Errorf("expected snake formatted keys, got %v", envMap)
+		}
+	})
+
+	t.Run("kebab", func(t *testing.T) {
+		res, err := orch.BuildEnv(ctx, EnvConfig{
+			Merges:   []string{"vault_kebab://app"},
+			EmptyEnv: true,
+		})
+		if err != nil {
+			t.Fatalf("BuildEnv failed: %v", err)
+		}
+		envMap := make(map[string]string)
+		for _, item := range res {
+			k, v, _ := strings.Cut(item, "=")
+			envMap[k] = v
+		}
+		if envMap["api-key"] != "secret4" || envMap["db-user"] != "user4" || envMap["username"] != "admin4" {
+			t.Errorf("expected kebab formatted keys, got %v", envMap)
+		}
+	})
+}

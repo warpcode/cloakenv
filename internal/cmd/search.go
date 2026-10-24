@@ -149,12 +149,12 @@ func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selecte
 
 func resolveSelectedAttribute(attributes map[string]any, lowerAttrs map[string]string, field, fieldLower string) (string, any) {
 	if origKey, ok := lowerAttrs[fieldLower]; ok {
-		return utils.FormatKey(origKey), attributes[origKey]
+		return origKey, attributes[origKey]
 	}
 	if v, ok := attributes[field]; ok {
-		return utils.FormatKey(field), v
+		return field, v
 	}
-	return utils.FormatKey(field), nil
+	return field, nil
 }
 
 func flattenDefaultEntry(r provider.SearchResult) map[string]any {
@@ -183,7 +183,7 @@ func flattenDefaultEntry(r provider.SearchResult) map[string]any {
 		if kLower == "tags" && len(r.Entry.Tags) > 0 {
 			continue
 		}
-		flatRes[utils.FormatKey(k)] = v
+		flatRes[k] = v
 	}
 	return flatRes
 }

@@ -76,7 +76,9 @@ func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, 
 
 	whitelistSet := make(map[string]bool)
 	for _, k := range whitelist {
+		whitelistSet[k] = true
 		whitelistSet[utils.FormatKey(k)] = true
+		whitelistSet[strings.ToLower(k)] = true
 	}
 	hasWhitelist := len(whitelist) > 0
 
@@ -103,8 +105,7 @@ func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, 
 				if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 					continue
 				}
-				formattedKey := utils.FormatKey(k)
-				if hasWhitelist && !whitelistSet[formattedKey] {
+				if hasWhitelist && !whitelistSet[k] && !whitelistSet[utils.FormatKey(k)] && !whitelistSet[strings.ToLower(k)] {
 					continue
 				}
 				strVal, err := utils.SerializeAttrValue(v)
@@ -114,7 +115,7 @@ func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, 
 					})
 					return
 				}
-				keys = append(keys, envKV{k: formattedKey, v: strVal})
+				keys = append(keys, envKV{k: k, v: strVal})
 			}
 			loaded[idx] = keys
 		}(i, m)
@@ -151,7 +152,7 @@ func (eb *EnvBuilder) resolveExplicitMappings(ctx context.Context, explicit map[
 				return
 			}
 			mu.Lock()
-			resolved[utils.FormatKey(k)] = val
+			resolved[k] = val
 			mu.Unlock()
 		}(k, uri)
 	}
