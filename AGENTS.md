@@ -31,6 +31,9 @@ internal/
   runner/                # Process execution wrapping logic
   utils/                 # Shared formatting and flag utilities
   yaml/                  # Centralized YAML parsing, serialization, and error wrapping
+docs/
+  adr/                   # Architecture Decision Records (MADR format)
+  plans/                 # Technical Design Specs (RFCs) & implementation plans
 examples/                # Example databases and config.yaml
 testdata/                # Test fixtures (testDB.kdbx, YAML/JSON samples)
 Makefile                 # Build, test, fmt, vet, install targets
