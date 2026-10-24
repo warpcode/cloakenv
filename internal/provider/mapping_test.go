@@ -39,9 +39,9 @@ func TestConvertBackslashGroups(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := convertBackslashGroups(tt.input)
+		got := ConvertBackslashGroups(tt.input)
 		if got != tt.want {
-			t.Errorf("convertBackslashGroups(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("ConvertBackslashGroups(%q) = %q, want %q", tt.input, got, tt.want)
 		}
 	}
 }
@@ -122,7 +122,7 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 		}
 
 		includeFields := []string{"KEEP_UNMAPPED", "OPENROUTER_API_KEY"}
-		excludeFields := []string{"REMOVE_UNMAPPED"}
+		excludeFields := []string{"REMOVE_UNMAPPED", "FOO"}
 
 		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, includeFields, excludeFields, "", nil, "")
 		if err != nil {
@@ -132,8 +132,8 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 		if _, ok := got["OPENROUTER_API_KEY"]; !ok {
 			t.Errorf("expected mapped field OPENROUTER_API_KEY to be kept (keys: %v)", keysOf(got))
 		}
-		if _, ok := got["FOO"]; ok {
-			t.Errorf("expected mapped field FOO to be filtered by include_fields (keys: %v)", keysOf(got))
+		if _, ok := got["FOO"]; !ok {
+			t.Errorf("expected mapped field FOO to always show regardless of include/exclude fields (keys: %v)", keysOf(got))
 		}
 		if _, ok := got["KEEP_UNMAPPED"]; !ok {
 			t.Errorf("expected KEEP_UNMAPPED to be kept (keys: %v)", keysOf(got))
@@ -273,8 +273,8 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 
 		attrs := map[string]any{
 			"raw_outer": map[string]any{
-				"raw_a": "V_A",
-				"raw_b": "V_B",
+				"a": "V_A",
+				"b": "V_B",
 			},
 		}
 
@@ -296,7 +296,7 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 		}
 	})
 
-	t.Run("exclude_fields applies to mapped keys", func(t *testing.T) {
+	t.Run("mapped keys always show regardless of exclude_fields", func(t *testing.T) {
 		rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
 		if err := rule.Compile(); err != nil {
 			t.Fatalf("rule.Compile failed: %v", err)
@@ -307,17 +307,17 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 			"PLAIN":        "V_P",
 		}
 
-		excludeFields := []string{"SECRET_B"}
+		excludeFields := []string{"SECRET_B", "PLAIN"}
 		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, nil, excludeFields, "", nil, "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if _, ok := got["SECRET_B"]; ok {
-			t.Error("expected mapped key SECRET_B to be excluded by exclude_fields")
+		if _, ok := got["SECRET_B"]; !ok {
+			t.Error("expected mapped key SECRET_B to be kept regardless of exclude_fields")
 		}
-		if _, ok := got["PLAIN"]; !ok {
-			t.Error("expected PLAIN to be kept")
+		if _, ok := got["PLAIN"]; ok {
+			t.Error("expected PLAIN to be excluded by exclude_fields")
 		}
 	})
 
@@ -757,7 +757,7 @@ func TestMappingProvider_NewMappingProvider_CompileError(t *testing.T) {
 func TestMappingIsolationForDefaultFields(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("DefaultFieldsExcludedWhenMappingIsActive", func(t *testing.T) {
+	t.Run("DefaultFieldsPreservedWhenMappingOnly", func(t *testing.T) {
 		sp := NewSearchProvider()
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
@@ -796,8 +796,66 @@ func TestMappingIsolationForDefaultFields(t *testing.T) {
 		}
 
 		res := results[0]
+		if res.Provider != "search" || res.Path != "services/api" || res.Entry.Title != "API Key Service" || len(res.Entry.Tags) != 2 {
+			t.Errorf("expected all default fields preserved when mapping without field filtering, got Provider=%q Vault=%q Path=%q Title=%q Tags=%v",
+				res.Provider, res.Vault, res.Path, res.Entry.Title, res.Entry.Tags)
+		}
+		if res.Entry.Attributes["API_KEY"] != "secret_key_123" {
+			t.Errorf("expected API_KEY to be mapped, got %v", res.Entry.Attributes["API_KEY"])
+		}
+
+		// Resolves GetSecret for title/tags
+		valTitle, errTitle := mp.GetSecret(ctx, "services/api:title")
+		if errTitle != nil {
+			t.Errorf("expected title to resolve when mapping only, got error: %v", errTitle)
+		}
+		if valTitle != "API Key Service" {
+			t.Errorf("expected title 'API Key Service', got %q", valTitle)
+		}
+	})
+
+	t.Run("DefaultFieldsExcludedWhenExcludeFieldsSet", func(t *testing.T) {
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Provider: "keepass",
+					Vault:    "main_vault",
+					Path:     "services/api",
+					Entry: Entry{
+						Title: "API Key Service",
+						Tags:  []string{"prod", "backend"},
+						Attributes: map[string]any{
+							"env:API_KEY": "secret_key_123",
+						},
+					},
+				},
+			}, nil
+		})
+
+		rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
+		if err := rule.Compile(); err != nil {
+			t.Fatalf("rule.Compile failed: %v", err)
+		}
+
+		fp := NewFilteringProvider(sp, nil, []string{"*"})
+		mp, err := NewMappingProvider(fp, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		smp := mp.(SearchableProvider)
+		results, err := smp.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+
+		res := results[0]
 		if res.Provider != "" || res.Vault != "" || res.Path != "" || res.Entry.Title != "" || res.Entry.Tags != nil {
-			t.Errorf("expected all default fields excluded by mapping isolation, got Provider=%q Vault=%q Path=%q Title=%q Tags=%v",
+			t.Errorf("expected all default fields excluded by exclude_fields: ['*'], got Provider=%q Vault=%q Path=%q Title=%q Tags=%v",
 				res.Provider, res.Vault, res.Path, res.Entry.Title, res.Entry.Tags)
 		}
 		if res.Entry.Attributes["API_KEY"] != "secret_key_123" {
@@ -807,7 +865,7 @@ func TestMappingIsolationForDefaultFields(t *testing.T) {
 		// Rejects GetSecret for title/tags
 		_, errTitle := mp.GetSecret(ctx, "services/api:title")
 		if errTitle == nil {
-			t.Errorf("expected error for unmapped title under mapping isolation, got nil")
+			t.Errorf("expected error for unmapped title under exclude_fields: ['*'], got nil")
 		}
 	})
 
@@ -852,6 +910,229 @@ func TestMappingIsolationForDefaultFields(t *testing.T) {
 		}
 		if len(res.Entry.Tags) != 1 || res.Entry.Tags[0] != "prod" {
 			t.Errorf("expected Tags ['prod'], got %v", res.Entry.Tags)
+		}
+	})
+
+	t.Run("MappedDefaultFieldsAlwaysShowRegardlessOfIncludeOrExcludeFields", func(t *testing.T) {
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Provider: "keepass",
+					Vault:    "main_vault",
+					Path:     "services/api",
+					Entry: Entry{
+						Title: "API Key Service",
+						Tags:  []string{"prod"},
+						Attributes: map[string]any{
+							"env:API_KEY": "secret_key_123",
+						},
+					},
+				},
+			}, nil
+		})
+
+		ruleTitle := config.MappingRule{Match: "^title$", Key: "title"}
+		ruleTag := config.MappingRule{Match: "^tags$", Key: "tags"}
+		ruleKey := config.MappingRule{Match: "env:(.*)", Key: "$1"}
+
+		// Both include_fields and exclude_fields are configured to exclude/not include title & tags
+		fp := NewFilteringProvider(sp, []string{"unrelated_field"}, []string{"*", "title", "tags"})
+		mp, err := NewMappingProvider(fp, []config.MappingRule{ruleTitle, ruleTag, ruleKey})
+		if err != nil {
+			t.Fatalf("NewMappingProvider failed: %v", err)
+		}
+
+		smp := mp.(SearchableProvider)
+		results, err := smp.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+
+		res := results[0]
+		if res.Entry.Title != "API Key Service" {
+			t.Errorf("expected mapped Title to show regardless of include/exclude fields, got %q", res.Entry.Title)
+		}
+		if len(res.Entry.Tags) != 1 || res.Entry.Tags[0] != "prod" {
+			t.Errorf("expected mapped Tags to show regardless of include/exclude fields, got %v", res.Entry.Tags)
+		}
+
+		// GetEntryWithPath also preserves mapped title and tags
+		pathProvider := mp.(interface {
+			GetEntryWithPath(ctx context.Context, location string) (Entry, string, error)
+		})
+		entry, _, err := pathProvider.GetEntryWithPath(ctx, "services/api")
+		if err != nil {
+			t.Fatalf("GetEntryWithPath failed: %v", err)
+		}
+		if entry.Title != "API Key Service" {
+			t.Errorf("expected mapped Title in GetEntryWithPath, got %q", entry.Title)
+		}
+		if len(entry.Tags) != 1 || entry.Tags[0] != "prod" {
+			t.Errorf("expected mapped Tags in GetEntryWithPath, got %v", entry.Tags)
+		}
+
+		// GetSecret resolves mapped title and tags
+		valTitle, err := mp.GetSecret(ctx, "services/api:title")
+		if err != nil {
+			t.Errorf("expected GetSecret for mapped title to succeed, got %v", err)
+		}
+		if valTitle != "API Key Service" {
+			t.Errorf("expected title value 'API Key Service', got %q", valTitle)
+		}
+	})
+}
+
+func TestMappingProvider_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T) {
+	ctx := context.Background()
+
+	cp := NewCustomVaultProvider()
+	_ = cp.Initialize(ctx, ProviderConfig{
+		Entities: map[string]map[string]any{
+			"app1": {
+				"env:API_KEY":       "sk-test-secret-123",
+				"env:DATABASE_URL":  "postgres://user:pass@localhost:5432/db",
+				"UNMAPPED_ALLOWED":  "allowed_val",
+				"UNMAPPED_EXCLUDED": "excluded_val",
+				"UNMAPPED_NOT_INCL": "not_included_val",
+			},
+		},
+	})
+
+	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
+	if err := rule.Compile(); err != nil {
+		t.Fatalf("rule.Compile failed: %v", err)
+	}
+
+	// include_fields includes only UNMAPPED_ALLOWED (neither API_KEY nor DATABASE_URL)
+	// exclude_fields excludes API_KEY and UNMAPPED_EXCLUDED
+	includeFields := []string{"UNMAPPED_ALLOWED"}
+	excludeFields := []string{"API_KEY", "UNMAPPED_EXCLUDED"}
+
+	fp := NewFilteringProvider(cp, includeFields, excludeFields)
+	mp, err := NewMappingProvider(fp, []config.MappingRule{rule})
+	if err != nil {
+		t.Fatalf("NewMappingProvider failed: %v", err)
+	}
+
+	searchable, ok := mp.(SearchableProvider)
+	if !ok {
+		t.Fatal("expected MappingProvider to implement SearchableProvider")
+	}
+
+	t.Run("GetEntry preserves mapped fields and applies filters to unmapped", func(t *testing.T) {
+		entry, err := searchable.GetEntry(ctx, "app1")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		// 1. Mapped field excluded by exclude_fields MUST show
+		if val, ok := entry.Attributes["API_KEY"]; !ok {
+			t.Error("expected mapped field API_KEY to show even when in exclude_fields")
+		} else if val != "sk-test-secret-123" {
+			t.Errorf("expected API_KEY='sk-test-secret-123', got %v", val)
+		}
+
+		// 2. Mapped field omitted from include_fields MUST show
+		if val, ok := entry.Attributes["DATABASE_URL"]; !ok {
+			t.Error("expected mapped field DATABASE_URL to show even when omitted from include_fields")
+		} else if val != "postgres://user:pass@localhost:5432/db" {
+			t.Errorf("expected DATABASE_URL='postgres://user:pass@localhost:5432/db', got %v", val)
+		}
+
+		// 3. Unmapped field in include_fields MUST show
+		if val, ok := entry.Attributes["UNMAPPED_ALLOWED"]; !ok {
+			t.Error("expected UNMAPPED_ALLOWED to show")
+		} else if val != "allowed_val" {
+			t.Errorf("expected UNMAPPED_ALLOWED='allowed_val', got %v", val)
+		}
+
+		// 4. Unmapped field matching exclude_fields MUST NOT show
+		if _, ok := entry.Attributes["UNMAPPED_EXCLUDED"]; ok {
+			t.Error("expected UNMAPPED_EXCLUDED to be filtered out")
+		}
+
+		// 5. Unmapped field not matching include_fields MUST NOT show
+		if _, ok := entry.Attributes["UNMAPPED_NOT_INCL"]; ok {
+			t.Error("expected UNMAPPED_NOT_INCL to be filtered out")
+		}
+
+		// 6. Pre-mapping raw key MUST NOT show
+		if _, ok := entry.Attributes["env:API_KEY"]; ok {
+			t.Error("expected pre-mapping key env:API_KEY to be absent")
+		}
+	})
+
+	t.Run("Search preserves mapped fields", func(t *testing.T) {
+		results, err := searchable.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		attrs := results[0].Entry.Attributes
+		if attrs["API_KEY"] != "sk-test-secret-123" {
+			t.Errorf("expected mapped API_KEY in Search, got %v", attrs["API_KEY"])
+		}
+		if attrs["DATABASE_URL"] != "postgres://user:pass@localhost:5432/db" {
+			t.Errorf("expected mapped DATABASE_URL in Search, got %v", attrs["DATABASE_URL"])
+		}
+		if attrs["UNMAPPED_ALLOWED"] != "allowed_val" {
+			t.Errorf("expected UNMAPPED_ALLOWED in Search, got %v", attrs["UNMAPPED_ALLOWED"])
+		}
+		if _, ok := attrs["UNMAPPED_EXCLUDED"]; ok {
+			t.Error("expected UNMAPPED_EXCLUDED to be filtered out in Search")
+		}
+	})
+
+	t.Run("GetSecret retrieves mapped fields regardless of filters", func(t *testing.T) {
+		// Mapped key in exclude_fields succeeds
+		val, err := mp.GetSecret(ctx, "app1:API_KEY")
+		if err != nil {
+			t.Fatalf("GetSecret app1:API_KEY failed: %v", err)
+		}
+		if val != "sk-test-secret-123" {
+			t.Errorf("expected secret value 'sk-test-secret-123', got %q", val)
+		}
+
+		// Mapped key omitted from include_fields succeeds
+		valDB, err := mp.GetSecret(ctx, "app1:DATABASE_URL")
+		if err != nil {
+			t.Fatalf("GetSecret app1:DATABASE_URL failed: %v", err)
+		}
+		if valDB != "postgres://user:pass@localhost:5432/db" {
+			t.Errorf("expected secret value 'postgres://user:pass@localhost:5432/db', got %q", valDB)
+		}
+
+		// Unmapped allowed key succeeds
+		valAllowed, err := mp.GetSecret(ctx, "app1:UNMAPPED_ALLOWED")
+		if err != nil {
+			t.Fatalf("GetSecret app1:UNMAPPED_ALLOWED failed: %v", err)
+		}
+		if valAllowed != "allowed_val" {
+			t.Errorf("expected 'allowed_val', got %q", valAllowed)
+		}
+
+		// Unmapped excluded key fails
+		_, err = mp.GetSecret(ctx, "app1:UNMAPPED_EXCLUDED")
+		if err == nil {
+			t.Fatal("expected GetSecret for UNMAPPED_EXCLUDED to fail, got nil")
+		}
+
+		// Unmapped key not in include_fields fails
+		_, err = mp.GetSecret(ctx, "app1:UNMAPPED_NOT_INCL")
+		if err == nil {
+			t.Fatal("expected GetSecret for UNMAPPED_NOT_INCL to fail, got nil")
+		}
+
+		// Raw unmapped original key fails
+		_, err = mp.GetSecret(ctx, "app1:env:API_KEY")
+		if err == nil {
+			t.Fatal("expected GetSecret for pre-mapping key to fail, got nil")
 		}
 	})
 }

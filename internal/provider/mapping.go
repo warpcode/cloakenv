@@ -9,9 +9,9 @@ import (
 	"github.com/warpcode/cloakenv/internal/config"
 )
 
-// convertBackslashGroups converts backslash capture group references (\1..\9)
+// ConvertBackslashGroups converts backslash capture group references (\1..\9)
 // into Go regexp format ($1..$9).
-func convertBackslashGroups(template string) string {
+func ConvertBackslashGroups(template string) string {
 	var sb strings.Builder
 	for i := 0; i < len(template); i++ {
 		if template[i] == '\\' && i+1 < len(template) && template[i+1] >= '0' && template[i+1] <= '9' {
@@ -25,8 +25,32 @@ func convertBackslashGroups(template string) string {
 	return sb.String()
 }
 
+// HasMappedDescendant checks if val (map or slice) has any descendant key that matches one of the mapping rules.
+func HasMappedDescendant(val any, rules []config.MappingRule) bool {
+	if m, isMap := normalizeEntryMap(val); isMap {
+		for k, v := range m {
+			for _, r := range rules {
+				if r.CompiledRegex != nil && r.CompiledRegex.MatchString(k) {
+					return true
+				}
+			}
+			if HasMappedDescendant(v, rules) {
+				return true
+			}
+		}
+	} else if slice, ok := val.([]any); ok {
+		for _, elem := range slice {
+			if HasMappedDescendant(elem, rules) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ApplyMappingAndFilteringToAttributes transforms an attribute map by applying regex key mapping rules,
-// then applies include_fields and exclude_fields glob filtering to the mapped attributes using path-aware filtering.
+// then applies include_fields and exclude_fields glob filtering to unmapped attributes using path-aware filtering.
+// Mapped fields always show regardless of include_fields or exclude_fields configured on the vault.
 func ApplyMappingAndFilteringToAttributes(
 	attrs map[string]any,
 	rules []config.MappingRule,
@@ -35,15 +59,27 @@ func ApplyMappingAndFilteringToAttributes(
 	rootPrefixes []string,
 	entryTitle string,
 ) (map[string]any, error) {
+	filtered, _, err := applyMappingAndFiltering(attrs, rules, includeFields, excludeFields, entryPath, rootPrefixes, entryTitle)
+	return filtered, err
+}
+
+func applyMappingAndFiltering(
+	attrs map[string]any,
+	rules []config.MappingRule,
+	includeFields, excludeFields []string,
+	entryPath string,
+	rootPrefixes []string,
+	entryTitle string,
+) (map[string]any, bool, error) {
 	if attrs == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	compiledRules := make([]config.MappingRule, len(rules))
 	for i, r := range rules {
 		if r.CompiledRegex == nil {
 			if err := r.Compile(); err != nil {
-				return nil, fmt.Errorf("mapping rule match %q: %w", r.Match, err)
+				return nil, false, fmt.Errorf("mapping rule match %q: %w", r.Match, err)
 			}
 		}
 		compiledRules[i] = r
@@ -69,12 +105,14 @@ func ApplyMappingAndFilteringToAttributes(
 		}
 	}
 
-	type mappedItem struct {
-		key string
-		val any
+	type itemInfo struct {
+		key      string
+		val      any
+		isMapped bool
 	}
-	var mappedList []mappedItem
+	var items []itemInfo
 	mappedNewKeys := make(map[string]bool)
+	anyMapped := false
 
 	for _, k := range keys {
 		v := attrs[k]
@@ -85,7 +123,7 @@ func ApplyMappingAndFilteringToAttributes(
 		for i := range compiledRules {
 			rule := &compiledRules[i]
 			if rule.CompiledRegex != nil && rule.CompiledRegex.MatchString(k) {
-				template := convertBackslashGroups(rule.Key)
+				template := ConvertBackslashGroups(rule.Key)
 				newKey := rule.CompiledRegex.ReplaceAllString(k, template)
 				if newKey != "" {
 					postKey = newKey
@@ -101,21 +139,26 @@ func ApplyMappingAndFilteringToAttributes(
 		}
 
 		valToUse := v
+		childHasMapped := false
 		if m, isMap := normalizeEntryMap(v); isMap {
-			mappedSub, err := ApplyMappingAndFilteringToAttributes(m, compiledRules, includeFields, excludeFields, childPath, rootPrefixes, entryTitle)
+			mappedSub, subHasMapped, err := applyMappingAndFiltering(m, compiledRules, includeFields, excludeFields, childPath, rootPrefixes, entryTitle)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			valToUse = mappedSub
+			childHasMapped = subHasMapped
 		} else if sliceVal, isSlice := v.([]any); isSlice {
 			newSlice := make([]any, len(sliceVal))
 			for i, elem := range sliceVal {
 				if elemMap, isMap := normalizeEntryMap(elem); isMap {
-					mappedSub, err := ApplyMappingAndFilteringToAttributes(elemMap, compiledRules, includeFields, excludeFields, childPath, rootPrefixes, entryTitle)
+					mappedSub, subHasMapped, err := applyMappingAndFiltering(elemMap, compiledRules, includeFields, excludeFields, childPath, rootPrefixes, entryTitle)
 					if err != nil {
-						return nil, err
+						return nil, false, err
 					}
 					newSlice[i] = mappedSub
+					if subHasMapped {
+						childHasMapped = true
+					}
 				} else {
 					newSlice[i] = elem
 				}
@@ -124,35 +167,58 @@ func ApplyMappingAndFilteringToAttributes(
 		}
 
 		if matched {
-			mappedList = append(mappedList, mappedItem{key: postKey, val: valToUse})
+			items = append(items, itemInfo{key: postKey, val: valToUse, isMapped: true})
 			mappedNewKeys[postKey] = true
+			anyMapped = true
 		} else {
-			mappedList = append(mappedList, mappedItem{key: k, val: valToUse})
+			items = append(items, itemInfo{key: k, val: valToUse, isMapped: childHasMapped})
+			if childHasMapped {
+				anyMapped = true
+			}
 		}
 	}
 
-	postMapAttrs := make(map[string]any, len(mappedList))
-	for _, item := range mappedList {
+	mappedAttrs := make(map[string]any)
+	unmappedAttrs := make(map[string]any)
+
+	for _, item := range items {
 		// Collision handling: if a mapped target key collides with a raw unmapped attribute name,
 		// drop the colliding mapped key so it cannot evict or substitute a real attribute.
 		if mappedNewKeys[item.key] && rawUnmappedKeys[item.key] {
 			continue
 		}
-		if _, exists := postMapAttrs[item.key]; !exists {
-			postMapAttrs[item.key] = item.val
+		if item.isMapped {
+			if _, exists := mappedAttrs[item.key]; !exists {
+				mappedAttrs[item.key] = item.val
+			}
+		} else {
+			if _, exists := unmappedAttrs[item.key]; !exists {
+				unmappedAttrs[item.key] = item.val
+			}
 		}
 	}
 
+	var filteredUnmapped map[string]any
 	if len(includeFields) == 0 && len(excludeFields) == 0 {
-		return postMapAttrs, nil
+		filteredUnmapped = unmappedAttrs
+	} else if len(unmappedAttrs) > 0 {
+		postEntry := Entry{
+			Title:      entryTitle,
+			Attributes: unmappedAttrs,
+		}
+		filteredPost := FilterEntryWithPath(postEntry, entryPath, rootPrefixes, includeFields, excludeFields)
+		filteredUnmapped = filteredPost.Attributes
 	}
 
-	postEntry := Entry{
-		Title:      entryTitle,
-		Attributes: postMapAttrs,
+	result := make(map[string]any, len(mappedAttrs)+len(filteredUnmapped))
+	for k, v := range filteredUnmapped {
+		result[k] = v
 	}
-	filteredPost := FilterEntryWithPath(postEntry, entryPath, rootPrefixes, includeFields, excludeFields)
-	return filteredPost.Attributes, nil
+	for k, v := range mappedAttrs {
+		result[k] = v
+	}
+
+	return result, anyMapped, nil
 }
 
 // MappingProvider wraps a SecretProvider to perform regex key mapping on entry attributes.
@@ -490,46 +556,22 @@ func (s *SearchableMappingProvider) RootPrefixes() []string {
 	return nil
 }
 
-// isDefaultFieldMappedOrIncluded checks whether a default metadata field
+// IsDefaultFieldMappedOrIncluded checks whether a default metadata field
 // ("title", "tags", "path", "vault", "provider") is produced/mapped by mapping rules
 // or explicitly included in includeFields.
-func isDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule, includeFields, excludeFields []string, entryPath string, rootPrefixes []string, entryTitle string) bool {
-	if len(excludeFields) > 0 {
-		if !isDefaultFieldAllowed(fieldName, entryPath, rootPrefixes, entryTitle, nil, excludeFields) {
-			return false
-		}
-	}
-
+// Mapped fields always show regardless of include_fields or exclude_fields configured on the vault.
+func IsDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule, includeFields, excludeFields []string, entryPath string, rootPrefixes []string, entryTitle string) bool {
 	fieldLower := strings.ToLower(fieldName)
-
-	if len(includeFields) > 0 {
-		matchedInclude := false
-		candidates := buildDefaultFieldCandidates(fieldName, entryPath, rootPrefixes, entryTitle)
-		for _, pattern := range includeFields {
-			for _, c := range candidates {
-				if matchPattern(pattern, c) {
-					matchedInclude = true
-					break
-				}
-			}
-			if matchedInclude {
-				break
-			}
-		}
-		if !matchedInclude {
-			return false
-		}
-	}
+	candidates := buildDefaultFieldCandidates(fieldName, entryPath, rootPrefixes, entryTitle)
 
 	for _, r := range rules {
 		if r.CompiledRegex == nil {
 			_ = r.Compile()
 		}
 		if r.CompiledRegex != nil {
-			candidates := buildDefaultFieldCandidates(fieldName, entryPath, rootPrefixes, entryTitle)
 			for _, c := range candidates {
 				if r.CompiledRegex.MatchString(c) {
-					template := convertBackslashGroups(r.Key)
+					template := ConvertBackslashGroups(r.Key)
 					newKey := r.CompiledRegex.ReplaceAllString(c, template)
 					if newKey != "" && strings.EqualFold(newKey, fieldLower) {
 						return true
@@ -539,7 +581,11 @@ func isDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule
 		}
 	}
 
-	return false
+	return IsDefaultFieldAllowed(fieldName, entryPath, rootPrefixes, entryTitle, includeFields, excludeFields)
+}
+
+func isDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule, includeFields, excludeFields []string, entryPath string, rootPrefixes []string, entryTitle string) bool {
+	return IsDefaultFieldMappedOrIncluded(fieldName, rules, includeFields, excludeFields, entryPath, rootPrefixes, entryTitle)
 }
 
 // GetEntryWithPath retrieves a structured entry and applies mapping and filtering to its attributes.

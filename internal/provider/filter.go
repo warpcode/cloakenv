@@ -32,7 +32,7 @@ func matchPatternCaseInsensitive(pattern, name string) bool {
 //
 // Rules:
 // 1. If includeFields is non-empty, fieldName must match at least one include pattern.
-// 2. If excludeFields is non-empty, fieldName must not match any exclude pattern.
+// 2. If excludeFields is non-empty, fieldName must not match any exclude pattern (excluding wildcard '*' when includeFields is specified).
 func IsFieldAllowed(fieldName string, includeFields, excludeFields []string) bool {
 	if len(includeFields) > 0 {
 		matched := false
@@ -49,6 +49,9 @@ func IsFieldAllowed(fieldName string, includeFields, excludeFields []string) boo
 
 	if len(excludeFields) > 0 {
 		for _, pattern := range excludeFields {
+			if pattern == "*" && len(includeFields) > 0 {
+				continue
+			}
 			if matchPattern(pattern, fieldName) {
 				return false
 			}
@@ -63,6 +66,9 @@ func IsFieldAllowed(fieldName string, includeFields, excludeFields []string) boo
 func isFieldOrPathAllowed(fullPath, leafAttr string, includeFields, excludeFields []string) bool {
 	if len(excludeFields) > 0 {
 		for _, pattern := range excludeFields {
+			if pattern == "*" && len(includeFields) > 0 {
+				continue
+			}
 			if matchPattern(pattern, leafAttr) || (fullPath != "" && matchPattern(pattern, fullPath)) {
 				return false
 			}
@@ -90,6 +96,9 @@ func isFieldOrPathAllowed(fullPath, leafAttr string, includeFields, excludeField
 func isFieldAuthorized(leafAttr string, candidates []string, includeFields, excludeFields []string) bool {
 	if len(excludeFields) > 0 {
 		for _, pattern := range excludeFields {
+			if pattern == "*" && len(includeFields) > 0 {
+				continue
+			}
 			if matchPattern(pattern, leafAttr) {
 				return false
 			}
@@ -156,16 +165,29 @@ func buildDefaultFieldCandidates(fieldName, entryPath string, rootPrefixes []str
 	return candidates
 }
 
-// isDefaultFieldAllowed determines whether a default field (title, tags, path, vault, provider)
+// IsDefaultFieldAllowed determines whether a default field (title, tags, path, vault, provider)
 // is permitted under include_fields and exclude_fields glob patterns.
-func isDefaultFieldAllowed(fieldName, entryPath string, rootPrefixes []string, entryTitle string, includeFields, excludeFields []string) bool {
+// include_fields always takes precedence over exclude_fields.
+func IsDefaultFieldAllowed(fieldName, entryPath string, rootPrefixes []string, entryTitle string, includeFields, excludeFields []string) bool {
 	if len(includeFields) == 0 && len(excludeFields) == 0 {
 		return true
 	}
 
 	candidates := buildDefaultFieldCandidates(fieldName, entryPath, rootPrefixes, entryTitle)
 
-	// 1. Check exclude_fields
+	// 1. Check include_fields first ("include should always be above exclude")
+	if len(includeFields) > 0 {
+		for _, pattern := range includeFields {
+			for _, c := range candidates {
+				if matchPatternCaseInsensitive(pattern, c) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	// 2. Check exclude_fields when include_fields is empty
 	if len(excludeFields) > 0 {
 		for _, pattern := range excludeFields {
 			for _, c := range candidates {
@@ -176,26 +198,11 @@ func isDefaultFieldAllowed(fieldName, entryPath string, rootPrefixes []string, e
 		}
 	}
 
-	// 2. Check include_fields
-	if len(includeFields) > 0 {
-		matched := false
-		for _, pattern := range includeFields {
-			for _, c := range candidates {
-				if matchPatternCaseInsensitive(pattern, c) {
-					matched = true
-					break
-				}
-			}
-			if matched {
-				break
-			}
-		}
-		if !matched {
-			return false
-		}
-	}
-
 	return true
+}
+
+func isDefaultFieldAllowed(fieldName, entryPath string, rootPrefixes []string, entryTitle string, includeFields, excludeFields []string) bool {
+	return IsDefaultFieldAllowed(fieldName, entryPath, rootPrefixes, entryTitle, includeFields, excludeFields)
 }
 
 func isContainerDirectlyIncluded(leafAttr string, candidates []string, includeFields []string) bool {
@@ -271,6 +278,9 @@ func projectRecursive(val any, pfx string, prefixes []string, includeFields, exc
 			childExcluded := false
 			if len(excludeFields) > 0 {
 				for _, pattern := range excludeFields {
+					if pattern == "*" && len(includeFields) > 0 {
+						continue
+					}
 					if matchPattern(pattern, kLeaf) {
 						childExcluded = true
 						break
@@ -370,6 +380,9 @@ func projectSliceRecursive(slice []any, pfx string, prefixes []string, includeFi
 		elemExcluded := false
 		if len(excludeFields) > 0 {
 			for _, pattern := range excludeFields {
+				if pattern == "*" && len(includeFields) > 0 {
+					continue
+				}
 				if matchPattern(pattern, idxStr) {
 					elemExcluded = true
 					break
@@ -1238,6 +1251,9 @@ func (f *FilteringProvider) getStaticSecret(ctx context.Context, location string
 	// Check if container itself is excluded
 	if len(f.excludeFields) > 0 {
 		for _, pattern := range f.excludeFields {
+			if pattern == "*" && len(f.includeFields) > 0 {
+				continue
+			}
 			if matchPattern(pattern, leafAttr) {
 				return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
 			}

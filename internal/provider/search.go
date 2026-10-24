@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/warpcode/cloakenv/internal/config"
 )
 
 // SearchExecutor defines a function that executes a search query across source vaults at a given depth.
@@ -20,6 +22,7 @@ type SearchProvider struct {
 	searchExecutor SearchExecutor
 	includeFields  []string
 	excludeFields  []string
+	mapping        []config.MappingRule
 }
 
 // NewSearchProvider returns a new SearchProvider instance.
@@ -47,6 +50,7 @@ func (s *SearchProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 	s.sourceVaults = cfg.SourceVaults
 	s.includeFields = cfg.IncludeFields
 	s.excludeFields = cfg.ExcludeFields
+	s.mapping = cfg.Mapping
 	return nil
 }
 
@@ -63,8 +67,8 @@ func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, err
 	}
 
 	nextCtx := context.WithValue(ctx, ContextKeyDepth, depth+1)
-	if len(s.includeFields) > 0 || len(s.excludeFields) > 0 {
-		nextCtx = WithFieldPolicy(nextCtx, s.includeFields, s.excludeFields)
+	if len(s.includeFields) > 0 || len(s.excludeFields) > 0 || len(s.mapping) > 0 {
+		nextCtx = WithFieldPolicyAndMapping(nextCtx, s.includeFields, s.excludeFields, s.mapping)
 	}
 	results, err := s.searchExecutor(nextCtx, s.query, s.sourceVaults, depth+1)
 	if err != nil {

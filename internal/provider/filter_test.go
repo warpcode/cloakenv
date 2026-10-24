@@ -75,6 +75,20 @@ func TestIsFieldAllowed(t *testing.T) {
 			excludeFields: []string{"Password"},
 			want:          true,
 		},
+		{
+			name:          "include with exclude all wildcard keeps included field",
+			fieldName:     "UserName",
+			includeFields: []string{"UserName"},
+			excludeFields: []string{"*"},
+			want:          true,
+		},
+		{
+			name:          "include with exclude all wildcard drops unincluded field",
+			fieldName:     "Password",
+			includeFields: []string{"UserName"},
+			excludeFields: []string{"*"},
+			want:          false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -82,6 +96,74 @@ func TestIsFieldAllowed(t *testing.T) {
 			got := IsFieldAllowed(tt.fieldName, tt.includeFields, tt.excludeFields)
 			if got != tt.want {
 				t.Errorf("IsFieldAllowed(%q, %v, %v) = %v, want %v",
+					tt.fieldName, tt.includeFields, tt.excludeFields, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsDefaultFieldAllowed(t *testing.T) {
+	tests := []struct {
+		name          string
+		fieldName     string
+		entryPath     string
+		entryTitle    string
+		includeFields []string
+		excludeFields []string
+		want          bool
+	}{
+		{
+			name:          "include title overrides exclude all wildcard",
+			fieldName:     "title",
+			entryPath:     "services/api",
+			entryTitle:    "API Service",
+			includeFields: []string{"title"},
+			excludeFields: []string{"*"},
+			want:          true,
+		},
+		{
+			name:          "exclude all wildcard drops unincluded tags",
+			fieldName:     "tags",
+			entryPath:     "services/api",
+			entryTitle:    "API Service",
+			includeFields: []string{"title"},
+			excludeFields: []string{"*"},
+			want:          false,
+		},
+		{
+			name:          "exclude all wildcard drops provider",
+			fieldName:     "provider",
+			entryPath:     "services/api",
+			entryTitle:    "API Service",
+			includeFields: []string{"title"},
+			excludeFields: []string{"*"},
+			want:          false,
+		},
+		{
+			name:          "exclude all wildcard drops vault",
+			fieldName:     "vault",
+			entryPath:     "services/api",
+			entryTitle:    "API Service",
+			includeFields: []string{"title"},
+			excludeFields: []string{"*"},
+			want:          false,
+		},
+		{
+			name:          "no filters allows default fields",
+			fieldName:     "title",
+			entryPath:     "services/api",
+			entryTitle:    "API Service",
+			includeFields: nil,
+			excludeFields: nil,
+			want:          true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsDefaultFieldAllowed(tt.fieldName, tt.entryPath, nil, tt.entryTitle, tt.includeFields, tt.excludeFields)
+			if got != tt.want {
+				t.Errorf("IsDefaultFieldAllowed(%q, %v, %v) = %v, want %v",
 					tt.fieldName, tt.includeFields, tt.excludeFields, got, tt.want)
 			}
 		})

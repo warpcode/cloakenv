@@ -110,7 +110,7 @@ func (s *Searcher) resolveSearchResultAttributes(ctx context.Context, r provider
 	return r
 }
 
-func (s *Searcher) filterResultsByExpression(expressionStr string, allResults []provider.SearchResult) ([]provider.SearchResult, error) {
+func (s *Searcher) filterResultsByExpression(ctx context.Context, expressionStr string, allResults []provider.SearchResult) ([]provider.SearchResult, error) {
 	if expressionStr == "" {
 		return allResults, nil
 	}
@@ -149,6 +149,8 @@ func (s *Searcher) filterResultsByExpression(expressionStr string, allResults []
 		s.cacheMu.Unlock()
 	}
 
+	fieldPolicy := provider.FieldPolicyFromContext(ctx)
+
 	var matchedResults []provider.SearchResult
 	env := make(map[string]any)
 	for _, r := range allResults {
@@ -160,6 +162,25 @@ func (s *Searcher) filterResultsByExpression(expressionStr string, allResults []
 		for k, v := range r.Entry.Attributes {
 			if k != "title" && k != "tags" && k != "path" {
 				env[k] = v
+			}
+		}
+
+		if fieldPolicy != nil && len(fieldPolicy.MappingRules) > 0 {
+			for _, rule := range fieldPolicy.MappingRules {
+				if rule.CompiledRegex == nil {
+					_ = rule.Compile()
+				}
+				if rule.CompiledRegex != nil {
+					for k, v := range r.Entry.Attributes {
+						if rule.CompiledRegex.MatchString(k) {
+							template := provider.ConvertBackslashGroups(rule.Key)
+							newKey := rule.CompiledRegex.ReplaceAllString(k, template)
+							if newKey != "" && env[newKey] == nil {
+								env[newKey] = v
+							}
+						}
+					}
+				}
 			}
 		}
 
@@ -215,14 +236,71 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 		}
 
 		for _, r := range results {
+			origTitle := r.Entry.Title
+			origPath := r.Path
+
 			if cfg != nil {
 				if vc, ok := cfg.Vaults[name]; ok {
-					r.Provider = vc.Provider
+					if r.Provider == "" {
+						r.Provider = vc.Provider
+					}
+					if r.Vault == "" {
+						r.Vault = name
+					}
+
+					if len(vc.Mapping) > 0 {
+						if !provider.IsDefaultFieldMappedOrIncluded("provider", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, origTitle) {
+							r.Provider = ""
+						}
+						if !provider.IsDefaultFieldMappedOrIncluded("vault", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, origTitle) {
+							r.Vault = ""
+						}
+						if !provider.IsDefaultFieldMappedOrIncluded("path", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, origTitle) {
+							r.Path = ""
+						}
+					} else if len(vc.IncludeFields) > 0 || len(vc.ExcludeFields) > 0 {
+						if !provider.IsDefaultFieldAllowed("provider", origPath, rootPrefixes, origTitle, vc.IncludeFields, vc.ExcludeFields) {
+							r.Provider = ""
+						}
+						if !provider.IsDefaultFieldAllowed("vault", origPath, rootPrefixes, origTitle, vc.IncludeFields, vc.ExcludeFields) {
+							r.Vault = ""
+						}
+						if !provider.IsDefaultFieldAllowed("path", origPath, rootPrefixes, origTitle, vc.IncludeFields, vc.ExcludeFields) {
+							r.Path = ""
+						}
+					}
 				}
 			}
-			r.Vault = name
+
 			if fieldPolicy != nil {
-				r.Entry = fieldPolicy.ApplyToEntry(r.Entry, r.Path, rootPrefixes)
+				var fpIncludes []string
+				for _, layer := range fieldPolicy.IncludeLayers {
+					fpIncludes = append(fpIncludes, layer...)
+				}
+
+				if len(fieldPolicy.MappingRules) > 0 {
+					if !provider.IsDefaultFieldMappedOrIncluded("provider", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, origTitle) {
+						r.Provider = ""
+					}
+					if !provider.IsDefaultFieldMappedOrIncluded("vault", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, origTitle) {
+						r.Vault = ""
+					}
+					if !provider.IsDefaultFieldMappedOrIncluded("path", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, origTitle) {
+						r.Path = ""
+					}
+				} else if len(fpIncludes) > 0 || len(fieldPolicy.ExcludeFields) > 0 {
+					if !provider.IsDefaultFieldAllowed("provider", origPath, rootPrefixes, origTitle, fpIncludes, fieldPolicy.ExcludeFields) {
+						r.Provider = ""
+					}
+					if !provider.IsDefaultFieldAllowed("vault", origPath, rootPrefixes, origTitle, fpIncludes, fieldPolicy.ExcludeFields) {
+						r.Vault = ""
+					}
+					if !provider.IsDefaultFieldAllowed("path", origPath, rootPrefixes, origTitle, fpIncludes, fieldPolicy.ExcludeFields) {
+						r.Path = ""
+					}
+				}
+
+				r.Entry = fieldPolicy.ApplyToEntry(r.Entry, origPath, rootPrefixes)
 			}
 			allResults = append(allResults, s.resolveSearchResultAttributes(ctx, r, depth))
 		}
@@ -239,7 +317,7 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 		return allResults[i].Path < allResults[j].Path
 	})
 
-	return s.filterResultsByExpression(expressionStr, allResults)
+	return s.filterResultsByExpression(ctx, expressionStr, allResults)
 }
 
 func validateExpression(expressionStr string) error {

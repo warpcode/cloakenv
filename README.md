@@ -604,8 +604,8 @@ vaults:
 
 #### 5. Field Filtering (`include_fields` and `exclude_fields`)
 - Supported across structured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`).
-- **`exclude_fields`**: Drops attributes matching any configured glob pattern before returning secrets. **Exclude rules always take precedence over include rules** (evaluated first at every step).
-- **`include_fields`**: When configured, restricts returned entry attributes to fields matching at least one glob pattern. An **empty list means filtering is disabled** (all unexcluded attributes allowed), not deny-all.
+- **`include_fields`**: When configured, restricts returned entry attributes to fields matching at least one glob pattern. **Include rules always take precedence over exclude rules** (evaluated first). An **empty list means filtering is disabled** (all unexcluded attributes allowed), not deny-all.
+- **`exclude_fields`**: Drops attributes matching any configured glob pattern before returning secrets when not explicitly permitted by include rules.
 - **Case-Sensitivity**: Glob patterns are evaluated **case-sensitively** (via Go's `path.Match`). A pattern like `"password"` will not match an attribute named `"Password"`. Ensure pattern casing matches the provider's attribute names.
 - **Candidate Matching Scope**: Pattern matching is not limited to bare attribute names; it evaluates multiple candidate representations:
   - **Bare field names**: e.g., `UserName`, `password`, `notes`.
@@ -636,7 +636,7 @@ vaults:
 - **`match`**: Regex pattern matched against raw attribute field names. Supports capture groups (e.g., `env:(.*)`).
 - **`key`**: Target output field name template using capture group references (e.g., `$1` or `\1`).
 - **Preserved Values**: Mapped fields retain the original field value.
-- **Post-Mapping Filtering**: Field filtering (`include_fields` and `exclude_fields`) is evaluated against post-mapping attribute key names and paths.
+- **Filter Exemption**: Mapped fields always show regardless of `include_fields` or `exclude_fields` configured on the same vault. Field filtering (`include_fields` and `exclude_fields`) applies to unmapped fields.
 - Example config:
 ```yaml
 vaults:

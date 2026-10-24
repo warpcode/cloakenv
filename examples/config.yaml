@@ -99,7 +99,7 @@ vaults:
 
   # Example of field key mapping on any vault provider using regex rules:
   # mapping: renames matched field keys while preserving original source field values as mapped values.
-  # Field filtering (include_fields and exclude_fields) is evaluated against post-mapping attribute key names and paths.
+  # Mapped fields always show regardless of include_fields or exclude_fields configured on the same vault. Field filtering applies to unmapped fields.
   # mapped_work:
   #   provider: "keepass"
   #   vault_path: "~/secrets/work_vault.kdbx"

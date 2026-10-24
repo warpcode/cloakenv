@@ -2,7 +2,11 @@
 // credential backends and the shared ProviderConfig type.
 package provider
 
-import "context"
+import (
+	"context"
+
+	"github.com/warpcode/cloakenv/internal/config"
+)
 
 // SecretProvider is the core abstraction for all credential backends.
 // Built-in providers (keyring://, env://) and remote-type providers
@@ -46,6 +50,7 @@ type ProviderConfig struct {
 	Query             string
 	IncludeFields     []string
 	ExcludeFields     []string
+	Mapping           []config.MappingRule
 	ResolveReferences bool
 }
 
@@ -101,37 +106,114 @@ const ContextKeyDepth ContextKey = "depth"
 
 type contextKeyFieldPolicy struct{}
 
-// FieldPolicy holds include layers and exclude glob patterns for attribute filtering.
+// FieldPolicy holds include layers, exclude glob patterns, and mapping rules for attribute filtering.
 type FieldPolicy struct {
 	IncludeLayers [][]string
 	ExcludeFields []string
+	MappingRules  []config.MappingRule
 }
 
 // ApplyToEntry applies the composed field policy to an entry taking entryPath and rootPrefixes into account.
 // Include layers are evaluated successively to enforce set intersection across all constraining layers.
+// Attributes matching mapping rules are preserved and bypass include/exclude filters.
+// Entry Title and Tags are preserved so search queries and entry matching can evaluate metadata.
 func (fp *FieldPolicy) ApplyToEntry(entry Entry, entryPath string, rootPrefixes []string) Entry {
 	if fp == nil {
 		return entry
 	}
-	current := entry
-	for _, layer := range fp.IncludeLayers {
-		if len(layer) > 0 {
-			current = FilterEntryWithPath(current, entryPath, rootPrefixes, layer, nil)
+	origTitle := entry.Title
+	origTags := entry.Tags
+
+	if len(fp.MappingRules) == 0 {
+		current := entry
+		if len(fp.IncludeLayers) > 0 {
+			for _, layer := range fp.IncludeLayers {
+				if len(layer) > 0 {
+					current = FilterEntryWithPath(current, entryPath, rootPrefixes, layer, fp.ExcludeFields)
+				}
+			}
+		} else if len(fp.ExcludeFields) > 0 {
+			current = FilterEntryWithPath(current, entryPath, rootPrefixes, nil, fp.ExcludeFields)
+		}
+		current.Title = origTitle
+		current.Tags = origTags
+		return current
+	}
+
+	compiledRules := make([]config.MappingRule, len(fp.MappingRules))
+	for i, r := range fp.MappingRules {
+		if r.CompiledRegex == nil {
+			_ = r.Compile()
+		}
+		compiledRules[i] = r
+	}
+
+	mappedAttrs := make(map[string]any)
+	unmappedAttrs := make(map[string]any)
+
+	for k, v := range entry.Attributes {
+		isMapped := false
+		for _, r := range compiledRules {
+			if r.CompiledRegex != nil && r.CompiledRegex.MatchString(k) {
+				isMapped = true
+				break
+			}
+		}
+		if !isMapped && HasMappedDescendant(v, compiledRules) {
+			isMapped = true
+		}
+
+		if isMapped {
+			mappedAttrs[k] = v
+		} else {
+			unmappedAttrs[k] = v
 		}
 	}
-	if len(fp.ExcludeFields) > 0 {
-		current = FilterEntryWithPath(current, entryPath, rootPrefixes, nil, fp.ExcludeFields)
+
+	unmappedEntry := Entry{
+		Title:      origTitle,
+		Attributes: unmappedAttrs,
 	}
-	return current
+	if len(fp.IncludeLayers) > 0 {
+		for _, layer := range fp.IncludeLayers {
+			if len(layer) > 0 {
+				unmappedEntry = FilterEntryWithPath(unmappedEntry, entryPath, rootPrefixes, layer, fp.ExcludeFields)
+			}
+		}
+	} else if len(fp.ExcludeFields) > 0 {
+		unmappedEntry = FilterEntryWithPath(unmappedEntry, entryPath, rootPrefixes, nil, fp.ExcludeFields)
+	}
+
+	resultAttrs := make(map[string]any, len(mappedAttrs)+len(unmappedEntry.Attributes))
+	for k, v := range unmappedEntry.Attributes {
+		resultAttrs[k] = v
+	}
+	for k, v := range mappedAttrs {
+		resultAttrs[k] = v
+	}
+
+	return Entry{
+		Title:      origTitle,
+		Tags:       origTags,
+		Attributes: resultAttrs,
+	}
 }
 
 // WithFieldPolicy returns a context carrying include and exclude glob field policies.
 // If ctx already carries a FieldPolicy, inherited and current policies are composed:
 // active includes preserve layers to evaluate intersection, and excludes are unioned.
 func WithFieldPolicy(ctx context.Context, includeFields, excludeFields []string) context.Context {
+	return WithFieldPolicyAndMapping(ctx, includeFields, excludeFields, nil)
+}
+
+// WithFieldPolicyAndMapping returns a context carrying include, exclude, and mapping rules.
+// If ctx already carries a FieldPolicy, inherited and current policies are composed:
+// active includes preserve layers to evaluate intersection, excludes are unioned,
+// and mapping rules are accumulated.
+func WithFieldPolicyAndMapping(ctx context.Context, includeFields, excludeFields []string, mappingRules []config.MappingRule) context.Context {
 	inherited := FieldPolicyFromContext(ctx)
 	if inherited == nil {
-		if len(includeFields) == 0 && len(excludeFields) == 0 {
+		if len(includeFields) == 0 && len(excludeFields) == 0 && len(mappingRules) == 0 {
 			return ctx
 		}
 		var layers [][]string
@@ -141,6 +223,7 @@ func WithFieldPolicy(ctx context.Context, includeFields, excludeFields []string)
 		return context.WithValue(ctx, contextKeyFieldPolicy{}, &FieldPolicy{
 			IncludeLayers: layers,
 			ExcludeFields: excludeFields,
+			MappingRules:  mappingRules,
 		})
 	}
 
@@ -167,9 +250,18 @@ func WithFieldPolicy(ctx context.Context, includeFields, excludeFields []string)
 		effectiveIncludeLayers = append(effectiveIncludeLayers, includeFields)
 	}
 
+	var effectiveMappingRules []config.MappingRule
+	if len(inherited.MappingRules) > 0 {
+		effectiveMappingRules = append(effectiveMappingRules, inherited.MappingRules...)
+	}
+	if len(mappingRules) > 0 {
+		effectiveMappingRules = append(effectiveMappingRules, mappingRules...)
+	}
+
 	return context.WithValue(ctx, contextKeyFieldPolicy{}, &FieldPolicy{
 		IncludeLayers: effectiveIncludeLayers,
 		ExcludeFields: effectiveExcludes,
+		MappingRules:  effectiveMappingRules,
 	})
 }
 

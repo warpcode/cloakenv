@@ -239,3 +239,285 @@ func TestSearchProviderIntegration_CyclicDependencyDetection(t *testing.T) {
 		t.Errorf("expected cyclic dependency error, got: %v", err)
 	}
 }
+
+func TestSearchProviderIntegration_MappingWithExcludeAllFields(t *testing.T) {
+	ctx := context.Background()
+
+	rule := config.MappingRule{Match: "^env:(.*)$", Key: "$1"}
+	_ = rule.Compile()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"kp": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"my_entry": {
+						"title":       "My Entry",
+						"tags":        []string{"dotenv:jules"},
+						"env:API_KEY": "sk-jules-secret",
+						"OTHER":       "unmapped_val",
+					},
+				},
+			},
+			"jules": {
+				Provider:      "search",
+				SourceVaults:  []string{"kp"},
+				Query:         `"dotenv:jules" in tags`,
+				ExcludeFields: []string{"*"},
+				Mapping:       []config.MappingRule{rule},
+			},
+		},
+	}
+
+	orch, err := engine.NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	// 1. GetSecret on mapped key
+	val, err := orch.Resolve(ctx, "jules://my_entry:API_KEY")
+	if err != nil {
+		t.Fatalf("unexpected error resolving secret: %v", err)
+	}
+	if val != "sk-jules-secret" {
+		t.Errorf("expected 'sk-jules-secret', got %q", val)
+	}
+
+	// 2. GetEntry on search vault
+	entry, err := orch.GetEntry(ctx, "jules://my_entry")
+	if err != nil {
+		t.Fatalf("unexpected error getting entry: %v", err)
+	}
+	if entry.Attributes["API_KEY"] != "sk-jules-secret" {
+		t.Errorf("expected API_KEY in entry attributes, got %v", entry.Attributes["API_KEY"])
+	}
+	if _, ok := entry.Attributes["OTHER"]; ok {
+		t.Errorf("expected OTHER to be excluded, but was present")
+	}
+	if entry.Tags != nil {
+		t.Errorf("expected unmapped tags to be excluded, got %v", entry.Tags)
+	}
+	if entry.Title != "" {
+		t.Errorf("expected unmapped title to be excluded, got %q", entry.Title)
+	}
+
+	// 3. Unmapped field should fail
+	_, errOther := orch.Resolve(ctx, "jules://my_entry:OTHER")
+	if errOther == nil {
+		t.Errorf("expected error resolving unmapped OTHER field, got nil")
+	}
+
+	// 4. Search on virtual vault
+	results, errSearch := orch.Search(ctx, `API_KEY == "sk-jules-secret"`, []string{"jules"})
+	if errSearch != nil {
+		t.Fatalf("unexpected error searching jules: %v", errSearch)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 search result, got %d", len(results))
+	}
+	if results[0].Entry.Attributes["API_KEY"] != "sk-jules-secret" {
+		t.Errorf("expected API_KEY in search result, got %v", results[0].Entry.Attributes["API_KEY"])
+	}
+	if results[0].Provider != "" {
+		t.Errorf("expected Provider to be excluded by exclude_fields: ['*'], got %q", results[0].Provider)
+	}
+	if results[0].Vault != "" {
+		t.Errorf("expected Vault to be excluded by exclude_fields: ['*'], got %q", results[0].Vault)
+	}
+	if results[0].Path != "" {
+		t.Errorf("expected Path to be excluded by exclude_fields: ['*'], got %q", results[0].Path)
+	}
+}
+
+func TestSearchProviderIntegration_IncludeAboveExclude(t *testing.T) {
+	ctx := context.Background()
+
+	rule := config.MappingRule{Match: "^env:(.*)$", Key: "$1"}
+	_ = rule.Compile()
+
+	// The exact vault configuration requested:
+	//   jules:
+	//     provider: "search"
+	//     source_vaults: ["kp"]
+	//     query: '"dotenv:jules" in tags'
+	//     exclude_fields: ['*']
+	//     include_fields: ['title']
+	//     mapping:
+	//       - match: "^env:(.*)$"
+	//         key: "$1"
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"kp": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"my_entry": {
+						"title":       "My Entry",
+						"tags":        []string{"dotenv:jules"},
+						"env:API_KEY": "sk-jules-secret",
+						"OTHER":       "unmapped_val",
+					},
+				},
+			},
+			"jules": {
+				Provider:      "search",
+				SourceVaults:  []string{"kp"},
+				Query:         `"dotenv:jules" in tags`,
+				ExcludeFields: []string{"*"},
+				IncludeFields: []string{"title"},
+				Mapping:       []config.MappingRule{rule},
+			},
+		},
+	}
+
+	orch, err := engine.NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	// 1. GetSecret on mapped key
+	val, err := orch.Resolve(ctx, "jules://my_entry:API_KEY")
+	if err != nil {
+		t.Fatalf("unexpected error resolving secret: %v", err)
+	}
+	if val != "sk-jules-secret" {
+		t.Errorf("expected 'sk-jules-secret', got %q", val)
+	}
+
+	// 2. GetEntry on search vault: title MUST be present because include is above exclude
+	entry, err := orch.GetEntry(ctx, "jules://my_entry")
+	if err != nil {
+		t.Fatalf("unexpected error getting entry: %v", err)
+	}
+	if entry.Attributes["API_KEY"] != "sk-jules-secret" {
+		t.Errorf("expected API_KEY in entry attributes, got %v", entry.Attributes["API_KEY"])
+	}
+	if entry.Title != "My Entry" {
+		t.Errorf("expected title 'My Entry' because include_fields has 'title', got %q", entry.Title)
+	}
+	if _, ok := entry.Attributes["OTHER"]; ok {
+		t.Errorf("expected OTHER to be excluded, but was present")
+	}
+	if entry.Tags != nil {
+		t.Errorf("expected tags to be excluded (not in include_fields), got %v", entry.Tags)
+	}
+
+	// 3. Search on virtual vault
+	results, errSearch := orch.Search(ctx, `API_KEY == "sk-jules-secret"`, []string{"jules"})
+	if errSearch != nil {
+		t.Fatalf("unexpected error searching jules: %v", errSearch)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 search result, got %d", len(results))
+	}
+	if results[0].Entry.Attributes["API_KEY"] != "sk-jules-secret" {
+		t.Errorf("expected API_KEY in search result, got %v", results[0].Entry.Attributes["API_KEY"])
+	}
+	if results[0].Entry.Title != "My Entry" {
+		t.Errorf("expected Title 'My Entry' in search result, got %q", results[0].Entry.Title)
+	}
+	if results[0].Entry.Tags != nil {
+		t.Errorf("expected Tags to be excluded in search result, got %v", results[0].Entry.Tags)
+	}
+	if results[0].Provider != "" {
+		t.Errorf("expected Provider to be excluded by exclude_fields: ['*'], got %q", results[0].Provider)
+	}
+	if results[0].Vault != "" {
+		t.Errorf("expected Vault to be excluded by exclude_fields: ['*'], got %q", results[0].Vault)
+	}
+	if results[0].Path != "" {
+		t.Errorf("expected Path to be excluded by exclude_fields: ['*'], got %q", results[0].Path)
+	}
+}
+
+func TestSearchProviderIntegration_MappingOnlyKeepsDefaultFields(t *testing.T) {
+	ctx := context.Background()
+
+	rule := config.MappingRule{
+		Match: "^env:(.*)$",
+		Key:   "$1",
+	}
+
+	// Vault config with mapping ONLY (no include_fields, no exclude_fields)
+	// Default fields (title, tags, path, vault, provider) MUST SHOW!
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"kp": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"my_entry": {
+						"title":       "My Entry",
+						"tags":        []string{"dotenv:jules"},
+						"env:API_KEY": "sk-jules-secret",
+						"OTHER":       "unmapped_val",
+					},
+				},
+			},
+			"jules": {
+				Provider:     "search",
+				SourceVaults: []string{"kp"},
+				Query:        `"dotenv:jules" in tags`,
+				Mapping:      []config.MappingRule{rule},
+			},
+		},
+	}
+
+	orch, err := engine.NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	// 1. GetSecret on mapped key
+	val, err := orch.Resolve(ctx, "jules://my_entry:API_KEY")
+	if err != nil {
+		t.Fatalf("unexpected error resolving secret: %v", err)
+	}
+	if val != "sk-jules-secret" {
+		t.Errorf("expected 'sk-jules-secret', got %q", val)
+	}
+
+	// 2. GetEntry on search vault: default fields MUST be present
+	entry, err := orch.GetEntry(ctx, "jules://my_entry")
+	if err != nil {
+		t.Fatalf("unexpected error getting entry: %v", err)
+	}
+	if entry.Attributes["API_KEY"] != "sk-jules-secret" {
+		t.Errorf("expected API_KEY in entry attributes, got %v", entry.Attributes["API_KEY"])
+	}
+	if entry.Title != "My Entry" {
+		t.Errorf("expected Title 'My Entry', got %q", entry.Title)
+	}
+	if len(entry.Tags) != 1 || entry.Tags[0] != "dotenv:jules" {
+		t.Errorf("expected tags ['dotenv:jules'], got %v", entry.Tags)
+	}
+	if entry.Attributes["OTHER"] != "unmapped_val" {
+		t.Errorf("expected unmapped OTHER to be present, got %v", entry.Attributes["OTHER"])
+	}
+
+	// 3. Search on virtual vault: all default fields must be preserved
+	results, errSearch := orch.Search(ctx, `API_KEY == "sk-jules-secret"`, []string{"jules"})
+	if errSearch != nil {
+		t.Fatalf("unexpected error searching jules: %v", errSearch)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 search result, got %d", len(results))
+	}
+	res := results[0]
+	if res.Entry.Attributes["API_KEY"] != "sk-jules-secret" {
+		t.Errorf("expected API_KEY in search result, got %v", res.Entry.Attributes["API_KEY"])
+	}
+	if res.Entry.Title != "My Entry" {
+		t.Errorf("expected Title 'My Entry', got %q", res.Entry.Title)
+	}
+	if len(res.Entry.Tags) != 1 || res.Entry.Tags[0] != "dotenv:jules" {
+		t.Errorf("expected Tags ['dotenv:jules'], got %v", res.Entry.Tags)
+	}
+	if res.Provider != "search" {
+		t.Errorf("expected Provider 'search', got %q", res.Provider)
+	}
+	if res.Vault != "jules" {
+		t.Errorf("expected Vault 'jules', got %q", res.Vault)
+	}
+	if res.Path != "my_entry" {
+		t.Errorf("expected Path 'my_entry', got %q", res.Path)
+	}
+}

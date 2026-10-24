@@ -316,6 +316,109 @@ func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
 	}
 }
 
+func TestProviderManager_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T) {
+	rule1 := config.MappingRule{Match: "env:(.*)", Key: "$1"}
+	_ = rule1.Compile()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"override_vault": {
+				Provider:      "custom_vault",
+				Mapping:       []config.MappingRule{rule1},
+				IncludeFields: []string{"UNMAPPED_KEPT"},
+				ExcludeFields: []string{"UNMAPPED_DROPPED", "MAPPED_KEY"},
+				Entities: map[string]map[string]any{
+					"service": {
+						"env:MAPPED_KEY":   "mapped_secret_value",
+						"UNMAPPED_KEPT":    "kept_val",
+						"UNMAPPED_DROPPED": "dropped_val",
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// 1. Resolve resolves mapped key even though exclude_fields has "*" and "MAPPED_KEY"
+	val, err := orch.Resolve(ctx, "override_vault://service:MAPPED_KEY")
+	if err != nil {
+		t.Fatalf("expected Resolve for mapped key to succeed, got %v", err)
+	}
+	if val != "mapped_secret_value" {
+		t.Errorf("expected 'mapped_secret_value', got %q", val)
+	}
+
+	// 2. Resolve resolves unmapped key in include_fields
+	valKept, err := orch.Resolve(ctx, "override_vault://service:UNMAPPED_KEPT")
+	if err != nil {
+		t.Fatalf("expected Resolve for UNMAPPED_KEPT to succeed, got %v", err)
+	}
+	if valKept != "kept_val" {
+		t.Errorf("expected 'kept_val', got %q", valKept)
+	}
+
+	// 3. Resolve fails for unmapped key matching exclude_fields
+	_, err = orch.Resolve(ctx, "override_vault://service:UNMAPPED_DROPPED")
+	if err == nil {
+		t.Fatal("expected Resolve for UNMAPPED_DROPPED to fail, got nil")
+	}
+
+	// 4. GetEntry shows mapped key and included unmapped key, but not excluded unmapped key
+	entry, err := orch.GetEntry(ctx, "override_vault://service")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+	if entry.Attributes["MAPPED_KEY"] != "mapped_secret_value" {
+		t.Errorf("expected mapped MAPPED_KEY in GetEntry, got %v", entry.Attributes["MAPPED_KEY"])
+	}
+	if entry.Attributes["UNMAPPED_KEPT"] != "kept_val" {
+		t.Errorf("expected UNMAPPED_KEPT in GetEntry, got %v", entry.Attributes["UNMAPPED_KEPT"])
+	}
+	// 5. When exclude_fields is wildcard "*", mapped key STILL shows and resolves
+	cfgWildcard := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"wildcard_vault": {
+				Provider:      "custom_vault",
+				Mapping:       []config.MappingRule{rule1},
+				ExcludeFields: []string{"*"},
+				Entities: map[string]map[string]any{
+					"service": {
+						"env:MAPPED_KEY": "wildcard_secret",
+						"OTHER_FIELD":    "other_val",
+					},
+				},
+			},
+		},
+	}
+	orchWildcard, err := NewOrchestrator(cfgWildcard)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	valWildcard, err := orchWildcard.Resolve(ctx, "wildcard_vault://service:MAPPED_KEY")
+	if err != nil {
+		t.Fatalf("expected Resolve for mapped key under exclude_fields=['*'] to succeed, got %v", err)
+	}
+	if valWildcard != "wildcard_secret" {
+		t.Errorf("expected 'wildcard_secret', got %q", valWildcard)
+	}
+	entryWildcard, err := orchWildcard.GetEntry(ctx, "wildcard_vault://service")
+	if err != nil {
+		t.Fatalf("GetEntry under exclude_fields=['*'] failed: %v", err)
+	}
+	if entryWildcard.Attributes["MAPPED_KEY"] != "wildcard_secret" {
+		t.Errorf("expected mapped key in GetEntry under exclude_fields=['*'], got %v", entryWildcard.Attributes["MAPPED_KEY"])
+	}
+	if _, ok := entryWildcard.Attributes["OTHER_FIELD"]; ok {
+		t.Error("expected OTHER_FIELD to be excluded by exclude_fields=['*']")
+	}
+}
+
 func TestProviderManagerUnknownSchemeDoesNotAllocateLock(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
