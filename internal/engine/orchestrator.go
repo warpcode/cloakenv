@@ -293,3 +293,8 @@ func (o *Orchestrator) IsRunAlias(cmdArgs []string) bool {
 	}
 	return IsRunAlias(o.config, cmdArgs)
 }
+
+// GetResolver returns the internal Resolver (used for testing).
+func (o *Orchestrator) GetResolver() *Resolver {
+	return o.resolver
+}
