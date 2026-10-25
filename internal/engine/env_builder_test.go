@@ -299,7 +299,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 			Autoload: []config.AutoloadRule{
 				{
 					Match:   `^testest(.*)$`,
-					Command: `echo "${env://EXP_USER}"`,
+					Command: `echo "{{ get \"env://EXP_USER\" }}"`,
 				},
 			},
 		}
@@ -334,13 +334,13 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
 
-		cmdArgs := []string{"mycli", "--token=${env://CLI_TOKEN}", "--raw=$${env://CLI_TOKEN}", "plain-arg"}
+		cmdArgs := []string{"mycli", "--token={{ get \"env://CLI_TOKEN\" }}", "--raw={{ \"{{\" }} get \"env://CLI_TOKEN\" }}", "plain-arg"}
 		newCmdArgs, _, err := orchDirect.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
 		if err != nil {
 			t.Fatalf("failed to build env for command: %v", err)
 		}
 
-		expectedArgs := []string{"mycli", "--token=secret-token-123", "--raw=${env://CLI_TOKEN}", "plain-arg"}
+		expectedArgs := []string{"mycli", "--token=secret-token-123", "--raw={{ get \"env://CLI_TOKEN\" }}", "plain-arg"}
 		if len(newCmdArgs) != len(expectedArgs) {
 			t.Fatalf("expected %d args, got %d (%v)", len(expectedArgs), len(newCmdArgs), newCmdArgs)
 		}
@@ -358,7 +358,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
 
-		cmdArgs := []string{"mycli", "--token=${nonexistent_vault://missing}"}
+		cmdArgs := []string{"mycli", "--token={{ get \"nonexistent_vault://missing\" }}"}
 		_, _, err = orchFail.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
 		if err == nil {
 			t.Fatal("expected error for unresolvable secret URI in command arg, got nil")

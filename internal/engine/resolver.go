@@ -50,9 +50,9 @@ func (r *Resolver) Resolve(ctx context.Context, uri string) (string, error) {
 // ResolveWithKey takes a full value, expands any ${...} expressions, and
 // includes the configKey in any failure messages if provided.
 func (r *Resolver) ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error) {
-	if !strings.Contains(uri, "${") {
+	if !strings.Contains(uri, "{{") {
 		if scheme, _, err := utils.ParseURI(uri); err == nil && r.isKnownScheme(scheme) {
-			uri = "${" + uri + "}"
+			uri = `{{ get "` + uri + `" }}`
 		}
 	}
 	return r.expandString(ctx, uri, 0, configKey)
@@ -77,10 +77,11 @@ func (r *Resolver) expandString(ctx context.Context, s string, depth int, config
 	if depth > 5 {
 		return "", fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5")
 	}
-
-	return utils.ExpandString(s, configKey, func(innerText string) (string, error) {
-		return r.resolveSingleURI(ctx, innerText, depth, configKey)
-	})
+	if !strings.Contains(s, "{{") {
+		return s, nil
+	}
+	te := NewTemplateEngine(r)
+	return te.Render(ctx, s, nil, depth, configKey)
 }
 
 func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, configKey string) (string, error) {

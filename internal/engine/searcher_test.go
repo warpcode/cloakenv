@@ -33,7 +33,7 @@ entries:
       - auth:ssh
       - env:prod
     title: "Production SSH Key"
-    username: ${env://ORCH_TEST_USER}
+    username: '{{ get "env://ORCH_TEST_USER" }}'
     password: "my_raw_password"
     bit_strength: 4096
   ssh_staging:
@@ -74,8 +74,8 @@ entries:
 
 	t.Run("RecursiveResolution", func(t *testing.T) {
 		// 1. Test recursive resolution
-		// ${my_repo://entries.ssh_prod.username} should resolve to ${env://ORCH_TEST_USER} which resolves to "env_user"
-		val, err := orch.Resolve(ctx, "${my_repo://entries.ssh_prod.username}")
+		// {{ get "my_repo://entries.ssh_prod.username" }} should resolve to {{ get "env://ORCH_TEST_USER" }} which resolves to "env_user"
+		val, err := orch.Resolve(ctx, `{{ get "my_repo://entries.ssh_prod.username" }}`)
 		if err != nil {
 			t.Fatalf("failed to resolve: %v", err)
 		}
@@ -123,7 +123,7 @@ entries:
 	t.Run("SearchURI", func(t *testing.T) {
 		// 4. Test search:// URI scheme in Resolve
 		// Resolves Hostname or Password dynamically
-		val, err := orch.Resolve(ctx, `${search://tags=auth:ssh,env:prod/password}`)
+		val, err := orch.Resolve(ctx, `{{ get "search://tags=auth:ssh,env:prod/password" }}`)
 		if err != nil {
 			t.Fatalf("failed to resolve search:// URI: %v", err)
 		}
@@ -273,25 +273,25 @@ servers:
 	// 2. Verify Retrievals
 	t.Run("RetrieveSecrets", func(t *testing.T) {
 		// Custom static default Password
-		val, err := orch.Resolve(ctx, "${custom_static://custom1}")
+		val, err := orch.Resolve(ctx, `{{ get "custom_static://custom1" }}`)
 		if err != nil || val != "custom_password" {
 			t.Errorf("expected 'custom_password', got: %v (err: %v)", val, err)
 		}
 
 		// Custom static specific key
-		val, err = orch.Resolve(ctx, "${custom_static://custom1:username}")
+		val, err = orch.Resolve(ctx, `{{ get "custom_static://custom1:username" }}`)
 		if err != nil || val != "custom_user" {
 			t.Errorf("expected 'custom_user', got: %v (err: %v)", val, err)
 		}
 
 		// Custom single — entity named "Static_Flat", access specific attribute
-		val, err = orch.Resolve(ctx, "${custom_single://Static_Flat:db_user}")
+		val, err = orch.Resolve(ctx, `{{ get "custom_single://Static_Flat:db_user" }}`)
 		if err != nil || val != "postgres" {
 			t.Errorf("expected 'postgres', got: %v (err: %v)", val, err)
 		}
 
 		// Flat file attributes
-		val, err = orch.Resolve(ctx, "${flat_file://api_key}")
+		val, err = orch.Resolve(ctx, `{{ get "flat_file://api_key" }}`)
 		if err != nil || val != "super_secret_api_token" {
 			t.Errorf("expected 'super_secret_api_token', got: %v (err: %v)", val, err)
 		}
@@ -300,7 +300,7 @@ servers:
 	// 3. Verify Serialization of structured values
 	t.Run("ValueSerialization", func(t *testing.T) {
 		// Metadata (should be serialized YAML)
-		val, err := orch.Resolve(ctx, "${flat_file://metadata}")
+		val, err := orch.Resolve(ctx, `{{ get "flat_file://metadata" }}`)
 		if err != nil {
 			t.Fatalf("failed to resolve metadata: %v", err)
 		}
@@ -310,7 +310,7 @@ servers:
 		}
 
 		// Servers (should be serialized YAML array)
-		val, err = orch.Resolve(ctx, "${flat_file://servers}")
+		val, err = orch.Resolve(ctx, `{{ get "flat_file://servers" }}`)
 		if err != nil {
 			t.Fatalf("failed to resolve servers: %v", err)
 		}
@@ -653,7 +653,7 @@ entities:
   api:
     title: "api_service"
     username: "api_user"
-    secret_ref: "${tripwire://must_not_be_called}"
+    secret_ref: '{{ get "tripwire://must_not_be_called" }}'
 `
 	yamlPath := filepath.Join(tempDir, "inferred_root.yaml")
 	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0644); err != nil {

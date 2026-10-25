@@ -94,7 +94,7 @@ func TestOrchestratorFacade(t *testing.T) {
 	}
 
 	t.Run("Resolve and ResolveWithKey", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, "${test_vault://service_a:API_KEY}")
+		val, err := orch.Resolve(ctx, `{{ get "test_vault://service_a:API_KEY" }}`)
 		if err != nil {
 			t.Fatalf("Resolve failed: %v", err)
 		}
@@ -102,7 +102,7 @@ func TestOrchestratorFacade(t *testing.T) {
 			t.Errorf("Resolve() = %q, want %q", val, "secret-api-key")
 		}
 
-		valKey, err := orch.ResolveWithKey(ctx, "${test_vault://service_a:API_KEY}", "MY_KEY")
+		valKey, err := orch.ResolveWithKey(ctx, `{{ get "test_vault://service_a:API_KEY" }}`, "MY_KEY")
 		if err != nil {
 			t.Fatalf("ResolveWithKey failed: %v", err)
 		}
@@ -203,7 +203,7 @@ func TestOrchestratorFacade(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Write failed: %v", err)
 		}
-		val, err := orch.Resolve(ctx, "${keyring://service_a/api_key}")
+		val, err := orch.Resolve(ctx, `{{ get "keyring://service_a/api_key" }}`)
 		if err != nil || val != "new-value" {
 			t.Errorf("after Write, Resolve() = (%q, %v), want ('new-value', nil)", val, err)
 		}
@@ -318,7 +318,7 @@ func TestOrchestrator_FieldFiltering(t *testing.T) {
 	})
 
 	t.Run("Resolve_AllowedField", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, "${filtered_vault://app_config:env:PORT}")
+		val, err := orch.Resolve(ctx, `{{ get "filtered_vault://app_config:env:PORT" }}`)
 		if err != nil {
 			t.Fatalf("Resolve env:PORT failed: %v", err)
 		}
@@ -328,12 +328,12 @@ func TestOrchestrator_FieldFiltering(t *testing.T) {
 	})
 
 	t.Run("Resolve_ExcludedField", func(t *testing.T) {
-		_, err := orch.Resolve(ctx, "${filtered_vault://app_config:Password}")
+		_, err := orch.Resolve(ctx, `{{ get "filtered_vault://app_config:Password" }}`)
 		if err == nil {
 			t.Fatalf("expected error resolving excluded field Password, got nil")
 		}
 
-		_, errToken := orch.Resolve(ctx, "${filtered_vault://app_config:secret:token}")
+		_, errToken := orch.Resolve(ctx, `{{ get "filtered_vault://app_config:secret:token" }}`)
 		if errToken == nil {
 			t.Fatalf("expected error resolving excluded field secret:token, got nil")
 		}
@@ -351,8 +351,8 @@ func TestOrchestrator_FieldFiltering_WrappedDirectProviderResolution(t *testing.
 	tmpDir := t.TempDir()
 	yamlFile := filepath.Join(tmpDir, "vault.yaml")
 	yamlContent := `
-api_key: "${env://MY_APP_SECRET}"
-excluded_key: "${env://MY_APP_SECRET}"
+api_key: '{{ get "env://MY_APP_SECRET" }}'
+excluded_key: '{{ get "env://MY_APP_SECRET" }}'
 `
 	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
 		t.Fatalf("failed to write yaml fixture: %v", err)
@@ -376,7 +376,7 @@ excluded_key: "${env://MY_APP_SECRET}"
 	}
 
 	// 1. Allowed field with nested URI should resolve through to the env provider value
-	val, err := orch.Resolve(ctx, "${filtered_yaml://api_key}")
+	val, err := orch.Resolve(ctx, `{{ get "filtered_yaml://api_key" }}`)
 	if err != nil {
 		t.Fatalf("failed to resolve filtered_yaml://api_key: %v", err)
 	}
@@ -397,7 +397,7 @@ excluded_key: "${env://MY_APP_SECRET}"
 	}
 
 	// 3. Excluded key must not be resolvable
-	_, errExcluded := orch.Resolve(ctx, "${filtered_yaml://excluded_key}")
+	_, errExcluded := orch.Resolve(ctx, `{{ get "filtered_yaml://excluded_key" }}`)
 	if errExcluded == nil {
 		t.Fatalf("expected error resolving excluded_key, got nil")
 	}
@@ -429,8 +429,8 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"entry1": {
 						"safe_field":            "safe_value",
-						"excluded_field":        "${tripwire://must_not_be_called}",
-						"rooted_excluded_field": "${tripwire://must_not_be_called_rooted}",
+						"excluded_field":        `{{ get "tripwire://must_not_be_called" }}`,
+						"rooted_excluded_field": `{{ get "tripwire://must_not_be_called_rooted" }}`,
 					},
 				}),
 			},
@@ -452,7 +452,7 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 	orch.providerManager.vaultCache["tripwire"] = tw
 
 	// Resolve through the virtual search provider
-	val, err := orch.Resolve(ctx, "${virtual_search://entry1:safe_field}")
+	val, err := orch.Resolve(ctx, `{{ get "virtual_search://entry1:safe_field" }}`)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -462,7 +462,7 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 
 	// Verify that neither the excluded field nor the rooted excluded field was ever dereferenced
 	if tw.called {
-		t.Errorf("pre-resolution isolation violated: excluded URI value ${tripwire://...} was dereferenced")
+		t.Errorf("pre-resolution isolation violated: excluded URI value tripwire://... was dereferenced")
 	}
 
 	// Also verify that a search vault whose query references the excluded field fails to match
@@ -475,7 +475,7 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"entry1": {
 						"safe_field":     "safe_value",
-						"excluded_field": "${tripwire://must_not_be_called}",
+						"excluded_field": `{{ get "tripwire://must_not_be_called" }}`,
 					},
 				}),
 			},
@@ -495,7 +495,7 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 	orchLeak.providerManager.vaultCache["tripwire"] = tw
 
 	// Since excluded_field was stripped before query evaluation, it cannot match
-	_, errMatch := orchLeak.Resolve(ctx, "${query_leak_search://entry1:safe_field}")
+	_, errMatch := orchLeak.Resolve(ctx, `{{ get "query_leak_search://entry1:safe_field" }}`)
 	if errMatch == nil {
 		t.Errorf("expected query match to fail when query references an excluded field, got nil")
 	}
@@ -515,8 +515,8 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"entry1": {
 						"safe_field":     "safe_value",
-						"outer_excluded": "${tripwire://outer_leak}",
-						"inner_excluded": "${tripwire://inner_leak}",
+						"outer_excluded": `{{ get "tripwire://outer_leak" }}`,
+						"inner_excluded": `{{ get "tripwire://inner_leak" }}`,
 					},
 				}),
 			},
@@ -544,7 +544,7 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 	orch.providerManager.vaultCache["tripwire"] = tw
 
 	// Resolve through the outer virtual search provider
-	val, err := orch.Resolve(ctx, "${outer_search://entry1:safe_field}")
+	val, err := orch.Resolve(ctx, `{{ get "outer_search://entry1:safe_field" }}`)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -554,7 +554,7 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 
 	// Verify that outer-excluded and inner-excluded URI values were never dereferenced
 	if tw.called {
-		t.Errorf("nested virtual search isolation violated: excluded URI value ${tripwire://...} was dereferenced")
+		t.Errorf("nested virtual search isolation violated: excluded URI value tripwire://... was dereferenced")
 	}
 
 	// Also verify that an inner search vault whose query attempts to match on outer_excluded fails
@@ -567,7 +567,7 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"entry1": {
 						"safe_field":     "safe_value",
-						"outer_excluded": "${tripwire://outer_leak}",
+						"outer_excluded": `{{ get "tripwire://outer_leak" }}`,
 					},
 				}),
 			},
@@ -591,7 +591,7 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 	}
 	orchLeak.providerManager.vaultCache["tripwire"] = tw
 
-	_, errMatch := orchLeak.Resolve(ctx, "${outer_search_leak://entry1:safe_field}")
+	_, errMatch := orchLeak.Resolve(ctx, `{{ get "outer_search_leak://entry1:safe_field" }}`)
 	if errMatch == nil {
 		t.Errorf("expected inner search query match on outer-excluded field to fail, got nil")
 	}

@@ -247,10 +247,70 @@ func (eb *EnvBuilder) evalAutoloadRules(cmdArgs []string) ([]string, map[string]
 	return autoMerges, autoExplicit, autoWhitelist, currentCmdArgs, nil
 }
 
+func hasCloakenvInvocation(arg string) bool {
+	if !strings.Contains(arg, "{{") {
+		return false
+	}
+	parts := strings.Split(arg, "{{")
+	for _, part := range parts[1:] {
+		endIdx := strings.Index(part, "}}")
+		var block string
+		if endIdx >= 0 {
+			block = part[:endIdx]
+		} else {
+			block = part
+		}
+		trimmed := strings.TrimSpace(block)
+		trimmed = strings.TrimPrefix(trimmed, "-")
+		trimmed = strings.TrimSpace(trimmed)
+
+		for _, fn := range []string{
+			"get ", "get\t", "get\"", "get`",
+			"entry ", "entry\t", "entry\"", "entry`",
+			"search ", "search\t", "search\"", "search`",
+			"include ", "include\t", "include\"", "include`",
+			"includeFile ", "includeFile\t", "includeFile\"", "includeFile`",
+		} {
+			if strings.HasPrefix(trimmed, fn) || strings.Contains(trimmed, " "+fn) || strings.Contains(trimmed, "("+fn) || strings.Contains(trimmed, "| "+fn) || strings.Contains(trimmed, "|"+fn) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (eb *EnvBuilder) isKnownScheme(scheme string) bool {
+	if scheme == "env" || scheme == "cache" || scheme == "keyring" || scheme == "search" {
+		return true
+	}
+	if eb.config != nil && eb.config.Vaults != nil {
+		_, ok := eb.config.Vaults[scheme]
+		return ok
+	}
+	return false
+}
+
+// shouldResolveCmdArg checks if a child command argument is a bare known URI
+// or contains a cloakenv template invocation. Arguments without cloakenv
+// invocations pass through untouched.
+func (eb *EnvBuilder) shouldResolveCmdArg(arg string) bool {
+	if !strings.Contains(arg, "{{") {
+		if scheme, _, err := utils.ParseURI(arg); err == nil && eb.isKnownScheme(scheme) {
+			return true
+		}
+		return false
+	}
+	return hasCloakenvInvocation(arg) || strings.Contains(arg, `"{{"`)
+}
+
 // resolveCmdArgs resolves secret URIs in command arguments.
 func (eb *EnvBuilder) resolveCmdArgs(ctx context.Context, cmdArgs []string) ([]string, error) {
 	resolvedCmdArgs := make([]string, len(cmdArgs))
 	for i, arg := range cmdArgs {
+		if !eb.shouldResolveCmdArg(arg) {
+			resolvedCmdArgs[i] = arg
+			continue
+		}
 		resolvedArg, err := eb.resolver.Resolve(ctx, arg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve command argument %q: %w", arg, err)
