@@ -43,7 +43,7 @@ func TestRun_Errors(t *testing.T) {
 		},
 		{
 			name:     "No Command",
-			args:     []string{"-e", "A=${env://B}", "--"},
+			args:     []string{"-e", `A={{ get "env://B" }}`, "--"},
 			wantExit: 1,
 			wantErr:  "No command specified",
 		},
@@ -132,8 +132,8 @@ func TestRunCommandExecution(t *testing.T) {
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
 	templateContent := `
-TEST_TEMPLATE_A=${env://SHOW_TEST_VAR_A}
-TEST_TEMPLATE_B=${env://SHOW_TEST_VAR_B}
+TEST_TEMPLATE_A={{ get "env://SHOW_TEST_VAR_A" }}
+TEST_TEMPLATE_B={{ get "env://SHOW_TEST_VAR_B" }}
 TEST_LITERAL_VAL=literal_value_here
 `
 	if _, err := tmpFile.WriteString(templateContent); err != nil {
@@ -154,7 +154,7 @@ TEST_LITERAL_VAL=literal_value_here
 				"CLOAKENV_TEST_B": "value_from_env_b",
 			},
 			runArgs: []string{
-				"-e", "CLOAKENV_TEST_A=${env://CLOAKENV_TEST_B}",
+				"-e", `CLOAKENV_TEST_A={{ get "env://CLOAKENV_TEST_B" }}`,
 				"--",
 				os.Args[0], "-test.run=TestHelperProcess",
 			},

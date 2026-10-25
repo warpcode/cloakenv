@@ -29,7 +29,7 @@ func TestShow_KeysFormat(t *testing.T) {
 	t.Setenv("SHOW_TEST_VAR_B", "valB")
 
 	// Call Show with keys format (with keys that should sort B before A)
-	args := []string{"-e", "KEY_B=${env://SHOW_TEST_VAR_B}", "-e", "KEY_A=${env://SHOW_TEST_VAR_A}", "-o", "keys"}
+	args := []string{"-e", `KEY_B={{ get "env://SHOW_TEST_VAR_B" }}`, "-e", `KEY_A={{ get "env://SHOW_TEST_VAR_A" }}`, "-o", "keys"}
 	cfg := &config.Config{
 		Vaults: make(map[string]config.VaultConfig),
 	}
@@ -82,9 +82,9 @@ func TestShow_KeysFormattingBehavior(t *testing.T) {
 
 	// Explicit keys with lowercase, hyphens, and multiple underscores
 	args := []string{
-		"-e", "db-user=${env://SHOW_TEST_VAR_B}",
-		"-e", "api--key=${env://SHOW_TEST_VAR_A}",
-		"-e", "multiple___underscores=${env://SHOW_TEST_VAR_A}",
+		"-e", `db-user={{ get "env://SHOW_TEST_VAR_B" }}`,
+		"-e", `api--key={{ get "env://SHOW_TEST_VAR_A" }}`,
+		"-e", `multiple___underscores={{ get "env://SHOW_TEST_VAR_A" }}`,
 		"-o", "keys",
 	}
 	cfg := &config.Config{
@@ -336,7 +336,7 @@ func TestBuildMergedEntry(t *testing.T) {
 		merges := []string{"vaultA://entry1", "vaultB://entry2"}
 		whitelist := []string{"user", "host"}
 		explicit := map[string]string{
-			"EXTRA_KEY": "${env://TEST_SHOW_ENV_VAL}",
+			"EXTRA_KEY": `{{ get "env://TEST_SHOW_ENV_VAL" }}`,
 		}
 
 		entry, err := buildMergedEntry(ctx, orch, merges, whitelist, explicit)
@@ -380,7 +380,7 @@ func TestBuildMergedEntry(t *testing.T) {
 
 	t.Run("Explicit mapping error", func(t *testing.T) {
 		explicit := map[string]string{
-			"BAD_KEY": "${invalid_scheme://foo}",
+			"BAD_KEY": `{{ get "invalid_scheme://foo" }}`,
 		}
 		_, err := buildMergedEntry(ctx, orch, nil, nil, explicit)
 		if err == nil {
