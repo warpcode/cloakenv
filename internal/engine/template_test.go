@@ -204,3 +204,30 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 		})
 	}
 }
+
+func TestTemplateEngine_LowercaseDotMetaAndAttributes(t *testing.T) {
+	ctx := context.Background()
+	te := engine.NewTemplateEngine(nil)
+
+	tmplCtx := engine.TemplateContext{
+		Meta: map[string]any{
+			"Title": "My Title",
+			"Group": map[string]any{
+				"Name": "My Group",
+			},
+		},
+		Attributes: map[string]any{
+			"key": "val",
+		},
+	}
+
+	tmpl := `{{ .meta.title }} / {{ .meta.group.name }} = {{ index .attributes "key" }}`
+	got, err := te.Render(ctx, tmpl, tmplCtx, 0, "")
+	if err != nil {
+		t.Fatalf("unexpected render error: %v", err)
+	}
+	want := "My Title / My Group = val"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
