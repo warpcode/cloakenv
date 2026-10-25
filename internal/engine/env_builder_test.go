@@ -14,7 +14,7 @@ func TestOrchestratorBuildEnvMerges(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"my_vault": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app_one": {
 						"DB_USER": "user1",
 						"DB_PASS": "pass1",
@@ -24,7 +24,7 @@ func TestOrchestratorBuildEnvMerges(t *testing.T) {
 						"PORT":    "5000",
 						"DB_USER": "user2",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -120,11 +120,11 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 			},
 			"k8s_vault": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"staging": {
 						"KUBECONFIG": "/path/to/staging.conf",
 					},
-				},
+				}),
 			},
 		},
 		Autoload: []config.AutoloadRule{
@@ -415,13 +415,13 @@ func TestOrchestratorBuildEnvEmptyEnv(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"my_vault": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app_one": {
 						"DB_USER": "user1",
 						"DB_PASS": "pass1",
 						"PORT":    "3000",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -580,46 +580,46 @@ func TestEnvBuilder_VaultKeyFormat(t *testing.T) {
 			"vault_none": {
 				Provider:  "custom_vault",
 				KeyFormat: "none",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"api-key":  "secret1",
 						"db.user":  "user1",
 						"UserName": "admin1",
 					},
-				},
+				}),
 			},
 			"vault_env": {
 				Provider:  "custom_vault",
 				KeyFormat: "env",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"api-key":  "secret2",
 						"db.user":  "user2",
 						"UserName": "admin2",
 					},
-				},
+				}),
 			},
 			"vault_snake": {
 				Provider:  "custom_vault",
 				KeyFormat: "snake",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"api-key":  "secret3",
 						"db.user":  "user3",
 						"UserName": "admin3",
 					},
-				},
+				}),
 			},
 			"vault_kebab": {
 				Provider:  "custom_vault",
 				KeyFormat: "kebab",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"api-key":  "secret4",
 						"db.user":  "user4",
 						"UserName": "admin4",
 					},
-				},
+				}),
 			},
 		},
 	}

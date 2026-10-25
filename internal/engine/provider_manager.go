@@ -253,9 +253,19 @@ func (pm *ProviderManager) initJson(ctx context.Context, vaultName string, vault
 // initCustomVault bootstraps a CustomVault provider using config settings.
 func (pm *ProviderManager) initCustomVault(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
 	cp := provider.NewCustomVaultProvider()
-	entities := vault.Entities
-	if entities == nil {
-		entities = make(map[string]map[string]any)
+	entities := make(map[string]map[string]any)
+	for name, entityCfg := range vault.Entities {
+		attrs := make(map[string]any)
+		for k, v := range entityCfg.Attributes {
+			attrs[k] = v
+		}
+		if entityCfg.Title != "" {
+			attrs["title"] = entityCfg.Title
+		}
+		if len(entityCfg.Tags) > 0 {
+			attrs["tags"] = entityCfg.Tags
+		}
+		entities[name] = attrs
 	}
 	if (vault.SingleEntity != nil && *vault.SingleEntity) || len(vault.Attributes) > 0 {
 		entityName := vault.EntityName

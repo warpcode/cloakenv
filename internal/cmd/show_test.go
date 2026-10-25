@@ -140,11 +140,13 @@ func TestShow_VaultKeyFormat(t *testing.T) {
 			"env_vault": {
 				Provider:  "custom_vault",
 				KeyFormat: "env",
-				Entities: map[string]map[string]any{
+				Entities: map[string]config.CustomEntityConfig{
 					"item": {
-						"api-key":                "val1",
-						"database.user_name":     "val2",
-						"multiple___underscores": "val3",
+						Attributes: map[string]any{
+							"api-key":                "val1",
+							"database.user_name":     "val2",
+							"multiple___underscores": "val3",
+						},
 					},
 				},
 			},
@@ -298,21 +300,25 @@ func TestBuildMergedEntry(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"vaultA": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: map[string]config.CustomEntityConfig{
 					"entry1": {
-						"user": "userA",
-						"pass": "passA",
-						"tags": []any{"tagA", "commonTag"},
+						Attributes: map[string]any{
+							"user": "userA",
+							"pass": "passA",
+							"tags": []any{"tagA", "commonTag"},
+						},
 					},
 				},
 			},
 			"vaultB": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: map[string]config.CustomEntityConfig{
 					"entry2": {
-						"host": "hostB",
-						"user": "userB_overridden",
-						"tags": []any{"tagB", "commonTag"},
+						Attributes: map[string]any{
+							"host": "hostB",
+							"user": "userB_overridden",
+							"tags": []any{"tagB", "commonTag"},
+						},
 					},
 				},
 			},
@@ -443,6 +449,10 @@ func TestShow_KeePassMetadataOutput(t *testing.T) {
 	var buf2 bytes.Buffer
 	if _, err := io.Copy(&buf2, r2); err != nil {
 		t.Fatalf("failed to read from pipe: %v", err)
+	}
+
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", exitCode)
 	}
 
 	keysOutput := buf2.String()

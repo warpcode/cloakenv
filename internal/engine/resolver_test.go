@@ -22,20 +22,20 @@ func TestResolveValues(t *testing.T) {
 				"vault_a": {
 					Provider:      "custom_vault",
 					ResolveValues: resolveValues,
-					Entities: map[string]map[string]any{
+					Entities: config.ToCustomEntityMap(map[string]map[string]any{
 						"entity1": {
 							"Password": "${vault_b://entry1:secret}",
 						},
-					},
+					}),
 				},
 				"vault_b": {
 					Provider:   "custom_vault",
 					Searchable: boolPtr(true),
-					Entities: map[string]map[string]any{
+					Entities: config.ToCustomEntityMap(map[string]map[string]any{
 						"entry1": {
 							"secret": "resolved_value",
 						},
-					},
+					}),
 				},
 			},
 		}
@@ -131,11 +131,11 @@ func TestResolveValues(t *testing.T) {
 				"vault_c": {
 					Provider:      "custom_vault",
 					ResolveValues: true,
-					Entities: map[string]map[string]any{
+					Entities: config.ToCustomEntityMap(map[string]map[string]any{
 						"entry": {
 							"Password": "${vault_c://entry:Password}",
 						},
-					},
+					}),
 				},
 			},
 		}
@@ -183,13 +183,13 @@ func TestGetEntry_AttributeSelector(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"vault_x": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"myentity": {
 						"Password": "s3cr3t",
 						"UserName": "alice",
 						"Notes":    "some notes",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -267,11 +267,11 @@ func TestOrchestratorExpansion(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"vault_exp": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"database": {
 						"password": "supersecretpassword",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -367,7 +367,7 @@ func TestGetEntry(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"vault_x": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"myentity": {
 						"Password":  "s3cr3t",
 						"recursive": "vault_x://myentity",
@@ -378,19 +378,19 @@ func TestGetEntry(t *testing.T) {
 					"recursive_attr": {
 						"Password": "${vault_x://recursive_attr:Password}",
 					},
-				},
+				}),
 				ResolveValues: true,
 			},
 			"vault_y": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"target": {
 						"Password": "pass",
 					},
 					"no_resolve": {
 						"Password": "vault_y://target",
 					},
-				},
+				}),
 				ResolveValues: false,
 			},
 		},
