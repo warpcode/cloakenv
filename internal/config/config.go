@@ -145,6 +145,8 @@ type CustomEntityConfig struct {
 	// IsComposed indicates whether the entity was defined using composition keys.
 	IsComposed bool `yaml:"-"`
 
+	Title         string         `yaml:"title,omitempty"`
+	Tags          []string       `yaml:"tags,omitempty"`
 	Merge         []string       `yaml:"merge,omitempty"`
 	Attributes    map[string]any `yaml:"attributes,omitempty"`
 	Mapping       []MappingRule  `yaml:"mapping,omitempty"`
@@ -196,6 +198,18 @@ func (c *CustomEntityConfig) UnmarshalYAML(value *goyaml.Node) error {
 		"resolve_values": true,
 	}
 
+	allowedKeys := map[string]bool{
+		"title":          true,
+		"tags":           true,
+		"merge":          true,
+		"attributes":     true,
+		"mapping":        true,
+		"include_fields": true,
+		"exclude_fields": true,
+		"key_format":     true,
+		"resolve_values": true,
+	}
+
 	var keyNames []string
 	hasCompositionKey := false
 
@@ -218,7 +232,7 @@ func (c *CustomEntityConfig) UnmarshalYAML(value *goyaml.Node) error {
 
 	c.IsComposed = true
 	for _, keyName := range keyNames {
-		if !compositionKeys[keyName] {
+		if !allowedKeys[keyName] {
 			return fmt.Errorf("unknown field %q in composed custom_vault entity", keyName)
 		}
 	}

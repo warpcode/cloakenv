@@ -417,6 +417,48 @@ vaults:
 		t.Errorf("unexpected Attributes in composed entity: %v", composed.Attributes)
 	}
 
+	// Test composed entity with title, tags, and merge
+	composedWithMetaYaml := `
+vaults:
+  my_custom:
+    provider: "custom_vault"
+    entities:
+      composed_meta:
+        title: "Composed Jules Entity"
+        tags: ["ai", "assistant"]
+        merge:
+          - "openrouter://"
+        key_format: "env"
+        attributes:
+          dotenv: "{{ .attributes | toEnv }}"
+`
+	metaConfigPath := filepath.Join(tempDir, "meta_config.yaml")
+	if err := os.WriteFile(metaConfigPath, []byte(composedWithMetaYaml), 0644); err != nil {
+		t.Fatalf("failed to write meta_config.yaml: %v", err)
+	}
+
+	cfgMeta, err := Load(metaConfigPath)
+	if err != nil {
+		t.Fatalf("Load failed for composed entity with metadata: %v", err)
+	}
+
+	metaEntity, ok := cfgMeta.Vaults["my_custom"].Entities["composed_meta"]
+	if !ok {
+		t.Fatal("expected 'composed_meta' entity")
+	}
+	if !metaEntity.IsComposed {
+		t.Error("expected composed_meta IsComposed to be true")
+	}
+	if metaEntity.Title != "Composed Jules Entity" {
+		t.Errorf("expected Title 'Composed Jules Entity', got %q", metaEntity.Title)
+	}
+	if len(metaEntity.Tags) != 2 || metaEntity.Tags[0] != "ai" || metaEntity.Tags[1] != "assistant" {
+		t.Errorf("expected Tags [ai, assistant], got %v", metaEntity.Tags)
+	}
+	if len(metaEntity.Merge) != 1 || metaEntity.Merge[0] != "openrouter://" {
+		t.Errorf("unexpected Merge in composed_meta entity: %v", metaEntity.Merge)
+	}
+
 	// Test unknown top-level field in composed entity
 	unknownKeyYaml := `
 vaults:

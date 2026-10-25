@@ -255,11 +255,17 @@ func (pm *ProviderManager) initCustomVault(ctx context.Context, vaultName string
 	cp := provider.NewCustomVaultProvider()
 	entities := make(map[string]map[string]any)
 	for name, entityCfg := range vault.Entities {
-		if entityCfg.Attributes != nil {
-			entities[name] = entityCfg.Attributes
-		} else {
-			entities[name] = make(map[string]any)
+		attrs := make(map[string]any)
+		for k, v := range entityCfg.Attributes {
+			attrs[k] = v
 		}
+		if entityCfg.Title != "" {
+			attrs["title"] = entityCfg.Title
+		}
+		if len(entityCfg.Tags) > 0 {
+			attrs["tags"] = entityCfg.Tags
+		}
+		entities[name] = attrs
 	}
 	if (vault.SingleEntity != nil && *vault.SingleEntity) || len(vault.Attributes) > 0 {
 		entityName := vault.EntityName
