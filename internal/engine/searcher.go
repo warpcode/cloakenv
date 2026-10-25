@@ -260,13 +260,13 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 					}
 
 					if len(vc.Mapping) > 0 {
-						if !provider.IsDefaultFieldMappedOrIncluded("provider", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, origTitle) {
+						if !provider.IsDefaultFieldMappedOrIncluded("provider", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
 							r.Provider = ""
 						}
-						if !provider.IsDefaultFieldMappedOrIncluded("vault", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, origTitle) {
+						if !provider.IsDefaultFieldMappedOrIncluded("vault", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
 							r.Vault = ""
 						}
-						if !provider.IsDefaultFieldMappedOrIncluded("path", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, origTitle) {
+						if !provider.IsDefaultFieldMappedOrIncluded("path", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
 							r.Path = ""
 						}
 					} else if len(vc.IncludeFields) > 0 || len(vc.ExcludeFields) > 0 {
@@ -290,13 +290,13 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 				}
 
 				if len(fieldPolicy.MappingRules) > 0 {
-					if !provider.IsDefaultFieldMappedOrIncluded("provider", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, origTitle) {
+					if !provider.IsDefaultFieldMappedOrIncluded("provider", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
 						r.Provider = ""
 					}
-					if !provider.IsDefaultFieldMappedOrIncluded("vault", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, origTitle) {
+					if !provider.IsDefaultFieldMappedOrIncluded("vault", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
 						r.Vault = ""
 					}
-					if !provider.IsDefaultFieldMappedOrIncluded("path", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, origTitle) {
+					if !provider.IsDefaultFieldMappedOrIncluded("path", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
 						r.Path = ""
 					}
 				} else if len(fpIncludes) > 0 || len(fieldPolicy.ExcludeFields) > 0 {
