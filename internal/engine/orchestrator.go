@@ -67,8 +67,16 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	})
 
 	// Break the circular dependency by setting the search callback dynamically
-	resolver.SetSearchFunc(func(ctx context.Context, expressionStr string, depth int) ([]provider.SearchResult, error) {
-		return searcher.SearchRecursive(ctx, expressionStr, nil, depth)
+	resolver.SetSearchFunc(func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]provider.SearchResult, error) {
+		return searcher.SearchRecursive(ctx, expressionStr, sourceVaults, depth)
+	})
+
+	pm.SetGetEntriesFunc(func(ctx context.Context, uri string) ([]provider.Entry, error) {
+		return resolver.GetEntriesRecursive(ctx, uri, 0)
+	})
+
+	pm.SetRenderTemplateFunc(func(ctx context.Context, tmplStr string, data any) (string, error) {
+		return NewTemplateEngine(resolver).Render(ctx, tmplStr, data, 0, "")
 	})
 
 	envBuilder := NewEnvBuilder(cfg, resolver)
@@ -99,6 +107,10 @@ func (o *Orchestrator) ResolveWithKey(ctx context.Context, uri string, configKey
 // GetEntry retrieves a complete structured entry by location.
 func (o *Orchestrator) GetEntry(ctx context.Context, uri string) (provider.Entry, error) {
 	return o.resolver.GetEntry(ctx, uri)
+}
+
+func (o *Orchestrator) GetEntries(ctx context.Context, uri string) ([]provider.Entry, error) {
+	return o.resolver.GetEntries(ctx, uri)
 }
 
 // Search queries entries across searchable repositories using an expression.

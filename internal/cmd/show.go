@@ -114,8 +114,8 @@ func resolveMergedEntries(ctx context.Context, orch *engine.Orchestrator, merges
 	}
 
 	type loadedEntry struct {
-		entry provider.Entry
-		err   error
+		entries []provider.Entry
+		err     error
 	}
 	loadedMerges := make([]loadedEntry, len(merges))
 	var mWg sync.WaitGroup
@@ -123,18 +123,18 @@ func resolveMergedEntries(ctx context.Context, orch *engine.Orchestrator, merges
 		mWg.Add(1)
 		go func(i int, uri string) {
 			defer mWg.Done()
-			e, err := orch.GetEntry(ctx, uri)
-			loadedMerges[i] = loadedEntry{entry: e, err: err}
+			entries, err := orch.GetEntries(ctx, uri)
+			loadedMerges[i] = loadedEntry{entries: entries, err: err}
 		}(idx, mURI)
 	}
 	mWg.Wait()
 
-	entries := make([]provider.Entry, len(merges))
-	for i, lm := range loadedMerges {
+	var entries []provider.Entry
+	for _, lm := range loadedMerges {
 		if lm.err != nil {
 			return nil, fmt.Errorf("failed to retrieve entry: %w", lm.err)
 		}
-		entries[i] = lm.entry
+		entries = append(entries, lm.entries...)
 	}
 	return entries, nil
 }

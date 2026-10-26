@@ -396,7 +396,7 @@ func TestMappingProvider_CustomVault(t *testing.T) {
 
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app1": {
 				"env:OPENROUTER_API_KEY": "sk-or-12345",
 				"env:test:foo":           "bar",
@@ -404,7 +404,7 @@ func TestMappingProvider_CustomVault(t *testing.T) {
 				"EXCLUDED_FIELD":         "excluded_val",
 				"Password":               "default_app1_pass",
 			},
-		},
+		}),
 	})
 
 	rule := config.MappingRule{Match: "env:(.*)", Key: "\\1"}
@@ -489,12 +489,12 @@ func TestMappingProvider_CustomVault(t *testing.T) {
 	t.Run("GetSecret bare location with excluded Password returns error", func(t *testing.T) {
 		cp2 := NewCustomVaultProvider()
 		_ = cp2.Initialize(ctx, ProviderConfig{
-			Entities: map[string]map[string]any{
+			Entities: config.ToCustomEntityMap(map[string]map[string]any{
 				"app1": {
 					"Password": "secret_password",
 					"UserName": "test_user",
 				},
-			},
+			}),
 		})
 
 		excludeFields := []string{"Password"}
@@ -538,12 +538,12 @@ func TestMappingProvider_ColonQualifiedExcludeFields(t *testing.T) {
 
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"website/Test Website": {
 				"Password": "secret_pass_123",
 				"UserName": "test_user",
 			},
-		},
+		}),
 	})
 
 	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
@@ -660,7 +660,7 @@ func TestMappingProvider_FilteringParityForNestedAndArrayPaths(t *testing.T) {
 
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app1": {
 				"env:API_KEY": "sk-123",
 				"db": map[string]any{
@@ -669,7 +669,7 @@ func TestMappingProvider_FilteringParityForNestedAndArrayPaths(t *testing.T) {
 				},
 				"tokens": []any{"tok1", "tok2_secret"},
 			},
-		},
+		}),
 	})
 
 	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
@@ -719,13 +719,13 @@ func TestMappingProvider_SerializationErrorPropagated(t *testing.T) {
 
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app1": {
 				"bad": map[string]any{
 					"invalid": badMarshaler{},
 				},
 			},
-		},
+		}),
 	})
 
 	rule := config.MappingRule{Match: "(.*)", Key: "$1"}
@@ -1013,7 +1013,7 @@ func TestMappingProvider_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app1": {
 				"env:API_KEY":       "sk-test-secret-123",
 				"env:DATABASE_URL":  "postgres://user:pass@localhost:5432/db",
@@ -1021,7 +1021,7 @@ func TestMappingProvider_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 				"UNMAPPED_EXCLUDED": "excluded_val",
 				"UNMAPPED_NOT_INCL": "not_included_val",
 			},
-		},
+		}),
 	})
 
 	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
@@ -1479,11 +1479,11 @@ func TestMappingProvider_MetadataTemplate(t *testing.T) {
 
 		cp := NewCustomVaultProvider()
 		_ = cp.Initialize(ctx, ProviderConfig{
-			Entities: map[string]map[string]any{
+			Entities: config.ToCustomEntityMap(map[string]map[string]any{
 				"app1": {
 					"env:API_KEY": "secret_value",
 				},
-			},
+			}),
 		})
 
 		provider, err := NewMappingProvider(cp, []config.MappingRule{rule})
@@ -1514,11 +1514,11 @@ func TestMappingProvider_MetadataTemplate(t *testing.T) {
 
 		cp := NewCustomVaultProvider()
 		_ = cp.Initialize(ctx, ProviderConfig{
-			Entities: map[string]map[string]any{
+			Entities: config.ToCustomEntityMap(map[string]map[string]any{
 				"app1": {
 					"env:API_KEY": "secret_value",
 				},
-			},
+			}),
 		})
 
 		provider, err := NewMappingProvider(cp, []config.MappingRule{rule})

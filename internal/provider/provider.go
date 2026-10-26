@@ -40,7 +40,7 @@ type SecretProvider interface {
 type ProviderConfig struct {
 	Settings          map[string]string
 	Attributes        map[string]any
-	Entities          map[string]map[string]any
+	Entities          map[string]config.CustomEntityConfig
 	SingleEntity      *bool
 	EntityName        string
 	Searchable        bool
@@ -293,3 +293,9 @@ func FieldPolicyFromContext(ctx context.Context) *FieldPolicy {
 	}
 	return nil
 }
+
+// GetEntriesFunc resolves a URI into a slice of Entry objects.
+type GetEntriesFunc func(ctx context.Context, uri string) ([]Entry, error)
+
+// TemplateRenderFunc renders a string template against provided data.
+type TemplateRenderFunc func(ctx context.Context, tmplStr string, data any) (string, error)
