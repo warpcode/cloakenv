@@ -195,10 +195,10 @@
   - Create `AttributesProvider` decorator in `internal/provider/attributes.go` (preserving `SearchableProvider` and `ValueResolvableProvider` optional interfaces) that wraps any vault configured with `attributes:` after `FilteringProvider`, `MappingProvider`, and `KeyFormatProvider`.
   - Evaluate configured `attributes:` against each entry's post-filter/map/format `.meta` and `.attributes` context so computed/templated keys are available on `GetEntry`, `GetSecret`, and `Search`.
 
-### `TSK-005`: Implement Composed `custom_vault` Entities & Multi-Entry Merge Expansion [Accepted] — 3.0 pt
+### `TSK-005`: Implement Composed `custom_vault` Entities & Multi-Entry Merge Expansion [Done] — 3.0 pt
 - **Depends On**: `REQ-006`, `REQ-007`, `TSK-003`, `TSK-004` · **Milestone**: `M-002`
 - **Target Files**: `internal/provider/custom_vault.go`, `internal/provider/custom_vault_test.go`, `internal/engine/provider_manager.go`, `internal/engine/env_builder.go`, `internal/cmd/show.go`
-- **Evidence**: [Issue #266](https://github.com/warpcode/cloakenv/issues/266) (Parent: [Epic #261](https://github.com/warpcode/cloakenv/issues/261))
+- **Evidence**: [PR #276](https://github.com/warpcode/cloakenv/pull/276) · Commit `91e46a5` · [Issue #266](https://github.com/warpcode/cloakenv/issues/266) (Parent: [Epic #261](https://github.com/warpcode/cloakenv/issues/261))
 - **Description**:
   - Expand `CustomVaultProvider` to resolve composed entities: expand `merge:` sources (including multi-entry `<vault>://` URIs via `Search`), apply per-entity `include_fields` -> `exclude_fields` -> `mapping` -> `key_format` to each source entry, fold into `.attributes` and `.entries` in deterministic order, and evaluate entity `attributes:` templates.
   - Update `EnvBuilder.resolveMergeSources` and `cmd/show.go` (`resolveMergedEntries`) to expand multi-entry `<vault>://` URIs when merging.
