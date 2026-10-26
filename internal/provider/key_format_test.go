@@ -11,9 +11,9 @@ import (
 func TestKeyFormatProvider_InterfacePreservation(t *testing.T) {
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(context.Background(), ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app": {"api-key": "secret"},
-		},
+		}),
 	})
 
 	// CustomVault implements both SearchableProvider and ValueResolvableProvider
@@ -90,7 +90,7 @@ func TestKeyFormatProvider_GetEntryFormats(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cp := NewCustomVaultProvider()
 			_ = cp.Initialize(ctx, ProviderConfig{
-				Entities: rawEntities,
+				Entities: config.ToCustomEntityMap(rawEntities),
 			})
 
 			p := NewKeyFormatProvider(cp, tt.format)
@@ -117,11 +117,11 @@ func TestKeyFormatProvider_SearchFormats(t *testing.T) {
 	ctx := context.Background()
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app": {
 				"database.user_name": "dbadmin",
 			},
-		},
+		}),
 	})
 
 	p := NewKeyFormatProvider(cp, utils.KeyFormatKebab)
@@ -145,12 +145,12 @@ func TestKeyFormatProvider_GetSecretResolution(t *testing.T) {
 	ctx := context.Background()
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app": {
 				"api-key":  "secret123",
 				"UserName": "admin_user",
 			},
-		},
+		}),
 	})
 
 	p := NewKeyFormatProvider(cp, utils.KeyFormatSnake)
@@ -187,13 +187,13 @@ func TestKeyFormatProvider_CompositionWithFilterAndMapping(t *testing.T) {
 	ctx := context.Background()
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app": {
 				"raw_password": "pass",
 				"client_token": "token123",
 				"hidden_field": "hidden",
 			},
-		},
+		}),
 	})
 
 	// 1. Filtering: exclude hidden_field

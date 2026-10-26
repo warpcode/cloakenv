@@ -13,7 +13,7 @@ import (
 )
 
 // SearchFunc defines the signature for searching across repositories.
-type SearchFunc func(ctx context.Context, expressionStr string, depth int) ([]provider.SearchResult, error)
+type SearchFunc func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]provider.SearchResult, error)
 
 // maxConcurrency bounds concurrent secret resolutions across array and nested
 // attribute expansions within the Resolver. It is deliberately independent from
@@ -106,7 +106,7 @@ func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, 
 			return "", err
 		}
 
-		results, err := r.searchFunc(ctx, exprQuery, depth+1)
+		results, err := r.searchFunc(ctx, exprQuery, nil, depth+1)
 		if err != nil {
 			return "", fmt.Errorf("search URI evaluation failed: %w", err)
 		}
@@ -210,6 +210,57 @@ func (r *Resolver) resolveAttributeSelector(ctx context.Context, location, uri s
 		}
 	}
 	return provider.Entry{}, false, nil
+}
+
+func (r *Resolver) GetEntries(ctx context.Context, uri string) ([]provider.Entry, error) {
+	return r.GetEntriesRecursive(ctx, uri, 0)
+}
+
+func (r *Resolver) GetEntriesRecursive(ctx context.Context, uri string, depth int) ([]provider.Entry, error) {
+	if depth > 5 {
+		return nil, fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5 resolving entry %q", uri)
+	}
+
+	scheme, location, err := utils.ParseURI(uri)
+	if err != nil {
+		return nil, err
+	}
+
+	if scheme == "search" {
+		if r.searchFunc == nil {
+			return nil, fmt.Errorf("search not supported")
+		}
+		results, err := r.searchFunc(ctx, location, nil, depth)
+		if err != nil {
+			return nil, err
+		}
+		entries := make([]provider.Entry, len(results))
+		for i, res := range results {
+			entries[i] = res.Entry
+		}
+		return entries, nil
+	}
+
+	if location == "" {
+		if r.searchFunc == nil {
+			return nil, fmt.Errorf("search not supported")
+		}
+		results, err := r.searchFunc(ctx, "", []string{scheme}, depth)
+		if err != nil {
+			return nil, err
+		}
+		entries := make([]provider.Entry, len(results))
+		for i, res := range results {
+			entries[i] = res.Entry
+		}
+		return entries, nil
+	}
+
+	entry, err := r.GetEntryRecursive(ctx, uri, depth)
+	if err != nil {
+		return nil, err
+	}
+	return []provider.Entry{entry}, nil
 }
 
 func (r *Resolver) GetEntryRecursive(ctx context.Context, uri string, depth int) (provider.Entry, error) {

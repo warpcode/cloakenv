@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"github.com/warpcode/cloakenv/internal/config"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func BenchmarkCustomVaultProvider_Search(b *testing.B) {
 		}
 	}
 
-	p.entities = entities
+	p.entities = config.ToCustomEntityMap(entities)
 
 	query := SearchQuery{
 		Title: "Entity",

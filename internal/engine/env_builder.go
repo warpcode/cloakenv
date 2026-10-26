@@ -18,6 +18,7 @@ type EnvResolver interface {
 	Resolve(ctx context.Context, uri string) (string, error)
 	ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error)
 	GetEntry(ctx context.Context, uri string) (provider.Entry, error)
+	GetEntries(ctx context.Context, uri string) ([]provider.Entry, error)
 }
 
 // maxResolveConcurrency bounds concurrent source resolutions spawned by the
@@ -93,29 +94,31 @@ func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, 
 		go func(idx int, uri string) {
 			defer wg.Done()
 			defer release()
-			entry, err := eb.resolver.GetEntry(ctx, uri)
+			entries, err := eb.resolver.GetEntries(ctx, uri)
 			if err != nil {
 				errOnce.Do(func() {
-					firstErr = fmt.Errorf("failed to get entry %s: %w", uri, err)
+					firstErr = fmt.Errorf("failed to get entries %s: %w", uri, err)
 				})
 				return
 			}
-			keys := make([]envKV, 0, len(entry.Attributes))
-			for k, v := range entry.Attributes {
-				if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
-					continue
+			var keys []envKV
+			for _, entry := range entries {
+				for k, v := range entry.Attributes {
+					if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
+						continue
+					}
+					if hasWhitelist && !whitelistSet[k] && !whitelistSet[utils.FormatKey(k)] && !whitelistSet[strings.ToLower(k)] {
+						continue
+					}
+					strVal, err := utils.SerializeAttrValue(v)
+					if err != nil {
+						errOnce.Do(func() {
+							firstErr = fmt.Errorf("failed to serialize attribute %q in entry %s: %w", k, uri, err)
+						})
+						return
+					}
+					keys = append(keys, envKV{k: k, v: strVal})
 				}
-				if hasWhitelist && !whitelistSet[k] && !whitelistSet[utils.FormatKey(k)] && !whitelistSet[strings.ToLower(k)] {
-					continue
-				}
-				strVal, err := utils.SerializeAttrValue(v)
-				if err != nil {
-					errOnce.Do(func() {
-						firstErr = fmt.Errorf("failed to serialize attribute %q in entry %s: %w", k, uri, err)
-					})
-					return
-				}
-				keys = append(keys, envKV{k: k, v: strVal})
 			}
 			loaded[idx] = keys
 		}(i, m)

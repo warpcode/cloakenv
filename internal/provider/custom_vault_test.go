@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"github.com/warpcode/cloakenv/internal/config"
 	"testing"
 )
 
@@ -10,7 +11,7 @@ func TestCustomVaultProvider_MultipleEntities(t *testing.T) {
 	p := NewCustomVaultProvider()
 
 	cfg := ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"entity1": {
 				"Password": "pass1",
 				"username": "user1",
@@ -21,7 +22,7 @@ func TestCustomVaultProvider_MultipleEntities(t *testing.T) {
 				"username": "user2",
 				"tags":     []any{"env:prod"},
 			},
-		},
+		}),
 	}
 
 	if err := p.Initialize(ctx, cfg); err != nil {
@@ -113,7 +114,7 @@ func TestCustomVaultProvider_Search(t *testing.T) {
 	p := NewCustomVaultProvider()
 
 	cfg := ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"projectA/db": {
 				"Password": "pass1",
 				"Title":    "Database Prod",
@@ -129,7 +130,7 @@ func TestCustomVaultProvider_Search(t *testing.T) {
 				"Title":    "Database Staging",
 				"tags":     []string{"env:staging", "type:db"},
 			},
-		},
+		}),
 	}
 
 	if err := p.Initialize(ctx, cfg); err != nil {
@@ -282,13 +283,13 @@ func TestCustomVaultProvider_GetRawAttribute(t *testing.T) {
 	rawSlice := []any{"item1", "item2"}
 
 	cfg := ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app": {
 				"data":   rawMap,
 				"tokens": rawSlice,
 				"secret": "scalar_secret",
 			},
-		},
+		}),
 	}
 
 	if err := p.Initialize(ctx, cfg); err != nil {

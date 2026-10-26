@@ -226,7 +226,7 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 			if te.resolver.searchFunc == nil {
 				return nil, fmt.Errorf("search function not configured")
 			}
-			results, err := te.resolver.searchFunc(ctx, query, depth+1)
+			results, err := te.resolver.searchFunc(ctx, query, nil, depth+1)
 			if err != nil {
 				return nil, err
 			}
