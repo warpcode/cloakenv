@@ -161,19 +161,19 @@
 
 > **Stacked PR Base Branch**: All task pull requests (`TSK-001`..`TSK-006`) MUST target `epic/2026-10-24-template-and-merge-consolidation` as their base branch (never `main`), followed by a final review PR from `epic/2026-10-24-template-and-merge-consolidation` → `main`.
 
-### `TSK-001`: Extend `internal/config` for `templates:` and Composed `custom_vault` Entities [Accepted] — 2.0 pt
+### `TSK-001`: Extend `internal/config` for `templates:` and Composed `custom_vault` Entities [Done] — 2.0 pt
 - **Depends On**: `REQ-001`, `REQ-006`, `ADR-0001` · **Milestone**: `M-001`
 - **Target Files**: `internal/config/config.go`, `internal/config/config_test.go`
-- **Evidence**: [Issue #262](https://github.com/warpcode/cloakenv/issues/262) (Parent: [Epic #261](https://github.com/warpcode/cloakenv/issues/261))
+- **Evidence**: [PR #270](https://github.com/warpcode/cloakenv/pull/270) · Commit `107f543` · [Issue #262](https://github.com/warpcode/cloakenv/issues/262) (Parent: [Epic #261](https://github.com/warpcode/cloakenv/issues/261))
 - **Description**:
   - Add `Templates map[string]TemplateConfig` (supporting both inline string YAML unmarshaling and `{ path, template }` struct unmarshaling) to `Config`.
   - Add structured `CustomEntityConfig` representation / validation for `VaultConfig.Entities` supporting strict mode when any composition key (`merge`, `attributes`, `mapping`, `include_fields`, `exclude_fields`, `key_format`, `resolve_values`) is present (rejecting unknown top-level keys) and flat mode when no composition keys are present.
   - Compile any regexes in entity-level `Mapping` rules during config validation.
 
-### `TSK-002`: Implement `text/template` Evaluator & `FuncMap` Replacing `${...}` [Accepted] — 3.0 pt
+### `TSK-002`: Implement `text/template` Evaluator & `FuncMap` Replacing `${...}` [Done] — 3.0 pt
 - **Depends On**: `REQ-001`, `REQ-002`, `REQ-003`, `TSK-001` · **Milestone**: `M-001`
 - **Target Files**: `internal/engine/template.go`, `internal/engine/resolver.go`, `internal/engine/env_builder.go`, `internal/utils/expand.go`, `internal/engine/resolver_test.go`
-- **Evidence**: [Issue #263](https://github.com/warpcode/cloakenv/issues/263) (Parent: [Epic #261](https://github.com/warpcode/cloakenv/issues/261))
+- **Evidence**: [PR #272](https://github.com/warpcode/cloakenv/pull/272) · Commit `d2864e7` · [Issue #263](https://github.com/warpcode/cloakenv/issues/263) (Parent: [Epic #261](https://github.com/warpcode/cloakenv/issues/261))
 - **Description**:
   - Create `internal/engine/template.go` providing `TemplateContext` (`.meta`, `.attributes`, `.entries`) and `FuncMap` (`get`, `entry`, `search`, `toEnv`, `toKv`, `toJson`, `toYaml`, `upper`, `lower`, `env`, `snake`, `kebab`, `keys`, `values`, `join`, `include`, `includeFile`) with `.Option("missingkey=error")` and recursion depth tracking (`maxDepth = 5`).
   - Update `Resolver` to evaluate `{{ ... }}` templates when `resolve_values: true` (and resolve bare `scheme://...` strings in `ResolveWithKey`), removing `${...}` expansion.
