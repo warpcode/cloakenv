@@ -1582,4 +1582,49 @@ func TestMappingProvider_MetadataTemplate(t *testing.T) {
 			t.Errorf("expected mapped key MY TITLE_API_KEY in search results, got keys: %v", keysOf(results[0].Entry.Attributes))
 		}
 	})
+
+	t.Run("GetEntry maps attributes with template case formatting and group name", func(t *testing.T) {
+		rule := config.MappingRule{Match: "credential:(.*)", Key: "{{ upper .meta.group.name }}_{{ upper .meta.title }}_$1"}
+		if err := rule.Compile(); err != nil {
+			t.Fatalf("rule.Compile failed: %v", err)
+		}
+
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Provider: "custom_vault",
+					Vault:    "main",
+					Path:     "infra/cluster",
+					Entry: Entry{
+						Title: "Cluster Master",
+						Group: &GroupInfo{Name: "Production Infra"},
+						Attributes: map[string]any{
+							"credential:ADMIN": "adm-token-999",
+						},
+					},
+				},
+			}, nil
+		})
+
+		provider, err := NewMappingProvider(sp, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("failed to create mapping provider: %v", err)
+		}
+
+		searchable, ok := provider.(SearchableProvider)
+		if !ok {
+			t.Fatalf("expected SearchableProvider")
+		}
+
+		got, err := searchable.GetEntry(ctx, "infra/cluster")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		wantKey := "PRODUCTION INFRA_CLUSTER MASTER_ADMIN"
+		if got.Attributes[wantKey] != "adm-token-999" {
+			t.Errorf("expected mapped key %q with value 'adm-token-999', got: %v", wantKey, got.Attributes)
+		}
+	})
 }
