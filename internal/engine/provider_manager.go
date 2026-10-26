@@ -181,6 +181,10 @@ func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName stri
 		p = provider.NewKeyFormatProvider(p, vault.KeyFormat)
 	}
 
+	if len(vault.Attributes) > 0 {
+		p = provider.NewAttributesProvider(p, vault.Attributes)
+	}
+
 	return p, nil
 }
 
