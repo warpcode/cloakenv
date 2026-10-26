@@ -2,8 +2,11 @@ package provider
 
 import (
 	"context"
-	"github.com/warpcode/cloakenv/internal/config"
+	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/warpcode/cloakenv/internal/config"
 )
 
 func TestCustomVaultProvider_MultipleEntities(t *testing.T) {
@@ -336,4 +339,193 @@ func TestCustomVaultProvider_GetRawAttribute(t *testing.T) {
 	if err == nil {
 		t.Errorf("expected error for missing attribute, got nil")
 	}
+}
+
+func TestCustomVaultProvider_ComposedEntities(t *testing.T) {
+	ctx := context.Background()
+
+	p := NewCustomVaultProvider()
+
+	// Mock getEntriesFunc to simulate resolving merged URIs
+	p.SetGetEntriesFunc(func(ctx context.Context, uri string) ([]Entry, error) {
+		if uri == "keepass://infra/db" {
+			return []Entry{
+				{
+					Title: "Database Primary",
+					Tags:  []string{"db", "primary"},
+					Attributes: map[string]any{
+						"DB_HOST":     "10.0.0.1",
+						"DB_PORT":     "5432",
+						"DB_USER":     "postgres",
+						"DB_PASSWORD": "secret-db-pass",
+						"SECRET_KEY":  "infra-secret-to-exclude",
+					},
+				},
+			}, nil
+		}
+		if uri == "search://tag=api" {
+			return []Entry{
+				{
+					Title: "API Service 1",
+					Tags:  []string{"api", "v1"},
+					Attributes: map[string]any{
+						"API_PORT": "8081",
+					},
+				},
+				{
+					Title: "API Service 2",
+					Tags:  []string{"api", "v2"},
+					Attributes: map[string]any{
+						"API_PORT": "8082",
+					},
+				},
+			}, nil
+		}
+		return nil, fmt.Errorf("unknown uri: %s", uri)
+	})
+
+	// Simple template renderer for testing
+	p.SetRenderTemplateFunc(func(ctx context.Context, tmplStr string, data any) (string, error) {
+		ctxMap, ok := data.(map[string]any)
+		if !ok {
+			return tmplStr, nil
+		}
+		meta, _ := ctxMap["meta"].(map[string]any)
+		attrs, _ := ctxMap["attributes"].(map[string]any)
+		entries, _ := ctxMap["entries"].([]Entry)
+
+		res := tmplStr
+		if meta != nil {
+			if title, ok := meta["title"].(string); ok {
+				res = strings.ReplaceAll(res, "{{ .meta.title }}", title)
+			}
+		}
+		if attrs != nil {
+			for k, v := range attrs {
+				res = strings.ReplaceAll(res, fmt.Sprintf("{{ .attributes.%s }}", k), fmt.Sprintf("%v", v))
+			}
+		}
+		if len(entries) > 0 {
+			res = strings.ReplaceAll(res, "{{ len .entries }}", fmt.Sprintf("%d", len(entries)))
+			res = strings.ReplaceAll(res, "{{ (index .entries 0).Title }}", entries[0].Title)
+		}
+		return res, nil
+	})
+
+	rule := config.MappingRule{Match: "DB_(.*)", Key: "DATABASE_$1"}
+	if err := rule.Compile(); err != nil {
+		t.Fatalf("rule compile failed: %v", err)
+	}
+
+	cfg := ProviderConfig{
+		Entities: map[string]config.CustomEntityConfig{
+			"app_composed": {
+				Title:      "My Composed App",
+				Tags:       []string{"app", "custom"},
+				IsComposed: true,
+				Merge:      []string{"keepass://infra/db", "search://tag=api"},
+				ExcludeFields: []string{
+					"SECRET_KEY",
+				},
+				Mapping: []config.MappingRule{rule},
+				Attributes: map[string]any{
+					"CUSTOM_ATTR":   "custom-static-val",
+					"DB_URL":        "postgres://{{ .attributes.DATABASE_USER }}@{{ .attributes.DATABASE_HOST }}:{{ .attributes.DATABASE_PORT }}/app",
+					"SUMMARY_TITLE": "{{ .meta.title }}",
+					"ENTRY_COUNT":   "{{ len .entries }}",
+					"FIRST_ENTRY":   "{{ (index .entries 0).Title }}",
+				},
+			},
+		},
+	}
+
+	if err := p.Initialize(ctx, cfg); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	t.Run("GetEntry resolves composed entity with merge, filters, mapping, and templates", func(t *testing.T) {
+		entry, err := p.GetEntry(ctx, "app_composed")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		if entry.Title != "My Composed App" {
+			t.Errorf("Title = %q, want 'My Composed App'", entry.Title)
+		}
+
+		// Tags should include merged tags and entity tags
+		tagSet := make(map[string]bool)
+		for _, tag := range entry.Tags {
+			tagSet[tag] = true
+		}
+		for _, wantTag := range []string{"db", "primary", "api", "v1", "v2", "app", "custom"} {
+			if !tagSet[wantTag] {
+				t.Errorf("expected tag %q in entry tags: %v", wantTag, entry.Tags)
+			}
+		}
+
+		// Excluded field should not be present
+		if _, ok := entry.Attributes["SECRET_KEY"]; ok {
+			t.Errorf("SECRET_KEY should have been excluded")
+		}
+
+		// Mapped fields
+		if entry.Attributes["DATABASE_HOST"] != "10.0.0.1" {
+			t.Errorf("DATABASE_HOST = %v, want '10.0.0.1'", entry.Attributes["DATABASE_HOST"])
+		}
+		if entry.Attributes["DATABASE_USER"] != "postgres" {
+			t.Errorf("DATABASE_USER = %v, want 'postgres'", entry.Attributes["DATABASE_USER"])
+		}
+
+		// Static attribute
+		if entry.Attributes["CUSTOM_ATTR"] != "custom-static-val" {
+			t.Errorf("CUSTOM_ATTR = %v, want 'custom-static-val'", entry.Attributes["CUSTOM_ATTR"])
+		}
+
+		// Templated attributes
+		if entry.Attributes["DB_URL"] != "postgres://postgres@10.0.0.1:5432/app" {
+			t.Errorf("DB_URL = %v, want 'postgres://postgres@10.0.0.1:5432/app'", entry.Attributes["DB_URL"])
+		}
+		if entry.Attributes["SUMMARY_TITLE"] != "My Composed App" {
+			t.Errorf("SUMMARY_TITLE = %v, want 'My Composed App'", entry.Attributes["SUMMARY_TITLE"])
+		}
+		if entry.Attributes["ENTRY_COUNT"] != "3" {
+			t.Errorf("ENTRY_COUNT = %v, want '3'", entry.Attributes["ENTRY_COUNT"])
+		}
+		if entry.Attributes["FIRST_ENTRY"] != "Database Primary" {
+			t.Errorf("FIRST_ENTRY = %v, want 'Database Primary'", entry.Attributes["FIRST_ENTRY"])
+		}
+	})
+
+	t.Run("GetSecret resolves composed entity merged and templated attributes", func(t *testing.T) {
+		valHost, err := p.GetSecret(ctx, "app_composed:DATABASE_HOST")
+		if err != nil {
+			t.Fatalf("GetSecret DATABASE_HOST failed: %v", err)
+		}
+		if valHost != "10.0.0.1" {
+			t.Errorf("GetSecret DATABASE_HOST = %q, want '10.0.0.1'", valHost)
+		}
+
+		valUrl, err := p.GetSecret(ctx, "app_composed:DB_URL")
+		if err != nil {
+			t.Fatalf("GetSecret DB_URL failed: %v", err)
+		}
+		if valUrl != "postgres://postgres@10.0.0.1:5432/app" {
+			t.Errorf("GetSecret DB_URL = %q, want 'postgres://postgres@10.0.0.1:5432/app'", valUrl)
+		}
+
+		valTitle, err := p.GetSecret(ctx, "app_composed:SUMMARY_TITLE")
+		if err != nil {
+			t.Fatalf("GetSecret SUMMARY_TITLE failed: %v", err)
+		}
+		if valTitle != "My Composed App" {
+			t.Errorf("GetSecret SUMMARY_TITLE = %q, want 'My Composed App'", valTitle)
+		}
+
+		// Excluded field fails
+		_, err = p.GetSecret(ctx, "app_composed:SECRET_KEY")
+		if err == nil {
+			t.Errorf("expected error for excluded SECRET_KEY, got nil")
+		}
+	})
 }

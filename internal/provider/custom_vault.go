@@ -57,10 +57,38 @@ func (c *CustomVaultProvider) GetRawAttribute(entityName, attr string) (any, err
 }
 
 // GetSecret retrieves a secret from the static inline configuration.
-func (c *CustomVaultProvider) GetSecret(_ context.Context, location string) (string, error) {
+func (c *CustomVaultProvider) GetSecret(ctx context.Context, location string) (string, error) {
 	entityName, attr, err := parseCustomVaultLocation(location)
 	if err != nil {
 		return "", err
+	}
+
+	entity, ok := c.entities[entityName]
+	if !ok {
+		return "", fmt.Errorf("custom_vault: entity %q not found", entityName)
+	}
+
+	if entity.IsComposed {
+		resolved, err := c.resolveEntity(ctx, entityName, entity)
+		if err != nil {
+			return "", err
+		}
+		if val, ok := resolved.Attributes[attr]; ok {
+			return serializeVal(val)
+		}
+		// Case-insensitive lookup fallback
+		for k, v := range resolved.Attributes {
+			if strings.EqualFold(k, attr) {
+				return serializeVal(v)
+			}
+		}
+		// Dot path lookup fallback within nested maps
+		if strings.Contains(attr, ".") {
+			if val, err := resolveDotPath(resolved.Attributes, attr); err == nil {
+				return serializeVal(val)
+			}
+		}
+		return "", fmt.Errorf("custom_vault: attribute %q not found for entity %q", attr, entityName)
 	}
 
 	val, err := c.GetRawAttribute(entityName, attr)
@@ -281,32 +309,61 @@ func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, en
 
 	mergedTags = uniqueStrings(mergedTags)
 
-	fp := &FieldPolicy{
-		ExcludeFields: entity.ExcludeFields,
-		MappingRules:  entity.Mapping,
+	if len(entity.Mapping) > 0 || len(entity.IncludeFields) > 0 || len(entity.ExcludeFields) > 0 {
+		mapped, err := ApplyMappingAndFilteringToAttributes(
+			mergedAttributes,
+			entity.Mapping,
+			entity.IncludeFields,
+			entity.ExcludeFields,
+			name,
+			nil,
+			Entry{Title: name, Tags: mergedTags, Attributes: mergedAttributes},
+			"custom_vault",
+			"custom_vault",
+		)
+		if err != nil {
+			return Entry{}, fmt.Errorf("custom_vault: failed to apply mapping/filtering: %w", err)
+		}
+		mergedAttributes = mapped
 	}
-	if len(entity.IncludeFields) > 0 {
-		fp.IncludeLayers = [][]string{entity.IncludeFields}
-	}
-
-	tempEntry := Entry{
-		Title:      name,
-		Tags:       mergedTags,
-		Attributes: mergedAttributes,
-	}
-	tempEntry = fp.ApplyToEntry(tempEntry, "", nil)
-
-	mergedAttributes = tempEntry.Attributes
-	mergedTags = tempEntry.Tags
 
 	if entity.KeyFormat != "" && entity.KeyFormat != "none" {
-		tempEntry = ApplyKeyFormat(tempEntry, entity.KeyFormat)
+		tempEntry := ApplyKeyFormat(Entry{
+			Title:      name,
+			Tags:       mergedTags,
+			Attributes: mergedAttributes,
+		}, entity.KeyFormat)
 		mergedAttributes = tempEntry.Attributes
 	}
 
+	if len(entity.Tags) > 0 {
+		mergedTags = append(mergedTags, entity.Tags...)
+		mergedTags = uniqueStrings(mergedTags)
+	}
+
+	title := entity.Title
+	if title == "" {
+		title = name
+	}
+
+	meta := map[string]any{
+		"Title":    title,
+		"title":    title,
+		"Tags":     mergedTags,
+		"tags":     mergedTags,
+		"Vault":    "custom_vault",
+		"vault":    "custom_vault",
+		"Provider": "custom_vault",
+		"provider": "custom_vault",
+	}
+
 	templateCtx := map[string]any{
+		"meta":       meta,
+		"Meta":       meta,
 		"entries":    mergedEntries,
+		"Entries":    mergedEntries,
 		"attributes": mergedAttributes,
+		"Attributes": mergedAttributes,
 	}
 
 	for k, v := range entity.Attributes {
@@ -322,16 +379,6 @@ func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, en
 		} else {
 			mergedAttributes[k] = v
 		}
-	}
-
-	if len(entity.Tags) > 0 {
-		mergedTags = append(mergedTags, entity.Tags...)
-		mergedTags = uniqueStrings(mergedTags)
-	}
-
-	title := entity.Title
-	if title == "" {
-		title = name
 	}
 
 	return Entry{
