@@ -179,18 +179,18 @@
   - Update `Resolver` to evaluate `{{ ... }}` templates when `resolve_values: true` (and resolve bare `scheme://...` strings in `ResolveWithKey`), removing `${...}` expansion.
   - Update `EnvBuilder.resolveCmdArgs` so child CLI arguments only evaluate bare known `scheme://...` URIs or `{{ ... }}` expressions invoking `get`, `entry`, `search`, `include`, or `includeFile`.
 
-### `TSK-003`: Add `{{ .meta.* }}` Interpolation to `MappingProvider` [Accepted] — 2.0 pt
+### `TSK-003`: Add `{{ .meta.* }}` Interpolation to `MappingProvider` [Done] — 2.0 pt
 - **Depends On**: `REQ-004`, `TSK-002` · **Milestone**: `M-002`
 - **Target Files**: `internal/provider/mapping.go`, `internal/provider/mapping_test.go`, `internal/provider/search.go`
-- **Evidence**: [Issue #264](https://github.com/warpcode/cloakenv/issues/264) (Parent: [Epic #261](https://github.com/warpcode/cloakenv/issues/261))
+- **Evidence**: [PR #274](https://github.com/warpcode/cloakenv/pull/274) · Commit `c176884` · [Issue #264](https://github.com/warpcode/cloakenv/issues/264) (Parent: [Epic #261](https://github.com/warpcode/cloakenv/issues/261))
 - **Description**:
   - Extend `ApplyMappingAndFilteringToAttributes` / `MappingProvider` so `rule.Key` containing `{{ ... }}` is rendered with the entry's `.meta` context (`Title`, `Tags`, `UUID`, `Group`, `Path`, `Vault`, `Provider`) and case helpers (`env`, `snake`, `kebab`, `upper`, `lower`) in addition to `$1` / `\1` regex capture group expansion.
   - Ensure `MappingProvider.GetSecret`, `GetEntry`, and `Search` consistently authorize and resolve metadata-interpolated mapped keys.
 
-### `TSK-004`: Implement Universal Per-Entry `attributes:` Decorator on Vaults [Accepted] — 2.0 pt
+### `TSK-004`: Implement Universal Per-Entry `attributes:` Decorator on Vaults [Done] — 2.0 pt
 - **Depends On**: `REQ-005`, `TSK-002`, `TSK-003` · **Milestone**: `M-002`
 - **Target Files**: `internal/provider/attributes.go`, `internal/provider/attributes_test.go`, `internal/engine/provider_manager.go`, `internal/engine/resolver.go`
-- **Evidence**: [Issue #265](https://github.com/warpcode/cloakenv/issues/265) (Parent: [Epic #261](https://github.com/warpcode/cloakenv/issues/261))
+- **Evidence**: [PR #275](https://github.com/warpcode/cloakenv/pull/275) · Commit `36e6e34` · [Issue #265](https://github.com/warpcode/cloakenv/issues/265) (Parent: [Epic #261](https://github.com/warpcode/cloakenv/issues/261))
 - **Description**:
   - Create `AttributesProvider` decorator in `internal/provider/attributes.go` (preserving `SearchableProvider` and `ValueResolvableProvider` optional interfaces) that wraps any vault configured with `attributes:` after `FilteringProvider`, `MappingProvider`, and `KeyFormatProvider`.
   - Evaluate configured `attributes:` against each entry's post-filter/map/format `.meta` and `.attributes` context so computed/templated keys are available on `GetEntry`, `GetSecret`, and `Search`.
