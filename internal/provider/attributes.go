@@ -56,26 +56,60 @@ func (a *AttributesProvider) GetSecret(ctx context.Context, location string) (st
 		return val, nil
 	}
 
-	_, isSearchable := a.underlying.(SearchableProvider)
+	searchable, isSearchable := a.underlying.(SearchableProvider)
 	if !isSearchable {
 		return "", err
 	}
 
-	var attrName string
+	var entryLoc, attrName string
 	if strings.Contains(location, ":") {
 		parts := strings.SplitN(location, ":", 2)
+		entryLoc = parts[0]
 		attrName = parts[1]
 	} else {
 		attrName = location
 	}
 
-	// Check if the attribute is in our injected attributes
+	resolveFromEntry := func(rawVal any) (string, error) {
+		strVal, isStr := rawVal.(string)
+		if !isStr || !strings.Contains(strVal, "{{") || !strings.Contains(strVal, "}}") {
+			if isStr {
+				return strVal, nil
+			}
+			return fmt.Sprintf("%v", rawVal), nil
+		}
+
+		// Templated attribute: resolve entry to evaluate against entry metadata and attributes
+		var targetEntry Entry
+		var entryPath string
+		var getErr error
+		if pWithPath, ok := a.underlying.(interface {
+			GetEntryWithPath(ctx context.Context, location string) (Entry, string, error)
+		}); ok {
+			targetEntry, entryPath, getErr = pWithPath.GetEntryWithPath(ctx, entryLoc)
+		} else {
+			targetEntry, getErr = searchable.GetEntry(ctx, entryLoc)
+			entryPath = entryLoc
+		}
+		if getErr != nil {
+			return "", getErr
+		}
+
+		providerName, vaultName, _ := utils.ParseURI(location)
+		if providerName == "" {
+			providerName = a.underlying.Scheme()
+		}
+
+		rendered, renderErr := renderAttributeTemplate(strVal, targetEntry, providerName, vaultName, entryPath)
+		if renderErr != nil {
+			return "", renderErr
+		}
+		return rendered, nil
+	}
+
 	// Check if the attribute is in our injected attributes
 	if injectedVal, ok := a.attributes[attrName]; ok {
-		if strVal, isStr := injectedVal.(string); isStr {
-			return strVal, nil
-		}
-		return fmt.Sprintf("%v", injectedVal), nil
+		return resolveFromEntry(injectedVal)
 	}
 
 	// Check if the attribute was accessed via dot path within an injected attribute
@@ -83,10 +117,7 @@ func (a *AttributesProvider) GetSecret(ctx context.Context, location string) (st
 	if strings.Contains(attrName, ".") {
 		val, resolveErr := resolveDotPath(a.attributes, attrName)
 		if resolveErr == nil {
-			if strVal, isStr := val.(string); isStr {
-				return strVal, nil
-			}
-			return fmt.Sprintf("%v", val), nil
+			return resolveFromEntry(val)
 		}
 	}
 
@@ -94,12 +125,12 @@ func (a *AttributesProvider) GetSecret(ctx context.Context, location string) (st
 }
 
 func (a *AttributesProvider) injectAttributes(entry Entry, providerName string, vaultName string, entryPath string) map[string]any {
-	attrs := entry.Attributes
 	if a.attributes == nil {
-		return attrs
+		return entry.Attributes
 	}
-	if attrs == nil {
-		attrs = make(map[string]any)
+	attrs := make(map[string]any, len(entry.Attributes)+len(a.attributes))
+	for k, v := range entry.Attributes {
+		attrs[k] = v
 	}
 	for k, v := range a.attributes {
 		if strVal, isStr := v.(string); isStr && strings.Contains(strVal, "{{") && strings.Contains(strVal, "}}") {
@@ -151,8 +182,8 @@ func renderAttributeTemplate(templateStr string, rawEntry Entry, providerName st
 		meta["group"] = nil
 	}
 	data := map[string]any{
-		"Meta": meta,
-		"meta": meta,
+		"Meta":       meta,
+		"meta":       meta,
 		"Attributes": rawEntry.Attributes,
 		"attributes": rawEntry.Attributes,
 	}

@@ -111,6 +111,106 @@ func TestAttributesProvider_GetSecret(t *testing.T) {
 	}
 }
 
+func TestAttributesProvider_TemplateRendering(t *testing.T) {
+	ctx := context.Background()
+	underlying := &mockSearchableProvider{
+		entries: map[string]Entry{
+			"prod/api": {
+				Title: "API Service",
+				Attributes: map[string]any{
+					"username": "deploy-user",
+					"port":     "8080",
+				},
+			},
+		},
+		results: []SearchResult{
+			{
+				Provider: "custom_vault",
+				Vault:    "main",
+				Path:     "prod/api",
+				Entry: Entry{
+					Title: "API Service",
+					Attributes: map[string]any{
+						"username": "deploy-user",
+						"port":     "8080",
+					},
+				},
+			},
+		},
+	}
+
+	attributes := map[string]any{
+		"url":         "https://{{ lower .meta.title }}.internal:{{ .attributes.port }}",
+		"auth_header": "Bearer {{ upper .attributes.username }}",
+		"static_tag":  "managed",
+	}
+
+	p := NewAttributesProvider(underlying, attributes)
+	searchable, ok := p.(SearchableProvider)
+	if !ok {
+		t.Fatalf("expected SearchableProvider interface")
+	}
+
+	t.Run("GetEntry renders meta and attributes templates", func(t *testing.T) {
+		entry, err := searchable.GetEntry(ctx, "prod/api")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if entry.Attributes["url"] != "https://api service.internal:8080" {
+			t.Errorf("url = %q, want 'https://api service.internal:8080'", entry.Attributes["url"])
+		}
+		if entry.Attributes["auth_header"] != "Bearer DEPLOY-USER" {
+			t.Errorf("auth_header = %q, want 'Bearer DEPLOY-USER'", entry.Attributes["auth_header"])
+		}
+		if entry.Attributes["static_tag"] != "managed" {
+			t.Errorf("static_tag = %q, want 'managed'", entry.Attributes["static_tag"])
+		}
+	})
+
+	t.Run("Search renders meta and attributes templates", func(t *testing.T) {
+		results, err := searchable.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		entry := results[0].Entry
+		if entry.Attributes["url"] != "https://api service.internal:8080" {
+			t.Errorf("Search url = %q, want 'https://api service.internal:8080'", entry.Attributes["url"])
+		}
+		if entry.Attributes["auth_header"] != "Bearer DEPLOY-USER" {
+			t.Errorf("Search auth_header = %q, want 'Bearer DEPLOY-USER'", entry.Attributes["auth_header"])
+		}
+	})
+
+	t.Run("GetSecret resolves and renders templated attributes", func(t *testing.T) {
+		valUrl, err := p.GetSecret(ctx, "prod/api:url")
+		if err != nil {
+			t.Fatalf("GetSecret url failed: %v", err)
+		}
+		if valUrl != "https://api service.internal:8080" {
+			t.Errorf("GetSecret url = %q, want 'https://api service.internal:8080'", valUrl)
+		}
+
+		valAuth, err := p.GetSecret(ctx, "prod/api:auth_header")
+		if err != nil {
+			t.Fatalf("GetSecret auth_header failed: %v", err)
+		}
+		if valAuth != "Bearer DEPLOY-USER" {
+			t.Errorf("GetSecret auth_header = %q, want 'Bearer DEPLOY-USER'", valAuth)
+		}
+
+		valStatic, err := p.GetSecret(ctx, "prod/api:static_tag")
+		if err != nil {
+			t.Fatalf("GetSecret static_tag failed: %v", err)
+		}
+		if valStatic != "managed" {
+			t.Errorf("GetSecret static_tag = %q, want 'managed'", valStatic)
+		}
+	})
+}
+
 func TestAttributesProvider_InterfacePreservation(t *testing.T) {
 	attributes := map[string]any{"injected": "value"}
 
@@ -154,14 +254,14 @@ func TestAttributesProvider_InterfacePreservation(t *testing.T) {
 // mock providers for testing
 type mockSecretProvider struct{}
 
-func (m *mockSecretProvider) Scheme() string { return "mock" }
+func (m *mockSecretProvider) Scheme() string                                           { return "mock" }
 func (m *mockSecretProvider) Initialize(ctx context.Context, cfg ProviderConfig) error { return nil }
 func (m *mockSecretProvider) GetSecret(ctx context.Context, location string) (string, error) {
 	return "", fmt.Errorf("not found")
 }
 func (m *mockSecretProvider) SetSecret(ctx context.Context, location, value string) error { return nil }
-func (m *mockSecretProvider) DeleteSecret(ctx context.Context, location string) error { return nil }
-func (m *mockSecretProvider) Validate(settings map[string]string) error { return nil }
+func (m *mockSecretProvider) DeleteSecret(ctx context.Context, location string) error     { return nil }
+func (m *mockSecretProvider) Validate(settings map[string]string) error                   { return nil }
 
 type mockSearchableProvider struct {
 	mockSecretProvider
