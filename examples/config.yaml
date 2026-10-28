@@ -1,6 +1,15 @@
 # cloakenv example configuration
 # Place this file at: ~/.config/cloakenv/config.yaml
 
+# Reusable Go text/template definitions available to `include "name" .`
+templates:
+  # Inline template definition:
+  dotenv:
+    template: "{{ .attributes | toEnv }}"
+  # External file template definition (resolves relative to config.yaml or expands ~/):
+  # app_config:
+  #   path: "~/.config/cloakenv/templates/app.tmpl"
+
 # Cache configurations
 cache:
   # Default expiration TTL for cache:// sets if --ttl CLI flag is omitted
@@ -55,16 +64,43 @@ vaults:
 
   # Defines the custom_static:// URI scheme using inline config values.
   # Useful for testing or statically configured fallback lists.
-  # resolve_values: true enables recursive ${scheme://...} resolution of attribute values, including inline interpolation within a larger string.
-  # Example: Password below is resolved from custom_single://my_static_vault:secret_key
+  # resolve_values: true enables recursive {{ ... }} template resolution of attribute values.
+  # Example: Password below is resolved from custom_single://my_static_vault:secret_key using {{ get "..." }}
   custom_static:
     provider: "custom_vault"
     resolve_values: true
     entities:
       custom1:
         username: "custom_user"
-        Password: "${custom_single://my_static_vault:secret_key}"
+        Password: '{{ get "custom_single://my_static_vault:secret_key" }}'
         tags: [testing, static]
+
+  # Defines the composed_vault:// URI scheme using composed entities.
+  # Expands merge: sources, applies include/exclude filtering and mapping,
+  # and renders post-merge attributes: templates against .meta, .attributes, and .entries.
+  composed_vault:
+    provider: "custom_vault"
+    resolve_values: true
+    entities:
+      app_stack:
+        title: "Application Stack"
+        tags: [composed, production]
+        merge:
+          - "work://infra/db"
+          - "search://tag=api"
+        include_fields:
+          - "DB_*"
+          - "API_*"
+        exclude_fields:
+          - "DB_SECRET_KEY"
+        mapping:
+          - match: "^API_(.*)"
+            key: "{{ .meta.Title | env }}_API_$1"
+        key_format: "env"
+        attributes:
+          DATABASE_URL: "postgres://{{ .attributes.DB_USER }}:{{ .attributes.DB_PASSWORD }}@{{ .attributes.DB_HOST }}:5432/app"
+          DOTENV: "{{ .attributes | toEnv }}"
+          SUMMARY: "{{ .meta.Title }} contains {{ len .entries }} upstream services"
 
   # Defines the custom_single:// URI scheme using a single named entity
   # Access: get custom_single://my_static_vault:secret_key
@@ -118,6 +154,18 @@ vaults:
   #   provider: "keepass"
   #   vault_path: "~/secrets/work_vault.kdbx"
   #   key_format: "snake"
+
+  # Example of universal per-entry attributes decorator on any vault provider:
+  # attributes: computes or overlays templated attributes on each entry after filtering,
+  # mapping, and key formatting. Templates have access to .meta and .attributes.
+  # decorated_work:
+  #   provider: "keepass"
+  #   vault_path: "~/secrets/work_vault.kdbx"
+  #   key_format: "env"
+  #   resolve_values: true
+  #   attributes:
+  #     EXPORT_ENV: "{{ .attributes | toEnv }}"
+  #     ENTRY_TITLE: "{{ .meta.Title }}"
 
 # Autoloading configuration: Automatically match commands, mask/transform command lines, and inject vault credentials
 autoload:
