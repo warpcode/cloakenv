@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/warpcode/cloakenv/internal/utils"
 	"sort"
 	"strings"
 	"text/template"
 
 	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 // ConvertBackslashGroups converts backslash capture group references (\1..\9)
@@ -709,10 +709,9 @@ func IsDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule
 					if newKey != "" {
 						if strings.Contains(newKey, "{{") && strings.Contains(newKey, "}}") {
 							renderedKey, err := renderMappingTemplate(newKey, rawEntry, providerName, vaultName, entryPath)
+							// If template evaluation fails, we just skip it as it might not be relevant
 							if err == nil {
 								newKey = renderedKey
-							} else {
-								// Template evaluation failed, we just skip it as it might not be relevant
 							}
 						}
 						if strings.EqualFold(newKey, fieldLower) {

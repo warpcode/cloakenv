@@ -307,7 +307,7 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 					basePath = cfg.ConfigPath
 				}
 				expanded := expandPath(tCfg.Path, basePath)
-				data, err := os.ReadFile(expanded)
+				data, err := os.ReadFile(expanded) //nolint:gosec // path comes from user-owned config / template author
 				if err != nil {
 					return "", fmt.Errorf("failed to read template file %q for %q: %w", tCfg.Path, name, err)
 				}
@@ -322,7 +322,7 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 				basePath = cfg.ConfigPath
 			}
 			expanded := expandPath(path, basePath)
-			data, err := os.ReadFile(expanded)
+			data, err := os.ReadFile(expanded) //nolint:gosec // path comes from user-owned config / template author
 			if err != nil {
 				return "", err
 			}
@@ -368,7 +368,7 @@ func toEnv(m map[string]any) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		sb.WriteString(fmt.Sprintf("%s=%s\n", k, valStr))
+		fmt.Fprintf(&sb, "%s=%s\n", k, valStr)
 	}
 	return strings.TrimSpace(sb.String()), nil
 }

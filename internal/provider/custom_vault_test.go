@@ -400,10 +400,8 @@ func TestCustomVaultProvider_ComposedEntities(t *testing.T) {
 				res = strings.ReplaceAll(res, "{{ .meta.title }}", title)
 			}
 		}
-		if attrs != nil {
-			for k, v := range attrs {
-				res = strings.ReplaceAll(res, fmt.Sprintf("{{ .attributes.%s }}", k), fmt.Sprintf("%v", v))
-			}
+		for k, v := range attrs {
+			res = strings.ReplaceAll(res, fmt.Sprintf("{{ .attributes.%s }}", k), fmt.Sprintf("%v", v))
 		}
 		if len(entries) > 0 {
 			res = strings.ReplaceAll(res, "{{ len .entries }}", fmt.Sprintf("%d", len(entries)))

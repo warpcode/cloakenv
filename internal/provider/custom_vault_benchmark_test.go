@@ -3,8 +3,9 @@ package provider
 import (
 	"context"
 	"fmt"
-	"github.com/warpcode/cloakenv/internal/config"
 	"testing"
+
+	"github.com/warpcode/cloakenv/internal/config"
 )
 
 func BenchmarkCustomVaultProvider_Search(b *testing.B) {

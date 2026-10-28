@@ -16,7 +16,9 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	incFile := filepath.Join(tmpDir, "test.txt")
-	os.WriteFile(incFile, []byte("file content: {{ .Attributes.k }}"), 0644)
+	if err := os.WriteFile(incFile, []byte("file content: {{ .Attributes.k }}"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	cfg := &config.Config{
 		ConfigPath: filepath.Join(tmpDir, "config.yaml"),

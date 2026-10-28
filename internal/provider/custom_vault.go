@@ -4,12 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/warpcode/cloakenv/internal/config"
 	"sort"
 	"strings"
 
+	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/utils"
-
 	"github.com/warpcode/cloakenv/internal/yaml"
 )
 

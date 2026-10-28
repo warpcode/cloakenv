@@ -3,11 +3,12 @@ package provider
 import (
 	"context"
 	"fmt"
-	"github.com/warpcode/cloakenv/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/warpcode/cloakenv/internal/config"
 
 	"github.com/zalando/go-keyring"
 )
