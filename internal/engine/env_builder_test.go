@@ -326,7 +326,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		}
 	})
 
-	t.Run("Direct command arguments with secret URIs and escaped tokens", func(t *testing.T) {
+	t.Run("Direct command arguments with secret URIs and foreign template arguments", func(t *testing.T) {
 		t.Setenv("CLI_TOKEN", "secret-token-123")
 		directCfg := &config.Config{}
 		orchDirect, err := NewOrchestrator(directCfg)
@@ -334,13 +334,25 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
 
-		cmdArgs := []string{"mycli", "--token={{ get \"env://CLI_TOKEN\" }}", "--raw={{ \"{{\" }} get \"env://CLI_TOKEN\" }}", "plain-arg"}
+		cmdArgs := []string{
+			"mycli",
+			"--token={{ get \"env://CLI_TOKEN\" }}",
+			`{"id":"{{.Id}}"}`,
+			"'{{.State.Status}}'",
+			"plain-arg",
+		}
 		newCmdArgs, _, err := orchDirect.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
 		if err != nil {
 			t.Fatalf("failed to build env for command: %v", err)
 		}
 
-		expectedArgs := []string{"mycli", "--token=secret-token-123", "--raw={{ get \"env://CLI_TOKEN\" }}", "plain-arg"}
+		expectedArgs := []string{
+			"mycli",
+			"--token=secret-token-123",
+			`{"id":"{{.Id}}"}`,
+			"'{{.State.Status}}'",
+			"plain-arg",
+		}
 		if len(newCmdArgs) != len(expectedArgs) {
 			t.Fatalf("expected %d args, got %d (%v)", len(expectedArgs), len(newCmdArgs), newCmdArgs)
 		}

@@ -158,7 +158,11 @@ func (c *CustomVaultProvider) GetEntryTitle(ctx context.Context, location string
 }
 
 // Search filters the entries using the given SearchQuery criteria.
-func (c *CustomVaultProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
+func (c *CustomVaultProvider) Search(ctx context.Context, query SearchQuery) ([]SearchResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	var results []SearchResult
 
 	var lowerQueryTitle string
@@ -172,12 +176,25 @@ func (c *CustomVaultProvider) Search(_ context.Context, query SearchQuery) ([]Se
 	}
 
 	for name, entity := range c.entities {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
 		var entry Entry
 		if !entity.IsComposed {
 			entry = toEntry(name, entity.Attributes)
+			if entity.Title != "" {
+				entry.Title = entity.Title
+			}
+			if len(entity.Tags) > 0 {
+				entry.Tags = uniqueStrings(append(entry.Tags, entity.Tags...))
+			}
 		} else {
-			e, err := c.resolveEntity(context.Background(), name, entity)
+			e, err := c.resolveEntity(ctx, name, entity)
 			if err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 				continue
 			}
 			entry = e
@@ -281,8 +298,18 @@ func serializeVal(val any) (string, error) {
 }
 
 func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, entity config.CustomEntityConfig) (Entry, error) {
+	if err := ctx.Err(); err != nil {
+		return Entry{}, err
+	}
 	if !entity.IsComposed {
-		return toEntry(name, entity.Attributes), nil
+		e := toEntry(name, entity.Attributes)
+		if entity.Title != "" {
+			e.Title = entity.Title
+		}
+		if len(entity.Tags) > 0 {
+			e.Tags = uniqueStrings(append(e.Tags, entity.Tags...))
+		}
+		return e, nil
 	}
 
 	mergedAttributes := make(map[string]any)
@@ -290,6 +317,9 @@ func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, en
 	var mergedEntries []Entry
 
 	for _, mURI := range entity.Merge {
+		if err := ctx.Err(); err != nil {
+			return Entry{}, err
+		}
 		if c.getEntriesFunc == nil {
 			return Entry{}, fmt.Errorf("custom_vault: merge execution not supported in this context")
 		}
@@ -298,9 +328,45 @@ func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, en
 			return Entry{}, fmt.Errorf("custom_vault: failed to merge %q: %w", mURI, err)
 		}
 		for _, e := range entries {
-			mergedEntries = append(mergedEntries, e)
-			mergedTags = append(mergedTags, e.Tags...)
-			for k, v := range e.Attributes {
+			entryAttrs := e.Attributes
+			if len(entity.Mapping) > 0 || len(entity.IncludeFields) > 0 || len(entity.ExcludeFields) > 0 {
+				entryPath := e.Title
+				if entryPath == "" {
+					entryPath = name
+				}
+				mapped, err := ApplyMappingAndFilteringToAttributes(
+					entryAttrs,
+					entity.Mapping,
+					entity.IncludeFields,
+					entity.ExcludeFields,
+					entryPath,
+					nil,
+					e,
+					"custom_vault",
+					"custom_vault",
+				)
+				if err != nil {
+					return Entry{}, fmt.Errorf("custom_vault: failed to apply mapping/filtering: %w", err)
+				}
+				entryAttrs = mapped
+			}
+
+			transformedEntry := Entry{
+				Title:      e.Title,
+				Tags:       e.Tags,
+				UUID:       e.UUID,
+				Group:      e.Group,
+				Attributes: entryAttrs,
+			}
+
+			if entity.KeyFormat != "" && entity.KeyFormat != "none" {
+				transformedEntry = ApplyKeyFormat(transformedEntry, entity.KeyFormat)
+				entryAttrs = transformedEntry.Attributes
+			}
+
+			mergedEntries = append(mergedEntries, transformedEntry)
+			mergedTags = append(mergedTags, transformedEntry.Tags...)
+			for k, v := range entryAttrs {
 				mergedAttributes[k] = v
 			}
 		}
@@ -308,32 +374,10 @@ func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, en
 
 	mergedTags = uniqueStrings(mergedTags)
 
-	if len(entity.Mapping) > 0 || len(entity.IncludeFields) > 0 || len(entity.ExcludeFields) > 0 {
-		mapped, err := ApplyMappingAndFilteringToAttributes(
-			mergedAttributes,
-			entity.Mapping,
-			entity.IncludeFields,
-			entity.ExcludeFields,
-			name,
-			nil,
-			Entry{Title: name, Tags: mergedTags, Attributes: mergedAttributes},
-			"custom_vault",
-			"custom_vault",
-		)
-		if err != nil {
-			return Entry{}, fmt.Errorf("custom_vault: failed to apply mapping/filtering: %w", err)
-		}
-		mergedAttributes = mapped
-	}
-
-	if entity.KeyFormat != "" && entity.KeyFormat != "none" {
-		tempEntry := ApplyKeyFormat(Entry{
-			Title:      name,
-			Tags:       mergedTags,
-			Attributes: mergedAttributes,
-		}, entity.KeyFormat)
-		mergedAttributes = tempEntry.Attributes
-	}
+	// Note: Mapping, filtering, and key formatting transforms are applied per source entry
+	// above before appending to mergedEntries and folding into mergedAttributes.
+	// We avoid applying the transforms a second time here to prevent destructively re-transforming
+	// already processed keys or stripping mapped fields.
 
 	if len(entity.Tags) > 0 {
 		mergedTags = append(mergedTags, entity.Tags...)

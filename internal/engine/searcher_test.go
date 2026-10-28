@@ -25,7 +25,7 @@ func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 	t.Setenv("ORCH_TEST_USER", "env_user")
 
 	// Create entries.yaml
-	// Here password maps to ${env://ORCH_TEST_USER}, demonstrating recursive resolution!
+	// Here username maps to {{ get "env://ORCH_TEST_USER" }}, demonstrating recursive resolution!
 	yamlContent := `
 entries:
   ssh_prod:

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zalando/go-keyring"
+
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/provider"
 )
@@ -546,4 +548,133 @@ func (f *falseReturnResolvableProvider) Search(ctx context.Context, q provider.S
 		return s.Search(ctx, q)
 	}
 	return nil, nil
+}
+
+func TestResolver_GetEntries_And_GetEntriesRecursive(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	ctx := context.Background()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"custom_v": {
+				Provider: "custom_vault",
+				Entities: map[string]config.CustomEntityConfig{
+					"app": {
+						Title: "App Entry",
+						Tags:  []string{"prod"},
+						Attributes: map[string]any{
+							"apiKey": "12345",
+							"secret": "s3cr3t",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	pm := NewProviderManager(cfg, nil, nil)
+	sem := make(chan struct{}, 10)
+	res := NewResolver(pm, sem)
+
+	tests := []struct {
+		name       string
+		uri        string
+		depth      int
+		useRecurse bool
+		wantCount  int
+		wantErr    bool
+		wantErrSub string
+		checkFn    func(t *testing.T, entries []provider.Entry)
+	}{
+		{
+			name:       "GetEntries valid URI",
+			uri:        "custom_v://app",
+			useRecurse: false,
+			wantCount:  1,
+			wantErr:    false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Title != "App Entry" {
+					t.Errorf("Title = %q, want 'App Entry'", entries[0].Title)
+				}
+				if entries[0].Attributes["apiKey"] != "12345" {
+					t.Errorf("apiKey = %v, want '12345'", entries[0].Attributes["apiKey"])
+				}
+			},
+		},
+		{
+			name:       "GetEntriesRecursive at depth 0 succeeds",
+			uri:        "custom_v://app",
+			depth:      0,
+			useRecurse: true,
+			wantCount:  1,
+			wantErr:    false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Title != "App Entry" {
+					t.Errorf("Title = %q, want 'App Entry'", entries[0].Title)
+				}
+			},
+		},
+		{
+			name:       "GetEntriesRecursive at depth 6 triggers max depth error",
+			uri:        "custom_v://app",
+			depth:      6,
+			useRecurse: true,
+			wantErr:    true,
+			wantErrSub: "reached max depth 5",
+		},
+		{
+			name:       "GetEntries with attribute selector returns single attribute",
+			uri:        "custom_v://app:apiKey",
+			useRecurse: false,
+			wantCount:  1,
+			wantErr:    false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Attributes["apiKey"] != "12345" {
+					t.Errorf("apiKey = %v, want '12345'", entries[0].Attributes["apiKey"])
+				}
+				if _, ok := entries[0].Attributes["secret"]; ok {
+					t.Errorf("expected only apiKey in attribute selector, but secret is present")
+				}
+			},
+		},
+		{
+			name:       "GetEntries for unknown vault returns error",
+			uri:        "unknown_vault://app",
+			useRecurse: false,
+			wantErr:    true,
+			wantErrSub: "unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var entries []provider.Entry
+			var err error
+			if tt.useRecurse {
+				entries, err = res.GetEntriesRecursive(ctx, tt.uri, tt.depth)
+			} else {
+				entries, err = res.GetEntries(ctx, tt.uri)
+			}
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr = %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				if tt.wantErrSub != "" && !strings.Contains(err.Error(), tt.wantErrSub) {
+					t.Errorf("error %q does not contain %q", err.Error(), tt.wantErrSub)
+				}
+			} else {
+				if len(entries) != tt.wantCount {
+					t.Fatalf("entries count = %d, want %d", len(entries), tt.wantCount)
+				}
+				if tt.checkFn != nil {
+					tt.checkFn(t, entries)
+				}
+			}
+		})
+	}
 }

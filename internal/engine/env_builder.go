@@ -303,7 +303,7 @@ func (eb *EnvBuilder) shouldResolveCmdArg(arg string) bool {
 		}
 		return false
 	}
-	return hasCloakenvInvocation(arg) || strings.Contains(arg, `"{{"`)
+	return hasCloakenvInvocation(arg)
 }
 
 // resolveCmdArgs resolves secret URIs in command arguments.

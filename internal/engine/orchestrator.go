@@ -72,7 +72,13 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	})
 
 	pm.SetGetEntriesFunc(func(ctx context.Context, uri string) ([]provider.Entry, error) {
-		return resolver.GetEntriesRecursive(ctx, uri, 0)
+		depth := 0
+		if d, ok := ctx.Value(provider.ContextKeyDepth).(int); ok {
+			depth = d
+		}
+		nextDepth := depth + 1
+		nextCtx := context.WithValue(ctx, provider.ContextKeyDepth, nextDepth)
+		return resolver.GetEntriesRecursive(nextCtx, uri, nextDepth)
 	})
 
 	pm.SetRenderTemplateFunc(func(ctx context.Context, tmplStr string, data any) (string, error) {

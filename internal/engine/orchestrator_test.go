@@ -599,3 +599,185 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 		t.Errorf("outer-excluded URI was dereferenced during inner query evaluation")
 	}
 }
+
+func TestOrchestrator_CyclicMergeDepthError(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		vaults     map[string]config.VaultConfig
+		targetURI  string
+		wantErrSub string
+	}{
+		{
+			name: "two entities mutually merging cause max depth error",
+			vaults: map[string]config.VaultConfig{
+				"loop_vault": {
+					Provider: "custom_vault",
+					Entities: map[string]config.CustomEntityConfig{
+						"entity_a": {
+							Title:      "Entity A",
+							IsComposed: true,
+							Merge:      []string{"loop_vault://entity_b"},
+						},
+						"entity_b": {
+							Title:      "Entity B",
+							IsComposed: true,
+							Merge:      []string{"loop_vault://entity_a"},
+						},
+					},
+				},
+			},
+			targetURI:  "loop_vault://entity_a",
+			wantErrSub: "reached max depth 5",
+		},
+		{
+			name: "self-merging composed entity causes max depth error",
+			vaults: map[string]config.VaultConfig{
+				"self_vault": {
+					Provider: "custom_vault",
+					Entities: map[string]config.CustomEntityConfig{
+						"self_loop": {
+							Title:      "Self Loop",
+							IsComposed: true,
+							Merge:      []string{"self_vault://self_loop"},
+						},
+					},
+				},
+			},
+			targetURI:  "self_vault://self_loop",
+			wantErrSub: "reached max depth 5",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Vaults: tt.vaults}
+			orch, err := NewOrchestrator(cfg)
+			if err != nil {
+				t.Fatalf("failed to create orchestrator: %v", err)
+			}
+
+			_, err = orch.GetEntries(ctx, tt.targetURI)
+			if err == nil {
+				t.Fatalf("expected max depth error for cyclic merge %s, got nil", tt.targetURI)
+			}
+			if !strings.Contains(err.Error(), tt.wantErrSub) {
+				t.Errorf("error %q does not contain expected substring %q", err.Error(), tt.wantErrSub)
+			}
+		})
+	}
+}
+
+func TestOrchestrator_GetEntries(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	ctx := context.Background()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"test_vault": {
+				Provider: "custom_vault",
+				Entities: map[string]config.CustomEntityConfig{
+					"flat_entry": {
+						Title: "Flat Entry",
+						Tags:  []string{"tag1"},
+						Attributes: map[string]any{
+							"KEY1": "val1",
+						},
+					},
+					"composed_entry": {
+						Title:      "Composed Entry",
+						IsComposed: true,
+						Merge:      []string{"test_vault://flat_entry"},
+						Attributes: map[string]any{
+							"EXTRA": "extra_val",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		uri       string
+		wantCount int
+		wantErr   bool
+		checkFn   func(t *testing.T, entries []provider.Entry)
+	}{
+		{
+			name:      "flat entry lookup returns single entry",
+			uri:       "test_vault://flat_entry",
+			wantCount: 1,
+			wantErr:   false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Title != "Flat Entry" {
+					t.Errorf("Title = %q, want 'Flat Entry'", entries[0].Title)
+				}
+				if entries[0].Attributes["KEY1"] != "val1" {
+					t.Errorf("KEY1 = %v, want 'val1'", entries[0].Attributes["KEY1"])
+				}
+			},
+		},
+		{
+			name:      "composed entry lookup returns resolved entry",
+			uri:       "test_vault://composed_entry",
+			wantCount: 1,
+			wantErr:   false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Title != "Composed Entry" {
+					t.Errorf("Title = %q, want 'Composed Entry'", entries[0].Title)
+				}
+				if entries[0].Attributes["KEY1"] != "val1" {
+					t.Errorf("KEY1 = %v, want 'val1'", entries[0].Attributes["KEY1"])
+				}
+				if entries[0].Attributes["EXTRA"] != "extra_val" {
+					t.Errorf("EXTRA = %v, want 'extra_val'", entries[0].Attributes["EXTRA"])
+				}
+			},
+		},
+		{
+			name:      "non-existent entity returns error",
+			uri:       "test_vault://nonexistent",
+			wantCount: 0,
+			wantErr:   true,
+		},
+		{
+			name:      "invalid uri scheme returns error",
+			uri:       "invalid_uri",
+			wantCount: 0,
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entries, err := orch.GetEntries(ctx, tt.uri)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("GetEntries() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+			if !tt.wantErr {
+				if len(entries) != tt.wantCount {
+					t.Fatalf("GetEntries() count = %d, want %d", len(entries), tt.wantCount)
+				}
+				if tt.checkFn != nil {
+					tt.checkFn(t, entries)
+				}
+			}
+		})
+	}
+}

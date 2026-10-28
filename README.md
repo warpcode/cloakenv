@@ -894,7 +894,7 @@ templates:
     path: "~/.config/cloakenv/templates/app.tmpl"
 ```
 
-Evaluate configured templates using `{{ include "name" . }}` or evaluate external template files directly using `{{ includeFile "path/to/file.tmpl" . }}`.
+Evaluate configured templates using `{{ include "name" . }}` or evaluate external template files directly using `{{ includeFile "path/to/file.tmpl" . }}`. Template authors are the configuration owner, and template file paths are unrestricted by design.
 
 ### Built-In Template Functions (`FuncMap`)
 

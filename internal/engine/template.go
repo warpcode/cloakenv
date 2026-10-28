@@ -315,6 +315,7 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 			}
 			return te.Render(ctx, tmplContent, tmplCtx, depth+1, configKey)
 		},
+		// Trust boundary: template authors are the config owner; paths are unrestricted by design.
 		"includeFile": func(path string, tmplCtx any) (string, error) {
 			cfg := te.resolver.providers.Config()
 			var basePath string
