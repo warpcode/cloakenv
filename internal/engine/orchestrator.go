@@ -98,14 +98,14 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	return o, nil
 }
 
-// Resolve takes a full value, expands any ${...} expressions, and
-// returns the resolved secret value.
+// Resolve takes a full value, evaluates any {{ get "scheme://..." }} template
+// expressions, and returns the resolved secret value.
 func (o *Orchestrator) Resolve(ctx context.Context, uri string) (string, error) {
 	return o.resolver.Resolve(ctx, uri)
 }
 
-// ResolveWithKey takes a full value, expands any ${...} expressions, and
-// includes the configKey in any failure messages if provided.
+// ResolveWithKey takes a full value, evaluates any {{ get "scheme://..." }} template
+// expressions, and includes the configKey in any failure messages if provided.
 func (o *Orchestrator) ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error) {
 	return o.resolver.ResolveWithKey(ctx, uri, configKey)
 }
