@@ -203,10 +203,10 @@
   - Expand `CustomVaultProvider` to resolve composed entities: expand `merge:` sources (including multi-entry `<vault>://` URIs via `Search`), apply per-entity `include_fields` -> `exclude_fields` -> `mapping` -> `key_format` to each source entry, fold into `.attributes` and `.entries` in deterministic order, and evaluate entity `attributes:` templates.
   - Update `EnvBuilder.resolveMergeSources` and `cmd/show.go` (`resolveMergedEntries`) to expand multi-entry `<vault>://` URIs when merging.
 
-### `TSK-006`: Update Tests, `examples/config.yaml`, `README.md`, and `AGENTS.md` [Accepted] — 1.5 pt
+### `TSK-006`: Update Tests, `examples/config.yaml`, `README.md`, and `AGENTS.md` [Done] — 1.5 pt
 - **Depends On**: `TSK-002`, `TSK-003`, `TSK-004`, `TSK-005` · **Milestone**: `M-002`
 - **Target Files**: `examples/config.yaml`, `README.md`, `AGENTS.md`, `internal/engine/engine_test.go`, `internal/provider/custom_vault_test.go`
-- **Evidence**: [Issue #267](https://github.com/warpcode/cloakenv/issues/267) (Parent: [Epic #261](https://github.com/warpcode/cloakenv/issues/261))
+- **Evidence**: [PR #277](https://github.com/warpcode/cloakenv/pull/277) · Commit `f20012c` · [Issue #267](https://github.com/warpcode/cloakenv/issues/267) (Parent: [Epic #261](https://github.com/warpcode/cloakenv/issues/261))
 - **Description**:
   - Migrate existing `${scheme://...}` test fixtures and examples to `{{ get "scheme://..." }}`.
   - Document `templates:`, `{{ ... }}` syntax and `FuncMap`, per-vault `attributes:`, and composed `custom_vault` entities in `README.md`, `examples/config.yaml`, and `AGENTS.md`.
