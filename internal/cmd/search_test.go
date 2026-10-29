@@ -96,7 +96,7 @@ func TestParseSearchArgs(t *testing.T) {
 		},
 		{
 			name:             "all flags and query",
-			args:             []string{"myquery", "--vault", "vault1", "-i", "key1", "-o", "json"},
+			args:             []string{"myquery", "--vault", "vault1", "-i", "key1", "-o", "json", "--show-meta"},
 			wantQuery:        "myquery",
 			wantRepoScopes:   []string{"vault1"},
 			wantSelectedKeys: []string{"key1"},
@@ -161,7 +161,13 @@ func TestParseSearchArgs(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			query, repoScopes, selectedKeys, outputFormat, err := parseSearchArgs(tc.args)
+			query, repoScopes, selectedKeys, outputFormat, showMeta, err := parseSearchArgs(tc.args)
+
+			if strings.Contains(tc.name, "--show-meta") {
+				if !showMeta {
+					t.Errorf("expected showMeta = true")
+				}
+			}
 
 			if tc.wantErrMsg != "" {
 				if err == nil {
@@ -210,13 +216,16 @@ func TestFlattenDefaultEntry_FilteredMetadata(t *testing.T) {
 		},
 	}
 
-	flat := flattenDefaultEntry(entryFiltered)
+	flat := flattenDefaultEntry(entryFiltered, false)
 
 	if _, ok := flat["provider"]; ok {
-		t.Errorf("expected 'provider' to be omitted when empty")
+		t.Errorf("expected 'provider' to be omitted from top level")
 	}
 	if _, ok := flat["vault"]; ok {
-		t.Errorf("expected 'vault' to be omitted when empty")
+		t.Errorf("expected 'vault' to be omitted from top level")
+	}
+	if _, ok := flat["_meta_"]; ok {
+		t.Errorf("expected '_meta_' to be omitted when showMeta is false")
 	}
 	if _, ok := flat["path"]; ok {
 		t.Errorf("expected 'path' to be omitted when empty")
@@ -254,22 +263,23 @@ func TestFlattenSearchResults(t *testing.T) {
 		name         string
 		results      []provider.SearchResult
 		selectedKeys []string
+		showMeta     bool
 		want         []map[string]any
 	}{
 		{
 			name:         "empty results",
 			results:      []provider.SearchResult{},
 			selectedKeys: nil,
+			showMeta:     false,
 			want:         []map[string]any{},
 		},
 		{
-			name:         "default flattening (no selected keys)",
+			name:         "default flattening (no selected keys, showMeta false)",
 			results:      []provider.SearchResult{entry},
 			selectedKeys: nil,
+			showMeta:     false,
 			want: []map[string]any{
 				{
-					"provider": "keepass",
-					"vault":    "myvault",
 					"path":     "path/to/entry",
 					"title":    "My Title",
 					"tags":     []string{"tag1", "tag2"},
@@ -280,9 +290,75 @@ func TestFlattenSearchResults(t *testing.T) {
 			},
 		},
 		{
+			name:         "default flattening with showMeta true",
+			results:      []provider.SearchResult{entry},
+			selectedKeys: nil,
+			showMeta:     true,
+			want: []map[string]any{
+				{
+					"_meta_": map[string]any{
+						"provider": "keepass",
+						"vault":    "myvault",
+					},
+					"path":     "path/to/entry",
+					"title":    "My Title",
+					"tags":     []string{"tag1", "tag2"},
+					"PASSWORD": "secret_password",
+					"USERNAME": "admin",
+					"SOME_KEY": "value",
+				},
+			},
+		},
+		{
+			name:         "selecting _meta_",
+			results:      []provider.SearchResult{entry},
+			selectedKeys: []string{"_meta_", "title", "password"},
+			showMeta:     false,
+			want: []map[string]any{
+				{
+					"_meta_": map[string]any{
+						"provider": "keepass",
+						"vault":    "myvault",
+					},
+					"title":    "My Title",
+					"PASSWORD": "secret_password",
+				},
+			},
+		},
+		{
+			name:         "selecting _meta_.provider and _meta_.vault",
+			results:      []provider.SearchResult{entry},
+			selectedKeys: []string{"_meta_.provider", "_meta_.vault", "title"},
+			showMeta:     false,
+			want: []map[string]any{
+				{
+					"_meta_": map[string]any{
+						"provider": "keepass",
+						"vault":    "myvault",
+					},
+					"title": "My Title",
+				},
+			},
+		},
+		{
+			name:         "selecting _meta_.provider only",
+			results:      []provider.SearchResult{entry},
+			selectedKeys: []string{"_meta_.provider", "title"},
+			showMeta:     false,
+			want: []map[string]any{
+				{
+					"_meta_": map[string]any{
+						"provider": "keepass",
+					},
+					"title": "My Title",
+				},
+			},
+		},
+		{
 			name:         "specific metadata keys",
 			results:      []provider.SearchResult{entry},
 			selectedKeys: []string{"provider", "TITLE", "vault", "path", "tags"},
+			showMeta:     false,
 			want: []map[string]any{
 				{
 					"provider": "keepass",
@@ -297,6 +373,7 @@ func TestFlattenSearchResults(t *testing.T) {
 			name:         "specific attributes case insensitive",
 			results:      []provider.SearchResult{entry},
 			selectedKeys: []string{"password", "username", "some-key"},
+			showMeta:     false,
 			want: []map[string]any{
 				{
 					"PASSWORD": "secret_password",
@@ -309,6 +386,7 @@ func TestFlattenSearchResults(t *testing.T) {
 			name:         "missing attributes",
 			results:      []provider.SearchResult{entry},
 			selectedKeys: []string{"nonexistent"},
+			showMeta:     false,
 			want: []map[string]any{
 				{
 					"NONEXISTENT": nil,
@@ -319,7 +397,7 @@ func TestFlattenSearchResults(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := flattenSearchResults(tc.results, tc.selectedKeys)
+			got := flattenSearchResults(tc.results, tc.selectedKeys, tc.showMeta)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("flattenSearchResults() = %v, want %v", got, tc.want)
 			}

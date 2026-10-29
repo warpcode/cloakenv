@@ -18,6 +18,7 @@ type showOptions struct {
 	explicit      map[string]string
 	whitelist     []string
 	outputFormat  string
+	showMeta      bool
 	positionalURI string
 }
 
@@ -27,7 +28,7 @@ func parseShowFlags(args []string) (*showOptions, error) {
 		outputFormat: "yaml",
 	}
 
-	usageMsg := "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]"
+	usageMsg := "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys] [--show-meta]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--show-meta]"
 
 	parser := NewFlagParser()
 	parser.Var([]string{"-o", "--output"}, true, "", func(name, val string) error {
@@ -57,6 +58,7 @@ func parseShowFlags(args []string) (*showOptions, error) {
 		return nil
 	})
 	parser.StringSlice([]string{"-i"}, &opts.whitelist, "")
+	parser.Bool([]string{"--show-meta"}, &opts.showMeta)
 	parser.PositionalHandler = func(arg string) error {
 		if opts.positionalURI != "" {
 			return fmt.Errorf("%s", usageMsg)
@@ -228,14 +230,19 @@ func Show(args []string, cfg *config.Config) int {
 	ctx := context.Background()
 
 	var entry provider.Entry
+	var targetURI string
 
 	if opts.positionalURI != "" {
+		targetURI = opts.positionalURI
 		entry, err = orch.GetEntry(ctx, opts.positionalURI)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to retrieve entry: %v\n", err)
 			return 1
 		}
 	} else {
+		if len(opts.merges) > 0 {
+			targetURI = opts.merges[0]
+		}
 		entry, err = buildMergedEntry(ctx, orch, opts.merges, opts.whitelist, opts.explicit)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -263,8 +270,28 @@ func Show(args []string, cfg *config.Config) int {
 		return 0
 	}
 
+	if opts.showMeta {
+		meta := make(map[string]any)
+		if targetURI != "" {
+			scheme, _, parseErr := utils.ParseURI(targetURI)
+			if parseErr == nil {
+				meta["vault"] = scheme
+				if cfg != nil {
+					if vCfg, ok := cfg.Vaults[scheme]; ok {
+						if vCfg.Provider != "" {
+							meta["provider"] = vCfg.Provider
+						}
+					}
+				}
+			}
+		}
+		if len(meta) > 0 {
+			formattedAttributes["_meta_"] = meta
+		}
+	}
+
 	asJSON := (opts.outputFormat == "json")
-	if err := utils.RenderOutput(entry.Attributes, asJSON, "entry"); err != nil {
+	if err := utils.RenderOutput(formattedAttributes, asJSON, "entry"); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}

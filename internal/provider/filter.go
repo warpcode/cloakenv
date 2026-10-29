@@ -134,23 +134,43 @@ func buildDefaultFieldCandidates(fieldName, entryPath string, rootPrefixes []str
 	var candidates []string
 	candidates = append(candidates, fieldLower, fieldUpper)
 
+	if fieldLower == "vault" {
+		candidates = append(candidates, "_meta_.vault", "_meta_.VAULT", "_meta_", "_META_")
+	} else if fieldLower == "provider" {
+		candidates = append(candidates, "_meta_.provider", "_meta_.PROVIDER", "_meta_", "_META_")
+	} else if fieldLower == "_meta_" || fieldLower == "_meta_.vault" || fieldLower == "_meta_.provider" {
+		candidates = append(candidates, "_meta_", "_META_", "_meta_.vault", "_meta_.provider", "vault", "VAULT", "provider", "PROVIDER")
+	}
+
 	cleanPath := normalizeDotPath(entryPath)
 	if cleanPath != "" {
 		candidates = append(candidates, cleanPath+"."+fieldLower, cleanPath+":"+fieldLower)
+		if fieldLower == "vault" || fieldLower == "provider" {
+			candidates = append(candidates, cleanPath+"._meta_."+fieldLower, cleanPath+"._meta_")
+		}
 	}
 
 	for _, rp := range rootPrefixes {
 		cleanRP := normalizeDotPath(rp)
 		if cleanRP != "" {
 			candidates = append(candidates, cleanRP+"."+fieldLower)
+			if fieldLower == "vault" || fieldLower == "provider" {
+				candidates = append(candidates, cleanRP+"._meta_."+fieldLower, cleanRP+"._meta_")
+			}
 			if cleanPath != "" {
 				candidates = append(candidates, cleanRP+"."+cleanPath+"."+fieldLower)
+				if fieldLower == "vault" || fieldLower == "provider" {
+					candidates = append(candidates, cleanRP+"."+cleanPath+"._meta_."+fieldLower, cleanRP+"."+cleanPath+"._meta_")
+				}
 			}
 		}
 	}
 
 	if entryTitle != "" && entryTitle != cleanPath {
 		candidates = append(candidates, entryTitle+"."+fieldLower, entryTitle+":"+fieldLower)
+		if fieldLower == "vault" || fieldLower == "provider" {
+			candidates = append(candidates, entryTitle+"._meta_."+fieldLower, entryTitle+"._meta_")
+		}
 	}
 
 	return candidates

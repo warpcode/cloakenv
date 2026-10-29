@@ -19,7 +19,7 @@ func Search(args []string, cfg *config.Config) int {
 		return 0
 	}
 
-	query, repoScopes, selectedKeys, outputFormat, err := parseSearchArgs(args)
+	query, repoScopes, selectedKeys, outputFormat, showMeta, err := parseSearchArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -38,7 +38,7 @@ func Search(args []string, cfg *config.Config) int {
 		return 1
 	}
 
-	flatResults := flattenSearchResults(results, selectedKeys)
+	flatResults := flattenSearchResults(results, selectedKeys, showMeta)
 
 	asJSON := (outputFormat == "json")
 	if err := utils.RenderOutput(flatResults, asJSON, "results"); err != nil {
@@ -49,7 +49,7 @@ func Search(args []string, cfg *config.Config) int {
 	return 0
 }
 
-func parseSearchArgs(args []string) (query string, repoScopes []string, selectedKeys []string, outputFormat string, err error) {
+func parseSearchArgs(args []string) (query string, repoScopes []string, selectedKeys []string, outputFormat string, showMeta bool, err error) {
 	outputFormat = "yaml" // default
 
 	parser := NewFlagParser()
@@ -62,25 +62,26 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 	})
 	parser.StringSlice([]string{"--vault"}, &repoScopes, "flag --vault requires an argument")
 	parser.StringSlice([]string{"-i"}, &selectedKeys, "flag -i requires an argument")
+	parser.Bool([]string{"--show-meta"}, &showMeta)
 	parser.UnknownFlagErr = func(flag string) error {
 		return fmt.Errorf("unknown flag: %s", flag)
 	}
 	parser.PositionalHandler = func(arg string) error {
 		if query != "" {
-			return fmt.Errorf("usage: cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]")
+			return fmt.Errorf("usage: cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json] [--show-meta]")
 		}
 		query = arg
 		return nil
 	}
 
 	if _, err := parser.Parse(args); err != nil {
-		return "", nil, nil, "", err
+		return "", nil, nil, "", false, err
 	}
 
-	return query, repoScopes, selectedKeys, outputFormat, nil
+	return query, repoScopes, selectedKeys, outputFormat, showMeta, nil
 }
 
-func flattenSearchResults(results []provider.SearchResult, selectedKeys []string) []map[string]any {
+func flattenSearchResults(results []provider.SearchResult, selectedKeys []string, showMeta bool) []map[string]any {
 	flatResults := make([]map[string]any, len(results))
 
 	selectedKeysLower := make([]string, len(selectedKeys))
@@ -89,19 +90,37 @@ func flattenSearchResults(results []provider.SearchResult, selectedKeys []string
 	}
 
 	for i, r := range results {
-		flatResults[i] = flattenEntry(r, selectedKeys, selectedKeysLower)
+		flatResults[i] = flattenEntry(r, selectedKeys, selectedKeysLower, showMeta)
 	}
 	return flatResults
 }
 
-func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
+func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string, showMeta bool) map[string]any {
 	if len(selectedKeys) > 0 {
-		return flattenSelectedKeys(r, selectedKeys, selectedKeysLower)
+		return flattenSelectedKeys(r, selectedKeys, selectedKeysLower, showMeta)
 	}
-	return flattenDefaultEntry(r)
+	return flattenDefaultEntry(r, showMeta)
 }
 
-func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
+func buildMetaMap(providerVal, vaultVal string, selectProvider, selectVault bool) map[string]any {
+	meta := make(map[string]any)
+	if selectProvider || (!selectProvider && !selectVault) {
+		if providerVal != "" {
+			meta["provider"] = providerVal
+		}
+	}
+	if selectVault || (!selectProvider && !selectVault) {
+		if vaultVal != "" {
+			meta["vault"] = vaultVal
+		}
+	}
+	if len(meta) == 0 {
+		return nil
+	}
+	return meta
+}
+
+func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string, showMeta bool) map[string]any {
 	flatRes := make(map[string]any, len(selectedKeys))
 
 	var lowerAttrs map[string]string
@@ -112,9 +131,46 @@ func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selecte
 		}
 	}
 
+	selectMetaProvider := false
+	selectMetaVault := false
+
+	for _, fieldLower := range selectedKeysLower {
+		if fieldLower == "_meta_.provider" {
+			selectMetaProvider = true
+		} else if fieldLower == "_meta_.vault" {
+			selectMetaVault = true
+		}
+	}
+
 	for j, field := range selectedKeys {
 		fieldLower := selectedKeysLower[j]
 		switch fieldLower {
+		case "_meta_":
+			if meta := buildMetaMap(r.Provider, r.Vault, false, false); meta != nil {
+				flatRes["_meta_"] = meta
+			}
+		case "_meta_.provider":
+			meta, _ := flatRes["_meta_"].(map[string]any)
+			if meta == nil {
+				meta = make(map[string]any)
+			}
+			if r.Provider != "" {
+				meta["provider"] = r.Provider
+			}
+			if len(meta) > 0 {
+				flatRes["_meta_"] = meta
+			}
+		case "_meta_.vault":
+			meta, _ := flatRes["_meta_"].(map[string]any)
+			if meta == nil {
+				meta = make(map[string]any)
+			}
+			if r.Vault != "" {
+				meta["vault"] = r.Vault
+			}
+			if len(meta) > 0 {
+				flatRes["_meta_"] = meta
+			}
 		case "provider":
 			if r.Provider != "" {
 				flatRes["provider"] = r.Provider
@@ -144,6 +200,13 @@ func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selecte
 			flatRes[key] = val
 		}
 	}
+
+	if showMeta && flatRes["_meta_"] == nil {
+		if meta := buildMetaMap(r.Provider, r.Vault, selectMetaProvider, selectMetaVault); meta != nil {
+			flatRes["_meta_"] = meta
+		}
+	}
+
 	return flatRes
 }
 
@@ -157,14 +220,15 @@ func resolveSelectedAttribute(attributes map[string]any, lowerAttrs map[string]s
 	return utils.FormatKey(field), nil
 }
 
-func flattenDefaultEntry(r provider.SearchResult) map[string]any {
+func flattenDefaultEntry(r provider.SearchResult, showMeta bool) map[string]any {
 	flatRes := make(map[string]any, 5+len(r.Entry.Attributes))
-	if r.Provider != "" {
-		flatRes["provider"] = r.Provider
+
+	if showMeta {
+		if meta := buildMetaMap(r.Provider, r.Vault, false, false); meta != nil {
+			flatRes["_meta_"] = meta
+		}
 	}
-	if r.Vault != "" {
-		flatRes["vault"] = r.Vault
-	}
+
 	if r.Path != "" {
 		flatRes["path"] = r.Path
 	}

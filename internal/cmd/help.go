@@ -37,6 +37,7 @@ Flags:
   -o, --output    Output format: keys, json, yaml, env (depends on command)
   --vault vault   Scope search to a specific vault (repeatable)
   --ttl duration  Expiration duration for cache entries (e.g. 5m, 1h, set only)
+  --show-meta     Include vault and provider metadata in _meta_ block
 
 URI schemes:
   keyring://service/account    Built-in: OS keyring (macOS Keychain, Linux D-Bus, Windows Credential Manager)
@@ -139,8 +140,8 @@ Description:
 // PrintShowHelp prints usage help for the show subcommand.
 func PrintShowHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]
-  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]
+  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--show-meta]
+  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--show-meta]
 
 Description:
   Retrieve and display a structured entry, or merge multiple entries/explicit mapping values.
@@ -153,13 +154,14 @@ Flags:
   -e KEY=uri      Explicit environment/key override (can be specified multiple times)
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
-  -o, --output    Output format: yaml, json, env, or keys (default: yaml)`)
+  -o, --output    Output format: yaml, json, env, or keys (default: yaml)
+  --show-meta     Include vault and provider metadata in _meta_ block`)
 }
 
 // PrintSearchHelp prints usage help for the search subcommand.
 func PrintSearchHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]
+  cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json] [--show-meta]
 
 Description:
   Search for structured entries matching the query.
@@ -170,7 +172,8 @@ Arguments:
 Flags:
   --vault vault   Scope search to a specific vault (repeatable)
   -i KEY          Select output fields/keys to return (repeatable)
-  -o, --output    Output format: yaml or json (default: yaml)`)
+  -o, --output    Output format: yaml or json (default: yaml)
+  --show-meta     Include vault and provider metadata in _meta_ block`)
 }
 
 // PrintAuthHelp prints usage help for the auth subcommand.
