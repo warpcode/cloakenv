@@ -25,9 +25,17 @@ func Run(args []string, cfg *config.Config) int {
 		cmdArgs     []string
 		noAutoload  bool
 		emptyEnv    bool
+		keyFormat   string
 	)
 
 	parser := NewFlagParser()
+	parser.Var([]string{"-f", "--key-format"}, true, "flag -f/--key-format requires an argument", func(name, val string) error {
+		if val != "none" && val != "env" && val != "snake" && val != "kebab" {
+			return fmt.Errorf("invalid key format %q (expected none, env, snake, or kebab)", val)
+		}
+		keyFormat = val
+		return nil
+	})
 	parser.StopAtNonFlag = true
 	parser.Bool([]string{"-E"}, &emptyEnv)
 	parser.Bool([]string{"--no-autoload", "--skip-autoload"}, &noAutoload)
@@ -62,6 +70,13 @@ func Run(args []string, cfg *config.Config) int {
 	if len(cmdArgs) == 0 {
 		fmt.Fprintln(os.Stderr, "No command specified. Usage: cloakenv run [flags] -- <command> [args]")
 		return 1
+	}
+
+	if keyFormat != "" {
+		if cfg == nil {
+			cfg = &config.Config{}
+		}
+		cfg.KeyFormatOverride = keyFormat
 	}
 
 	orch, err := engine.NewOrchestrator(cfg)
