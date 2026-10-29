@@ -20,6 +20,7 @@ func TestParseSearchArgs(t *testing.T) {
 		wantRepoScopes   []string
 		wantSelectedKeys []string
 		wantOutputFormat string
+		wantKeyFormat    string
 		wantErrMsg       string
 	}{
 		{
@@ -29,6 +30,7 @@ func TestParseSearchArgs(t *testing.T) {
 			wantRepoScopes:   nil,
 			wantSelectedKeys: nil,
 			wantOutputFormat: "yaml",
+			wantKeyFormat:    "",
 			wantErrMsg:       "",
 		},
 		{
@@ -38,6 +40,7 @@ func TestParseSearchArgs(t *testing.T) {
 			wantRepoScopes:   nil,
 			wantSelectedKeys: nil,
 			wantOutputFormat: "yaml",
+			wantKeyFormat:    "",
 			wantErrMsg:       "",
 		},
 		{
@@ -47,6 +50,7 @@ func TestParseSearchArgs(t *testing.T) {
 			wantRepoScopes:   nil,
 			wantSelectedKeys: nil,
 			wantOutputFormat: "json",
+			wantKeyFormat:    "",
 			wantErrMsg:       "",
 		},
 		{
@@ -56,7 +60,38 @@ func TestParseSearchArgs(t *testing.T) {
 			wantRepoScopes:   nil,
 			wantSelectedKeys: nil,
 			wantOutputFormat: "yaml",
+			wantKeyFormat:    "",
 			wantErrMsg:       "",
+		},
+		{
+			name:             "key format snake with -f",
+			args:             []string{"-f", "snake"},
+			wantQuery:        "",
+			wantRepoScopes:   nil,
+			wantSelectedKeys: nil,
+			wantOutputFormat: "yaml",
+			wantKeyFormat:    "snake",
+			wantErrMsg:       "",
+		},
+		{
+			name:             "key format kebab with --key-format",
+			args:             []string{"--key-format", "kebab"},
+			wantQuery:        "",
+			wantRepoScopes:   nil,
+			wantSelectedKeys: nil,
+			wantOutputFormat: "yaml",
+			wantKeyFormat:    "kebab",
+			wantErrMsg:       "",
+		},
+		{
+			name:             "invalid key format",
+			args:             []string{"-f", "invalid"},
+			wantQuery:        "",
+			wantRepoScopes:   nil,
+			wantSelectedKeys: nil,
+			wantOutputFormat: "",
+			wantKeyFormat:    "",
+			wantErrMsg:       "invalid key format",
 		},
 		{
 			name:             "single vault",
@@ -65,6 +100,7 @@ func TestParseSearchArgs(t *testing.T) {
 			wantRepoScopes:   []string{"vault1"},
 			wantSelectedKeys: nil,
 			wantOutputFormat: "yaml",
+			wantKeyFormat:    "",
 			wantErrMsg:       "",
 		},
 		{
@@ -96,11 +132,12 @@ func TestParseSearchArgs(t *testing.T) {
 		},
 		{
 			name:             "all flags and query",
-			args:             []string{"myquery", "--vault", "vault1", "-i", "key1", "-o", "json"},
+			args:             []string{"myquery", "--vault", "vault1", "-i", "key1", "-o", "json", "-f", "env"},
 			wantQuery:        "myquery",
 			wantRepoScopes:   []string{"vault1"},
 			wantSelectedKeys: []string{"key1"},
 			wantOutputFormat: "json",
+			wantKeyFormat:    "env",
 			wantErrMsg:       "",
 		},
 		{
@@ -161,7 +198,7 @@ func TestParseSearchArgs(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			query, repoScopes, selectedKeys, outputFormat, err := parseSearchArgs(tc.args)
+			query, repoScopes, selectedKeys, outputFormat, keyFormat, err := parseSearchArgs(tc.args)
 
 			if tc.wantErrMsg != "" {
 				if err == nil {
@@ -191,6 +228,10 @@ func TestParseSearchArgs(t *testing.T) {
 
 			if outputFormat != tc.wantOutputFormat {
 				t.Errorf("outputFormat = %q, want %q", outputFormat, tc.wantOutputFormat)
+			}
+
+			if keyFormat != tc.wantKeyFormat {
+				t.Errorf("expected keyFormat %q, got %q", tc.wantKeyFormat, keyFormat)
 			}
 		})
 	}
