@@ -19,7 +19,7 @@
 - [Core Concepts](#core-concepts)
   - [URI Addressing](#uri-addressing)
   - [Template & Secret Expansion Syntax (`{{ ... }}`)](#template--secret-expansion-syntax-)
-  - [Automatic Environment Key Formatting](#automatic-environment-key-formatting)
+  - [Vault Key Formatting (`key_format`)](#vault-key-formatting-key_format)
 - [CLI Command Reference](#cli-command-reference)
   - [`run` — Wrap Processes & Inject Secrets](#run--wrap-processes--inject-secrets)
   - [`get` — Extract Single Secret Raw to Stdout](#get--extract-single-secret-raw-to-stdout)
@@ -33,9 +33,9 @@
 - [Secret Providers & Schemes](#secret-providers--schemes)
   - [Built-In Providers (Zero Setup)](#built-in-providers-zero-setup)
   - [Configured Vaults](#configured-vaults)
-    - [Composed Custom Vault Entities](#composed-custom-vault-entities)
-    - [Universal Per-Entry Attributes Decorator](#universal-per-entry-attributes-decorator)
-    - [KeePass Placeholders & Cross-Entry References](#8-keepass-placeholders--cross-entry-references-resolve_references)
+    - [Custom Vault (`custom_vault`)](#3-custom-vault-custom_vault)
+    - [Universal Per-Entry Attributes Decorator (`attributes`)](#8-universal-per-entry-attributes-decorator-attributes)
+    - [KeePass Placeholders & Cross-Entry References (`resolve_references`)](#9-keepass-placeholders--cross-entry-references-resolve_references)
 - [Template Engine & FuncMap Reference](#template-engine--funcmap-reference)
 - [Command Autoloading & Alias Masking](#command-autoloading--alias-masking)
 - [Search Query Language Reference](#search-query-language-reference)
@@ -276,7 +276,7 @@ cloakenv run [-E] [flags] -- <command> [args...]
 # 1. Map single environment variables explicitly
 cloakenv run -e API_KEY=keyring://stripe/secret_key -- node server.js
 
-# 2. Merge an entire KeePass entry (injects all attributes as UPPERCASE_VARS)
+# 2. Merge an entire KeePass entry (injects all attributes)
 cloakenv run -m "work://Production/PostgreSQL" -- ./migrate-db
 
 # 3. Merge an entry but whitelist only specific fields
@@ -569,7 +569,7 @@ vaults:
 - Defaults to `:Password` attribute if omitted.
 - **Virtual Metadata Attributes**: KeePass entries expose virtual metadata attributes via `GetSecret` (e.g. `work://website/Test Website:UUID`, `work://website/Test Website:uuid`, `work://website/Test Website:group`, `work://website/Test Website:group_name`, `work://website/Test Website:group_uuid`, `work://website/Test Website:group_path`). Custom string fields take precedence over virtual metadata attributes.
 - **File Attachments**: Directly stream binary attachments by name (e.g. `vault://SSH/Keys:id_rsa`).
-- **Placeholder & Reference Resolution**: Set `resolve_references: true` in `config.yaml` to enable `{TITLE}`, `{REF:...}`, `{T-CONV:...}`, `{URL:...}`, and date/time expansion (see [KeePass Placeholders & Cross-Entry References](#7-keepass-placeholders--cross-entry-references-resolve_references)).
+- **Placeholder & Reference Resolution**: Set `resolve_references: true` in `config.yaml` to enable `{TITLE}`, `{REF:...}`, `{T-CONV:...}`, `{URL:...}`, and date/time expansion (see [KeePass Placeholders & Cross-Entry References](#9-keepass-placeholders--cross-entry-references-resolve_references)).
 
 ##### Placeholder Expansion & Field References
 `cloakenv` supports resolving field placeholders and cross-entry references embedded inside KeePass field values:
@@ -741,7 +741,6 @@ vaults:
     provider: "keepass"
     vault_path: "~/secrets/work.kdbx"
     key_format: "env"
-    resolve_values: true
     attributes:
       DOTENV: "{{ .attributes | toEnv }}"
       SERVICE_NAME: "{{ .meta.Title | lower }}"
@@ -877,7 +876,7 @@ References field values from another entry in the database.
 
 ## Template Engine & FuncMap Reference
 
-`cloakenv` embeds Go's standard library `text/template` engine with `.Option("missingkey=error")` and recursion depth tracking. When `resolve_values: true` is enabled on any vault or `custom_vault` entity, string attribute values containing `{{ ... }}` are dynamically rendered with access to entry metadata, attributes, and 17 built-in functions.
+`cloakenv` embeds Go's standard library `text/template` engine with `.Option("missingkey=error")` and recursion depth tracking. When `resolve_values: true` is enabled on a `custom_vault` or `custom_vault` entity, string attribute values containing `{{ ... }}` are dynamically rendered with access to entry metadata, attributes, and 17 built-in functions.
 
 ### Top-Level Templates (`templates:`)
 
@@ -1145,7 +1144,6 @@ vaults:
     provider: "keepass"
     vault_path: "~/secrets/work.kdbx"
     key_format: "env"
-    resolve_values: true
     attributes:
       DOTENV: "{{ .attributes | toEnv }}"
       TITLE_UPPER: "{{ .meta.Title | upper }}"

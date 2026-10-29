@@ -162,7 +162,6 @@ vaults:
   #   provider: "keepass"
   #   vault_path: "~/secrets/work_vault.kdbx"
   #   key_format: "env"
-  #   resolve_values: true
   #   attributes:
   #     EXPORT_ENV: "{{ .attributes | toEnv }}"
   #     ENTRY_TITLE: "{{ .meta.Title }}"
