@@ -21,6 +21,10 @@ func (d *dummyResolver) GetEntry(ctx context.Context, uri string) (provider.Entr
 	return provider.Entry{Attributes: map[string]any{}}, nil
 }
 
+func (d *dummyResolver) GetEntries(ctx context.Context, uri string) ([]provider.Entry, error) {
+	return []provider.Entry{}, nil
+}
+
 func BenchmarkMatchRunAlias(b *testing.B) {
 	rules := make([]config.AutoloadRule, 50)
 	for i := range 50 {

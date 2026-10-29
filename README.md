@@ -18,8 +18,8 @@
 - [Quick Start (Zero to Running in 2 Minutes)](#quick-start-zero-to-running-in-2-minutes)
 - [Core Concepts](#core-concepts)
   - [URI Addressing](#uri-addressing)
-  - [Explicit Expansion Syntax (`${...}`)](#explicit-expansion-syntax-)
-  - [Automatic Environment Key Formatting](#automatic-environment-key-formatting)
+  - [Template & Secret Expansion Syntax (`{{ ... }}`)](#template--secret-expansion-syntax-)
+  - [Vault Key Formatting (`key_format`)](#vault-key-formatting-key_format)
 - [CLI Command Reference](#cli-command-reference)
   - [`run` — Wrap Processes & Inject Secrets](#run--wrap-processes--inject-secrets)
   - [`get` — Extract Single Secret Raw to Stdout](#get--extract-single-secret-raw-to-stdout)
@@ -33,7 +33,10 @@
 - [Secret Providers & Schemes](#secret-providers--schemes)
   - [Built-In Providers (Zero Setup)](#built-in-providers-zero-setup)
   - [Configured Vaults](#configured-vaults)
-    - [KeePass Placeholders & Cross-Entry References](#7-keepass-placeholders--cross-entry-references-resolve_references)
+    - [Custom Vault (`custom_vault`)](#3-custom-vault-custom_vault)
+    - [Universal Per-Entry Attributes Decorator (`attributes`)](#8-universal-per-entry-attributes-decorator-attributes)
+    - [KeePass Placeholders & Cross-Entry References (`resolve_references`)](#9-keepass-placeholders--cross-entry-references-resolve_references)
+- [Template Engine & FuncMap Reference](#template-engine--funcmap-reference)
 - [Command Autoloading & Alias Masking](#command-autoloading--alias-masking)
 - [Search Query Language Reference](#search-query-language-reference)
 - [Configuration Reference (`config.yaml`)](#configuration-reference-configyaml)
@@ -52,7 +55,7 @@ Managing application credentials usually forces bad trade-offs:
 `cloakenv` provides a single, uniform abstraction:
 - **Zero Disk Persistence**: Secrets are decrypted into process memory only for the duration of the child process.
 - **Universal URI Scheme**: Access any backend with the same syntax (`keyring://...`, `keepass://...`, `yaml://...`, `env://...`, `cache://...`).
-- **Template Hydration**: Inject whole `.env` templates containing `${...}` secret expansions on the fly.
+- **Template Hydration**: Inject whole `.env` templates containing `{{ ... }}` secret expansions and Go templates on the fly.
 - **Command Autoloading**: Automatically attach the right credentials whenever specific CLI commands (like `aws`, `kubectl`, or custom tools) run.
 - **Cross-Platform**: Full support for Linux, macOS, and Windows.
 
@@ -63,7 +66,7 @@ Managing application credentials usually forces bad trade-offs:
 ```mermaid
 flowchart TD
     subgraph CLI ["1. You run a command wrapped with cloakenv"]
-        Cmd["cloakenv run -e DB_PASS='${keyring://db/prod}' -- ./my-app"]
+        Cmd["cloakenv run -e DB_PASS='{{ get \"keyring://db/prod\" }}' -- ./my-app"]
     end
 
     subgraph Engine ["2. cloakenv Orchestrator"]
@@ -181,21 +184,27 @@ json_db://servers.bastion.hostname
 
 ---
 
-### Explicit Expansion Syntax (`${...}`)
+### Template & Secret Expansion Syntax (`{{ ... }}`)
 
-`cloakenv` supports embedding secrets directly into connection strings, URLs, and template files using `${scheme://...}` syntax:
+`cloakenv` provides a unified templating engine powered by Go's standard library `text/template` with `.Option("missingkey=error")`. When `resolve_values: true` is configured or when evaluating template contexts, secret URIs and expressions can be embedded directly into connection strings, URLs, configuration files, and attribute templates:
 
 ```bash
-cloakenv run -e DATABASE_URL="postgres://${env://DB_USER}:${keyring://pg/password}@localhost:5432/mydb" -- ./server
+cloakenv run -e DATABASE_URL='postgres://{{ get "env://DB_USER" }}:{{ get "keyring://pg/password" }}@localhost:5432/mydb' -- ./server
 ```
 
-#### Syntax Rules:
-1. **Explicit Wrapping**: Secret URIs inside strings must be wrapped in `${...}` to be resolved.
-2. **Escaping**: Use `$$` to escape dollar signs. For example:
-   - `$$` $\rightarrow$ `$`
-   - `$${env://USER}` $\rightarrow$ `${env://USER}` (unexpanded literal string).
-3. **No Nesting**: Expansions cannot be nested within other expansions (`${env://${FOO}}` will return a validation error).
-4. **Recursive Resolution**: Static custom vaults and `.env` template files can reference other URIs recursively (up to 5 levels deep).
+#### Core Template Mechanics:
+1. **Unified Go `text/template` Engine**: Expressions use standard Go template syntax `{{ ... }}` with strict key checking (`missingkey=error`). Referencing an undefined attribute or field aborts with a descriptive error instead of outputting `<no value>`.
+2. **Explicit Secret Retrieval**: Use `{{ get "scheme://..." }}` to fetch a secret string from any vault or built-in provider.
+3. **Structured Context (`.`)**: Attribute and composed vault templates receive a structured dot context containing:
+   - **`.meta` / `.Meta`**: Entry metadata map (`Title`/`title`, `Tags`/`tags`, `UUID`/`uuid`, `Vault`/`vault`, `Provider`/`provider`, `Path`/`path`, `Group`/`group`).
+   - **`.attributes` / `.Attributes`**: Entry attributes after field filtering, mapping, and key formatting.
+   - **`.entries` / `.Entries`**: Slice of upstream source entry contexts when resolving composed `custom_vault` entities.
+4. **Child Command Argument Pass-Through Safety (`resolveCmdArgs`)**:
+   When `cloakenv run` executes child processes, command-line arguments are safely inspected:
+   - Arguments that are bare known `scheme://...` URIs or templates invoking `cloakenv` functions (`get`, `entry`, `search`, `include`, `includeFile`) are resolved before process execution.
+   - Foreign templates (such as Docker format strings `'{{.State.Status}}'`, Helm templates, or Kubernetes format strings) pass through to the child command untouched without evaluation errors.
+5. **Recursion Limit**: Dynamic resolution and template inclusion are capped at depth 5 (`maxDepth = 5`) to prevent circular evaluation or infinite recursion.
+6. **Legacy `${...}` Removed**: The legacy `${scheme://...}` syntax has been completely removed in favor of `{{ get "scheme://..." }}`. Bare `scheme://...` URIs remain supported in explicit CLI contexts (`get`, `show`, `-e`, `-m`), `merge:`, and `autoload.env`.
 
 ---
 
@@ -267,7 +276,7 @@ cloakenv run [-E] [flags] -- <command> [args...]
 # 1. Map single environment variables explicitly
 cloakenv run -e API_KEY=keyring://stripe/secret_key -- node server.js
 
-# 2. Merge an entire KeePass entry (injects all attributes as UPPERCASE_VARS)
+# 2. Merge an entire KeePass entry (injects all attributes)
 cloakenv run -m "work://Production/PostgreSQL" -- ./migrate-db
 
 # 3. Merge an entry but whitelist only specific fields
@@ -551,7 +560,7 @@ vaults:
     entities:
       database:
         username: "postgres"
-        Password: "${keyring://db/prod_password}"
+        Password: '{{ get "keyring://db/prod_password" }}'
 ```
 
 #### 1. KeePass (`keepass`)
@@ -560,7 +569,7 @@ vaults:
 - Defaults to `:Password` attribute if omitted.
 - **Virtual Metadata Attributes**: KeePass entries expose virtual metadata attributes via `GetSecret` (e.g. `work://website/Test Website:UUID`, `work://website/Test Website:uuid`, `work://website/Test Website:group`, `work://website/Test Website:group_name`, `work://website/Test Website:group_uuid`, `work://website/Test Website:group_path`). Custom string fields take precedence over virtual metadata attributes.
 - **File Attachments**: Directly stream binary attachments by name (e.g. `vault://SSH/Keys:id_rsa`).
-- **Placeholder & Reference Resolution**: Set `resolve_references: true` in `config.yaml` to enable `{TITLE}`, `{REF:...}`, `{T-CONV:...}`, `{URL:...}`, and date/time expansion (see [KeePass Placeholders & Cross-Entry References](#7-keepass-placeholders--cross-entry-references-resolve_references)).
+- **Placeholder & Reference Resolution**: Set `resolve_references: true` in `config.yaml` to enable `{TITLE}`, `{REF:...}`, `{T-CONV:...}`, `{URL:...}`, and date/time expansion (see [KeePass Placeholders & Cross-Entry References](#9-keepass-placeholders--cross-entry-references-resolve_references)).
 
 ##### Placeholder Expansion & Field References
 `cloakenv` supports resolving field placeholders and cross-entry references embedded inside KeePass field values:
@@ -593,8 +602,52 @@ vaults:
 - Supports multi-entity registries (under `entities_root_key`) or flat single-entity databases (`single_entity: true`).
 
 #### 3. Custom Vault (`custom_vault`)
-- Defined directly inside `config.yaml` with no external files.
-- Set `resolve_values: true` to enable recursive resolution of `${...}` URIs inside the configuration.
+Defined directly inside `config.yaml` with no external files required. Supports both static attribute definitions and multi-entry composed entities.
+
+- **`resolve_values: true`**: Enables recursive resolution of `{{ ... }}` Go template expressions and `{{ get "scheme://..." }}` lookups within attribute values (up to recursion depth 5).
+- **Legacy Flat Entities**: Fully backward-compatible. Any entity defined as a flat key-value map of attributes resolves attributes directly:
+  ```yaml
+  vaults:
+    custom_static:
+      provider: "custom_vault"
+      entities:
+        database:
+          username: "admin"
+          password: "plain-secret"
+  ```
+- **Composed Custom Vault Entities**: When an entity configures composition keys (`merge`, `attributes`, `mapping`, `include_fields`, `exclude_fields`, `key_format`, `resolve_values`), `cloakenv` treats it as a composed entity:
+  - **`merge`**: A list of source URIs to combine into this entity. Can target specific entries (`work://infra/db`) or multi-entry vaults (`openrouter://`, which automatically expands all entries returned by `Search` in deterministic order).
+  - **Per-Source Transformation**: Each upstream entry is transformed in sequence: `include_fields` $\rightarrow$ `exclude_fields` $\rightarrow$ `mapping` $\rightarrow$ `key_format`.
+  - **Deterministic Fold**: Transformed attributes are folded into `.attributes`, while upstream entry contexts are preserved in `.entries`.
+  - **`attributes`**: Configures static attributes or `{{ ... }}` templates evaluated against the merged `.meta`, `.attributes`, and `.entries` context.
+  - **Strict Validation**: Unrecognized top-level fields on composed entities are rejected to catch typos.
+  - **Queryable**: Composed entities can be inspected via `cloakenv show <vault>://<entity>`, resolved via `cloakenv get <vault>://<entity>:<attribute>`, or injected into processes via `cloakenv run -m <vault>://<entity>`.
+  - Example composed entity:
+  ```yaml
+  vaults:
+    config:
+      provider: "custom_vault"
+      resolve_values: true
+      entities:
+        jules:
+          title: "Jules Agent Configuration"
+          tags: ["ai", "composed"]
+          merge:
+            - "openrouter://"
+            - "work://ai/credentials"
+          include_fields:
+            - "API_*"
+            - "DATABASE_*"
+          exclude_fields:
+            - "API_SECRET_KEY"
+          mapping:
+            - match: "^API_(.*)"
+              key: "{{ .meta.Title | env }}_API_$1"
+          key_format: "env"
+          attributes:
+            DOTENV: "{{ .attributes | toEnv }}"
+            SUMMARY: "{{ .meta.Title }} contains {{ len .entries }} upstream models"
+  ```
 
 #### 4. Stored Search Vault (`search`)
 - Acts as a stored search definition over one or more source vaults, returning a filtered synthetic entry view.
@@ -643,6 +696,7 @@ vaults:
 - Supported across vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`).
 - **`match`**: Regex pattern matched against raw attribute field names. Supports capture groups (e.g., `env:(.*)`).
 - **`key`**: Target output field name template using capture group references (e.g., `$1` or `\1`).
+- **Metadata Interpolation in `key`**: Target key names support Go `text/template` syntax referencing the entry's `.meta` context (such as `{{ .meta.Title | env }}_$1`). Case helper functions (`env`, `snake`, `kebab`, `upper`, `lower`) can be piped into capture groups and metadata values.
 - **Preserved Values**: Mapped fields retain the original field value.
 - **Filter Exemption**: Mapped fields always show regardless of `include_fields` or `exclude_fields` configured on the same vault. Field filtering (`include_fields` and `exclude_fields`) applies to unmapped fields.
 - Example config:
@@ -652,6 +706,8 @@ vaults:
     provider: "keepass"
     vault_path: "~/secrets/work_vault.kdbx"
     mapping:
+      - match: "^Password$"
+        key: "{{ .meta.Title | env }}_API_KEY"
       - match: "env:(.*)"
         key: "\\1"
 ```
@@ -671,7 +727,26 @@ vaults:
     key_format: "snake"
 ```
 
-#### 8. KeePass Placeholders & Cross-Entry References (`resolve_references`)
+#### 8. Universal Per-Entry Attributes Decorator (`attributes`)
+Supported across all configured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`). Computes or overlays templated attributes onto every entry.
+
+- **Execution Order**: Wrapped strictly after `FilteringProvider` (`include_fields`, `exclude_fields`), `MappingProvider` (`mapping`), and `KeyFormatProvider` (`key_format`).
+- **Post-Filter Guarantee**: Templates in `attributes:` only see authorized, formatted attributes in `.attributes`, ensuring field filters cannot be bypassed by template evaluation (`RSK-002`, `REQ-005`).
+- **Template Context**: Templates have access to `.meta` (`Title`, `Tags`, `UUID`, `Vault`, `Provider`, `Path`, `Group`) and post-filter `.attributes`.
+- **Queryable**: Computed attributes are immediately available via `cloakenv get <vault>://<entry>:<attribute>`, `cloakenv show <vault>://<entry>`, and `cloakenv search`.
+- Example config:
+```yaml
+vaults:
+  decorated_keepass:
+    provider: "keepass"
+    vault_path: "~/secrets/work.kdbx"
+    key_format: "env"
+    attributes:
+      DOTENV: "{{ .attributes | toEnv }}"
+      SERVICE_NAME: "{{ .meta.Title | lower }}"
+```
+
+#### 9. KeePass Placeholders & Cross-Entry References (`resolve_references`)
 Supported on `keepass` vaults when `resolve_references: true` is configured in `config.yaml`. Allows KeePass entries to dynamically reference fields within the same entry, calculate timestamps, perform text transformations, parse URL components, or pull attributes from other entries across the database.
 
 ##### Enabling Placeholder Resolution
@@ -799,6 +874,65 @@ References field values from another entry in the database.
 
 ---
 
+## Template Engine & FuncMap Reference
+
+`cloakenv` embeds Go's standard library `text/template` engine with `.Option("missingkey=error")` and recursion depth tracking. When `resolve_values: true` is enabled on a `custom_vault` or `custom_vault` entity, string attribute values containing `{{ ... }}` are dynamically rendered with access to entry metadata, attributes, and 17 built-in functions.
+
+### Top-Level Templates (`templates:`)
+
+Centralize reusable templates in `~/.config/cloakenv/config.yaml`. Templates can be defined inline or point to external files:
+
+```yaml
+templates:
+  # Inline template definition:
+  dotenv:
+    template: "{{ .attributes | toEnv }}"
+
+  # External file template (resolves relative to config.yaml directory or expands ~/):
+  app_config:
+    path: "~/.config/cloakenv/templates/app.tmpl"
+```
+
+Evaluate configured templates using `{{ include "name" . }}` or evaluate external template files directly using `{{ includeFile "path/to/file.tmpl" . }}`. Template authors are the configuration owner, and template file paths are unrestricted by design.
+
+### Built-In Template Functions (`FuncMap`)
+
+| Function | Signature | Description | Example |
+|---|---|---|---|
+| `get` | `(uri string) (string, error)` | Resolves a single secret value from any vault or provider | `{{ get "keyring://pg/pass" }}` |
+| `entry` | `(uri string) (map[string]any, error)` | Resolves a complete entry into a structured context map (`.meta`, `.attributes`) | `{{ (entry "work://db").attributes.Password }}` |
+| `search` | `(query string) ([]map[string]any, error)` | Executes a search query across vaults and returns a slice of entry context maps | `{{ range search "tag=db" }}{{ .meta.Title }}: {{ .attributes.HOST }}{{ end }}` |
+| `toEnv` | `(attrs any) (string, error)` | Serializes an attributes map into dotenv key-value format (sorted, excluding metadata) | `{{ .attributes \| toEnv }}` |
+| `toKv` | `(attrs any) (string, error)` | Alias for `toEnv` | `{{ .attributes \| toKv }}` |
+| `toJson` | `(v any) (string, error)` | Serializes a value or map to a JSON string | `{{ .attributes \| toJson }}` |
+| `toYaml` | `(v any) (string, error)` | Serializes a value or map to a YAML string | `{{ .attributes \| toYaml }}` |
+| `upper` | `(s string) string` | Converts a string to UPPERCASE | `{{ .meta.Title \| upper }}` |
+| `lower` | `(s string) string` | Converts a string to lowercase | `{{ .meta.Title \| lower }}` |
+| `env` | `(s string) string` | Formats a string to `UPPERCASE_WITH_UNDERSCORES` | `{{ .meta.Title \| env }}_API_KEY` |
+| `snake` | `(s string) string` | Formats a string to `lowercase_with_underscores` | `{{ .meta.Title \| snake }}` |
+| `kebab` | `(s string) string` | Formats a string to `lowercase-with-hyphens` | `{{ .meta.Title \| kebab }}` |
+| `keys` | `(m map[string]any) []string` | Returns a sorted slice of map keys | `{{ range keys .attributes }}{{ . }}{{ end }}` |
+| `values` | `(m map[string]any) []any` | Returns a slice of map values in sorted key order | `{{ range values .attributes }}{{ . }}{{ end }}` |
+| `join` | `(sep string, slice any) (string, error)` | Joins slice elements with a separator string | `{{ join "," .meta.Tags }}` |
+| `include` | `(name string, ctx any) (string, error)` | Renders a named top-level template defined under `templates:` | `{{ include "dotenv" . }}` |
+| `includeFile` | `(path string, ctx any) (string, error)` | Renders an external template file relative to `config.yaml` or `~/` | `{{ includeFile "templates/dotenv.tmpl" . }}` |
+
+### Template Context (`.`)
+
+Templates rendered within vaults, per-entry `attributes:`, and composed entities receive a root dot context (`.`):
+
+| Context Variable | Description |
+|---|---|
+| `.meta` / `.Meta` | Entry metadata: `Title`/`title`, `Tags`/`tags`, `UUID`/`uuid`, `Vault`/`vault`, `Provider`/`provider`, `Path`/`path`, `Group`/`group` (with `.group.name`, `.group.uuid`, `.group.path`). Both lowercase and PascalCase access are supported. |
+| `.attributes` / `.Attributes` | Post-filter, post-map, post-format entry attributes map. Excluded fields are never accessible in `.attributes`. |
+| `.entries` / `.Entries` | Ordered slice of upstream entry context maps when evaluating composed `custom_vault` entities. |
+
+### Error Handling & Safety
+- **Strict Key Checking (`missingkey=error`)**: Accessing an unmapped or misspelled attribute key (e.g. `{{ .attributes.MissingKey }}`) triggers an immediate evaluation error, preventing silent generation of broken configurations.
+- **Bounded Recursion (`maxDepth = 5`)**: Resolution through `get`, `entry`, `search`, `include`, and `includeFile` tracks execution depth and aborts if recursion exceeds 5 levels.
+
+---
+
 ## Command Autoloading & Alias Masking
 
 `cloakenv` can automatically match commands executed via `cloakenv run -- <command>` and inject credentials, merge vaults, or transform the command line before execution.
@@ -906,6 +1040,15 @@ Default path: `~/.config/cloakenv/config.yaml` (override with `-c <path>`).
 
 ```yaml
 # ==========================================
+# Reusable Templates
+# ==========================================
+templates:
+  dotenv:
+    template: "{{ .attributes | toEnv }}"
+  # app_config:
+  #   path: "~/.config/cloakenv/templates/app.tmpl"
+
+# ==========================================
 # Cache Configuration
 # ==========================================
 cache:
@@ -950,15 +1093,36 @@ vaults:
     entity_name: "Local Development Config"
     tags: ["env:dev", "local"]
 
-  # Inline Custom Vault (with recursive URI resolution)
+  # Inline Custom Vault (with recursive URI and template resolution)
   custom_static:
     provider: "custom_vault"
     resolve_values: true
     entities:
       api_gateway:
         username: "admin"
-        Password: "${keyring://gateway/admin_pass}"
+        Password: '{{ get "keyring://gateway/admin_pass" }}'
         tags: ["static", "gateway"]
+
+  # Composed Custom Vault (multi-source merge, filtering, mapping, and templates)
+  composed_vault:
+    provider: "custom_vault"
+    resolve_values: true
+    entities:
+      jules_stack:
+        title: "Jules AI Stack"
+        tags: ["composed", "ai"]
+        merge:
+          - "openrouter://"
+          - "work://ai/keys"
+        include_fields:
+          - "API_*"
+        mapping:
+          - match: "^API_(.*)"
+            key: "{{ .meta.Title | env }}_API_$1"
+        key_format: "env"
+        attributes:
+          DOTENV: "{{ .attributes | toEnv }}"
+          SUMMARY: "{{ .meta.Title }} contains {{ len .entries }} models"
 
   # Stored Search Vault (filtered view over source vaults)
   openrouter:
@@ -974,6 +1138,15 @@ vaults:
     mapping:
       - match: "env:(.*)"
         key: "\\1"
+
+  # Vault with Universal Per-Entry Attributes Decorator
+  decorated_vault:
+    provider: "keepass"
+    vault_path: "~/secrets/work.kdbx"
+    key_format: "env"
+    attributes:
+      DOTENV: "{{ .attributes | toEnv }}"
+      TITLE_UPPER: "{{ .meta.Title | upper }}"
 
 # ==========================================
 # Command Autoloading Rules
