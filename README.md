@@ -254,6 +254,7 @@ cloakenv run [-E] [flags] -- <command> [args...]
 - `-t template_path`: Load a `.env` template file containing `KEY=uri` or literal definitions (repeatable).
 - `-m entry-uri`: Merge all attributes from a structured entry into the environment (repeatable). Can target a single attribute using `:attribute`.
 - `-i KEY`: Whitelist key filter (repeatable). When `-i` is specified, only the whitelisted keys from `-m` merges are injected. (`-e` mappings always bypass whitelist filtering).
+- `-f, --key-format`: Key formatting style (`none`, `env`, `snake`, or `kebab`).
 - `--no-autoload`: Bypass configuration `autoload:` rules for this execution.
 
 #### Examples:
@@ -373,6 +374,7 @@ cloakenv show -m <entry-uri> [-m <entry-uri> ...] [flags]
 
 #### Flags:
 - `-o, --output`: Output format: `yaml` (default), `json`, `env` (dotenv), or `keys`.
+- `-f, --key-format`: Key formatting style (`none`, `env`, `snake`, or `kebab`, default: `env`).
 - `-m entry-uri`: Merge additional entries (repeatable).
 - `-e KEY=uri`: Explicit key override (repeatable).
 - `-t template_path`: Load template `.env` file (repeatable).
@@ -416,6 +418,7 @@ cloakenv search "[query_expression]" [flags]
 #### Flags:
 - `--vault <vault_name>`: Scope the search to one or more specific vaults (repeatable).
 - `-i KEY`: Select only specific attributes/fields in the output (repeatable).
+- `-f, --key-format`: Key formatting style (`none`, `env`, `snake`, or `kebab`, default: `env`).
 - `-o, --output`: Output format: `yaml` (default) or `json`.
 
 #### Examples:

@@ -34,6 +34,6 @@ func BenchmarkFlattenSearchResults(b *testing.B) {
 
 	b.ResetTimer()
 	for range b.N {
-		benchmarkRes = flattenSearchResults(results, selectedKeys)
+		benchmarkRes = flattenSearchResults(results, selectedKeys, "env")
 	}
 }

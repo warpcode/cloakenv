@@ -11,6 +11,87 @@ import (
 	"github.com/warpcode/cloakenv/internal/engine"
 )
 
+func TestShow_KeyFormatOptions(t *testing.T) {
+	t.Setenv("SHOW_TEST_VAR", "my_value")
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"test_vault": {
+				Provider: "custom_vault",
+				Entities: map[string]map[string]any{
+					"my_entry": {
+						"user.name": "john",
+						"API-Key":   "secret",
+					},
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		args     []string
+		wantKeys []string
+	}{
+		{
+			name:     "kebab key format",
+			args:     []string{"test_vault://my_entry", "-f", "kebab", "-o", "keys"},
+			wantKeys: []string{"user-name", "api-key"},
+		},
+		{
+			name:     "snake key format",
+			args:     []string{"test_vault://my_entry", "-f", "snake", "-o", "keys"},
+			wantKeys: []string{"user_name", "api_key"},
+		},
+		{
+			name:     "none key format",
+			args:     []string{"test_vault://my_entry", "-f", "none", "-o", "keys"},
+			wantKeys: []string{"user.name", "API-Key"},
+		},
+		{
+			name:     "env key format",
+			args:     []string{"test_vault://my_entry", "-f", "env", "-o", "keys"},
+			wantKeys: []string{"USER_NAME", "API_KEY"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			oldStdout := os.Stdout
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatalf("failed to create pipe: %v", err)
+			}
+			os.Stdout = w
+
+			exitCode := Show(tc.args, cfg)
+			_ = w.Close()
+			os.Stdout = oldStdout
+
+			var buf bytes.Buffer
+			_, _ = io.Copy(&buf, r)
+			_ = r.Close()
+
+			if exitCode != 0 {
+				t.Fatalf("Show failed with exit code %d", exitCode)
+			}
+
+			out := strings.ReplaceAll(buf.String(), "\r\n", "\n")
+			lines := strings.Split(strings.TrimSpace(out), "\n")
+			lineSet := make(map[string]bool)
+			for _, l := range lines {
+				lineSet[l] = true
+			}
+
+			for _, wantKey := range tc.wantKeys {
+				if !lineSet[wantKey] {
+					t.Errorf("expected output to contain key %q, got output:\n%s", wantKey, out)
+				}
+			}
+		})
+	}
+}
+
 func TestShow_KeysFormat(t *testing.T) {
 	// Keep original stdout
 	oldStdout := os.Stdout
@@ -271,7 +352,7 @@ func TestBuildMergedEntry(t *testing.T) {
 			"EXTRA_KEY": "${env://TEST_SHOW_ENV_VAL}",
 		}
 
-		entry, err := buildMergedEntry(ctx, orch, merges, whitelist, explicit)
+		entry, err := buildMergedEntry(ctx, orch, merges, whitelist, explicit, "env")
 		if err != nil {
 			t.Fatalf("buildMergedEntry failed: %v", err)
 		}
@@ -304,7 +385,7 @@ func TestBuildMergedEntry(t *testing.T) {
 
 	t.Run("Merge invalid entry error", func(t *testing.T) {
 		merges := []string{"vaultA://nonexistent"}
-		_, err := buildMergedEntry(ctx, orch, merges, nil, nil)
+		_, err := buildMergedEntry(ctx, orch, merges, nil, nil, "env")
 		if err == nil {
 			t.Errorf("expected error when retrieving nonexistent entry, got nil")
 		}
@@ -314,7 +395,7 @@ func TestBuildMergedEntry(t *testing.T) {
 		explicit := map[string]string{
 			"BAD_KEY": "${invalid_scheme://foo}",
 		}
-		_, err := buildMergedEntry(ctx, orch, nil, nil, explicit)
+		_, err := buildMergedEntry(ctx, orch, nil, nil, explicit, "env")
 		if err == nil {
 			t.Errorf("expected error when resolving invalid explicit mapping, got nil")
 		}
