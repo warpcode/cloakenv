@@ -143,6 +143,10 @@ func buildDefaultFieldCandidates(fieldName, entryPath string, rootPrefixes []str
 	var candidates []string
 	candidates = append(candidates, fieldLower, fieldUpper)
 
+	if fieldLower == "provider" || fieldLower == "vault" {
+		candidates = append(candidates, "_meta_", "_meta_."+fieldLower, "_meta_:"+fieldLower)
+	}
+
 	cleanPath := normalizeDotPath(entryPath)
 	if cleanPath != "" {
 		candidates = append(candidates, cleanPath+"."+fieldLower, cleanPath+":"+fieldLower)

@@ -20,6 +20,7 @@ func TestParseSearchArgs(t *testing.T) {
 		wantRepoScopes   []string
 		wantSelectedKeys []string
 		wantOutputFormat string
+		wantShowMeta     bool
 		wantErrMsg       string
 	}{
 		{
@@ -161,7 +162,7 @@ func TestParseSearchArgs(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			query, repoScopes, selectedKeys, outputFormat, err := parseSearchArgs(tc.args)
+			query, repoScopes, selectedKeys, outputFormat, showMeta, err := parseSearchArgs(tc.args)
 
 			if tc.wantErrMsg != "" {
 				if err == nil {
@@ -192,6 +193,9 @@ func TestParseSearchArgs(t *testing.T) {
 			if outputFormat != tc.wantOutputFormat {
 				t.Errorf("outputFormat = %q, want %q", outputFormat, tc.wantOutputFormat)
 			}
+			if showMeta != tc.wantShowMeta {
+				t.Errorf("parseSearchArgs() showMeta = %v, want %v", showMeta, tc.wantShowMeta)
+			}
 		})
 	}
 }
@@ -210,7 +214,7 @@ func TestFlattenDefaultEntry_FilteredMetadata(t *testing.T) {
 		},
 	}
 
-	flat := flattenDefaultEntry(entryFiltered)
+	flat := flattenDefaultEntry(entryFiltered, false)
 
 	if _, ok := flat["provider"]; ok {
 		t.Errorf("expected 'provider' to be omitted when empty")
@@ -233,6 +237,8 @@ func TestFlattenDefaultEntry_FilteredMetadata(t *testing.T) {
 }
 
 func TestFlattenSearchResults(t *testing.T) {
+	showMeta := false
+
 	entry := provider.SearchResult{
 		Provider: "keepass",
 		Vault:    "myvault",
@@ -268,8 +274,6 @@ func TestFlattenSearchResults(t *testing.T) {
 			selectedKeys: nil,
 			want: []map[string]any{
 				{
-					"provider": "keepass",
-					"vault":    "myvault",
 					"path":     "path/to/entry",
 					"title":    "My Title",
 					"tags":     []string{"tag1", "tag2"},
@@ -350,7 +354,7 @@ func TestFlattenSearchResults(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := flattenSearchResults(tc.results, tc.selectedKeys)
+			got := flattenSearchResults(tc.results, tc.selectedKeys, showMeta)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("flattenSearchResults() = %v, want %v", got, tc.want)
 			}
