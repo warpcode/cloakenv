@@ -114,6 +114,16 @@ func TestCacheProvider(t *testing.T) {
 				t.Fatalf("SetSecret failed: %v", err)
 			}
 
+			// Verify permissions on the written cache file
+			filePath := cp.getCacheFilePath(location)
+			info, err := os.Stat(filePath)
+			if err != nil {
+				t.Fatalf("failed to stat cache file: %v", err)
+			}
+			if perm := info.Mode().Perm(); perm != 0600 {
+				t.Errorf("expected file permissions 0600, got %o", perm)
+			}
+
 			// Get secret should succeed
 			got, err := cp.GetSecret(ctx, location)
 			if err != nil {
