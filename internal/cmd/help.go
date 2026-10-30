@@ -71,6 +71,7 @@ Flags:
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -m entry-uri    Merge attributes from an entry into the environment. Can target a single attribute using :attribute (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
+  -f, --key-format format  Override attribute key formatting (none, env, snake, kebab)
   --no-autoload   Disable config command autoloading rules for this run execution`)
 }
 
@@ -154,6 +155,7 @@ Flags:
   -e KEY=uri      Explicit environment/key override (can be specified multiple times)
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
+  -f, --key-format format  Override attribute key formatting (none, env, snake, kebab)
   -o, --output    Output format: yaml, json, env, or keys (default: yaml)`)
 }
 
@@ -171,6 +173,7 @@ Arguments:
 Flags:
   --vault vault   Scope search to a specific vault (repeatable)
   -i KEY          Select output fields/keys to return (e.g. uuid, group_name, group_uuid, group_path) (repeatable)
+  -f, --key-format format  Override attribute key formatting (none, env, snake, kebab)
   -o, --output    Output format: yaml or json (default: yaml)`)
 }
 

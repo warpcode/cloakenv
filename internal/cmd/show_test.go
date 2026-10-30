@@ -450,3 +450,35 @@ func TestShow_KeePassMetadataOutput(t *testing.T) {
 		t.Errorf("expected keys output to NOT include uuid or group, got: %s", keysOutput)
 	}
 }
+
+func TestShow_InvalidKeyFormat(t *testing.T) {
+	oldStderr := os.Stderr
+	defer func() { os.Stderr = oldStderr }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stderr = w
+
+	args := []string{"-f", "camel", "work://my_entry"}
+	cfg := &config.Config{
+		Vaults: make(map[string]config.VaultConfig),
+	}
+
+	exitCode := Show(args, cfg)
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("failed to read from pipe: %v", err)
+	}
+
+	if exitCode != 1 {
+		t.Errorf("expected exit code 1, got %d", exitCode)
+	}
+
+	if !strings.Contains(buf.String(), "invalid key format") {
+		t.Errorf("expected output to contain 'invalid key format', got %q", buf.String())
+	}
+}
