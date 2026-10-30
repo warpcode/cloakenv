@@ -1,304 +1,87 @@
 # Agent Instructions for cloakenv
 
 > [!IMPORTANT]
-> These instructions apply to all AI agents working within the `cloakenv` repository.
-> They complement, and never override, the global rules in `~/.agents/AGENTS.md`.
+> These instructions apply to all AI agents working within `cloakenv`. They complement, and never override, global rules in `~/.agents/AGENTS.md`.
 
----
+`cloakenv` is a pluggable secret orchestrator and dynamic runtime environment injector written in Go.
+It resolves typed secret URIs from multiple backends into temporary execution memory with zero plaintext disk persistence.
 
-## 🏗️ Project Overview
+## Package Contracts
 
-`cloakenv` is a **pluggable secret orchestrator and dynamic runtime environment injector** written in Go. It wraps application binaries, resolves secret URIs from multiple configurable backends (KeePass, OS keyring, YAML, JSON, stored search, environment, encrypted cache), and injects secrets strictly into temporary execution memory — never persisting them to disk unencrypted.
-
-### Key Design Principles
-
-- **Zero-persistence**: Secrets are resolved at runtime and never written to plaintext files.
-- **URI-addressed secrets**: Every secret is referenced by a typed URI (e.g., `keepass://group/entry:attr`, `keyring://service/account`).
-- **Pluggable providers**: Adding a new backend means implementing the `provider.SecretProvider` interface only.
-- **Cross-platform**: CI runs on Linux, macOS, and Windows. All code must compile and pass tests on all three.
-
----
-
-## 📁 Project Structure
-
-```
-main.go                  # CLI entrypoint — config & router logic only
-internal/
-  cmd/                   # Top-level subcommand implementations
-  config/                # YAML config parser (no business logic)
-  engine/                # Orchestrator core — resolves URIs, injects env
-  provider/              # Built-in & custom secret vaults
-  runner/                # Process execution wrapping logic
-  utils/                 # Shared formatting and flag utilities
-  yaml/                  # Centralized YAML parsing, serialization, and error wrapping
-docs/
-  adr/                   # Architecture Decision Records (MADR format)
-  plans/                 # Technical Design Specs (RFCs) & implementation plans
-examples/                # Example databases and config.yaml
-testdata/                # Test fixtures (testDB.kdbx, YAML/JSON samples)
-Makefile                 # Build, test, fmt, vet, install targets
-```
-
-### Internal Package Contracts
-
-| Package | Responsibility | Must NOT |
+| Package | Responsibility | Invariant / Must NOT |
 |---|---|---|
-| `internal/config` | Parse and validate `config.yaml` | Resolve secrets or perform I/O beyond file reads |
-| `internal/engine` | Orchestrate URI resolution, caching, env injection | Directly import provider-specific libraries |
-| `internal/provider` | Implement `provider.Provider` interface per backend | Share mutable state between providers |
-| `internal/yaml` | Centralize YAML encoding/decoding and error context wrapping | Perform business logic or URI resolution |
+| `internal/cmd` | Top-level CLI subcommand dispatch and flag parsing | No secret resolution or direct backend provider instantiation |
+| `internal/config` | Parse and validate YAML configuration | No secret resolution or I/O beyond file reads |
+| `internal/engine` | Orchestrate URI resolution, caching, and env injection | No direct imports of backend-specific libraries |
+| `internal/provider` | Implement `provider.SecretProvider` per backend | No shared mutable state between providers |
+| `internal/runner` | Process execution wrapping and environment injection | No secret leakage into persistent state or child processes |
+| `internal/utils` | Shared string, slice, and formatting utilities | No business logic, config loading, or URI resolution |
+| `internal/yaml` | Centralized YAML encode/decode and error wrapping | No business logic or URI resolution |
 
----
+## Verification Gate
 
-## 🛠️ Development Workflow
-
-### Build & Run
-
+All code modifications must pass the project verification command before review or merge:
 ```bash
-make build            # Compiles to bin/cloakenv
-make run              # go run .
-make install          # Installs using go install (defaults to $GOBIN or $GOPATH/bin)
-make uninstall        # Removes the installed binary using go clean -i
+go build ./... && go vet ./... && gofmt -l . && go test -race ./...
 ```
-
-### Testing
-
-```bash
-make test             # go test -v -race ./...
-make bench            # Run benchmarks (go test -bench=. ./internal/engine/...)
-make test-all         # Run formatting, vetting, unit tests, and benchmarks (runs fmt, vet, test, and bench targets)
-```
-
-> [!IMPORTANT]
-> Always run tests with the **race detector** (`-race`) before committing. CI enforces this.
-
-### Linting & Formatting
-
-```bash
-make fmt              # go fmt ./...
-make vet              # go vet ./...
-go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run  # Full lint (mirrors CI)
-```
-
-> [!WARNING]
-> **All CI checks must pass before any merge.** CI runs lint, and tests on
-> `ubuntu-latest`, `macos-latest`, and `windows-latest`.
->
-> Lint configuration lives in `.golangci.yml` (golangci-lint v2 format). The
-> pinned golangci-lint version must be built with the same Go major version as
-> `go.mod` — older binaries fail with "export data version" typecheck errors.
-
----
-
-## 🧬 Coding Conventions
-
-### Go Style
-
-- Generic Go style, error handling, table-driven tests, and UTF-8 string scanning conventions are governed by `~/.agents/rules/go.instructions.md`.
-- Benchmark functions live in `*_benchmark_test.go` files within the same package.
-- **Tag Parser Consistency**: `matchEntryTags` (search filtering) and `toEntry` (serialization) must agree on what a tag is; differential-test rewrites against pre-change behavior.
-- **Entry & Tag Immutability**: `Entry.Tags` must NEVER be mutated (e.g. lowercased) at parse time. Lowercasing tags at parse time destroys original casing and breaks data fidelity for `GetEntry()` callers. Case-insensitive tag matching must always be performed dynamically within the `Search` loop only (matching the pattern in `custom_vault.go` and `keepass.go`). When handling provider configs with `cfg.Tags` (such as in `internal/provider/static.go`), beware of regression paths that bypass lowercasing logic when `len(tags) == 0`.
-
-### Interfaces & Extensibility
-
-- The `provider.SecretProvider` interface is the **core extension point**. Adding a new backend = new file in `internal/provider/`, implementing the interface. Do not modify the interface signature without a plan review.
-- URI scheme registration happens in the engine; new providers must be registered there explicitly.
-- **Provider wrapper contracts**: Wrappers must preserve optional capabilities such as `ValueResolvableProvider`; the engine gates URI expansion by interface presence, not by the method return value. Do not unconditionally add optional interfaces to wrappers.
-- **Provider-specific URI parsing**: YAML/JSON locations use dot paths, KeePass/custom vaults use `entity:attribute`, and search providers may resolve attribute names case-insensitively. Field filters must authorize the effective canonical key and full static path before delegating.
-- **Filtered static resolution**: Root-keyed and nested YAML/JSON paths must be resolved and filtered before any fallback to the underlying provider; preserve the provider's native serializer.
-- **Filtering projection invariants**: Apply field filters recursively to structured maps and arrays, using canonical root and leaf paths consistently across `GetEntry`, `Search`, and `GetSecret`. For virtual search, apply the policy before source-value resolution and stored-query evaluation, and resolve the canonical key and returned value from the same search snapshot. Preserve actual attribute-map entries before metadata sentinels. Nested virtual-search policies must compose before source resolution: intersect active include allowlists and union exclusions rather than replacing an inherited policy. Authorize the provider's authoritative result identity rather than a caller alias, include numeric array indices in canonical paths, and use effective inferred roots before dynamic resolution; isolation regressions must enable `ResolveValues` and verify excluded URIs are never dereferenced.
-- **Unified Template Engine (`internal/engine/template.go`)**: Evaluates `{{ ... }}` expressions using Go stdlib `text/template` with `.Option("missingkey=error")`. Structured `TemplateContext` (`.meta`, `.attributes`, `.entries`) is normalized to support both lowercase and PascalCase keys (`.meta.Title` and `.meta.title`, `.meta.UUID` and `.meta.uuid`). All 17 `FuncMap` functions (`get`, `entry`, `search`, `toEnv`, `toKv`, `toJson`, `toYaml`, `upper`, `lower`, `env`, `snake`, `kebab`, `keys`, `values`, `join`, `include`, `includeFile`) must respect recursion depth tracking, aborting at `depth > 5`. Legacy `${scheme://...}` regex interpolation has been removed; never re-introduce `${...}` resolution.
-- **Child Command Argument Pass-Through Safety**: `resolveCmdArgs` in `internal/engine/env_builder.go` selectively evaluates only bare known URIs or templates containing cloakenv function invocations (`get`, `entry`, `search`, `include`, `includeFile`). Foreign templates (e.g. docker format flags `'{{.State.Status}}'`) must pass through untouched.
-- **Composed Custom Vault Entities (`internal/provider/custom_vault.go`)**: Composed entities are differentiated from legacy flat entities by composition keys (`merge`, `attributes`, `mapping`, `include_fields`, `exclude_fields`, `key_format`, `resolve_values`) in `CustomEntityConfig.UnmarshalYAML`. Source entries from `merge:` (including multi-entry `<vault>://` expanded via `Search`) are transformed sequentially (`include_fields` -> `exclude_fields` -> `mapping` -> `key_format`) before folding into `.attributes` and `.entries`. Post-merge `attributes:` templates are evaluated against the merged context. `GetSecret` on composed entities must evaluate via `resolveEntity` to ensure dynamic merges, filters, mappings, and templates are computed rather than reading raw static entity attributes.
-- **Universal Per-Entry `attributes:` Decorator (`internal/provider/attributes.go`)**: The decorator must wrap vaults strictly after `FilteringProvider`, `MappingProvider`, and `KeyFormatProvider` so `.attributes` and `.entries` in templates only expose authorized, post-filter fields.
-
-### File Naming
-
-- Source files: `snake_case.go`
-- Test files: `<source_file>_test.go`
-- Benchmark files: `<source_file>_benchmark_test.go`
-
-### Dependencies
-
-- All dependencies are managed via `go.mod` / `go.sum`.
-- Do not add new dependencies without explicit user approval. Prefer stdlib where possible.
-- Cross-platform dependencies only — any OS-specific code must be gated with build tags.
-
----
+Equivalently, run `make verify` to execute this pipeline. Run `make agents-check` to verify documentation synchronization, package layout contracts, and referenced skills existence.
 
 ## 🔒 Security Constraints
 
-> [!CAUTION]
-> This project handles live credentials. These rules are non-negotiable.
+1. **Never log secret values**:
+   Debug output, test logs, and error messages must never contain resolved secret values.
+2. **Zero plaintext disk persistence**:
+   Secrets exist strictly in execution memory; encrypted cache (`cache://`) key lives in OS keyring.
+3. **Test credentials for testing only**:
+   Fixture credentials (`testdata/testDB.kdbx`) must never appear in production examples.
+4. **No hardcoded credentials**:
+   Never commit secrets, API keys, or passwords anywhere in source code or documentation.
+5. **Keyring isolation**:
+   Keyring operations go through `internal/provider/os_keyring.go`; tests must use `keyring.MockInit()` and temporary `HOME`/`XDG_CACHE_HOME`.
 
-1. **Never log secret values.** Debug output, test output, and error messages must never contain resolved secret values.
-2. **Never write plaintext secrets to disk.** The encrypted cache (`cache://`) is the only on-disk secret store, and its encryption key lives in the OS keyring.
-3. **Testdata credentials are for testing only.** `testdata/testDB.kdbx` uses `password123` — this must never appear in production config examples.
-4. **No hardcoded credentials** anywhere in source, comments, or examples. Use placeholder strings like `<your-password>` in documentation.
-5. **Cross-platform keyring operations** must go through `internal/provider/os_keyring.go` via `go-keyring`. Do not bypass the abstraction layer.
+## 🤖 AI Guardrails
 
----
+- **Surgical edits only**:
+  Change only what is necessary to fulfill the request. Never perform unrequested refactors.
+- **Preserve existing behavior**:
+  Never delete existing error messages, logging, comments, or essential logic.
+- **Dependency lock**:
+  Never add external dependencies to `go.mod` without explicit user approval.
+- **Workspace hygiene**:
+  Never write temporary, review, or scratch files to the workspace root; use `/tmp/` or conversation scratch dirs.
 
-## 🔀 Git Workflow
+## 🧬 Core Invariants
 
-- **Default branch**: `main`
-- **Strategy**: Rebase on pull (`git pull --rebase`).
-- **Merge strategy**: Squash-and-merge for PRs.
-- **Branch cleanup**: Delete remote branches immediately after merge.
-- **CI gate**: All GitHub Actions (lint + cross-platform tests) must be green before any merge.
+- **Entry & Tag Immutability**:
+  `Entry.Tags` must never be mutated or lowercased at parse time; case-insensitive matching occurs strictly dynamically in `Search`.
+- **Provider Interface & Wrappers**:
+  Backends implement `provider.SecretProvider`. Wrappers (`FilteringProvider`, `MappingProvider`, etc.) must preserve optional interfaces (`SearchableProvider`, `ValueResolvableProvider`) by interface presence, not return value.
+- **Wrapper Ordering**:
+  Vault decorators wrap in strict order: `FilteringProvider` -> `MappingProvider` -> `KeyFormatProvider` -> `AttributesProvider`. Wrappers compose; they must never replace filtering or bypass to unfiltered underlying `GetSecret`.
+- **Filter Precedence & Exemptions**:
+  `include_fields` takes precedence over `exclude_fields`. Mapped fields always show regardless of include/exclude filters.
+- **Filter Authorization**:
+  `FilteringProvider.GetSecret` and `FilterEntryWithPath` evaluate canonical colon-qualified candidates (`entry:attr`, `title:attr`) and dot paths; single-entity and root-keyed vaults must not fall through to unredacted retrieval.
+- **Unified Templating**:
+  Templates evaluate Go `text/template` with `.Option("missingkey=error")` and recursion depth <= 5; legacy `${...}` interpolation is permanently removed (`docs/adr/0001-unify-templating-on-go-text-template-and-composed-custom-vaults.md`).
+- **Child Command Pass-Through**:
+  `resolveCmdArgs` evaluates only bare URIs or cloakenv template functions (`get`, `entry`, `search`, `include`, `includeFile`), preserving foreign format flags (e.g. Docker format).
 
-### Commit Messages
+## 🧭 Skills & Documentation Pointers
 
-Use [Conventional Commits](https://www.conventionalcommits.org/) format:
+| Task / Domain | Target Resource | Purpose |
+|---|---|---|
+| Implement a secret backend | `.github/skills/cloakenv-add-provider` | Provider SOP, checklist, and `provider_checklist.sh` |
+| Review PRs & Jules runs | `.github/skills/cloakenv-pr-review` | PR audit SOP, review traps, and `pr_review_bundle.sh` |
+| Session health & stuck runners | `google-jules-triage` | Nudge-first protocol, stalled VM triage, and recovery |
+| Author pull requests | `github-pr` | Conventional commits, PR creation, and lifecycle |
+| Git workflow & commits | `CONTRIBUTING.md` | Branching, rebasing, and Conventional Commit format |
+| Test fixtures & credentials | `testdata/README.md` | Test database schema, entries, and master passwords |
+| Architecture decisions | `docs/adr/`, `docs/plans/` | ADR-0001 (templating/merge), RFCs, and design specs |
+| Build targets & user docs | `README.md`, `Makefile` | CLI documentation, configuration reference, and targets |
 
-```
-feat(provider): add JSON provider with entities_root_key support
-fix(engine): handle missing URI scheme gracefully
-test(engine): add benchmark for concurrent URI resolution
-docs: update README with JSON provider usage
-```
+## 🛠️ Automated Maintenance
 
----
-
-## 🧪 Testing Standards
-
-### Unit Tests
-
-- Every new exported function or method in `internal/` must have a corresponding `_test.go` entry.
-- Use `testify` only if already present in `go.mod`; otherwise use stdlib `testing` and `errors` packages.
-- Mock or stub external I/O (keyring, filesystem) in unit tests. Integration tests requiring real keyring access must be skipped in CI via `t.Skip()` or build tags.
-- **Keyring/Cache Testing Isolation**: Tests that execute cache operations (such as `ClearCache()`) or interact with keyring providers must invoke `keyring.MockInit()` and set environment variables (`HOME`, `XDG_CACHE_HOME`, `LocalAppData`) to a temporary directory (`t.TempDir()`) during test setup to prevent local cache erasure and test leakage.
-- **Filtering regression coverage**: Cover recursive map/array projection, rooted and rootless static paths through scalar and structured APIs, changing search snapshots, and real `Title`/`Tags` attributes.
-
-### Integration Tests
-
-The `testdata/testDB.kdbx` database provides a stable fixture for KeePass integration tests:
-- **Master Password**: `password123`
-- **Entry path**: `website/Test Website`
-- **Attributes**: `Password` (`testPassword123!`), `UserName` (`user@email.com`), attachment `hello.txt`
-
-### Benchmarks
-
-- Benchmark functions are named `BenchmarkXxx` and live in `*_benchmark_test.go`.
-- Run with `go test -bench=. -benchmem ./internal/engine/...` to capture allocations.
-- Do not mix benchmark and unit test logic in the same file.
-
----
-
-## 🤖 AI Agent Guardrails
-
-### Scope
-
-- Only modify files within the `cloakenv` workspace.
-- Do not modify files outside this workspace (e.g., `~/.agents/AGENTS.md`) unless the user explicitly requests a global memory update.
-- **Workspace Hygiene**: Subagents and audit tasks must NEVER write files to the workspace root (`/home/jase/src/cloakenv/`) during non-invasive audits or reviews. All temporary files, review payloads, and scratch scripts must be written to `/tmp/` or the agent scratch directory (`scratch/`).
-
-### Code Changes
-
-- **Surgical edits only**: Change only what is necessary to fulfill the request.
-- **Preserve error messages and logging**: Never silently remove existing error handling or log statements.
-- **No unrequested refactors**: Do not restructure, rename, or reorganize code beyond the stated scope.
-- **No new dependencies**: Do not add `go get` calls or modify `go.mod` without explicit user approval.
-- **Verify compilation**: After any Go change, confirm the build still passes (`make build` or `go build ./...`).
-
-### Testing Gate
-
-> [!IMPORTANT]
-> After any code change, always verify:
-> 1. `make build` succeeds.
-> 2. `go test -race ./...` passes.
-> 3. `go vet ./...` is clean.
-
-### AGENTS.md Review
-
-> [!IMPORTANT]
-> At the end of **every task**, re-read this file and verify it still accurately reflects
-> the codebase. If any section is stale (e.g., a new provider was added, a Makefile target
-> changed, a dependency was approved), update it before closing the task.
-
-Questions to check before finishing:
-- Does the **Project Structure** map still match the directory layout?
-- Are all **Makefile targets** listed accurately?
-- Do the **Testing Standards** reflect the current test fixtures and benchmark conventions?
-- Does the **Provider Development Checklist** cover all required steps for a new backend?
-- Are any **dependencies** in `go.mod` not yet documented in the Coding Conventions?
-
-### Security Hygiene
-
-- Never print, log, or output resolved secret values during any agent task.
-- Do not create test fixtures that contain real credentials.
-- If a task would require exposing a real secret, stop and ask the user how to proceed.
-
-### Pull Request Workflow
-
-Formal PRs must be created using the `github-pull-requests` skill. Required PR fields:
-
-| Field | Requirement |
-|---|---|
-| Title | Conventional Commits format (`feat:`, `fix:`, `docs:`, etc.) |
-| Body | What changed, why, and how to test it |
-| CI | All checks green before requesting review |
-| Branch | Delete immediately after merge |
-
-### cloakenv-specific review traps
-
-Generic Jules/bot-PR handling: see the `google-jules-triage` and `review-pull-request` skills. When recovering wedged branches via `tidy/` branches, the cloakenv verification command before committing is:
-`go build ./... && go vet ./... && gofmt -l . && go test -race ./...`.
-
-- **Smuggled Autoload Refactors**: Jules consistently attempts an unrequested `regexCache sync.Map` autoload refactor across unrelated feature PRs, frequently accompanied by removing `CompileAutoloadRules()` or inlining `normalizeURIs`. Strictly reject these out-of-scope refactors under the "No unrequested refactors" rule.
-- **Spurious Workflow Deletions**: Jules repeatedly deletes `.github/workflows/reject-empty-commit.yml` across unrelated PRs. Always verify this workflow file remains intact.
-- **Checklist Non-Compliance**: Jules routinely implements Go provider code but skips updating `README.md` and `examples/config.yaml`. Enforce all items in the *Provider Development Checklist*.
-- **Virtual Provider & Switch Case Drift**: When reviewing PRs modifying `initVaultProvider`, verify that recently added provider cases on `main` (such as `case "search":`) are not inadvertently dropped due to outdated branch origins, and that generic decorators (such as filtering or caching) wrap virtual providers alongside direct providers.
-- **Single-Entity & Dot-Path Filter Bypass**: When reviewing field filtering logic, verify that lookups without colons in single-entity vaults (YAML/JSON) or root-keyed vaults (`entities_root_key`) do not default to checking `"Password"` or fall through to unredacted secret retrieval.
-- **Mapped Fields Always Show Regardless of Field Filters**: When `mapping` is configured on a vault alongside `include_fields` or `exclude_fields`, mapped fields (and mapped default metadata fields) must always show regardless of include or exclude filters. Field filtering applies strictly to unmapped fields, while mapped-key collisions with unmapped attributes remain deterministic and cannot earn exemption. When mapping is configured without `include_fields` or `exclude_fields`, default metadata fields (`title`, `tags`, `uuid`, `group`, `group_name`, `group_uuid`, `group_path`, `path`, `vault`, `provider`) remain visible and are not stripped.
-- **Include Rules Take Precedence Over Exclude Rules**: When both `include_fields` and `exclude_fields` are configured on a vault, `include_fields` rules are evaluated first and always take precedence over `exclude_fields` ("include should always be above exclude"). Any field explicitly permitted by `include_fields` is allowed regardless of broad or wildcard exclude patterns.
-- **Virtual Search with Mapping and Exclude Filters**: When a `search` vault configures `mapping` alongside `include_fields` or `exclude_fields`, `SearchProvider` initializes with and propagates `mapping` into `FieldPolicy`. In `ApplyToEntry`, attributes matching mapping rules are preserved so mapped fields are never stripped before `MappingProvider` processes them, and candidate entry metadata (`Title`, `Tags`) is preserved during search execution so stored queries (`"tag" in tags`, `title == ...`) match as expected.
-- **Wrapper-Replaces-Filter Regression**: Observed on warpcode/cloakenv#210 (regex `mapping`): `initVaultProvider` used `if len(vault.Mapping) > 0 { NewMappingProvider } else if include/exclude { NewFilteringProvider }`, which dropped `FilteringProvider` whenever `mapping` was set; the new wrapper re-implemented filtering on bare leaf keys, and its `GetSecret` fell through to `underlying.GetSecret` unfiltered, so excluded or renamed-original keys stayed readable. When a PR adds a provider wrapper, check that (1) it composes with `FilteringProvider` rather than replacing it, (2) there is no fallback to the unfiltered underlying `GetSecret` after a miss, and (3) mapped-key collisions are deterministic (Go map iteration order) and cannot earn the filter exemption.
-- **Colon-Qualified Filter Candidates**: `FilteringProvider.GetSecret` builds colon-qualified candidates — `entryPath+":"+effectiveAttr` (`filter.go:674`), `entryTitle+":"+effectiveAttr` (`:690`), `entityLoc+":"+effectiveAttr` (`:740`) — while the generic `FilterEntryWithPath`/`projectRecursive` builds dot paths only. `MappingProvider` authorizes through the generic filter (`mapping.go:152`), so the colon form of `exclude_fields` (documented at `README.md:587`, e.g. `website/Test Website:*`, `website/*:Password`) is silently unenforced the moment any `mapping:` block exists — even one whose rules match nothing. Observed on warpcode/cloakenv#212 and reproduced end-to-end against `testdata/testDB.kdbx`. Any new wrapper must either emit the same colon candidates or keep `FilteringProvider.GetSecret` in the chain and map only the requested attribute name.
-- **Fixing "No Unfiltered Fallback" by Deleting the Fallback Over-Corrects**: The #212 follow-up to the trap above removed `return m.underlying.GetSecret(ctx, location)` from `MappingProvider.GetSecret`, which fixed the bypass but broke two documented resolution paths: (a) bare `provider://entity` URIs lost the per-scheme default attribute (`effectiveAttr := "Password"` for `keepass` at `filter.go:649` and `custom_vault` at `:713`), and (b) multi-entity YAML/JSON `GetSecret` cannot resolve at all, because `getRawEntryWithPath` reaches the entity-keyed `GetEntryWithPath` while `staticProvider.GetSecret` resolves dot paths against `rawContent`. When removing a passthrough, enumerate what it was resolving and reproduce each case explicitly.
-- **Stacked Tidy-Branch PRs**: Verify the base branch's PR state before reviewing. `internal/provider/mapping.go` exists only on `tidy/pr-210-regex-key-mapping`, not on `main`; PRs #210/#211 were byte-identical duplicate submissions (both closed unmerged) and #212 was stacked on the survivor, so its reported 3 files / +438/-97 was really 8 files / +1100/-1 against `main`. Always run `git diff origin/main origin/pr-<n>` in addition to `gh pr diff`. Note that #212 was later merged by retargeting its base to `main`, and `internal/provider/mapping.go` is now on `main` — so this trap's specifics are historical, but the `git diff origin/main origin/pr-<n>` check is not.
-- **CI Does Not Run For Non-`main`-Based PRs**: `.github/workflows/ci.yml` and `semgrep.yml` trigger on `pull_request: branches: [main]` only. While a PR's base is a `tidy/` branch, **no CI, lint, test, CodeQL or Semgrep job runs at all** — only `reject-empty-commit.yml`. Observed on #212: seven runs on the branch head, every one of them `Reject empty commits`, and nothing triggered in the window between retargeting and merging. So a stacked PR's "CI is green" is not evidence of anything. Read the workflow triggers before claiming a check ran.
-- **`Protect main` Requires 1 Approving Review And Squash — Not A "Code Quality" Check**: An earlier version of this file claimed the ruleset required a status check named `Code Quality` that the repo never produces, and that every merge therefore needed `gh pr merge --admin`. **That was wrong**, verified 2026-10-05 against `gh api repos/warpcode/cloakenv/rulesets/20865389`: the `code_quality` rule is a *code-scanning* gate at `severity: warnings`, not a required status check. No workflow job is named "Code Quality" and none needs to be — `git grep 'Code Quality' .github/` returning nothing is expected, not evidence of a broken gate. Check it with `gh api 'repos/<o>/<r>/code-scanning/alerts?state=open'` (0 open as of 2026-10-05). The actual gates are: `required_approving_review_count: 1`, `allowed_merge_methods: ["squash"]`, CodeQL at `errors_and_warnings` / security `medium_or_higher`, and `required_deployments: []`. `current_user_can_bypass: "always"`, so `--admin` is a genuine escape hatch, not a requirement. Two consequences that matter for review: `dismiss_stale_reviews_on_push: true` means **every bot push marks all prior reviews stale**, so re-verify each finding against the new head rather than assuming it carries over (on #213 the head moved `df3db57` -> `b766bbc` between review and submission, and 2 of 6 findings were fixed while 4 went untouched); and `require_extra_approval_for_unattributed_changes: true` applies to squash-merges of bot branches.
-
-- **Task Heading Is Not A Capability Boundary**: A model configured under one family (e.g. `llama-server.conf` `vision-*`) may be strong in another. FrogNano-4B was filed under vision only because an inherited comment described MiniCPM-V-4.6's sizes (8B-A8B MoE, 0.47 GB + 1.03 GB projector), so it sat in the vision section and was never chat- or coding-tested. When it was finally tested it tied Qwen3.5-4B on chat throughput (75.7 vs 76.6 tok/s prefill), beat it on vision (47.5% vs 37.5% COCO recognition) and shipped built-in MTP speculative decoding (7.75 → 8.32 tok/s) that the other model has no equivalent for. When reviewing a model addition, enumerate **every** role the config implies, and re-run the incumbent on the *current* harness before claiming a delta — a `vision-*` entry is a placement decision, not a capability claim.
-- **`pkill -f` Matches Its Own Caller**: `pkill -f "port 8094"` invoked from a shell whose own command line contains that string kills the invoking shell. Observed twice in one session: each cost a full tool timeout, and the first silently truncated a benchmark sweep mid-run so a result set was quietly incomplete. All scripts under `llama.cpp/` must use bracket patterns (`ocr[-]batch`, `"port ${PORT}"` matched via a variable the caller's command line does not contain). In reviews, treat a suspiciously short or abruptly-ended results file as a self-kill until proven otherwise — the failure is silent because the harness writes no error.
-- **One Model Resident At A Time**: Two concurrent `llama-server` processes lose the Vulkan device outright — `vk::Queue::submit: ErrorDeviceLost` — rather than merely slowing down, because the iGPU sources its memory from system RAM. Any throughput figure gathered while another server was resident is contended and must be discarded and re-measured serially. Bench harnesses are therefore launched one model per invocation, and this is not a performance nicety but a correctness precondition.
-- **Template Filter Bypass Trap**: Evaluated `attributes:` templates must only run after `FilteringProvider`, `MappingProvider`, and `KeyFormatProvider`. Excluded fields must never be accessible in `.attributes` or leak through template evaluation (`RSK-002`, `REQ-005`).
-- **Composed Entity Secret Resolution**: `CustomVaultProvider.GetSecret` must check `entity.IsComposed` and call `resolveEntity` to return merged, filtered, and templated attribute values rather than falling through to static unmerged attribute maps.
-- **Child Command Pass-Through**: `resolveCmdArgs` must selectively evaluate only known URIs and cloakenv template functions (`get`, `entry`, `search`, `include`, `includeFile`); never unconditionally pass command arguments through `template.Execute` which would break Docker, Helm, or kubectl format flags.
-
-### Review discipline: never assert an unverified fact
-
-The most expensive defect class in this repository's review history is not a missed code bug — it is a **review comment that states a code or test fact the reviewer never checked**, which then has to be walked back mid-thread and re-verified by both parties. Observed repeatedly across #208/#209/#212/#213:
-
-| Claim made | Reality |
-|---|---|
-| "`isValidGroupNameOrNum` rejects `_`, so use `(?P<group_1>…)` to pin it" | The condition is `!isAlphaNum(c) && c != '_'` — underscores are **accepted**. The proposed test would have discriminated nothing. |
-| "8 of the 15 new cases restate #206's" | Compared field by field: **1** exact duplicate, 3 behavioural, and 2 of the "duplicates" were the *only* coverage of bare `$name` refs and `\$` escaping. Folding as recommended would have deleted coverage. |
-| "CI only runs the empty-commit job" (stated as a property of bot branches) | True only for PRs whose base is not `main`; `ci.yml` triggers on `pull_request: branches: [main]`. |
-| "CodeQL was green on that PR, so it could have been cited" | CodeQL never evaluated #212 at all — a *correction* that was itself unverified, costing a second round trip. |
-| "the merged tree is IDENTICAL to the approved head" | Compared `main` against the whole PR branch, which showed 22 files because `main` was 8 commits ahead. The correct comparison is per-file. |
-
-Rules that follow, to be applied before writing any review text:
-
-1. **Read the predicate, not the function name.** Any claim about what a guard accepts or rejects must quote the condition that decides it.
-2. **Count with a command.** Tallies, duplicate detection and diffs come from `grep`/`diff`/a script — never from comparing names by eye, and never asserted before the command has run.
-3. **Never comment on output before reading it.** Do not write "identical above" or "empty above" adjacent to a diff you have not yet looked at.
-4. **A counterparty's "fixed" is not verification.** Diff it, or mutate it, before agreeing — bot replies claim work that is absent more often than not.
-5. **Generalise only after trying to break the generalisation.** One counterexample check before an observation becomes a rule about the repo.
-6. **Verify the self-correction too.** When retracting a claim, the replacement claim needs the same evidence as the original.
-7. **Mutation-verified beats argued.** Where a cheap mutation settles whether a guard is covered, run it instead of reasoning about it — and always run it against the whole package, never a `-run` subset.
-
----
-
-## 📦 Provider Development Checklist
-
-When adding a new secret provider, verify each item:
-
-- [ ] Implements `provider.SecretProvider` interface in `internal/provider/<name>.go`
-- [ ] Has a corresponding test file `internal/provider/<name>_test.go`
-- [ ] Registered in the engine's vault provider map with its URI scheme
-- [ ] Documented in `README.md` with configuration snippet and usage examples
-- [ ] Added to `examples/config.yaml` with commented-out example block
-- [ ] Cross-platform — no OS-specific syscalls without build tags
-- [ ] No new `go.mod` dependency without user approval
+Rather than ritualistic end-of-task review checklists, repository integrity is enforced automatically:
+- Run `make agents-check` to verify that Makefile targets, internal package contracts, and referenced skills remain synchronized.
+- Run `make test-all` for full local verification (formatting, vetting, unit tests with race detection, and benchmarks).
