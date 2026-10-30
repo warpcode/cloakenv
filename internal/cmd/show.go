@@ -19,6 +19,7 @@ type showOptions struct {
 	whitelist     []string
 	outputFormat  string
 	positionalURI string
+	showMeta      bool
 }
 
 func parseShowFlags(args []string) (*showOptions, error) {
@@ -30,6 +31,10 @@ func parseShowFlags(args []string) (*showOptions, error) {
 	usageMsg := "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]"
 
 	parser := NewFlagParser()
+	parser.Var([]string{"--show-meta"}, false, "", func(name, val string) error {
+		opts.showMeta = true
+		return nil
+	})
 	parser.Var([]string{"-o", "--output"}, true, "", func(name, val string) error {
 		if val != "yaml" && val != "json" && val != "env" && val != "keys" {
 			return fmt.Errorf("invalid output format %q (expected yaml, json, env, or keys)", val)
@@ -276,6 +281,29 @@ func Show(args []string, cfg *config.Config) int {
 	if entry.Group != nil {
 		if _, exists := out["group"]; !exists {
 			out["group"] = entry.Group
+		}
+	}
+
+	if opts.showMeta && (opts.outputFormat == "yaml" || opts.outputFormat == "json") {
+		primaryURI := opts.positionalURI
+		if primaryURI == "" && len(opts.merges) > 0 {
+			primaryURI = opts.merges[0]
+		}
+		if primaryURI != "" {
+			if scheme, _, err := utils.ParseURI(primaryURI); err == nil {
+				metaMap := make(map[string]any)
+				if vCfg, exists := cfg.Vaults[scheme]; exists {
+					metaMap["vault"] = scheme
+					if vCfg.Provider != "" {
+						metaMap["provider"] = vCfg.Provider
+					}
+				} else {
+					metaMap["provider"] = scheme
+				}
+				if len(metaMap) > 0 {
+					out["_meta_"] = metaMap
+				}
+			}
 		}
 	}
 

@@ -13,13 +13,14 @@ import (
 )
 
 // Search handles "cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]"
+// Search handles "cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json] [--show-meta]"
 func Search(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
 		PrintSearchHelp()
 		return 0
 	}
 
-	query, repoScopes, selectedKeys, outputFormat, err := parseSearchArgs(args)
+	query, repoScopes, selectedKeys, outputFormat, showMeta, err := parseSearchArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -38,7 +39,7 @@ func Search(args []string, cfg *config.Config) int {
 		return 1
 	}
 
-	flatResults := flattenSearchResults(results, selectedKeys)
+	flatResults := flattenSearchResults(results, selectedKeys, showMeta)
 
 	asJSON := (outputFormat == "json")
 	if err := utils.RenderOutput(flatResults, asJSON, "results"); err != nil {
@@ -49,10 +50,14 @@ func Search(args []string, cfg *config.Config) int {
 	return 0
 }
 
-func parseSearchArgs(args []string) (query string, repoScopes []string, selectedKeys []string, outputFormat string, err error) {
+func parseSearchArgs(args []string) (query string, repoScopes []string, selectedKeys []string, outputFormat string, showMeta bool, err error) {
 	outputFormat = "yaml" // default
 
 	parser := NewFlagParser()
+	parser.Var([]string{"--show-meta"}, false, "", func(name, val string) error {
+		showMeta = true
+		return nil
+	})
 	parser.Var([]string{"-o", "--output"}, true, "flag -o/--output requires an argument", func(name, val string) error {
 		if val != "yaml" && val != "json" {
 			return fmt.Errorf("invalid output format %q (expected yaml or json)", val)
@@ -74,13 +79,13 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 	}
 
 	if _, err := parser.Parse(args); err != nil {
-		return "", nil, nil, "", err
+		return "", nil, nil, "", false, err
 	}
 
-	return query, repoScopes, selectedKeys, outputFormat, nil
+	return query, repoScopes, selectedKeys, outputFormat, showMeta, nil
 }
 
-func flattenSearchResults(results []provider.SearchResult, selectedKeys []string) []map[string]any {
+func flattenSearchResults(results []provider.SearchResult, selectedKeys []string, showMeta bool) []map[string]any {
 	flatResults := make([]map[string]any, len(results))
 
 	selectedKeysLower := make([]string, len(selectedKeys))
@@ -89,19 +94,19 @@ func flattenSearchResults(results []provider.SearchResult, selectedKeys []string
 	}
 
 	for i, r := range results {
-		flatResults[i] = flattenEntry(r, selectedKeys, selectedKeysLower)
+		flatResults[i] = flattenEntry(r, selectedKeys, selectedKeysLower, showMeta)
 	}
 	return flatResults
 }
 
-func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
+func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string, showMeta bool) map[string]any {
 	if len(selectedKeys) > 0 {
-		return flattenSelectedKeys(r, selectedKeys, selectedKeysLower)
+		return flattenSelectedKeys(r, selectedKeys, selectedKeysLower, showMeta)
 	}
-	return flattenDefaultEntry(r)
+	return flattenDefaultEntry(r, showMeta)
 }
 
-func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
+func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string, showMeta bool) map[string]any {
 	flatRes := make(map[string]any, len(selectedKeys))
 
 	var lowerAttrs map[string]string
@@ -115,6 +120,25 @@ func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selecte
 	for j, field := range selectedKeys {
 		fieldLower := selectedKeysLower[j]
 		switch fieldLower {
+		case "_meta_":
+			metaMap := make(map[string]any)
+			if r.Provider != "" {
+				metaMap["provider"] = r.Provider
+			}
+			if r.Vault != "" {
+				metaMap["vault"] = r.Vault
+			}
+			if len(metaMap) > 0 {
+				flatRes["_meta_"] = metaMap
+			}
+		case "_meta_.provider":
+			if r.Provider != "" {
+				flatRes["_meta_.provider"] = r.Provider
+			}
+		case "_meta_.vault":
+			if r.Vault != "" {
+				flatRes["_meta_.vault"] = r.Vault
+			}
 		case "provider":
 			if r.Provider != "" {
 				flatRes["provider"] = r.Provider
@@ -187,13 +211,19 @@ func resolveSelectedAttribute(attributes map[string]any, lowerAttrs map[string]s
 	return field, nil
 }
 
-func flattenDefaultEntry(r provider.SearchResult) map[string]any {
+func flattenDefaultEntry(r provider.SearchResult, showMeta bool) map[string]any {
 	flatRes := make(map[string]any, 7+len(r.Entry.Attributes))
-	if r.Provider != "" {
-		flatRes["provider"] = r.Provider
-	}
-	if r.Vault != "" {
-		flatRes["vault"] = r.Vault
+	if showMeta {
+		metaMap := make(map[string]any)
+		if r.Provider != "" {
+			metaMap["provider"] = r.Provider
+		}
+		if r.Vault != "" {
+			metaMap["vault"] = r.Vault
+		}
+		if len(metaMap) > 0 {
+			flatRes["_meta_"] = metaMap
+		}
 	}
 	if r.Path != "" {
 		flatRes["path"] = r.Path
