@@ -33,6 +33,16 @@ func TestParseSearchArgs(t *testing.T) {
 			wantErrMsg:       "",
 		},
 		{
+			name:             "show meta flag",
+			args:             []string{"--show-meta"},
+			wantQuery:        "",
+			wantRepoScopes:   nil,
+			wantSelectedKeys: nil,
+			wantOutputFormat: "yaml",
+			wantShowMeta:     true,
+			wantErrMsg:       "",
+		},
+		{
 			name:             "just query",
 			args:             []string{"myquery"},
 			wantQuery:        "myquery",
@@ -237,8 +247,6 @@ func TestFlattenDefaultEntry_FilteredMetadata(t *testing.T) {
 }
 
 func TestFlattenSearchResults(t *testing.T) {
-	showMeta := false
-
 	entry := provider.SearchResult{
 		Provider: "keepass",
 		Vault:    "myvault",
@@ -260,6 +268,7 @@ func TestFlattenSearchResults(t *testing.T) {
 		name         string
 		results      []provider.SearchResult
 		selectedKeys []string
+		showMeta     bool
 		want         []map[string]any
 	}{
 		{
@@ -274,6 +283,26 @@ func TestFlattenSearchResults(t *testing.T) {
 			selectedKeys: nil,
 			want: []map[string]any{
 				{
+					"path":     "path/to/entry",
+					"title":    "My Title",
+					"tags":     []string{"tag1", "tag2"},
+					"password": "secret_password",
+					"USERNAME": "admin",
+					"some-key": "value",
+				},
+			},
+		},
+		{
+			name:         "default flattening with showMeta=true",
+			results:      []provider.SearchResult{entry},
+			selectedKeys: nil,
+			showMeta:     true,
+			want: []map[string]any{
+				{
+					"_meta_": map[string]any{
+						"provider": "keepass",
+						"vault":    "myvault",
+					},
 					"path":     "path/to/entry",
 					"title":    "My Title",
 					"tags":     []string{"tag1", "tag2"},
@@ -354,7 +383,7 @@ func TestFlattenSearchResults(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := flattenSearchResults(tc.results, tc.selectedKeys, showMeta)
+			got := flattenSearchResults(tc.results, tc.selectedKeys, tc.showMeta)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("flattenSearchResults() = %v, want %v", got, tc.want)
 			}

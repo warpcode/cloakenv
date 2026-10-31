@@ -19,6 +19,8 @@ type ProviderManager struct {
 	initLocks           map[string]*sync.Mutex
 	keyring             *provider.OSKeyringProvider
 	searchExecutor      provider.SearchExecutor
+	getEntriesFunc      provider.GetEntriesFunc
+	renderTemplateFunc  provider.TemplateRenderFunc
 	mu                  sync.Mutex
 }
 
@@ -51,6 +53,20 @@ func (pm *ProviderManager) SetSearchExecutor(exec provider.SearchExecutor) {
 }
 
 // HasBuiltin reports whether the given scheme is a registered built-in provider.
+// SetGetEntriesFunc sets the callback for resolving multi-entry vaults.
+func (pm *ProviderManager) SetGetEntriesFunc(exec provider.GetEntriesFunc) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.getEntriesFunc = exec
+}
+
+// SetRenderTemplateFunc sets the callback for template evaluation.
+func (pm *ProviderManager) SetRenderTemplateFunc(exec provider.TemplateRenderFunc) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.renderTemplateFunc = exec
+}
+
 func (pm *ProviderManager) HasBuiltin(scheme string) bool {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -181,6 +197,10 @@ func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName stri
 		p = provider.NewKeyFormatProvider(p, vault.KeyFormat)
 	}
 
+	if len(vault.Attributes) > 0 {
+		p = provider.NewAttributesProvider(p, vault.Attributes)
+	}
+
 	return p, nil
 }
 
@@ -253,26 +273,24 @@ func (pm *ProviderManager) initJson(ctx context.Context, vaultName string, vault
 // initCustomVault bootstraps a CustomVault provider using config settings.
 func (pm *ProviderManager) initCustomVault(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
 	cp := provider.NewCustomVaultProvider()
-	entities := vault.Entities
-	if entities == nil {
-		entities = make(map[string]map[string]any)
+	entities := make(map[string]config.CustomEntityConfig)
+	for name, entityCfg := range vault.Entities {
+		entities[name] = entityCfg
 	}
 	if (vault.SingleEntity != nil && *vault.SingleEntity) || len(vault.Attributes) > 0 {
 		entityName := vault.EntityName
 		if entityName == "" {
 			entityName = vaultName
 		}
-		attrs := make(map[string]any)
-		for k, v := range vault.Attributes {
-			attrs[k] = v
+		singleEntity := config.CustomEntityConfig{
+			Title:      entityName,
+			Tags:       vault.Tags,
+			Attributes: vault.Attributes,
+			IsComposed: false,
 		}
-		if len(vault.Tags) > 0 {
-			attrs["tags"] = vault.Tags
-		}
-		attrs["title"] = entityName
-		entities[""] = attrs
-		entities[entityName] = attrs
-		entities["default"] = attrs
+		entities[""] = singleEntity
+		entities[entityName] = singleEntity
+		entities["default"] = singleEntity
 	}
 
 	err := cp.Initialize(ctx, provider.ProviderConfig{
@@ -281,6 +299,18 @@ func (pm *ProviderManager) initCustomVault(ctx context.Context, vaultName string
 		},
 		Entities: entities,
 	})
+
+	pm.mu.Lock()
+	getEntries := pm.getEntriesFunc
+	renderTemplate := pm.renderTemplateFunc
+	pm.mu.Unlock()
+
+	if getEntries != nil {
+		cp.SetGetEntriesFunc(getEntries)
+	}
+	if renderTemplate != nil {
+		cp.SetRenderTemplateFunc(renderTemplate)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -1,12 +1,15 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sort"
 	"strings"
+	"text/template"
 
 	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 // ConvertBackslashGroups converts backslash capture group references (\1..\9)
@@ -51,15 +54,65 @@ func HasMappedDescendant(val any, rules []config.MappingRule) bool {
 // ApplyMappingAndFilteringToAttributes transforms an attribute map by applying regex key mapping rules,
 // then applies include_fields and exclude_fields glob filtering to unmapped attributes using path-aware filtering.
 // Mapped fields always show regardless of include_fields or exclude_fields configured on the vault.
+
+// renderMappingTemplate renders a text/template mapping key.
+func renderMappingTemplate(templateStr string, rawEntry Entry, providerName string, vaultName string, entryPath string) (string, error) {
+	funcs := template.FuncMap{
+		"upper": strings.ToUpper,
+		"lower": strings.ToLower,
+		"snake": func(s string) string { return utils.FormatKeyWithFormat(s, utils.KeyFormatSnake) },
+		"kebab": func(s string) string { return utils.FormatKeyWithFormat(s, utils.KeyFormatKebab) },
+		"env":   func(s string) string { return utils.FormatKeyWithFormat(s, utils.KeyFormatEnv) },
+	}
+
+	tmpl, err := template.New("tmpl").Option("missingkey=error").Funcs(funcs).Parse(templateStr)
+	if err != nil {
+		return "", err
+	}
+
+	meta := map[string]any{
+		"Title": rawEntry.Title, "title": rawEntry.Title,
+		"Tags": rawEntry.Tags, "tags": rawEntry.Tags,
+		"UUID": rawEntry.UUID, "uuid": rawEntry.UUID,
+		"Path": entryPath, "path": entryPath,
+		"Vault": vaultName, "vault": vaultName,
+		"Provider": providerName, "provider": providerName,
+	}
+	if rawEntry.Group != nil {
+		grp := map[string]any{
+			"Name": rawEntry.Group.Name, "name": rawEntry.Group.Name,
+			"UUID": rawEntry.Group.UUID, "uuid": rawEntry.Group.UUID,
+			"Path": rawEntry.Group.Path, "path": rawEntry.Group.Path,
+		}
+		meta["Group"] = grp
+		meta["group"] = grp
+	} else {
+		meta["Group"] = nil
+		meta["group"] = nil
+	}
+	data := map[string]any{
+		"Meta": meta,
+		"meta": meta,
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
 func ApplyMappingAndFilteringToAttributes(
 	attrs map[string]any,
 	rules []config.MappingRule,
 	includeFields, excludeFields []string,
 	entryPath string,
 	rootPrefixes []string,
-	entryTitle string,
+	rawEntry Entry,
+	providerName string,
+	vaultName string,
 ) (map[string]any, error) {
-	filtered, _, err := applyMappingAndFiltering(attrs, rules, includeFields, excludeFields, entryPath, rootPrefixes, entryTitle)
+	filtered, _, err := applyMappingAndFiltering(attrs, rules, includeFields, excludeFields, entryPath, rootPrefixes, rawEntry, providerName, vaultName)
 	return filtered, err
 }
 
@@ -69,7 +122,9 @@ func applyMappingAndFiltering(
 	includeFields, excludeFields []string,
 	entryPath string,
 	rootPrefixes []string,
-	entryTitle string,
+	rawEntry Entry,
+	providerName string,
+	vaultName string,
 ) (map[string]any, bool, error) {
 	if attrs == nil {
 		return nil, false, nil
@@ -123,9 +178,17 @@ func applyMappingAndFiltering(
 		for i := range compiledRules {
 			rule := &compiledRules[i]
 			if rule.CompiledRegex != nil && rule.CompiledRegex.MatchString(k) {
-				template := ConvertBackslashGroups(rule.Key)
-				newKey := rule.CompiledRegex.ReplaceAllString(k, template)
+				templateStr := ConvertBackslashGroups(rule.Key)
+				newKey := rule.CompiledRegex.ReplaceAllString(k, templateStr)
 				if newKey != "" {
+					if strings.Contains(newKey, "{{") && strings.Contains(newKey, "}}") {
+						renderedKey, err := renderMappingTemplate(newKey, rawEntry, providerName, vaultName, entryPath)
+						if err == nil {
+							newKey = renderedKey
+						} else {
+							return nil, false, err
+						}
+					}
 					postKey = newKey
 					matched = true
 					break
@@ -141,7 +204,7 @@ func applyMappingAndFiltering(
 		valToUse := v
 		childHasMapped := false
 		if m, isMap := normalizeEntryMap(v); isMap {
-			mappedSub, subHasMapped, err := applyMappingAndFiltering(m, compiledRules, includeFields, excludeFields, childPath, rootPrefixes, entryTitle)
+			mappedSub, subHasMapped, err := applyMappingAndFiltering(m, compiledRules, includeFields, excludeFields, childPath, rootPrefixes, rawEntry, providerName, vaultName)
 			if err != nil {
 				return nil, false, err
 			}
@@ -151,7 +214,7 @@ func applyMappingAndFiltering(
 			newSlice := make([]any, len(sliceVal))
 			for i, elem := range sliceVal {
 				if elemMap, isMap := normalizeEntryMap(elem); isMap {
-					mappedSub, subHasMapped, err := applyMappingAndFiltering(elemMap, compiledRules, includeFields, excludeFields, childPath, rootPrefixes, entryTitle)
+					mappedSub, subHasMapped, err := applyMappingAndFiltering(elemMap, compiledRules, includeFields, excludeFields, childPath, rootPrefixes, rawEntry, providerName, vaultName)
 					if err != nil {
 						return nil, false, err
 					}
@@ -203,7 +266,7 @@ func applyMappingAndFiltering(
 		filteredUnmapped = unmappedAttrs
 	} else if len(unmappedAttrs) > 0 {
 		postEntry := Entry{
-			Title:      entryTitle,
+			Title:      rawEntry.Title,
 			Attributes: unmappedAttrs,
 		}
 		filteredPost := FilterEntryWithPath(postEntry, entryPath, rootPrefixes, includeFields, excludeFields)
@@ -330,6 +393,10 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 			rootPrefixes = rpProvider.RootPrefixes()
 		}
 
+		providerName, vaultName, _ := utils.ParseURI(location)
+		if providerName == "" && m.underlying != nil {
+			providerName = m.underlying.Scheme()
+		}
 		checkMappedAttrs := func(rawEntry Entry, authoritativePath string, mappedAttrs map[string]any, dotPath string) (string, bool, error) {
 			if attrName != "" {
 				if val, ok := mappedAttrs[attrName]; ok {
@@ -352,7 +419,7 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 				if strings.EqualFold(attrName, "title") {
 					allowed := false
 					if len(m.rules) > 0 {
-						allowed = isDefaultFieldMappedOrIncluded("title", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title)
+						allowed = isDefaultFieldMappedOrIncluded("title", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry, providerName, vaultName)
 					} else {
 						allowed = isDefaultFieldAllowed("title", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields)
 					}
@@ -363,7 +430,7 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 				if strings.EqualFold(attrName, "tags") {
 					allowed := false
 					if len(m.rules) > 0 {
-						allowed = isDefaultFieldMappedOrIncluded("tags", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title)
+						allowed = isDefaultFieldMappedOrIncluded("tags", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry, providerName, vaultName)
 					} else {
 						allowed = isDefaultFieldAllowed("tags", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields)
 					}
@@ -375,7 +442,7 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 				if strings.EqualFold(attrName, "uuid") {
 					allowed := false
 					if len(m.rules) > 0 {
-						allowed = isDefaultFieldMappedOrIncluded("uuid", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title)
+						allowed = isDefaultFieldMappedOrIncluded("uuid", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry, providerName, vaultName)
 					} else {
 						allowed = isDefaultFieldAllowed("uuid", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields)
 					}
@@ -387,7 +454,7 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 					allowed := false
 					field := strings.ToLower(attrName)
 					if len(m.rules) > 0 {
-						allowed = isDefaultFieldMappedOrIncluded(field, m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title)
+						allowed = isDefaultFieldMappedOrIncluded(field, m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry, providerName, vaultName)
 					} else {
 						allowed = isDefaultFieldAllowed(field, authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields)
 					}
@@ -398,7 +465,7 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 				if strings.EqualFold(attrName, "group_uuid") {
 					allowed := false
 					if len(m.rules) > 0 {
-						allowed = isDefaultFieldMappedOrIncluded("group_uuid", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title)
+						allowed = isDefaultFieldMappedOrIncluded("group_uuid", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry, providerName, vaultName)
 					} else {
 						allowed = isDefaultFieldAllowed("group_uuid", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields)
 					}
@@ -409,7 +476,7 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 				if strings.EqualFold(attrName, "group_path") {
 					allowed := false
 					if len(m.rules) > 0 {
-						allowed = isDefaultFieldMappedOrIncluded("group_path", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title)
+						allowed = isDefaultFieldMappedOrIncluded("group_path", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry, providerName, vaultName)
 					} else {
 						allowed = isDefaultFieldAllowed("group_path", authoritativePath, rootPrefixes, rawEntry.Title, includeFields, excludeFields)
 					}
@@ -477,7 +544,9 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 					excludeFields,
 					authoritativePath,
 					rootPrefixes,
-					rawEntry.Title,
+					rawEntry,
+					providerName,
+					vaultName,
 				)
 				if mapErr != nil {
 					return "", mapErr
@@ -517,7 +586,9 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 							excludeFields,
 							authoritativePath,
 							rootPrefixes,
-							rawEntry.Title,
+							rawEntry,
+							providerName,
+							vaultName,
 						)
 						if mapErr != nil {
 							return "", mapErr
@@ -549,7 +620,9 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 						excludeFields,
 						authoritativePath,
 						rootPrefixes,
-						rawEntry.Title,
+						rawEntry,
+						providerName,
+						vaultName,
 					)
 					if mapErr != nil {
 						return "", mapErr
@@ -575,7 +648,9 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 				excludeFields,
 				authoritativePath,
 				rootPrefixes,
-				rawEntry.Title,
+				rawEntry,
+				providerName,
+				vaultName,
 			)
 			if mapErr != nil {
 				return "", mapErr
@@ -618,9 +693,9 @@ func (s *SearchableMappingProvider) RootPrefixes() []string {
 // ("title", "tags", "path", "vault", "provider") is produced/mapped by mapping rules
 // or explicitly included in includeFields.
 // Mapped fields always show regardless of include_fields or exclude_fields configured on the vault.
-func IsDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule, includeFields, excludeFields []string, entryPath string, rootPrefixes []string, entryTitle string) bool {
+func IsDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule, includeFields, excludeFields []string, entryPath string, rootPrefixes []string, rawEntry Entry, providerName string, vaultName string) bool {
 	fieldLower := strings.ToLower(fieldName)
-	candidates := buildDefaultFieldCandidates(fieldName, entryPath, rootPrefixes, entryTitle)
+	candidates := buildDefaultFieldCandidates(fieldName, entryPath, rootPrefixes, rawEntry.Title)
 
 	for _, r := range rules {
 		if r.CompiledRegex == nil {
@@ -629,21 +704,30 @@ func IsDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule
 		if r.CompiledRegex != nil {
 			for _, c := range candidates {
 				if r.CompiledRegex.MatchString(c) {
-					template := ConvertBackslashGroups(r.Key)
-					newKey := r.CompiledRegex.ReplaceAllString(c, template)
-					if newKey != "" && strings.EqualFold(newKey, fieldLower) {
-						return true
+					templateStr := ConvertBackslashGroups(r.Key)
+					newKey := r.CompiledRegex.ReplaceAllString(c, templateStr)
+					if newKey != "" {
+						if strings.Contains(newKey, "{{") && strings.Contains(newKey, "}}") {
+							renderedKey, err := renderMappingTemplate(newKey, rawEntry, providerName, vaultName, entryPath)
+							// If template evaluation fails, we just skip it as it might not be relevant
+							if err == nil {
+								newKey = renderedKey
+							}
+						}
+						if strings.EqualFold(newKey, fieldLower) {
+							return true
+						}
 					}
 				}
 			}
 		}
 	}
 
-	return IsDefaultFieldAllowed(fieldName, entryPath, rootPrefixes, entryTitle, includeFields, excludeFields)
+	return IsDefaultFieldAllowed(fieldName, entryPath, rootPrefixes, rawEntry.Title, includeFields, excludeFields)
 }
 
-func isDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule, includeFields, excludeFields []string, entryPath string, rootPrefixes []string, entryTitle string) bool {
-	return IsDefaultFieldMappedOrIncluded(fieldName, rules, includeFields, excludeFields, entryPath, rootPrefixes, entryTitle)
+func isDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule, includeFields, excludeFields []string, entryPath string, rootPrefixes []string, rawEntry Entry, providerName string, vaultName string) bool {
+	return IsDefaultFieldMappedOrIncluded(fieldName, rules, includeFields, excludeFields, entryPath, rootPrefixes, rawEntry, providerName, vaultName)
 }
 
 // GetEntryWithPath retrieves a structured entry and applies mapping and filtering to its attributes.
@@ -656,6 +740,10 @@ func (s *SearchableMappingProvider) GetEntryWithPath(ctx context.Context, locati
 	includeFields, excludeFields := getFilteringParams(s.underlying)
 	rootPrefixes := s.RootPrefixes()
 
+	providerName, vaultName, _ := utils.ParseURI(location)
+	if providerName == "" && s.underlying != nil {
+		providerName = s.underlying.Scheme()
+	}
 	mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
 		rawEntry.Attributes,
 		s.rules,
@@ -663,7 +751,9 @@ func (s *SearchableMappingProvider) GetEntryWithPath(ctx context.Context, locati
 		excludeFields,
 		authoritativePath,
 		rootPrefixes,
-		rawEntry.Title,
+		rawEntry,
+		providerName,
+		vaultName,
 	)
 	if mapErr != nil {
 		return Entry{}, "", mapErr
@@ -672,16 +762,16 @@ func (s *SearchableMappingProvider) GetEntryWithPath(ctx context.Context, locati
 	rawEntry.Attributes = mappedAttrs
 
 	if len(s.rules) > 0 {
-		if !isDefaultFieldMappedOrIncluded("title", s.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title) {
+		if !isDefaultFieldMappedOrIncluded("title", s.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry, providerName, vaultName) {
 			rawEntry.Title = ""
 		}
-		if !isDefaultFieldMappedOrIncluded("tags", s.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title) {
+		if !isDefaultFieldMappedOrIncluded("tags", s.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry, providerName, vaultName) {
 			rawEntry.Tags = nil
 		}
-		if !isDefaultFieldMappedOrIncluded("uuid", s.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title) {
+		if !isDefaultFieldMappedOrIncluded("uuid", s.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry, providerName, vaultName) {
 			rawEntry.UUID = ""
 		}
-		if !isDefaultFieldMappedOrIncluded("group", s.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry.Title) {
+		if !isDefaultFieldMappedOrIncluded("group", s.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry, providerName, vaultName) {
 			rawEntry.Group = nil
 		}
 	} else {
@@ -744,7 +834,9 @@ func (s *SearchableMappingProvider) Search(ctx context.Context, query SearchQuer
 			excludeFields,
 			origPath,
 			rootPrefixes,
-			origTitle,
+			r.Entry,
+			r.Provider,
+			r.Vault,
 		)
 		if mapErr != nil {
 			return nil, mapErr
@@ -752,25 +844,25 @@ func (s *SearchableMappingProvider) Search(ctx context.Context, query SearchQuer
 		r.Entry.Attributes = mappedAttrs
 
 		if len(s.rules) > 0 {
-			if !isDefaultFieldMappedOrIncluded("title", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
+			if !isDefaultFieldMappedOrIncluded("title", s.rules, includeFields, excludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
 				r.Entry.Title = ""
 			}
-			if !isDefaultFieldMappedOrIncluded("tags", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
+			if !isDefaultFieldMappedOrIncluded("tags", s.rules, includeFields, excludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
 				r.Entry.Tags = nil
 			}
-			if !isDefaultFieldMappedOrIncluded("uuid", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
+			if !isDefaultFieldMappedOrIncluded("uuid", s.rules, includeFields, excludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
 				r.Entry.UUID = ""
 			}
-			if !isDefaultFieldMappedOrIncluded("group", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
+			if !isDefaultFieldMappedOrIncluded("group", s.rules, includeFields, excludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
 				r.Entry.Group = nil
 			}
-			if !isDefaultFieldMappedOrIncluded("path", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
+			if !isDefaultFieldMappedOrIncluded("path", s.rules, includeFields, excludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
 				r.Path = ""
 			}
-			if !isDefaultFieldMappedOrIncluded("vault", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
+			if !isDefaultFieldMappedOrIncluded("vault", s.rules, includeFields, excludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
 				r.Vault = ""
 			}
-			if !isDefaultFieldMappedOrIncluded("provider", s.rules, includeFields, excludeFields, origPath, rootPrefixes, origTitle) {
+			if !isDefaultFieldMappedOrIncluded("provider", s.rules, includeFields, excludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
 				r.Provider = ""
 			}
 		} else {

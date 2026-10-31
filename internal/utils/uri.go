@@ -14,9 +14,11 @@ func ParseURI(uri string) (string, string, error) {
 		return "", "", fmt.Errorf("malformed URI: contains null byte")
 	}
 
-	parts := strings.SplitN(uri, "://", 2)
-	if len(parts) != 2 || parts[0] == "" {
+	// Optimization: strings.Cut avoids allocating a slice of strings on the heap
+	// for every parsed secret URI across resolvers, providers, and templates.
+	scheme, location, found := strings.Cut(uri, "://")
+	if !found || scheme == "" {
 		return "", "", fmt.Errorf("malformed URI: %q (expected scheme://location)", uri)
 	}
-	return parts[0], parts[1], nil
+	return scheme, location, nil
 }

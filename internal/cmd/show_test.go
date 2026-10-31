@@ -29,7 +29,7 @@ func TestShow_KeysFormat(t *testing.T) {
 	t.Setenv("SHOW_TEST_VAR_B", "valB")
 
 	// Call Show with keys format (with keys that should sort B before A)
-	args := []string{"-e", "KEY_B=${env://SHOW_TEST_VAR_B}", "-e", "KEY_A=${env://SHOW_TEST_VAR_A}", "-o", "keys"}
+	args := []string{"-e", `KEY_B={{ get "env://SHOW_TEST_VAR_B" }}`, "-e", `KEY_A={{ get "env://SHOW_TEST_VAR_A" }}`, "-o", "keys"}
 	cfg := &config.Config{
 		Vaults: make(map[string]config.VaultConfig),
 	}
@@ -82,9 +82,9 @@ func TestShow_KeysFormattingBehavior(t *testing.T) {
 
 	// Explicit keys with lowercase, hyphens, and multiple underscores
 	args := []string{
-		"-e", "db-user=${env://SHOW_TEST_VAR_B}",
-		"-e", "api--key=${env://SHOW_TEST_VAR_A}",
-		"-e", "multiple___underscores=${env://SHOW_TEST_VAR_A}",
+		"-e", `db-user={{ get "env://SHOW_TEST_VAR_B" }}`,
+		"-e", `api--key={{ get "env://SHOW_TEST_VAR_A" }}`,
+		"-e", `multiple___underscores={{ get "env://SHOW_TEST_VAR_A" }}`,
 		"-o", "keys",
 	}
 	cfg := &config.Config{
@@ -140,11 +140,13 @@ func TestShow_VaultKeyFormat(t *testing.T) {
 			"env_vault": {
 				Provider:  "custom_vault",
 				KeyFormat: "env",
-				Entities: map[string]map[string]any{
+				Entities: map[string]config.CustomEntityConfig{
 					"item": {
-						"api-key":                "val1",
-						"database.user_name":     "val2",
-						"multiple___underscores": "val3",
+						Attributes: map[string]any{
+							"api-key":                "val1",
+							"database.user_name":     "val2",
+							"multiple___underscores": "val3",
+						},
 					},
 				},
 			},
@@ -298,21 +300,25 @@ func TestBuildMergedEntry(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"vaultA": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: map[string]config.CustomEntityConfig{
 					"entry1": {
-						"user": "userA",
-						"pass": "passA",
-						"tags": []any{"tagA", "commonTag"},
+						Attributes: map[string]any{
+							"user": "userA",
+							"pass": "passA",
+							"tags": []any{"tagA", "commonTag"},
+						},
 					},
 				},
 			},
 			"vaultB": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: map[string]config.CustomEntityConfig{
 					"entry2": {
-						"host": "hostB",
-						"user": "userB_overridden",
-						"tags": []any{"tagB", "commonTag"},
+						Attributes: map[string]any{
+							"host": "hostB",
+							"user": "userB_overridden",
+							"tags": []any{"tagB", "commonTag"},
+						},
 					},
 				},
 			},
@@ -330,7 +336,7 @@ func TestBuildMergedEntry(t *testing.T) {
 		merges := []string{"vaultA://entry1", "vaultB://entry2"}
 		whitelist := []string{"user", "host"}
 		explicit := map[string]string{
-			"EXTRA_KEY": "${env://TEST_SHOW_ENV_VAL}",
+			"EXTRA_KEY": `{{ get "env://TEST_SHOW_ENV_VAL" }}`,
 		}
 
 		entry, err := buildMergedEntry(ctx, orch, merges, whitelist, explicit)
@@ -374,7 +380,7 @@ func TestBuildMergedEntry(t *testing.T) {
 
 	t.Run("Explicit mapping error", func(t *testing.T) {
 		explicit := map[string]string{
-			"BAD_KEY": "${invalid_scheme://foo}",
+			"BAD_KEY": `{{ get "invalid_scheme://foo" }}`,
 		}
 		_, err := buildMergedEntry(ctx, orch, nil, nil, explicit)
 		if err == nil {
@@ -445,8 +451,130 @@ func TestShow_KeePassMetadataOutput(t *testing.T) {
 		t.Fatalf("failed to read from pipe: %v", err)
 	}
 
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", exitCode)
+	}
+
 	keysOutput := buf2.String()
 	if strings.Contains(keysOutput, "uuid") || strings.Contains(keysOutput, "group") {
 		t.Errorf("expected keys output to NOT include uuid or group, got: %s", keysOutput)
 	}
+}
+
+func TestShow_ShowMeta(t *testing.T) {
+	keyring.MockInit()
+	if err := keyring.Set("cloakenv", "provider/testdb", "password123"); err != nil {
+		t.Fatalf("failed to set mock credentials: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+	t.Setenv("XDG_CACHE_HOME", tempDir)
+	t.Setenv("LocalAppData", tempDir)
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"testdb": {
+				Provider:  "keepass",
+				VaultPath: "../../testdata/testDB.kdbx",
+			},
+		},
+	}
+
+	t.Run("JSON_WithMeta", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"testdb://website/Test Website", "-o", "json", "--show-meta"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, "_meta_") {
+			t.Errorf("expected json output to include _meta_, got: %s", output)
+		}
+		if !strings.Contains(output, `"vault": "testdb"`) || !strings.Contains(output, `"provider": "keepass"`) {
+			t.Errorf("expected _meta_ to include vault and provider, got: %s", output)
+		}
+	})
+
+	t.Run("JSON_NilConfigDoesNotPanic", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"testdb://website/Test Website", "-o", "json", "--show-meta"}, nil)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		// Even with nil config, should not panic
+		_ = exitCode
+	})
+
+	t.Run("EnvFormat_OmitsMeta", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"testdb://website/Test Website", "-o", "env", "--show-meta"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		output := buf.String()
+		if strings.Contains(output, "_meta_") {
+			t.Errorf("expected env format to omit _meta_, got: %s", output)
+		}
+	})
+
+	t.Run("KeysFormat_OmitsMeta", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"testdb://website/Test Website", "-o", "keys", "--show-meta"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		output := buf.String()
+		if strings.Contains(output, "_meta_") {
+			t.Errorf("expected keys format to omit _meta_, got: %s", output)
+		}
+	})
 }

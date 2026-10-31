@@ -28,7 +28,7 @@ func parseShowFlags(args []string) (*showOptions, error) {
 		outputFormat: "yaml",
 	}
 
-	usageMsg := "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]"
+	usageMsg := "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys] [--show-meta]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--show-meta]"
 
 	parser := NewFlagParser()
 	parser.Var([]string{"--show-meta"}, false, "", func(name, val string) error {
@@ -119,8 +119,8 @@ func resolveMergedEntries(ctx context.Context, orch *engine.Orchestrator, merges
 	}
 
 	type loadedEntry struct {
-		entry provider.Entry
-		err   error
+		entries []provider.Entry
+		err     error
 	}
 	loadedMerges := make([]loadedEntry, len(merges))
 	var mWg sync.WaitGroup
@@ -128,18 +128,18 @@ func resolveMergedEntries(ctx context.Context, orch *engine.Orchestrator, merges
 		mWg.Add(1)
 		go func(i int, uri string) {
 			defer mWg.Done()
-			e, err := orch.GetEntry(ctx, uri)
-			loadedMerges[i] = loadedEntry{entry: e, err: err}
+			entries, err := orch.GetEntries(ctx, uri)
+			loadedMerges[i] = loadedEntry{entries: entries, err: err}
 		}(idx, mURI)
 	}
 	mWg.Wait()
 
-	entries := make([]provider.Entry, len(merges))
-	for i, lm := range loadedMerges {
+	var entries []provider.Entry
+	for _, lm := range loadedMerges {
 		if lm.err != nil {
 			return nil, fmt.Errorf("failed to retrieve entry: %w", lm.err)
 		}
-		entries[i] = lm.entry
+		entries = append(entries, lm.entries...)
 	}
 	return entries, nil
 }
@@ -292,10 +292,14 @@ func Show(args []string, cfg *config.Config) int {
 		if primaryURI != "" {
 			if scheme, _, err := utils.ParseURI(primaryURI); err == nil {
 				metaMap := make(map[string]any)
-				if vCfg, exists := cfg.Vaults[scheme]; exists {
-					metaMap["vault"] = scheme
-					if vCfg.Provider != "" {
-						metaMap["provider"] = vCfg.Provider
+				if cfg != nil && cfg.Vaults != nil {
+					if vCfg, exists := cfg.Vaults[scheme]; exists {
+						metaMap["vault"] = scheme
+						if vCfg.Provider != "" {
+							metaMap["provider"] = vCfg.Provider
+						}
+					} else {
+						metaMap["provider"] = scheme
 					}
 				} else {
 					metaMap["provider"] = scheme

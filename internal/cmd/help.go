@@ -154,6 +154,7 @@ Flags:
   -e KEY=uri      Explicit environment/key override (can be specified multiple times)
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
+  --show-meta     Include vault and provider metadata in a _meta_ object (yaml and json output only)
   -o, --output    Output format: yaml, json, env, or keys (default: yaml)`)
 }
 
@@ -171,6 +172,7 @@ Arguments:
 Flags:
   --vault vault   Scope search to a specific vault (repeatable)
   -i KEY          Select output fields/keys to return (e.g. uuid, group_name, group_uuid, group_path) (repeatable)
+  --show-meta     Include vault and provider metadata in a _meta_ object (yaml and json output only)
   -o, --output    Output format: yaml or json (default: yaml)`)
 }
 

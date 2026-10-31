@@ -52,9 +52,10 @@ func FormatKeyWithFormat(key string, format string) string {
 
 	sep := byte('_')
 	toUpper := false
-	if format == KeyFormatEnv {
+	switch format {
+	case KeyFormatEnv:
 		toUpper = true
-	} else if format == KeyFormatKebab {
+	case KeyFormatKebab:
 		sep = '-'
 	}
 

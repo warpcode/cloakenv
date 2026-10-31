@@ -47,12 +47,7 @@ func Get(args []string, cfg *config.Config) int {
 	}
 	ctx := context.Background()
 
-	uri := args[0]
-	if !strings.Contains(uri, "${") && strings.Contains(uri, "://") {
-		uri = "${" + uri + "}"
-	}
-
-	val, err := orch.Resolve(ctx, uri)
+	val, err := orch.Resolve(ctx, args[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Resolution failed: %v\n", err)
 		return 1

@@ -44,6 +44,17 @@
 ### Negative Consequences / Trade-offs
 - Existing configs using `${scheme://...}` must migrate to `{{ get "scheme://..." }}` (while bare `scheme://...` URIs in CLI flags, `merge:`, and `autoload.env` continue working unchanged).
 
+### 4.1 Template Safety, FuncMap & Recursion Limits
+
+- **Unified FuncMap (17 Functions)**:
+  `get`, `entry`, `search`, `toEnv`, `toKv`, `toJson`, `toYaml`, `upper`, `lower`, `env`, `snake`, `kebab`, `keys`, `values`, `join`, `include`, `includeFile`.
+- **Recursion Depth Tracking**:
+  All nested template evaluations (`get`, `entry`, `search`, `include`, `includeFile`) track call depth, aborting immediately with an error when `depth > 5` to prevent infinite recursion and stack exhaustion.
+- **Child Command Argument Pass-Through Safety**:
+  `resolveCmdArgs` in `internal/engine/env_builder.go` selectively evaluates only bare known URIs or templates invoking cloakenv functions (`get`, `entry`, `search`, `include`, `includeFile`). Foreign templates (e.g. Docker format flags `'{{.State.Status}}'`, Helm templates) pass through untouched.
+- **Execution Pipeline Order**:
+  Universal per-entry `attributes:` decorator wraps vaults strictly after `FilteringProvider`, `MappingProvider`, and `KeyFormatProvider`, guaranteeing that `.attributes` only exposes authorized, filtered fields. Composed custom entities resolve dynamic merges, mappings, and templates via `resolveEntity` during `GetSecret`.
+
 ---
 
 ## 5. Pros and Cons of the Options

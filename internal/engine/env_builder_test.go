@@ -14,7 +14,7 @@ func TestOrchestratorBuildEnvMerges(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"my_vault": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app_one": {
 						"DB_USER": "user1",
 						"DB_PASS": "pass1",
@@ -24,7 +24,7 @@ func TestOrchestratorBuildEnvMerges(t *testing.T) {
 						"PORT":    "5000",
 						"DB_USER": "user2",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -120,11 +120,11 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 			},
 			"k8s_vault": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"staging": {
 						"KUBECONFIG": "/path/to/staging.conf",
 					},
-				},
+				}),
 			},
 		},
 		Autoload: []config.AutoloadRule{
@@ -299,7 +299,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 			Autoload: []config.AutoloadRule{
 				{
 					Match:   `^testest(.*)$`,
-					Command: `echo "${env://EXP_USER}"`,
+					Command: `echo "{{ get \"env://EXP_USER\" }}"`,
 				},
 			},
 		}
@@ -326,7 +326,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		}
 	})
 
-	t.Run("Direct command arguments with secret URIs and escaped tokens", func(t *testing.T) {
+	t.Run("Direct command arguments with secret URIs and foreign template arguments", func(t *testing.T) {
 		t.Setenv("CLI_TOKEN", "secret-token-123")
 		directCfg := &config.Config{}
 		orchDirect, err := NewOrchestrator(directCfg)
@@ -334,13 +334,25 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
 
-		cmdArgs := []string{"mycli", "--token=${env://CLI_TOKEN}", "--raw=$${env://CLI_TOKEN}", "plain-arg"}
+		cmdArgs := []string{
+			"mycli",
+			"--token={{ get \"env://CLI_TOKEN\" }}",
+			`{"id":"{{.Id}}"}`,
+			"'{{.State.Status}}'",
+			"plain-arg",
+		}
 		newCmdArgs, _, err := orchDirect.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
 		if err != nil {
 			t.Fatalf("failed to build env for command: %v", err)
 		}
 
-		expectedArgs := []string{"mycli", "--token=secret-token-123", "--raw=${env://CLI_TOKEN}", "plain-arg"}
+		expectedArgs := []string{
+			"mycli",
+			"--token=secret-token-123",
+			`{"id":"{{.Id}}"}`,
+			"'{{.State.Status}}'",
+			"plain-arg",
+		}
 		if len(newCmdArgs) != len(expectedArgs) {
 			t.Fatalf("expected %d args, got %d (%v)", len(expectedArgs), len(newCmdArgs), newCmdArgs)
 		}
@@ -358,7 +370,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
 
-		cmdArgs := []string{"mycli", "--token=${nonexistent_vault://missing}"}
+		cmdArgs := []string{"mycli", "--token={{ get \"nonexistent_vault://missing\" }}"}
 		_, _, err = orchFail.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
 		if err == nil {
 			t.Fatal("expected error for unresolvable secret URI in command arg, got nil")
@@ -415,13 +427,13 @@ func TestOrchestratorBuildEnvEmptyEnv(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"my_vault": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app_one": {
 						"DB_USER": "user1",
 						"DB_PASS": "pass1",
 						"PORT":    "3000",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -580,46 +592,46 @@ func TestEnvBuilder_VaultKeyFormat(t *testing.T) {
 			"vault_none": {
 				Provider:  "custom_vault",
 				KeyFormat: "none",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"api-key":  "secret1",
 						"db.user":  "user1",
 						"UserName": "admin1",
 					},
-				},
+				}),
 			},
 			"vault_env": {
 				Provider:  "custom_vault",
 				KeyFormat: "env",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"api-key":  "secret2",
 						"db.user":  "user2",
 						"UserName": "admin2",
 					},
-				},
+				}),
 			},
 			"vault_snake": {
 				Provider:  "custom_vault",
 				KeyFormat: "snake",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"api-key":  "secret3",
 						"db.user":  "user3",
 						"UserName": "admin3",
 					},
-				},
+				}),
 			},
 			"vault_kebab": {
 				Provider:  "custom_vault",
 				KeyFormat: "kebab",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"api-key":  "secret4",
 						"db.user":  "user4",
 						"UserName": "admin4",
 					},
-				},
+				}),
 			},
 		},
 	}

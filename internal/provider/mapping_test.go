@@ -47,6 +47,28 @@ func TestConvertBackslashGroups(t *testing.T) {
 }
 
 func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
+
+	t.Run("metadata interpolation in mapping rules", func(t *testing.T) {
+		rule := config.MappingRule{Match: "env:(.*)", Key: "{{ upper .meta.title }}_$1"}
+		if err := rule.Compile(); err != nil {
+			t.Fatalf("rule.Compile failed: %v", err)
+		}
+
+		attrs := map[string]any{
+			"env:API_KEY": "val",
+		}
+
+		rawEntry := Entry{Title: "my title"}
+
+		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, nil, nil, "", nil, rawEntry, "test", "testvault")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, ok := got["MY TITLE_API_KEY"]; !ok {
+			t.Errorf("expected mapped key MY TITLE_API_KEY, got keys: %v", keysOf(got))
+		}
+	})
 	t.Run("basic regex key mapping", func(t *testing.T) {
 		rule1 := config.MappingRule{Match: "env:(.*)", Key: "\\1"}
 		if err := rule1.Compile(); err != nil {
@@ -59,7 +81,7 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 			"OTHER_VAR":              "baz",
 		}
 
-		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule1}, nil, nil, "", nil, "")
+		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule1}, nil, nil, "", nil, Entry{}, "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -92,7 +114,7 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 			"yenv:A": "val_B",
 		}
 
-		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, nil, nil, "", nil, "")
+		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, nil, nil, "", nil, Entry{}, "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -124,7 +146,7 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 		includeFields := []string{"KEEP_UNMAPPED", "OPENROUTER_API_KEY"}
 		excludeFields := []string{"REMOVE_UNMAPPED", "FOO"}
 
-		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, includeFields, excludeFields, "", nil, "")
+		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, includeFields, excludeFields, "", nil, Entry{}, "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -158,7 +180,7 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 			"env:API_KEY":      "key_val",
 		}
 
-		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule1, rule2}, nil, nil, "", nil, "")
+		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule1, rule2}, nil, nil, "", nil, Entry{}, "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -189,7 +211,7 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 			},
 		}
 
-		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, nil, nil, "", nil, "")
+		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, nil, nil, "", nil, Entry{}, "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -225,7 +247,7 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 						"env:FOO": "mapped_value",
 					}
 
-					got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, include, exclude, "", nil, "")
+					got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, include, exclude, "", nil, Entry{}, "", "")
 					if err != nil {
 						t.Fatalf("unexpected error: %v", err)
 					}
@@ -253,7 +275,7 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 					"a_env:FOO": "first_val",
 				}
 
-				got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule1, rule2}, nil, nil, "", nil, "")
+				got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule1, rule2}, nil, nil, "", nil, Entry{}, "", "")
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
@@ -279,7 +301,7 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 		}
 
 		includeFields := []string{"outer.a"}
-		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, includeFields, nil, "", nil, "")
+		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, includeFields, nil, "", nil, Entry{}, "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -308,7 +330,7 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 		}
 
 		excludeFields := []string{"SECRET_B", "PLAIN"}
-		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, nil, excludeFields, "", nil, "")
+		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, nil, excludeFields, "", nil, Entry{}, "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -335,7 +357,7 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 		}
 
 		excludeFields := []string{"outer.b"}
-		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, nil, excludeFields, "", nil, "")
+		got, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{rule}, nil, excludeFields, "", nil, Entry{}, "", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -359,7 +381,7 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 			"key": "val",
 		}
 
-		_, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{invalidRule}, nil, nil, "", nil, "")
+		_, err := ApplyMappingAndFilteringToAttributes(attrs, []config.MappingRule{invalidRule}, nil, nil, "", nil, Entry{}, "", "")
 		if err == nil {
 			t.Fatal("expected error for invalid mapping rule regex, got nil")
 		}
@@ -374,7 +396,7 @@ func TestMappingProvider_CustomVault(t *testing.T) {
 
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app1": {
 				"env:OPENROUTER_API_KEY": "sk-or-12345",
 				"env:test:foo":           "bar",
@@ -382,7 +404,7 @@ func TestMappingProvider_CustomVault(t *testing.T) {
 				"EXCLUDED_FIELD":         "excluded_val",
 				"Password":               "default_app1_pass",
 			},
-		},
+		}),
 	})
 
 	rule := config.MappingRule{Match: "env:(.*)", Key: "\\1"}
@@ -467,12 +489,12 @@ func TestMappingProvider_CustomVault(t *testing.T) {
 	t.Run("GetSecret bare location with excluded Password returns error", func(t *testing.T) {
 		cp2 := NewCustomVaultProvider()
 		_ = cp2.Initialize(ctx, ProviderConfig{
-			Entities: map[string]map[string]any{
+			Entities: config.ToCustomEntityMap(map[string]map[string]any{
 				"app1": {
 					"Password": "secret_password",
 					"UserName": "test_user",
 				},
-			},
+			}),
 		})
 
 		excludeFields := []string{"Password"}
@@ -516,12 +538,12 @@ func TestMappingProvider_ColonQualifiedExcludeFields(t *testing.T) {
 
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"website/Test Website": {
 				"Password": "secret_pass_123",
 				"UserName": "test_user",
 			},
-		},
+		}),
 	})
 
 	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
@@ -638,7 +660,7 @@ func TestMappingProvider_FilteringParityForNestedAndArrayPaths(t *testing.T) {
 
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app1": {
 				"env:API_KEY": "sk-123",
 				"db": map[string]any{
@@ -647,7 +669,7 @@ func TestMappingProvider_FilteringParityForNestedAndArrayPaths(t *testing.T) {
 				},
 				"tokens": []any{"tok1", "tok2_secret"},
 			},
-		},
+		}),
 	})
 
 	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
@@ -697,13 +719,13 @@ func TestMappingProvider_SerializationErrorPropagated(t *testing.T) {
 
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app1": {
 				"bad": map[string]any{
 					"invalid": badMarshaler{},
 				},
 			},
-		},
+		}),
 	})
 
 	rule := config.MappingRule{Match: "(.*)", Key: "$1"}
@@ -991,7 +1013,7 @@ func TestMappingProvider_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app1": {
 				"env:API_KEY":       "sk-test-secret-123",
 				"env:DATABASE_URL":  "postgres://user:pass@localhost:5432/db",
@@ -999,7 +1021,7 @@ func TestMappingProvider_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 				"UNMAPPED_EXCLUDED": "excluded_val",
 				"UNMAPPED_NOT_INCL": "not_included_val",
 			},
-		},
+		}),
 	})
 
 	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
@@ -1442,6 +1464,167 @@ func TestMappingProvider_UUIDAndGroup(t *testing.T) {
 		valLower2, err := mpLower.GetSecret(ctx, "services/api:uuid")
 		if err != nil || valLower2 != "custom-override-lower" {
 			t.Errorf("GetSecret :uuid = %q, want 'custom-override-lower', err: %v", valLower2, err)
+		}
+	})
+}
+
+func TestMappingProvider_MetadataTemplate(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("GetEntry maps attributes with template", func(t *testing.T) {
+		rule := config.MappingRule{Match: "env:(.*)", Key: "{{ upper .meta.title }}_$1"}
+		if err := rule.Compile(); err != nil {
+			t.Fatalf("rule.Compile failed: %v", err)
+		}
+
+		cp := NewCustomVaultProvider()
+		_ = cp.Initialize(ctx, ProviderConfig{
+			Entities: config.ToCustomEntityMap(map[string]map[string]any{
+				"app1": {
+					"env:API_KEY": "secret_value",
+				},
+			}),
+		})
+
+		provider, err := NewMappingProvider(cp, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("failed to create mapping provider: %v", err)
+		}
+
+		searchable, ok := provider.(SearchableProvider)
+		if !ok {
+			t.Fatalf("expected SearchableProvider")
+		}
+
+		got, err := searchable.GetEntry(ctx, "app1")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		if _, ok := got.Attributes["APP1_API_KEY"]; !ok {
+			t.Errorf("expected mapped key APP1_API_KEY, got keys: %v", keysOf(got.Attributes))
+		}
+	})
+
+	t.Run("GetSecret retrieves mapped attributes with template", func(t *testing.T) {
+		rule := config.MappingRule{Match: "env:(.*)", Key: "{{ upper .meta.title }}_$1"}
+		if err := rule.Compile(); err != nil {
+			t.Fatalf("rule.Compile failed: %v", err)
+		}
+
+		cp := NewCustomVaultProvider()
+		_ = cp.Initialize(ctx, ProviderConfig{
+			Entities: config.ToCustomEntityMap(map[string]map[string]any{
+				"app1": {
+					"env:API_KEY": "secret_value",
+				},
+			}),
+		})
+
+		provider, err := NewMappingProvider(cp, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("failed to create mapping provider: %v", err)
+		}
+
+		got, err := provider.GetSecret(ctx, "app1:APP1_API_KEY")
+		if err != nil {
+			t.Fatalf("GetSecret failed: %v", err)
+		}
+
+		if got != "secret_value" {
+			t.Errorf("expected secret_value, got %q", got)
+		}
+	})
+
+	t.Run("Search maps entry attributes in results with template", func(t *testing.T) {
+		rule := config.MappingRule{Match: "env:(.*)", Key: "{{ upper .meta.title }}_$1"}
+		if err := rule.Compile(); err != nil {
+			t.Fatalf("rule.Compile failed: %v", err)
+		}
+
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Provider: "mock",
+					Vault:    "main_vault",
+					Path:     "services/api",
+					Entry: Entry{
+						Title: "my title",
+						Attributes: map[string]any{
+							"env:API_KEY": "secret_value",
+						},
+					},
+				},
+			}, nil
+		})
+
+		provider, err := NewMappingProvider(sp, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("failed to create mapping provider: %v", err)
+		}
+
+		searchable, ok := provider.(SearchableProvider)
+		if !ok {
+			t.Fatalf("expected SearchableProvider")
+		}
+
+		results, err := searchable.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+
+		if _, ok := results[0].Entry.Attributes["MY TITLE_API_KEY"]; !ok {
+			t.Errorf("expected mapped key MY TITLE_API_KEY in search results, got keys: %v", keysOf(results[0].Entry.Attributes))
+		}
+	})
+
+	t.Run("GetEntry maps attributes with template case formatting and group name", func(t *testing.T) {
+		rule := config.MappingRule{Match: "credential:(.*)", Key: "{{ upper .meta.group.name }}_{{ upper .meta.title }}_$1"}
+		if err := rule.Compile(); err != nil {
+			t.Fatalf("rule.Compile failed: %v", err)
+		}
+
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Provider: "custom_vault",
+					Vault:    "main",
+					Path:     "infra/cluster",
+					Entry: Entry{
+						Title: "Cluster Master",
+						Group: &GroupInfo{Name: "Production Infra"},
+						Attributes: map[string]any{
+							"credential:ADMIN": "adm-token-999",
+						},
+					},
+				},
+			}, nil
+		})
+
+		provider, err := NewMappingProvider(sp, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("failed to create mapping provider: %v", err)
+		}
+
+		searchable, ok := provider.(SearchableProvider)
+		if !ok {
+			t.Fatalf("expected SearchableProvider")
+		}
+
+		got, err := searchable.GetEntry(ctx, "infra/cluster")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		wantKey := "PRODUCTION INFRA_CLUSTER MASTER_ADMIN"
+		if got.Attributes[wantKey] != "adm-token-999" {
+			t.Errorf("expected mapped key %q with value 'adm-token-999', got: %v", wantKey, got.Attributes)
 		}
 	})
 }

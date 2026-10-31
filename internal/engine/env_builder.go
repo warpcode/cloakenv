@@ -18,6 +18,7 @@ type EnvResolver interface {
 	Resolve(ctx context.Context, uri string) (string, error)
 	ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error)
 	GetEntry(ctx context.Context, uri string) (provider.Entry, error)
+	GetEntries(ctx context.Context, uri string) ([]provider.Entry, error)
 }
 
 // maxResolveConcurrency bounds concurrent source resolutions spawned by the
@@ -93,29 +94,31 @@ func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, 
 		go func(idx int, uri string) {
 			defer wg.Done()
 			defer release()
-			entry, err := eb.resolver.GetEntry(ctx, uri)
+			entries, err := eb.resolver.GetEntries(ctx, uri)
 			if err != nil {
 				errOnce.Do(func() {
-					firstErr = fmt.Errorf("failed to get entry %s: %w", uri, err)
+					firstErr = fmt.Errorf("failed to get entries %s: %w", uri, err)
 				})
 				return
 			}
-			keys := make([]envKV, 0, len(entry.Attributes))
-			for k, v := range entry.Attributes {
-				if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
-					continue
+			var keys []envKV
+			for _, entry := range entries {
+				for k, v := range entry.Attributes {
+					if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
+						continue
+					}
+					if hasWhitelist && !whitelistSet[k] && !whitelistSet[utils.FormatKey(k)] && !whitelistSet[strings.ToLower(k)] {
+						continue
+					}
+					strVal, err := utils.SerializeAttrValue(v)
+					if err != nil {
+						errOnce.Do(func() {
+							firstErr = fmt.Errorf("failed to serialize attribute %q in entry %s: %w", k, uri, err)
+						})
+						return
+					}
+					keys = append(keys, envKV{k: k, v: strVal})
 				}
-				if hasWhitelist && !whitelistSet[k] && !whitelistSet[utils.FormatKey(k)] && !whitelistSet[strings.ToLower(k)] {
-					continue
-				}
-				strVal, err := utils.SerializeAttrValue(v)
-				if err != nil {
-					errOnce.Do(func() {
-						firstErr = fmt.Errorf("failed to serialize attribute %q in entry %s: %w", k, uri, err)
-					})
-					return
-				}
-				keys = append(keys, envKV{k: k, v: strVal})
 			}
 			loaded[idx] = keys
 		}(i, m)
@@ -247,10 +250,70 @@ func (eb *EnvBuilder) evalAutoloadRules(cmdArgs []string) ([]string, map[string]
 	return autoMerges, autoExplicit, autoWhitelist, currentCmdArgs, nil
 }
 
+func hasCloakenvInvocation(arg string) bool {
+	if !strings.Contains(arg, "{{") {
+		return false
+	}
+	parts := strings.Split(arg, "{{")
+	for _, part := range parts[1:] {
+		endIdx := strings.Index(part, "}}")
+		var block string
+		if endIdx >= 0 {
+			block = part[:endIdx]
+		} else {
+			block = part
+		}
+		trimmed := strings.TrimSpace(block)
+		trimmed = strings.TrimPrefix(trimmed, "-")
+		trimmed = strings.TrimSpace(trimmed)
+
+		for _, fn := range []string{
+			"get ", "get\t", "get\"", "get`",
+			"entry ", "entry\t", "entry\"", "entry`",
+			"search ", "search\t", "search\"", "search`",
+			"include ", "include\t", "include\"", "include`",
+			"includeFile ", "includeFile\t", "includeFile\"", "includeFile`",
+		} {
+			if strings.HasPrefix(trimmed, fn) || strings.Contains(trimmed, " "+fn) || strings.Contains(trimmed, "("+fn) || strings.Contains(trimmed, "| "+fn) || strings.Contains(trimmed, "|"+fn) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (eb *EnvBuilder) isKnownScheme(scheme string) bool {
+	if scheme == "env" || scheme == "cache" || scheme == "keyring" || scheme == "search" {
+		return true
+	}
+	if eb.config != nil && eb.config.Vaults != nil {
+		_, ok := eb.config.Vaults[scheme]
+		return ok
+	}
+	return false
+}
+
+// shouldResolveCmdArg checks if a child command argument is a bare known URI
+// or contains a cloakenv template invocation. Arguments without cloakenv
+// invocations pass through untouched.
+func (eb *EnvBuilder) shouldResolveCmdArg(arg string) bool {
+	if !strings.Contains(arg, "{{") {
+		if scheme, _, err := utils.ParseURI(arg); err == nil && eb.isKnownScheme(scheme) {
+			return true
+		}
+		return false
+	}
+	return hasCloakenvInvocation(arg)
+}
+
 // resolveCmdArgs resolves secret URIs in command arguments.
 func (eb *EnvBuilder) resolveCmdArgs(ctx context.Context, cmdArgs []string) ([]string, error) {
 	resolvedCmdArgs := make([]string, len(cmdArgs))
 	for i, arg := range cmdArgs {
+		if !eb.shouldResolveCmdArg(arg) {
+			resolvedCmdArgs[i] = arg
+			continue
+		}
 		resolvedArg, err := eb.resolver.Resolve(ctx, arg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve command argument %q: %w", arg, err)

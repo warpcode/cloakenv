@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zalando/go-keyring"
+
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/provider"
 )
@@ -22,20 +24,20 @@ func TestResolveValues(t *testing.T) {
 				"vault_a": {
 					Provider:      "custom_vault",
 					ResolveValues: resolveValues,
-					Entities: map[string]map[string]any{
+					Entities: config.ToCustomEntityMap(map[string]map[string]any{
 						"entity1": {
-							"Password": "${vault_b://entry1:secret}",
+							"Password": `{{ get "vault_b://entry1:secret" }}`,
 						},
-					},
+					}),
 				},
 				"vault_b": {
 					Provider:   "custom_vault",
 					Searchable: boolPtr(true),
-					Entities: map[string]map[string]any{
+					Entities: config.ToCustomEntityMap(map[string]map[string]any{
 						"entry1": {
 							"secret": "resolved_value",
 						},
-					},
+					}),
 				},
 			},
 		}
@@ -47,7 +49,7 @@ func TestResolveValues(t *testing.T) {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
 
-		val, err := orch.Resolve(ctx, "${vault_a://entity1:Password}")
+		val, err := orch.Resolve(ctx, `{{ get "vault_a://entity1:Password" }}`)
 		if err != nil {
 			t.Fatalf("Resolve failed: %v", err)
 		}
@@ -62,12 +64,12 @@ func TestResolveValues(t *testing.T) {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
 
-		val, err := orch.Resolve(ctx, "${vault_a://entity1:Password}")
+		val, err := orch.Resolve(ctx, `{{ get "vault_a://entity1:Password" }}`)
 		if err != nil {
 			t.Fatalf("Resolve failed: %v", err)
 		}
 		// Should return the raw URI string, not the resolved secret.
-		if val != "${vault_b://entry1:secret}" {
+		if val != `{{ get "vault_b://entry1:secret" }}` {
 			t.Errorf("expected raw URI, got %q", val)
 		}
 	})
@@ -88,7 +90,7 @@ func TestResolveValues(t *testing.T) {
 		if !ok {
 			t.Fatal("expected 'Password' attribute in entry")
 		}
-		if raw != "${vault_b://entry1:secret}" {
+		if raw != `{{ get "vault_b://entry1:secret" }}` {
 			t.Errorf("expected raw URI in attribute, got %q", raw)
 		}
 	})
@@ -107,11 +109,11 @@ func TestResolveValues(t *testing.T) {
 		}
 		orch.providerManager.vaultCache["vault_a"] = &falseReturnResolvableProvider{underlying: underlying}
 
-		val, err := orch.Resolve(ctx, "${vault_a://entity1:Password}")
+		val, err := orch.Resolve(ctx, `{{ get "vault_a://entity1:Password" }}`)
 		if err != nil {
 			t.Fatalf("Resolve failed: %v", err)
 		}
-		if val != "${vault_b://entry1:secret}" {
+		if val != `{{ get "vault_b://entry1:secret" }}` {
 			t.Errorf("expected raw URI when resolve_values is false, got %q", val)
 		}
 
@@ -119,7 +121,7 @@ func TestResolveValues(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetEntry failed: %v", err)
 		}
-		if raw := entry.Attributes["Password"]; raw != "${vault_b://entry1:secret}" {
+		if raw := entry.Attributes["Password"]; raw != `{{ get "vault_b://entry1:secret" }}` {
 			t.Errorf("expected raw URI in GetEntry when resolve_values is false, got %q", raw)
 		}
 	})
@@ -131,11 +133,11 @@ func TestResolveValues(t *testing.T) {
 				"vault_c": {
 					Provider:      "custom_vault",
 					ResolveValues: true,
-					Entities: map[string]map[string]any{
+					Entities: config.ToCustomEntityMap(map[string]map[string]any{
 						"entry": {
-							"Password": "${vault_c://entry:Password}",
+							"Password": `{{ get "vault_c://entry:Password" }}`,
 						},
-					},
+					}),
 				},
 			},
 		}
@@ -145,7 +147,7 @@ func TestResolveValues(t *testing.T) {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
 
-		_, err = orch.Resolve(ctx, "${vault_c://entry:Password}")
+		_, err = orch.Resolve(ctx, `{{ get "vault_c://entry:Password" }}`)
 		if err == nil {
 			t.Error("expected error due to circular reference, got nil")
 		}
@@ -183,13 +185,13 @@ func TestGetEntry_AttributeSelector(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"vault_x": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"myentity": {
 						"Password": "s3cr3t",
 						"UserName": "alice",
 						"Notes":    "some notes",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -267,11 +269,11 @@ func TestOrchestratorExpansion(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"vault_exp": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"database": {
 						"password": "supersecretpassword",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -282,7 +284,7 @@ func TestOrchestratorExpansion(t *testing.T) {
 	}
 
 	t.Run("Single expansion in a value", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, "${env://EXP_USER}")
+		val, err := orch.Resolve(ctx, `{{ get "env://EXP_USER" }}`)
 		if err != nil {
 			t.Fatalf("failed to resolve: %v", err)
 		}
@@ -292,7 +294,7 @@ func TestOrchestratorExpansion(t *testing.T) {
 	})
 
 	t.Run("Multiple expansions in a single value", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, "${env://EXP_USER}-${env://EXP_HOST}")
+		val, err := orch.Resolve(ctx, `{{ get "env://EXP_USER" }}-{{ get "env://EXP_HOST" }}`)
 		if err != nil {
 			t.Fatalf("failed to resolve: %v", err)
 		}
@@ -302,7 +304,7 @@ func TestOrchestratorExpansion(t *testing.T) {
 	})
 
 	t.Run("Expansion embedded in longer strings (URIs, file paths)", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, "mysql://${env://EXP_USER}:${vault_exp://database:password}@${env://EXP_HOST}:3306/db")
+		val, err := orch.Resolve(ctx, `mysql://{{ get "env://EXP_USER" }}:{{ get "vault_exp://database:password" }}@{{ get "env://EXP_HOST" }}:3306/db`)
 		if err != nil {
 			t.Fatalf("failed to resolve: %v", err)
 		}
@@ -312,29 +314,27 @@ func TestOrchestratorExpansion(t *testing.T) {
 		}
 	})
 
-	t.Run("Escaped ${} remains literal", func(t *testing.T) {
-		// $$ becomes literal $
-		// $${env://EXP_USER} becomes literal ${env://EXP_USER}
-		val, err := orch.Resolve(ctx, "$${env://EXP_USER}")
+	t.Run("Escaped {{ remains literal", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, `{{ "{{" }} get "env://EXP_USER" }}`)
 		if err != nil {
 			t.Fatalf("failed to resolve: %v", err)
 		}
-		if val != "${env://EXP_USER}" {
-			t.Errorf("expected '${env://EXP_USER}', got %q", val)
+		if val != `{{ get "env://EXP_USER" }}` {
+			t.Errorf("expected '{{ get \"env://EXP_USER\" }}', got %q", val)
 		}
 
-		// my$$password becomes literal my$password
+		// my$$password becomes literal my$$password (since $$ is no longer special)
 		val, err = orch.Resolve(ctx, "my$$password")
 		if err != nil {
 			t.Fatalf("failed to resolve: %v", err)
 		}
-		if val != "my$password" {
-			t.Errorf("expected 'my$password', got %q", val)
+		if val != "my$$password" {
+			t.Errorf("expected 'my$$password', got %q", val)
 		}
 	})
 
 	t.Run("Provider resolution errors surface useful messages", func(t *testing.T) {
-		_, err := orch.ResolveWithKey(ctx, "mysql://${env://NON_EXISTENT_VAR_FOR_EXP}", "DATABASE_URI")
+		_, err := orch.ResolveWithKey(ctx, `mysql://{{ get "env://NON_EXISTENT_VAR_FOR_EXP" }}`, "DATABASE_URI")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -342,20 +342,16 @@ func TestOrchestratorExpansion(t *testing.T) {
 		if !strings.Contains(err.Error(), expectedPart) {
 			t.Errorf("expected error message to contain %q, got %q", expectedPart, err.Error())
 		}
-		expectedExprPart := "failed to resolve expansion \"env://NON_EXISTENT_VAR_FOR_EXP\""
+		expectedExprPart := "env://NON_EXISTENT_VAR_FOR_EXP"
 		if !strings.Contains(err.Error(), expectedExprPart) {
 			t.Errorf("expected error message to contain %q, got %q", expectedExprPart, err.Error())
 		}
 	})
 
-	t.Run("Nested expansions are disallowed", func(t *testing.T) {
-		_, err := orch.Resolve(ctx, "${env://${EXP_USER}}")
+	t.Run("Nested expansions syntax error", func(t *testing.T) {
+		_, err := orch.Resolve(ctx, `{{ get "env://{{ get \"EXP_USER\" }}" }}`)
 		if err == nil {
 			t.Fatal("expected error, got nil")
-		}
-		expectedPart := "nested expansions are not supported"
-		if !strings.Contains(err.Error(), expectedPart) {
-			t.Errorf("expected error message to contain %q, got %q", expectedPart, err.Error())
 		}
 	})
 }
@@ -367,30 +363,30 @@ func TestGetEntry(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"vault_x": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"myentity": {
 						"Password":  "s3cr3t",
 						"recursive": "vault_x://myentity",
 					},
 					"error_attr": {
-						"Password": "${vault_missing://nonexistent}",
+						"Password": `{{ get "vault_missing://nonexistent" }}`,
 					},
 					"recursive_attr": {
-						"Password": "${vault_x://recursive_attr:Password}",
+						"Password": `{{ get "vault_x://recursive_attr:Password" }}`,
 					},
-				},
+				}),
 				ResolveValues: true,
 			},
 			"vault_y": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"target": {
 						"Password": "pass",
 					},
 					"no_resolve": {
 						"Password": "vault_y://target",
 					},
-				},
+				}),
 				ResolveValues: false,
 			},
 		},
@@ -552,4 +548,133 @@ func (f *falseReturnResolvableProvider) Search(ctx context.Context, q provider.S
 		return s.Search(ctx, q)
 	}
 	return nil, nil
+}
+
+func TestResolver_GetEntries_And_GetEntriesRecursive(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	ctx := context.Background()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"custom_v": {
+				Provider: "custom_vault",
+				Entities: map[string]config.CustomEntityConfig{
+					"app": {
+						Title: "App Entry",
+						Tags:  []string{"prod"},
+						Attributes: map[string]any{
+							"apiKey": "12345",
+							"secret": "s3cr3t",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	pm := NewProviderManager(cfg, nil, nil)
+	sem := make(chan struct{}, 10)
+	res := NewResolver(pm, sem)
+
+	tests := []struct {
+		name       string
+		uri        string
+		depth      int
+		useRecurse bool
+		wantCount  int
+		wantErr    bool
+		wantErrSub string
+		checkFn    func(t *testing.T, entries []provider.Entry)
+	}{
+		{
+			name:       "GetEntries valid URI",
+			uri:        "custom_v://app",
+			useRecurse: false,
+			wantCount:  1,
+			wantErr:    false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Title != "App Entry" {
+					t.Errorf("Title = %q, want 'App Entry'", entries[0].Title)
+				}
+				if entries[0].Attributes["apiKey"] != "12345" {
+					t.Errorf("apiKey = %v, want '12345'", entries[0].Attributes["apiKey"])
+				}
+			},
+		},
+		{
+			name:       "GetEntriesRecursive at depth 0 succeeds",
+			uri:        "custom_v://app",
+			depth:      0,
+			useRecurse: true,
+			wantCount:  1,
+			wantErr:    false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Title != "App Entry" {
+					t.Errorf("Title = %q, want 'App Entry'", entries[0].Title)
+				}
+			},
+		},
+		{
+			name:       "GetEntriesRecursive at depth 6 triggers max depth error",
+			uri:        "custom_v://app",
+			depth:      6,
+			useRecurse: true,
+			wantErr:    true,
+			wantErrSub: "reached max depth 5",
+		},
+		{
+			name:       "GetEntries with attribute selector returns single attribute",
+			uri:        "custom_v://app:apiKey",
+			useRecurse: false,
+			wantCount:  1,
+			wantErr:    false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Attributes["apiKey"] != "12345" {
+					t.Errorf("apiKey = %v, want '12345'", entries[0].Attributes["apiKey"])
+				}
+				if _, ok := entries[0].Attributes["secret"]; ok {
+					t.Errorf("expected only apiKey in attribute selector, but secret is present")
+				}
+			},
+		},
+		{
+			name:       "GetEntries for unknown vault returns error",
+			uri:        "unknown_vault://app",
+			useRecurse: false,
+			wantErr:    true,
+			wantErrSub: "unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var entries []provider.Entry
+			var err error
+			if tt.useRecurse {
+				entries, err = res.GetEntriesRecursive(ctx, tt.uri, tt.depth)
+			} else {
+				entries, err = res.GetEntries(ctx, tt.uri)
+			}
+
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr = %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				if tt.wantErrSub != "" && !strings.Contains(err.Error(), tt.wantErrSub) {
+					t.Errorf("error %q does not contain %q", err.Error(), tt.wantErrSub)
+				}
+			} else {
+				if len(entries) != tt.wantCount {
+					t.Fatalf("entries count = %d, want %d", len(entries), tt.wantCount)
+				}
+				if tt.checkFn != nil {
+					tt.checkFn(t, entries)
+				}
+			}
+		})
+	}
 }
