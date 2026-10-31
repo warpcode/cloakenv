@@ -87,7 +87,7 @@ func BenchmarkBuildEnvMerges(b *testing.B) {
 		Vaults: map[string]config.VaultConfig{
 			"bench_vault": {
 				Provider: "custom_vault",
-				Entities: entities,
+				Entities: config.ToCustomEntityMap(entities),
 			},
 		},
 	}

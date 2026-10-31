@@ -158,12 +158,12 @@ func TestProviderManager_MappingIntegration(t *testing.T) {
 			"mapped_vault": {
 				Provider: "custom_vault",
 				Mapping:  []config.MappingRule{rule1},
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"env:OPENROUTER_API_KEY": "sk-test-secret",
 						"UNMAPPED":               "unmapped_value",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -219,14 +219,14 @@ func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
 				Mapping:       []config.MappingRule{rule1},
 				IncludeFields: []string{"OPENROUTER_API_KEY", "test:foo", "INCLUDED_FIELD"},
 				ExcludeFields: []string{"EXCLUDED_FIELD"},
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"env:OPENROUTER_API_KEY": "sk-test-secret",
 						"env:test:foo":           "bar",
 						"INCLUDED_FIELD":         "included_val",
 						"EXCLUDED_FIELD":         "excluded_val",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -294,11 +294,11 @@ func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
 				Provider:      "custom_vault",
 				Mapping:       []config.MappingRule{rule1},
 				ExcludeFields: []string{"app:*"},
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app": {
 						"Password": "pass_val",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -327,13 +327,13 @@ func TestProviderManager_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 				Mapping:       []config.MappingRule{rule1},
 				IncludeFields: []string{"UNMAPPED_KEPT"},
 				ExcludeFields: []string{"UNMAPPED_DROPPED", "MAPPED_KEY"},
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"service": {
 						"env:MAPPED_KEY":   "mapped_secret_value",
 						"UNMAPPED_KEPT":    "kept_val",
 						"UNMAPPED_DROPPED": "dropped_val",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -387,12 +387,12 @@ func TestProviderManager_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 				Provider:      "custom_vault",
 				Mapping:       []config.MappingRule{rule1},
 				ExcludeFields: []string{"*"},
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"service": {
 						"env:MAPPED_KEY": "wildcard_secret",
 						"OTHER_FIELD":    "other_val",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -505,11 +505,11 @@ func TestProviderManagerConcurrentInitialization(t *testing.T) {
 			Vaults: map[string]config.VaultConfig{
 				"test_vault": {
 					Provider: "custom_vault",
-					Entities: map[string]map[string]any{
+					Entities: config.ToCustomEntityMap(map[string]map[string]any{
 						"app": {
 							"KEY": "val",
 						},
-					},
+					}),
 				},
 			},
 		}
@@ -602,5 +602,139 @@ func TestProviderManager_KeyFormatOverride(t *testing.T) {
 
 	if kfp.Format() != "snake" {
 		t.Errorf("expected key format 'snake', got %q", kfp.Format())
+	}
+}
+
+func TestProviderManager_SetGetEntriesFunc_And_SetRenderTemplateFunc(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name              string
+		setGetEntries     bool
+		setRenderTemplate bool
+		composedEntity    config.CustomEntityConfig
+		wantErr           bool
+		wantErrSub        string
+		checkFn           func(t *testing.T, entry provider.Entry, getEntriesCalled, renderTemplateCalled bool)
+	}{
+		{
+			name:              "both callbacks set are propagated to custom_vault provider",
+			setGetEntries:     true,
+			setRenderTemplate: true,
+			composedEntity: config.CustomEntityConfig{
+				Title:      "Composed App",
+				IsComposed: true,
+				Merge:      []string{"mock://entries"},
+				Attributes: map[string]any{
+					"RENDERED_KEY": "{{ .attributes.SRC_KEY }}",
+				},
+			},
+			wantErr: false,
+			checkFn: func(t *testing.T, entry provider.Entry, getEntriesCalled, renderTemplateCalled bool) {
+				if !getEntriesCalled {
+					t.Errorf("expected getEntriesFunc to have been called")
+				}
+				if !renderTemplateCalled {
+					t.Errorf("expected renderTemplateFunc to have been called")
+				}
+				if entry.Attributes["RENDERED_KEY"] != "rendered:src_val" {
+					t.Errorf("RENDERED_KEY = %v, want 'rendered:src_val'", entry.Attributes["RENDERED_KEY"])
+				}
+			},
+		},
+		{
+			name:              "missing getEntriesFunc returns error when composed entity has merge",
+			setGetEntries:     false,
+			setRenderTemplate: true,
+			composedEntity: config.CustomEntityConfig{
+				Title:      "Composed App",
+				IsComposed: true,
+				Merge:      []string{"mock://entries"},
+			},
+			wantErr:    true,
+			wantErrSub: "merge execution not supported in this context",
+		},
+		{
+			name:              "missing renderTemplateFunc returns error when composed entity has template",
+			setGetEntries:     true,
+			setRenderTemplate: false,
+			composedEntity: config.CustomEntityConfig{
+				Title:      "Composed App",
+				IsComposed: true,
+				Merge:      []string{"mock://entries"},
+				Attributes: map[string]any{
+					"RENDERED_KEY": "{{ .attributes.SRC_KEY }}",
+				},
+			},
+			wantErr:    true,
+			wantErrSub: "template rendering not supported in this context",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Vaults: map[string]config.VaultConfig{
+					"test_vault": {
+						Provider: "custom_vault",
+						Entities: map[string]config.CustomEntityConfig{
+							"comp": tt.composedEntity,
+						},
+					},
+				},
+			}
+
+			pm := NewProviderManager(cfg, nil, nil)
+			var getEntriesCalled bool
+			var renderTemplateCalled bool
+
+			if tt.setGetEntries {
+				pm.SetGetEntriesFunc(func(ctx context.Context, uri string) ([]provider.Entry, error) {
+					getEntriesCalled = true
+					return []provider.Entry{
+						{
+							Title: "Src",
+							Attributes: map[string]any{
+								"SRC_KEY": "src_val",
+							},
+						},
+					}, nil
+				})
+			}
+
+			if tt.setRenderTemplate {
+				pm.SetRenderTemplateFunc(func(ctx context.Context, tmplStr string, data any) (string, error) {
+					renderTemplateCalled = true
+					return "rendered:src_val", nil
+				})
+			}
+
+			p, _, err := pm.GetProvider(ctx, "test_vault")
+			if err != nil {
+				t.Fatalf("GetProvider failed: %v", err)
+			}
+
+			sp, ok := p.(provider.SearchableProvider)
+			if !ok {
+				t.Fatalf("provider does not implement SearchableProvider")
+			}
+
+			entry, err := sp.GetEntry(ctx, "comp")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("GetEntry() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				if tt.wantErrSub != "" && !strings.Contains(err.Error(), tt.wantErrSub) {
+					t.Errorf("error %q does not contain expected substring %q", err.Error(), tt.wantErrSub)
+				}
+			} else if tt.checkFn != nil {
+				tt.checkFn(t, entry, getEntriesCalled, renderTemplateCalled)
+			}
+		})
 	}
 }

@@ -29,7 +29,7 @@ func TestShow_KeysFormat(t *testing.T) {
 	t.Setenv("SHOW_TEST_VAR_B", "valB")
 
 	// Call Show with keys format (with keys that should sort B before A)
-	args := []string{"-e", "KEY_B=${env://SHOW_TEST_VAR_B}", "-e", "KEY_A=${env://SHOW_TEST_VAR_A}", "-o", "keys"}
+	args := []string{"-e", `KEY_B={{ get "env://SHOW_TEST_VAR_B" }}`, "-e", `KEY_A={{ get "env://SHOW_TEST_VAR_A" }}`, "-o", "keys"}
 	cfg := &config.Config{
 		Vaults: make(map[string]config.VaultConfig),
 	}
@@ -82,9 +82,9 @@ func TestShow_KeysFormattingBehavior(t *testing.T) {
 
 	// Explicit keys with lowercase, hyphens, and multiple underscores
 	args := []string{
-		"-e", "db-user=${env://SHOW_TEST_VAR_B}",
-		"-e", "api--key=${env://SHOW_TEST_VAR_A}",
-		"-e", "multiple___underscores=${env://SHOW_TEST_VAR_A}",
+		"-e", `db-user={{ get "env://SHOW_TEST_VAR_B" }}`,
+		"-e", `api--key={{ get "env://SHOW_TEST_VAR_A" }}`,
+		"-e", `multiple___underscores={{ get "env://SHOW_TEST_VAR_A" }}`,
 		"-o", "keys",
 	}
 	cfg := &config.Config{
@@ -140,11 +140,13 @@ func TestShow_VaultKeyFormat(t *testing.T) {
 			"env_vault": {
 				Provider:  "custom_vault",
 				KeyFormat: "env",
-				Entities: map[string]map[string]any{
+				Entities: map[string]config.CustomEntityConfig{
 					"item": {
-						"api-key":                "val1",
-						"database.user_name":     "val2",
-						"multiple___underscores": "val3",
+						Attributes: map[string]any{
+							"api-key":                "val1",
+							"database.user_name":     "val2",
+							"multiple___underscores": "val3",
+						},
 					},
 				},
 			},
@@ -298,21 +300,25 @@ func TestBuildMergedEntry(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"vaultA": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: map[string]config.CustomEntityConfig{
 					"entry1": {
-						"user": "userA",
-						"pass": "passA",
-						"tags": []any{"tagA", "commonTag"},
+						Attributes: map[string]any{
+							"user": "userA",
+							"pass": "passA",
+							"tags": []any{"tagA", "commonTag"},
+						},
 					},
 				},
 			},
 			"vaultB": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: map[string]config.CustomEntityConfig{
 					"entry2": {
-						"host": "hostB",
-						"user": "userB_overridden",
-						"tags": []any{"tagB", "commonTag"},
+						Attributes: map[string]any{
+							"host": "hostB",
+							"user": "userB_overridden",
+							"tags": []any{"tagB", "commonTag"},
+						},
 					},
 				},
 			},
@@ -330,7 +336,7 @@ func TestBuildMergedEntry(t *testing.T) {
 		merges := []string{"vaultA://entry1", "vaultB://entry2"}
 		whitelist := []string{"user", "host"}
 		explicit := map[string]string{
-			"EXTRA_KEY": "${env://TEST_SHOW_ENV_VAL}",
+			"EXTRA_KEY": `{{ get "env://TEST_SHOW_ENV_VAL" }}`,
 		}
 
 		entry, err := buildMergedEntry(ctx, orch, merges, whitelist, explicit)
@@ -374,7 +380,7 @@ func TestBuildMergedEntry(t *testing.T) {
 
 	t.Run("Explicit mapping error", func(t *testing.T) {
 		explicit := map[string]string{
-			"BAD_KEY": "${invalid_scheme://foo}",
+			"BAD_KEY": `{{ get "invalid_scheme://foo" }}`,
 		}
 		_, err := buildMergedEntry(ctx, orch, nil, nil, explicit)
 		if err == nil {
@@ -443,6 +449,10 @@ func TestShow_KeePassMetadataOutput(t *testing.T) {
 	var buf2 bytes.Buffer
 	if _, err := io.Copy(&buf2, r2); err != nil {
 		t.Fatalf("failed to read from pipe: %v", err)
+	}
+
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", exitCode)
 	}
 
 	keysOutput := buf2.String()

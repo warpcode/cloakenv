@@ -67,8 +67,22 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	})
 
 	// Break the circular dependency by setting the search callback dynamically
-	resolver.SetSearchFunc(func(ctx context.Context, expressionStr string, depth int) ([]provider.SearchResult, error) {
-		return searcher.SearchRecursive(ctx, expressionStr, nil, depth)
+	resolver.SetSearchFunc(func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]provider.SearchResult, error) {
+		return searcher.SearchRecursive(ctx, expressionStr, sourceVaults, depth)
+	})
+
+	pm.SetGetEntriesFunc(func(ctx context.Context, uri string) ([]provider.Entry, error) {
+		depth := 0
+		if d, ok := ctx.Value(provider.ContextKeyDepth).(int); ok {
+			depth = d
+		}
+		nextDepth := depth + 1
+		nextCtx := context.WithValue(ctx, provider.ContextKeyDepth, nextDepth)
+		return resolver.GetEntriesRecursive(nextCtx, uri, nextDepth)
+	})
+
+	pm.SetRenderTemplateFunc(func(ctx context.Context, tmplStr string, data any) (string, error) {
+		return NewTemplateEngine(resolver).Render(ctx, tmplStr, data, 0, "")
 	})
 
 	envBuilder := NewEnvBuilder(cfg, resolver)
@@ -84,14 +98,14 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	return o, nil
 }
 
-// Resolve takes a full value, expands any ${...} expressions, and
-// returns the resolved secret value.
+// Resolve takes a full value, evaluates any {{ get "scheme://..." }} template
+// expressions, and returns the resolved secret value.
 func (o *Orchestrator) Resolve(ctx context.Context, uri string) (string, error) {
 	return o.resolver.Resolve(ctx, uri)
 }
 
-// ResolveWithKey takes a full value, expands any ${...} expressions, and
-// includes the configKey in any failure messages if provided.
+// ResolveWithKey takes a full value, evaluates any {{ get "scheme://..." }} template
+// expressions, and includes the configKey in any failure messages if provided.
 func (o *Orchestrator) ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error) {
 	return o.resolver.ResolveWithKey(ctx, uri, configKey)
 }
@@ -99,6 +113,10 @@ func (o *Orchestrator) ResolveWithKey(ctx context.Context, uri string, configKey
 // GetEntry retrieves a complete structured entry by location.
 func (o *Orchestrator) GetEntry(ctx context.Context, uri string) (provider.Entry, error) {
 	return o.resolver.GetEntry(ctx, uri)
+}
+
+func (o *Orchestrator) GetEntries(ctx context.Context, uri string) ([]provider.Entry, error) {
+	return o.resolver.GetEntries(ctx, uri)
 }
 
 // Search queries entries across searchable repositories using an expression.
@@ -292,4 +310,9 @@ func (o *Orchestrator) IsRunAlias(cmdArgs []string) bool {
 		return false
 	}
 	return IsRunAlias(o.config, cmdArgs)
+}
+
+// GetResolver returns the internal Resolver (used for testing).
+func (o *Orchestrator) GetResolver() *Resolver {
+	return o.resolver
 }

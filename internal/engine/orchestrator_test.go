@@ -71,13 +71,13 @@ func TestOrchestratorFacade(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"test_vault": {
 				Provider: "custom_vault",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"service_a": {
 						"API_KEY": "secret-api-key",
 						"tags":    []string{"prod", "api"},
 						"title":   "Service A",
 					},
-				},
+				}),
 			},
 		},
 		Autoload: []config.AutoloadRule{
@@ -94,7 +94,7 @@ func TestOrchestratorFacade(t *testing.T) {
 	}
 
 	t.Run("Resolve and ResolveWithKey", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, "${test_vault://service_a:API_KEY}")
+		val, err := orch.Resolve(ctx, `{{ get "test_vault://service_a:API_KEY" }}`)
 		if err != nil {
 			t.Fatalf("Resolve failed: %v", err)
 		}
@@ -102,7 +102,7 @@ func TestOrchestratorFacade(t *testing.T) {
 			t.Errorf("Resolve() = %q, want %q", val, "secret-api-key")
 		}
 
-		valKey, err := orch.ResolveWithKey(ctx, "${test_vault://service_a:API_KEY}", "MY_KEY")
+		valKey, err := orch.ResolveWithKey(ctx, `{{ get "test_vault://service_a:API_KEY" }}`, "MY_KEY")
 		if err != nil {
 			t.Fatalf("ResolveWithKey failed: %v", err)
 		}
@@ -203,7 +203,7 @@ func TestOrchestratorFacade(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Write failed: %v", err)
 		}
-		val, err := orch.Resolve(ctx, "${keyring://service_a/api_key}")
+		val, err := orch.Resolve(ctx, `{{ get "keyring://service_a/api_key" }}`)
 		if err != nil || val != "new-value" {
 			t.Errorf("after Write, Resolve() = (%q, %v), want ('new-value', nil)", val, err)
 		}
@@ -253,7 +253,7 @@ func TestOrchestrator_FieldFiltering(t *testing.T) {
 					"*.notes",
 					"secret:*",
 				},
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"app_config": {
 						"UserName":        "app_admin",
 						"Password":        "super_secret_pw",
@@ -263,7 +263,7 @@ func TestOrchestrator_FieldFiltering(t *testing.T) {
 						"secret:token":    "bearer_12345",
 						"db.notes":        "production database notes",
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -318,7 +318,7 @@ func TestOrchestrator_FieldFiltering(t *testing.T) {
 	})
 
 	t.Run("Resolve_AllowedField", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, "${filtered_vault://app_config:env:PORT}")
+		val, err := orch.Resolve(ctx, `{{ get "filtered_vault://app_config:env:PORT" }}`)
 		if err != nil {
 			t.Fatalf("Resolve env:PORT failed: %v", err)
 		}
@@ -328,12 +328,12 @@ func TestOrchestrator_FieldFiltering(t *testing.T) {
 	})
 
 	t.Run("Resolve_ExcludedField", func(t *testing.T) {
-		_, err := orch.Resolve(ctx, "${filtered_vault://app_config:Password}")
+		_, err := orch.Resolve(ctx, `{{ get "filtered_vault://app_config:Password" }}`)
 		if err == nil {
 			t.Fatalf("expected error resolving excluded field Password, got nil")
 		}
 
-		_, errToken := orch.Resolve(ctx, "${filtered_vault://app_config:secret:token}")
+		_, errToken := orch.Resolve(ctx, `{{ get "filtered_vault://app_config:secret:token" }}`)
 		if errToken == nil {
 			t.Fatalf("expected error resolving excluded field secret:token, got nil")
 		}
@@ -351,8 +351,8 @@ func TestOrchestrator_FieldFiltering_WrappedDirectProviderResolution(t *testing.
 	tmpDir := t.TempDir()
 	yamlFile := filepath.Join(tmpDir, "vault.yaml")
 	yamlContent := `
-api_key: "${env://MY_APP_SECRET}"
-excluded_key: "${env://MY_APP_SECRET}"
+api_key: '{{ get "env://MY_APP_SECRET" }}'
+excluded_key: '{{ get "env://MY_APP_SECRET" }}'
 `
 	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
 		t.Fatalf("failed to write yaml fixture: %v", err)
@@ -376,7 +376,7 @@ excluded_key: "${env://MY_APP_SECRET}"
 	}
 
 	// 1. Allowed field with nested URI should resolve through to the env provider value
-	val, err := orch.Resolve(ctx, "${filtered_yaml://api_key}")
+	val, err := orch.Resolve(ctx, `{{ get "filtered_yaml://api_key" }}`)
 	if err != nil {
 		t.Fatalf("failed to resolve filtered_yaml://api_key: %v", err)
 	}
@@ -397,7 +397,7 @@ excluded_key: "${env://MY_APP_SECRET}"
 	}
 
 	// 3. Excluded key must not be resolvable
-	_, errExcluded := orch.Resolve(ctx, "${filtered_yaml://excluded_key}")
+	_, errExcluded := orch.Resolve(ctx, `{{ get "filtered_yaml://excluded_key" }}`)
 	if errExcluded == nil {
 		t.Fatalf("expected error resolving excluded_key, got nil")
 	}
@@ -426,13 +426,13 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 				Provider:        "custom_vault",
 				ResolveValues:   true,
 				EntitiesRootKey: "entities",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"entry1": {
 						"safe_field":            "safe_value",
-						"excluded_field":        "${tripwire://must_not_be_called}",
-						"rooted_excluded_field": "${tripwire://must_not_be_called_rooted}",
+						"excluded_field":        `{{ get "tripwire://must_not_be_called" }}`,
+						"rooted_excluded_field": `{{ get "tripwire://must_not_be_called_rooted" }}`,
 					},
-				},
+				}),
 			},
 			"virtual_search": {
 				Provider:      "search",
@@ -452,7 +452,7 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 	orch.providerManager.vaultCache["tripwire"] = tw
 
 	// Resolve through the virtual search provider
-	val, err := orch.Resolve(ctx, "${virtual_search://entry1:safe_field}")
+	val, err := orch.Resolve(ctx, `{{ get "virtual_search://entry1:safe_field" }}`)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -462,7 +462,7 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 
 	// Verify that neither the excluded field nor the rooted excluded field was ever dereferenced
 	if tw.called {
-		t.Errorf("pre-resolution isolation violated: excluded URI value ${tripwire://...} was dereferenced")
+		t.Errorf("pre-resolution isolation violated: excluded URI value tripwire://... was dereferenced")
 	}
 
 	// Also verify that a search vault whose query references the excluded field fails to match
@@ -472,12 +472,12 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 				Provider:        "custom_vault",
 				ResolveValues:   true,
 				EntitiesRootKey: "entities",
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"entry1": {
 						"safe_field":     "safe_value",
-						"excluded_field": "${tripwire://must_not_be_called}",
+						"excluded_field": `{{ get "tripwire://must_not_be_called" }}`,
 					},
-				},
+				}),
 			},
 			"query_leak_search": {
 				Provider:      "search",
@@ -495,7 +495,7 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 	orchLeak.providerManager.vaultCache["tripwire"] = tw
 
 	// Since excluded_field was stripped before query evaluation, it cannot match
-	_, errMatch := orchLeak.Resolve(ctx, "${query_leak_search://entry1:safe_field}")
+	_, errMatch := orchLeak.Resolve(ctx, `{{ get "query_leak_search://entry1:safe_field" }}`)
 	if errMatch == nil {
 		t.Errorf("expected query match to fail when query references an excluded field, got nil")
 	}
@@ -512,13 +512,13 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 			"source_vault": {
 				Provider:      "custom_vault",
 				ResolveValues: true,
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"entry1": {
 						"safe_field":     "safe_value",
-						"outer_excluded": "${tripwire://outer_leak}",
-						"inner_excluded": "${tripwire://inner_leak}",
+						"outer_excluded": `{{ get "tripwire://outer_leak" }}`,
+						"inner_excluded": `{{ get "tripwire://inner_leak" }}`,
 					},
-				},
+				}),
 			},
 			"inner_search": {
 				Provider:      "search",
@@ -544,7 +544,7 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 	orch.providerManager.vaultCache["tripwire"] = tw
 
 	// Resolve through the outer virtual search provider
-	val, err := orch.Resolve(ctx, "${outer_search://entry1:safe_field}")
+	val, err := orch.Resolve(ctx, `{{ get "outer_search://entry1:safe_field" }}`)
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -554,7 +554,7 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 
 	// Verify that outer-excluded and inner-excluded URI values were never dereferenced
 	if tw.called {
-		t.Errorf("nested virtual search isolation violated: excluded URI value ${tripwire://...} was dereferenced")
+		t.Errorf("nested virtual search isolation violated: excluded URI value tripwire://... was dereferenced")
 	}
 
 	// Also verify that an inner search vault whose query attempts to match on outer_excluded fails
@@ -564,12 +564,12 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 			"source_vault": {
 				Provider:      "custom_vault",
 				ResolveValues: true,
-				Entities: map[string]map[string]any{
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"entry1": {
 						"safe_field":     "safe_value",
-						"outer_excluded": "${tripwire://outer_leak}",
+						"outer_excluded": `{{ get "tripwire://outer_leak" }}`,
 					},
-				},
+				}),
 			},
 			"inner_search_leak": {
 				Provider:     "search",
@@ -591,11 +591,193 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 	}
 	orchLeak.providerManager.vaultCache["tripwire"] = tw
 
-	_, errMatch := orchLeak.Resolve(ctx, "${outer_search_leak://entry1:safe_field}")
+	_, errMatch := orchLeak.Resolve(ctx, `{{ get "outer_search_leak://entry1:safe_field" }}`)
 	if errMatch == nil {
 		t.Errorf("expected inner search query match on outer-excluded field to fail, got nil")
 	}
 	if tw.called {
 		t.Errorf("outer-excluded URI was dereferenced during inner query evaluation")
+	}
+}
+
+func TestOrchestrator_CyclicMergeDepthError(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		vaults     map[string]config.VaultConfig
+		targetURI  string
+		wantErrSub string
+	}{
+		{
+			name: "two entities mutually merging cause max depth error",
+			vaults: map[string]config.VaultConfig{
+				"loop_vault": {
+					Provider: "custom_vault",
+					Entities: map[string]config.CustomEntityConfig{
+						"entity_a": {
+							Title:      "Entity A",
+							IsComposed: true,
+							Merge:      []string{"loop_vault://entity_b"},
+						},
+						"entity_b": {
+							Title:      "Entity B",
+							IsComposed: true,
+							Merge:      []string{"loop_vault://entity_a"},
+						},
+					},
+				},
+			},
+			targetURI:  "loop_vault://entity_a",
+			wantErrSub: "reached max depth 5",
+		},
+		{
+			name: "self-merging composed entity causes max depth error",
+			vaults: map[string]config.VaultConfig{
+				"self_vault": {
+					Provider: "custom_vault",
+					Entities: map[string]config.CustomEntityConfig{
+						"self_loop": {
+							Title:      "Self Loop",
+							IsComposed: true,
+							Merge:      []string{"self_vault://self_loop"},
+						},
+					},
+				},
+			},
+			targetURI:  "self_vault://self_loop",
+			wantErrSub: "reached max depth 5",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Vaults: tt.vaults}
+			orch, err := NewOrchestrator(cfg)
+			if err != nil {
+				t.Fatalf("failed to create orchestrator: %v", err)
+			}
+
+			_, err = orch.GetEntries(ctx, tt.targetURI)
+			if err == nil {
+				t.Fatalf("expected max depth error for cyclic merge %s, got nil", tt.targetURI)
+			}
+			if !strings.Contains(err.Error(), tt.wantErrSub) {
+				t.Errorf("error %q does not contain expected substring %q", err.Error(), tt.wantErrSub)
+			}
+		})
+	}
+}
+
+func TestOrchestrator_GetEntries(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	ctx := context.Background()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"test_vault": {
+				Provider: "custom_vault",
+				Entities: map[string]config.CustomEntityConfig{
+					"flat_entry": {
+						Title: "Flat Entry",
+						Tags:  []string{"tag1"},
+						Attributes: map[string]any{
+							"KEY1": "val1",
+						},
+					},
+					"composed_entry": {
+						Title:      "Composed Entry",
+						IsComposed: true,
+						Merge:      []string{"test_vault://flat_entry"},
+						Attributes: map[string]any{
+							"EXTRA": "extra_val",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		uri       string
+		wantCount int
+		wantErr   bool
+		checkFn   func(t *testing.T, entries []provider.Entry)
+	}{
+		{
+			name:      "flat entry lookup returns single entry",
+			uri:       "test_vault://flat_entry",
+			wantCount: 1,
+			wantErr:   false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Title != "Flat Entry" {
+					t.Errorf("Title = %q, want 'Flat Entry'", entries[0].Title)
+				}
+				if entries[0].Attributes["KEY1"] != "val1" {
+					t.Errorf("KEY1 = %v, want 'val1'", entries[0].Attributes["KEY1"])
+				}
+			},
+		},
+		{
+			name:      "composed entry lookup returns resolved entry",
+			uri:       "test_vault://composed_entry",
+			wantCount: 1,
+			wantErr:   false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Title != "Composed Entry" {
+					t.Errorf("Title = %q, want 'Composed Entry'", entries[0].Title)
+				}
+				if entries[0].Attributes["KEY1"] != "val1" {
+					t.Errorf("KEY1 = %v, want 'val1'", entries[0].Attributes["KEY1"])
+				}
+				if entries[0].Attributes["EXTRA"] != "extra_val" {
+					t.Errorf("EXTRA = %v, want 'extra_val'", entries[0].Attributes["EXTRA"])
+				}
+			},
+		},
+		{
+			name:      "non-existent entity returns error",
+			uri:       "test_vault://nonexistent",
+			wantCount: 0,
+			wantErr:   true,
+		},
+		{
+			name:      "invalid uri scheme returns error",
+			uri:       "invalid_uri",
+			wantCount: 0,
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entries, err := orch.GetEntries(ctx, tt.uri)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("GetEntries() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+			if !tt.wantErr {
+				if len(entries) != tt.wantCount {
+					t.Fatalf("GetEntries() count = %d, want %d", len(entries), tt.wantCount)
+				}
+				if tt.checkFn != nil {
+					tt.checkFn(t, entries)
+				}
+			}
+		})
 	}
 }

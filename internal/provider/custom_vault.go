@@ -7,20 +7,22 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/utils"
-
 	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 // CustomVaultProvider implements SecretProvider and SearchableProvider for multi-entity inline static configs.
 type CustomVaultProvider struct {
-	entities map[string]map[string]any
+	entities           map[string]config.CustomEntityConfig
+	getEntriesFunc     GetEntriesFunc
+	renderTemplateFunc TemplateRenderFunc
 }
 
 // NewCustomVaultProvider returns a new CustomVaultProvider instance.
 func NewCustomVaultProvider() *CustomVaultProvider {
 	return &CustomVaultProvider{
-		entities: make(map[string]map[string]any),
+		entities: make(map[string]config.CustomEntityConfig),
 	}
 }
 
@@ -33,7 +35,7 @@ func (c *CustomVaultProvider) Scheme() string {
 func (c *CustomVaultProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 	c.entities = cfg.Entities
 	if c.entities == nil {
-		c.entities = make(map[string]map[string]any)
+		c.entities = make(map[string]config.CustomEntityConfig)
 	}
 	return nil
 }
@@ -45,7 +47,7 @@ func (c *CustomVaultProvider) GetRawAttribute(entityName, attr string) (any, err
 		return nil, fmt.Errorf("custom_vault: entity %q not found", entityName)
 	}
 
-	val, ok := entity[attr]
+	val, ok := entity.Attributes[attr]
 	if !ok {
 		return nil, fmt.Errorf("custom_vault: attribute %q not found for entity %q", attr, entityName)
 	}
@@ -54,10 +56,38 @@ func (c *CustomVaultProvider) GetRawAttribute(entityName, attr string) (any, err
 }
 
 // GetSecret retrieves a secret from the static inline configuration.
-func (c *CustomVaultProvider) GetSecret(_ context.Context, location string) (string, error) {
+func (c *CustomVaultProvider) GetSecret(ctx context.Context, location string) (string, error) {
 	entityName, attr, err := parseCustomVaultLocation(location)
 	if err != nil {
 		return "", err
+	}
+
+	entity, ok := c.entities[entityName]
+	if !ok {
+		return "", fmt.Errorf("custom_vault: entity %q not found", entityName)
+	}
+
+	if entity.IsComposed {
+		resolved, err := c.resolveEntity(ctx, entityName, entity)
+		if err != nil {
+			return "", err
+		}
+		if val, ok := resolved.Attributes[attr]; ok {
+			return serializeVal(val)
+		}
+		// Case-insensitive lookup fallback
+		for k, v := range resolved.Attributes {
+			if strings.EqualFold(k, attr) {
+				return serializeVal(v)
+			}
+		}
+		// Dot path lookup fallback within nested maps
+		if strings.Contains(attr, ".") {
+			if val, err := resolveDotPath(resolved.Attributes, attr); err == nil {
+				return serializeVal(val)
+			}
+		}
+		return "", fmt.Errorf("custom_vault: attribute %q not found for entity %q", attr, entityName)
 	}
 
 	val, err := c.GetRawAttribute(entityName, attr)
@@ -90,13 +120,13 @@ func (c *CustomVaultProvider) SupportsValueResolution() bool {
 }
 
 // GetEntry retrieves a complete structured entry by location.
-func (c *CustomVaultProvider) GetEntry(_ context.Context, location string) (Entry, error) {
+func (c *CustomVaultProvider) GetEntry(ctx context.Context, location string) (Entry, error) {
 	entity, ok := c.entities[location]
 	if !ok {
 		return Entry{}, fmt.Errorf("custom_vault: entity %q not found", location)
 	}
 
-	return toEntry(location, entity), nil
+	return c.resolveEntity(ctx, location, entity)
 }
 
 // GetEntryWithPath retrieves a complete structured entry along with its location path.
@@ -109,13 +139,15 @@ func (c *CustomVaultProvider) GetEntryWithPath(ctx context.Context, location str
 }
 
 // GetEntryTitle retrieves only the title of an entity by location.
-func (c *CustomVaultProvider) GetEntryTitle(_ context.Context, location string) (string, error) {
-	raw, ok := c.entities[location]
+func (c *CustomVaultProvider) GetEntryTitle(ctx context.Context, location string) (string, error) {
+	entity, ok := c.entities[location]
 	if !ok {
 		return "", fmt.Errorf("custom_vault: entity %q not found", location)
 	}
-
-	for k, v := range raw {
+	if entity.Title != "" {
+		return entity.Title, nil
+	}
+	for k, v := range entity.Attributes {
 		if strings.EqualFold(k, "title") {
 			if str, ok := v.(string); ok {
 				return str, nil
@@ -126,7 +158,11 @@ func (c *CustomVaultProvider) GetEntryTitle(_ context.Context, location string) 
 }
 
 // Search filters the entries using the given SearchQuery criteria.
-func (c *CustomVaultProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
+func (c *CustomVaultProvider) Search(ctx context.Context, query SearchQuery) ([]SearchResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	var results []SearchResult
 
 	var lowerQueryTitle string
@@ -140,7 +176,29 @@ func (c *CustomVaultProvider) Search(_ context.Context, query SearchQuery) ([]Se
 	}
 
 	for name, entity := range c.entities {
-		entry := toEntry(name, entity)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		var entry Entry
+		if !entity.IsComposed {
+			entry = toEntry(name, entity.Attributes)
+			if entity.Title != "" {
+				entry.Title = entity.Title
+			}
+			if len(entity.Tags) > 0 {
+				entry.Tags = uniqueStrings(append(entry.Tags, entity.Tags...))
+			}
+		} else {
+			e, err := c.resolveEntity(ctx, name, entity)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				continue
+			}
+			entry = e
+		}
 
 		if lowerQueryTitle != "" {
 			if !strings.Contains(strings.ToLower(entry.Title), lowerQueryTitle) {
@@ -237,4 +295,172 @@ func serializeVal(val any) (string, error) {
 		return "", fmt.Errorf("custom_vault serialization failed: %w", err)
 	}
 	return s, nil
+}
+
+func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, entity config.CustomEntityConfig) (Entry, error) {
+	if err := ctx.Err(); err != nil {
+		return Entry{}, err
+	}
+	if !entity.IsComposed {
+		e := toEntry(name, entity.Attributes)
+		if entity.Title != "" {
+			e.Title = entity.Title
+		}
+		if len(entity.Tags) > 0 {
+			e.Tags = uniqueStrings(append(e.Tags, entity.Tags...))
+		}
+		return e, nil
+	}
+
+	mergedAttributes := make(map[string]any)
+	var mergedTags []string
+	var mergedEntries []Entry
+
+	for _, mURI := range entity.Merge {
+		if err := ctx.Err(); err != nil {
+			return Entry{}, err
+		}
+		if c.getEntriesFunc == nil {
+			return Entry{}, fmt.Errorf("custom_vault: merge execution not supported in this context")
+		}
+		entries, err := c.getEntriesFunc(ctx, mURI)
+		if err != nil {
+			return Entry{}, fmt.Errorf("custom_vault: failed to merge %q: %w", mURI, err)
+		}
+		for _, e := range entries {
+			entryAttrs := e.Attributes
+			if len(entity.Mapping) > 0 || len(entity.IncludeFields) > 0 || len(entity.ExcludeFields) > 0 {
+				entryPath := e.Title
+				if entryPath == "" {
+					entryPath = name
+				}
+				mapped, err := ApplyMappingAndFilteringToAttributes(
+					entryAttrs,
+					entity.Mapping,
+					entity.IncludeFields,
+					entity.ExcludeFields,
+					entryPath,
+					nil,
+					e,
+					"custom_vault",
+					"custom_vault",
+				)
+				if err != nil {
+					return Entry{}, fmt.Errorf("custom_vault: failed to apply mapping/filtering: %w", err)
+				}
+				entryAttrs = mapped
+			}
+
+			transformedEntry := Entry{
+				Title:      e.Title,
+				Tags:       e.Tags,
+				UUID:       e.UUID,
+				Group:      e.Group,
+				Attributes: entryAttrs,
+			}
+
+			if entity.KeyFormat != "" && entity.KeyFormat != "none" {
+				transformedEntry = ApplyKeyFormat(transformedEntry, entity.KeyFormat)
+				entryAttrs = transformedEntry.Attributes
+			}
+
+			mergedEntries = append(mergedEntries, transformedEntry)
+			mergedTags = append(mergedTags, transformedEntry.Tags...)
+			for k, v := range entryAttrs {
+				mergedAttributes[k] = v
+			}
+		}
+	}
+
+	mergedTags = uniqueStrings(mergedTags)
+
+	// Note: Mapping, filtering, and key formatting transforms are applied per source entry
+	// above before appending to mergedEntries and folding into mergedAttributes.
+	// We avoid applying the transforms a second time here to prevent destructively re-transforming
+	// already processed keys or stripping mapped fields.
+
+	if len(entity.Tags) > 0 {
+		mergedTags = append(mergedTags, entity.Tags...)
+		mergedTags = uniqueStrings(mergedTags)
+	}
+
+	title := entity.Title
+	if title == "" {
+		title = name
+	}
+
+	meta := map[string]any{
+		"Title":    title,
+		"title":    title,
+		"Tags":     mergedTags,
+		"tags":     mergedTags,
+		"Vault":    "custom_vault",
+		"vault":    "custom_vault",
+		"Provider": "custom_vault",
+		"provider": "custom_vault",
+	}
+
+	templateCtx := map[string]any{
+		"meta":       meta,
+		"Meta":       meta,
+		"entries":    mergedEntries,
+		"Entries":    mergedEntries,
+		"attributes": mergedAttributes,
+		"Attributes": mergedAttributes,
+	}
+
+	for k, v := range entity.Attributes {
+		if str, ok := v.(string); ok && strings.Contains(str, "{{") {
+			if c.renderTemplateFunc == nil {
+				return Entry{}, fmt.Errorf("custom_vault: template rendering not supported in this context")
+			}
+			rendered, err := c.renderTemplateFunc(ctx, str, templateCtx)
+			if err != nil {
+				return Entry{}, fmt.Errorf("custom_vault: failed to render template for attribute %q: %w", k, err)
+			}
+			mergedAttributes[k] = rendered
+		} else {
+			mergedAttributes[k] = v
+		}
+	}
+
+	return Entry{
+		Title:      title,
+		Tags:       mergedTags,
+		Attributes: mergedAttributes,
+	}, nil
+}
+
+func ApplyKeyFormat(entry Entry, format string) Entry {
+	if format == "" || format == utils.KeyFormatNone {
+		return entry
+	}
+	formatted := make(map[string]any, len(entry.Attributes))
+	for k, v := range entry.Attributes {
+		formatted[utils.FormatKeyWithFormat(k, format)] = formatValue(v, format)
+	}
+	entry.Attributes = formatted
+	return entry
+}
+
+func uniqueStrings(s []string) []string {
+	seen := make(map[string]bool)
+	var res []string
+	for _, v := range s {
+		if !seen[v] {
+			seen[v] = true
+			res = append(res, v)
+		}
+	}
+	return res
+}
+
+// SetGetEntriesFunc sets the resolver function.
+func (c *CustomVaultProvider) SetGetEntriesFunc(fn GetEntriesFunc) {
+	c.getEntriesFunc = fn
+}
+
+// SetRenderTemplateFunc sets the template renderer function.
+func (c *CustomVaultProvider) SetRenderTemplateFunc(fn TemplateRenderFunc) {
+	c.renderTemplateFunc = fn
 }

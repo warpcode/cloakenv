@@ -13,7 +13,7 @@ import (
 )
 
 // SearchFunc defines the signature for searching across repositories.
-type SearchFunc func(ctx context.Context, expressionStr string, depth int) ([]provider.SearchResult, error)
+type SearchFunc func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]provider.SearchResult, error)
 
 // maxConcurrency bounds concurrent secret resolutions across array and nested
 // attribute expansions within the Resolver. It is deliberately independent from
@@ -41,18 +41,18 @@ func (r *Resolver) SetSearchFunc(sf SearchFunc) {
 	r.searchFunc = sf
 }
 
-// Resolve takes a full value, expands any ${...} expressions, and
-// returns the resolved secret value.
+// Resolve takes a full value, evaluates any {{ get "scheme://..." }} template
+// expressions, and returns the resolved secret value.
 func (r *Resolver) Resolve(ctx context.Context, uri string) (string, error) {
 	return r.ResolveWithKey(ctx, uri, "")
 }
 
-// ResolveWithKey takes a full value, expands any ${...} expressions, and
-// includes the configKey in any failure messages if provided.
+// ResolveWithKey takes a full value, evaluates any {{ get "scheme://..." }} template
+// expressions, and includes the configKey in any failure messages if provided.
 func (r *Resolver) ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error) {
-	if !strings.Contains(uri, "${") {
+	if !strings.Contains(uri, "{{") {
 		if scheme, _, err := utils.ParseURI(uri); err == nil && r.isKnownScheme(scheme) {
-			uri = "${" + uri + "}"
+			uri = `{{ get "` + uri + `" }}`
 		}
 	}
 	return r.expandString(ctx, uri, 0, configKey)
@@ -77,10 +77,11 @@ func (r *Resolver) expandString(ctx context.Context, s string, depth int, config
 	if depth > 5 {
 		return "", fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5")
 	}
-
-	return utils.ExpandString(s, configKey, func(innerText string) (string, error) {
-		return r.resolveSingleURI(ctx, innerText, depth, configKey)
-	})
+	if !strings.Contains(s, "{{") {
+		return s, nil
+	}
+	te := NewTemplateEngine(r)
+	return te.Render(ctx, s, nil, depth, configKey)
 }
 
 func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, configKey string) (string, error) {
@@ -105,7 +106,7 @@ func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, 
 			return "", err
 		}
 
-		results, err := r.searchFunc(ctx, exprQuery, depth+1)
+		results, err := r.searchFunc(ctx, exprQuery, nil, depth+1)
 		if err != nil {
 			return "", fmt.Errorf("search URI evaluation failed: %w", err)
 		}
@@ -149,7 +150,11 @@ func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, 
 
 // GetEntry retrieves a complete structured entry by location.
 func (r *Resolver) GetEntry(ctx context.Context, uri string) (provider.Entry, error) {
-	return r.GetEntryRecursive(ctx, uri, 0)
+	depth := 0
+	if d, ok := ctx.Value(provider.ContextKeyDepth).(int); ok {
+		depth = d
+	}
+	return r.GetEntryRecursive(ctx, uri, depth)
 }
 
 func (r *Resolver) fetchProviderEntry(ctx context.Context, scheme, location string) (provider.Entry, bool, error) {
@@ -211,10 +216,67 @@ func (r *Resolver) resolveAttributeSelector(ctx context.Context, location, uri s
 	return provider.Entry{}, false, nil
 }
 
+func (r *Resolver) GetEntries(ctx context.Context, uri string) ([]provider.Entry, error) {
+	depth := 0
+	if d, ok := ctx.Value(provider.ContextKeyDepth).(int); ok {
+		depth = d
+	}
+	return r.GetEntriesRecursive(ctx, uri, depth)
+}
+
+func (r *Resolver) GetEntriesRecursive(ctx context.Context, uri string, depth int) ([]provider.Entry, error) {
+	if depth > 5 {
+		return nil, fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5 resolving entry %q", uri)
+	}
+	ctx = context.WithValue(ctx, provider.ContextKeyDepth, depth)
+
+	scheme, location, err := utils.ParseURI(uri)
+	if err != nil {
+		return nil, err
+	}
+
+	if scheme == "search" {
+		if r.searchFunc == nil {
+			return nil, fmt.Errorf("search not supported")
+		}
+		results, err := r.searchFunc(ctx, location, nil, depth)
+		if err != nil {
+			return nil, err
+		}
+		entries := make([]provider.Entry, len(results))
+		for i, res := range results {
+			entries[i] = res.Entry
+		}
+		return entries, nil
+	}
+
+	if location == "" {
+		if r.searchFunc == nil {
+			return nil, fmt.Errorf("search not supported")
+		}
+		results, err := r.searchFunc(ctx, "", []string{scheme}, depth)
+		if err != nil {
+			return nil, err
+		}
+		entries := make([]provider.Entry, len(results))
+		for i, res := range results {
+			entries[i] = res.Entry
+		}
+		return entries, nil
+	}
+
+	entry, err := r.GetEntryRecursive(ctx, uri, depth)
+	if err != nil {
+		return nil, err
+	}
+	return []provider.Entry{entry}, nil
+}
+
 func (r *Resolver) GetEntryRecursive(ctx context.Context, uri string, depth int) (provider.Entry, error) {
 	if depth > 5 {
 		return provider.Entry{}, fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5 resolving entry %q", uri)
 	}
+	ctx = context.WithValue(ctx, provider.ContextKeyDepth, depth)
 
 	scheme, location, err := utils.ParseURI(uri)
 	if err != nil {

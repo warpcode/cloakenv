@@ -115,16 +115,9 @@ func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLo
 	return flattenDefaultEntry(r)
 }
 
+// flattenSelectedKeys extracts selected keys for a result entry without allocating a lowerAttrs map per result.
 func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
 	flatRes := make(map[string]any, len(selectedKeys))
-
-	var lowerAttrs map[string]string
-	if len(r.Entry.Attributes) > 0 {
-		lowerAttrs = make(map[string]string, len(r.Entry.Attributes))
-		for k := range r.Entry.Attributes {
-			lowerAttrs[strings.ToLower(k)] = k
-		}
-	}
 
 	for j, field := range selectedKeys {
 		fieldLower := selectedKeysLower[j]
@@ -144,61 +137,75 @@ func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selecte
 		case "title":
 			if r.Entry.Title != "" {
 				flatRes["title"] = r.Entry.Title
-			} else if origKey, ok := lowerAttrs["title"]; ok {
-				flatRes["title"] = r.Entry.Attributes[origKey]
+			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "title"); ok {
+				flatRes["title"] = val
 			}
 		case "tags":
 			if len(r.Entry.Tags) > 0 {
 				flatRes["tags"] = r.Entry.Tags
-			} else if origKey, ok := lowerAttrs["tags"]; ok {
-				flatRes["tags"] = r.Entry.Attributes[origKey]
+			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "tags"); ok {
+				flatRes["tags"] = val
 			}
 		case "uuid":
 			if r.Entry.UUID != "" {
 				flatRes["uuid"] = r.Entry.UUID
-			} else if origKey, ok := lowerAttrs["uuid"]; ok {
-				flatRes["uuid"] = r.Entry.Attributes[origKey]
+			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "uuid"); ok {
+				flatRes["uuid"] = val
 			}
 		case "group":
 			if r.Entry.Group != nil {
 				flatRes["group"] = r.Entry.Group
-			} else if origKey, ok := lowerAttrs["group"]; ok {
-				flatRes["group"] = r.Entry.Attributes[origKey]
+			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "group"); ok {
+				flatRes["group"] = val
 			}
 		case "group_name":
 			if r.Entry.Group != nil && r.Entry.Group.Name != "" {
 				flatRes["group_name"] = r.Entry.Group.Name
-			} else if origKey, ok := lowerAttrs["group_name"]; ok {
-				flatRes["group_name"] = r.Entry.Attributes[origKey]
+			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "group_name"); ok {
+				flatRes["group_name"] = val
 			}
 		case "group_uuid":
 			if r.Entry.Group != nil && r.Entry.Group.UUID != "" {
 				flatRes["group_uuid"] = r.Entry.Group.UUID
-			} else if origKey, ok := lowerAttrs["group_uuid"]; ok {
-				flatRes["group_uuid"] = r.Entry.Attributes[origKey]
+			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "group_uuid"); ok {
+				flatRes["group_uuid"] = val
 			}
 		case "group_path":
 			if r.Entry.Group != nil && r.Entry.Group.Path != "" {
 				flatRes["group_path"] = r.Entry.Group.Path
-			} else if origKey, ok := lowerAttrs["group_path"]; ok {
-				flatRes["group_path"] = r.Entry.Attributes[origKey]
+			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "group_path"); ok {
+				flatRes["group_path"] = val
 			}
 		default:
-			key, val := resolveSelectedAttribute(r.Entry.Attributes, lowerAttrs, field, fieldLower)
+			key, val := resolveSelectedAttribute(r.Entry.Attributes, field)
 			flatRes[key] = val
 		}
 	}
 	return flatRes
 }
 
-func resolveSelectedAttribute(attributes map[string]any, lowerAttrs map[string]string, field, fieldLower string) (string, any) {
-	if origKey, ok := lowerAttrs[fieldLower]; ok {
-		return origKey, attributes[origKey]
-	}
-	if v, ok := attributes[field]; ok {
-		return field, v
+func resolveSelectedAttribute(attributes map[string]any, field string) (string, any) {
+	if origKey, val, ok := findAttrCaseInsensitive(attributes, field); ok {
+		return origKey, val
 	}
 	return field, nil
+}
+
+// findAttrCaseInsensitive performs a direct lookup or case-insensitive search over attributes
+// without string allocations or creating temporary maps.
+func findAttrCaseInsensitive(attributes map[string]any, field string) (string, any, bool) {
+	if len(attributes) == 0 {
+		return "", nil, false
+	}
+	if val, ok := attributes[field]; ok {
+		return field, val, true
+	}
+	for k, val := range attributes {
+		if strings.EqualFold(k, field) {
+			return k, val, true
+		}
+	}
+	return "", nil, false
 }
 
 func flattenDefaultEntry(r provider.SearchResult) map[string]any {
@@ -226,17 +233,16 @@ func flattenDefaultEntry(r provider.SearchResult) map[string]any {
 	}
 
 	for k, v := range r.Entry.Attributes {
-		kLower := strings.ToLower(k)
-		if kLower == "title" && r.Entry.Title != "" {
+		if r.Entry.Title != "" && strings.EqualFold(k, "title") {
 			continue
 		}
-		if kLower == "tags" && len(r.Entry.Tags) > 0 {
+		if len(r.Entry.Tags) > 0 && strings.EqualFold(k, "tags") {
 			continue
 		}
-		if kLower == "uuid" && r.Entry.UUID != "" {
+		if r.Entry.UUID != "" && strings.EqualFold(k, "uuid") {
 			continue
 		}
-		if kLower == "group" && r.Entry.Group != nil {
+		if r.Entry.Group != nil && strings.EqualFold(k, "group") {
 			continue
 		}
 		flatRes[k] = v

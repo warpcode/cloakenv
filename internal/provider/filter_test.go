@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/warpcode/cloakenv/internal/config"
+
 	"github.com/zalando/go-keyring"
 )
 
@@ -223,7 +225,7 @@ func TestFilteringProvider(t *testing.T) {
 		Settings: map[string]string{
 			"vault_name": "work",
 		},
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"db_prod": {
 				"UserName":     "admin",
 				"Password":     "supersecret",
@@ -231,7 +233,7 @@ func TestFilteringProvider(t *testing.T) {
 				"secret:token": "tok123",
 				"db.notes":     "production database",
 			},
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("failed to initialize CustomVaultProvider: %v", err)
@@ -457,12 +459,12 @@ func TestFilteringProvider_BareLocation_Password(t *testing.T) {
 	rawProvider := NewCustomVaultProvider()
 	err := rawProvider.Initialize(ctx, ProviderConfig{
 		Settings: map[string]string{"vault_name": "work"},
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"db_prod": {
 				"UserName": "admin",
 				"Password": "supersecret",
 			},
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("failed to initialize CustomVaultProvider: %v", err)
@@ -560,7 +562,7 @@ func TestFilteringProvider_InterfaceShape(t *testing.T) {
 	cv := NewCustomVaultProvider()
 	_ = cv.Initialize(ctx, ProviderConfig{
 		Settings: map[string]string{"vault_name": "test"},
-		Entities: map[string]map[string]any{"e": {"k": "v"}},
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{"e": {"k": "v"}}),
 	})
 	fpCV := NewFilteringProvider(cv, nil, nil)
 	vrCV, ok := fpCV.(ValueResolvableProvider)
@@ -1670,12 +1672,12 @@ func TestFilteringProvider_CustomVault_EntryPathCandidates(t *testing.T) {
 	cv := NewCustomVaultProvider()
 	if err := cv.Initialize(ctx, ProviderConfig{
 		Settings: map[string]string{},
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"my_entity": {
 				"Password": "my_secret_pass",
 				"UserName": "my_user",
 			},
-		},
+		}),
 	}); err != nil {
 		t.Fatalf("failed to initialize custom vault: %v", err)
 	}
@@ -1912,7 +1914,7 @@ func TestFilteringProvider_CustomVault_StructuredProjection(t *testing.T) {
 	cvp := NewCustomVaultProvider()
 
 	cfg := ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app": {
 				"data": map[string]any{
 					"user":  "alice",
@@ -1923,7 +1925,7 @@ func TestFilteringProvider_CustomVault_StructuredProjection(t *testing.T) {
 					map[string]any{"id": 2, "secret": "s2"},
 				},
 			},
-		},
+		}),
 	}
 	if err := cvp.Initialize(ctx, cfg); err != nil {
 		t.Fatalf("failed to init custom_vault: %v", err)
@@ -2300,13 +2302,13 @@ entities:
 	t.Run("CustomVault_TitleQualifiedExclusion", func(t *testing.T) {
 		cp := NewCustomVaultProvider()
 		if err := cp.Initialize(ctx, ProviderConfig{
-			Entities: map[string]map[string]any{
+			Entities: config.ToCustomEntityMap(map[string]map[string]any{
 				"e1": {
 					"title":    "My App Secret",
 					"Password": "top_secret_pass",
 					"username": "admin",
 				},
-			},
+			}),
 		}); err != nil {
 			t.Fatalf("failed to init CustomVault: %v", err)
 		}
@@ -2569,12 +2571,12 @@ func TestFilteringProvider_TitleResolutionError(t *testing.T) {
 	// Custom vault: lookup for nonexistent entity title must return error
 	cp := NewCustomVaultProvider()
 	if err := cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"valid_entity": {
 				"Password": "secret",
 				"title":    "Valid Title",
 			},
-		},
+		}),
 	}); err != nil {
 		t.Fatalf("failed to initialize custom vault: %v", err)
 	}
@@ -2638,12 +2640,12 @@ func TestFilteringProvider_ColonQualifiedCandidateInclusionAndExclusion(t *testi
 
 	cp := NewCustomVaultProvider()
 	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: map[string]map[string]any{
+		Entities: config.ToCustomEntityMap(map[string]map[string]any{
 			"app": {
 				"Password": "secret_password",
 				"UserName": "test_user",
 			},
-		},
+		}),
 	})
 
 	// 1. Colon-qualified exclude_fields: ["app:*"]
