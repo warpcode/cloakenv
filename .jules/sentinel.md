@@ -1,0 +1,4 @@
+## 2026-10-31 - Relative PATH Executable Hijacking via exec.ErrDot
+**Vulnerability:** In Go 1.19+, `exec.LookPath` returns an error wrapping `exec.ErrDot` when an executable resolves to the current working directory (`.`) due to `PATH` containing `.` or empty entries. If not handled explicitly as a security violation, the command runner may either report a generic "command not found" error or execute untrusted binaries if `GODEBUG=execerrdot=0` is set.
+**Learning:** `cloakenv run` executes commands with injected secrets into child processes. If a command name resolves implicitly to an untrusted executable in the current working directory, malicious binaries placed in the repository root or workdir could hijack execution and exfiltrate injected secrets.
+**Prevention:** In runner implementations across Unix and Windows, always explicitly inspect `errors.Is(err, exec.ErrDot)` from `exec.LookPath` and abort execution immediately with a clear security risk error.

@@ -4,6 +4,7 @@
 package runner
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,6 +24,10 @@ func RunCommand(cmdArgs []string, env []string) int {
 	cmd := cmdArgs[0]
 	binary, err := exec.LookPath(cmd)
 	if err != nil {
+		if errors.Is(err, exec.ErrDot) {
+			fmt.Fprintf(os.Stderr, "Execution of relative command %q from PATH is blocked due to security risks\n", cmd)
+			return 1
+		}
 		fmt.Fprintf(os.Stderr, "Command not found: %v\n", err)
 		return 1
 	}
