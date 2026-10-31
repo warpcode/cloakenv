@@ -48,6 +48,12 @@ func TestRun_Errors(t *testing.T) {
 			wantErr:  "No command specified",
 		},
 		{
+			name:     "Invalid Key Format",
+			args:     []string{"-f", "camel", "--", "echo", "1"},
+			wantExit: 1,
+			wantErr:  "invalid key format",
+		},
+		{
 			name:     "Invalid -e Format",
 			args:     []string{"-e", "INVALID_FORMAT", "--", "echo", "1"},
 			wantExit: 1,

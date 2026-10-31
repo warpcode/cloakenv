@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"os"
+	"runtime"
 	"testing"
 	"time"
 
@@ -112,6 +113,18 @@ func TestCacheProvider(t *testing.T) {
 		t.Run("SetAndGet", func(t *testing.T) {
 			if err := cp.SetSecret(ctx, location, secretVal); err != nil {
 				t.Fatalf("SetSecret failed: %v", err)
+			}
+
+			// Verify permissions on the written cache file
+			if runtime.GOOS != "windows" {
+				filePath := cp.getCacheFilePath(location)
+				info, err := os.Stat(filePath)
+				if err != nil {
+					t.Fatalf("failed to stat cache file: %v", err)
+				}
+				if perm := info.Mode().Perm(); perm != 0600 {
+					t.Errorf("expected file permissions 0600, got %o", perm)
+				}
 			}
 
 			// Get secret should succeed

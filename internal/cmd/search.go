@@ -12,18 +12,24 @@ import (
 	"github.com/warpcode/cloakenv/internal/utils"
 )
 
-// Search handles "cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]"
-// Search handles "cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json] [--show-meta]"
+// Search handles "cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json] [-f format] [--show-meta]"
 func Search(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
 		PrintSearchHelp()
 		return 0
 	}
 
-	query, repoScopes, selectedKeys, outputFormat, showMeta, err := parseSearchArgs(args)
+	query, repoScopes, selectedKeys, outputFormat, keyFormat, showMeta, err := parseSearchArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
+	}
+
+	if keyFormat != "" {
+		if cfg == nil {
+			cfg = &config.Config{}
+		}
+		cfg.KeyFormatOverride = keyFormat
 	}
 
 	orch, err := engine.NewOrchestrator(cfg)
@@ -50,10 +56,17 @@ func Search(args []string, cfg *config.Config) int {
 	return 0
 }
 
-func parseSearchArgs(args []string) (query string, repoScopes []string, selectedKeys []string, outputFormat string, showMeta bool, err error) {
+func parseSearchArgs(args []string) (query string, repoScopes []string, selectedKeys []string, outputFormat string, keyFormat string, showMeta bool, err error) {
 	outputFormat = "yaml" // default
 
 	parser := NewFlagParser()
+	parser.Var([]string{"-f", "--key-format"}, true, "flag -f/--key-format requires an argument", func(name, val string) error {
+		if val != "none" && val != "env" && val != "snake" && val != "kebab" {
+			return fmt.Errorf("invalid key format %q (expected none, env, snake, or kebab)", val)
+		}
+		keyFormat = val
+		return nil
+	})
 	parser.Var([]string{"--show-meta"}, false, "", func(name, val string) error {
 		showMeta = true
 		return nil
@@ -79,10 +92,10 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 	}
 
 	if _, err := parser.Parse(args); err != nil {
-		return "", nil, nil, "", false, err
+		return "", nil, nil, "", "", false, err
 	}
 
-	return query, repoScopes, selectedKeys, outputFormat, showMeta, nil
+	return query, repoScopes, selectedKeys, outputFormat, keyFormat, showMeta, nil
 }
 
 func flattenSearchResults(results []provider.SearchResult, selectedKeys []string, showMeta bool) []map[string]any {

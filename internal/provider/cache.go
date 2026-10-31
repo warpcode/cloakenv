@@ -225,6 +225,11 @@ func (c *CacheProvider) SetSecret(ctx context.Context, location string, value st
 	}
 	tmpFile := f.Name()
 
+	// Enforce restrictive file permissions (0600) so sensitive temporary cache files are only readable/writable by owner.
+	if err := f.Chmod(0600); err != nil {
+		return fmt.Errorf("cache provider: failed to set permissions on temp cache file: %w", errors.Join(err, f.Close(), os.Remove(tmpFile)))
+	}
+
 	if _, err := f.Write(fileData); err != nil {
 		// Best-effort cleanup; join cleanup failures with the primary error
 		// so nothing is silently discarded.

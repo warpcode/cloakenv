@@ -20,6 +20,7 @@ func TestParseSearchArgs(t *testing.T) {
 		wantRepoScopes   []string
 		wantSelectedKeys []string
 		wantOutputFormat string
+		wantKeyFormat    string
 		wantShowMeta     bool
 		wantErrMsg       string
 	}{
@@ -30,6 +31,7 @@ func TestParseSearchArgs(t *testing.T) {
 			wantRepoScopes:   nil,
 			wantSelectedKeys: nil,
 			wantOutputFormat: "yaml",
+			wantKeyFormat:    "",
 			wantErrMsg:       "",
 		},
 		{
@@ -49,6 +51,7 @@ func TestParseSearchArgs(t *testing.T) {
 			wantRepoScopes:   nil,
 			wantSelectedKeys: nil,
 			wantOutputFormat: "yaml",
+			wantKeyFormat:    "",
 			wantErrMsg:       "",
 		},
 		{
@@ -58,6 +61,7 @@ func TestParseSearchArgs(t *testing.T) {
 			wantRepoScopes:   nil,
 			wantSelectedKeys: nil,
 			wantOutputFormat: "json",
+			wantKeyFormat:    "",
 			wantErrMsg:       "",
 		},
 		{
@@ -67,7 +71,38 @@ func TestParseSearchArgs(t *testing.T) {
 			wantRepoScopes:   nil,
 			wantSelectedKeys: nil,
 			wantOutputFormat: "yaml",
+			wantKeyFormat:    "",
 			wantErrMsg:       "",
+		},
+		{
+			name:             "key format snake with -f",
+			args:             []string{"-f", "snake"},
+			wantQuery:        "",
+			wantRepoScopes:   nil,
+			wantSelectedKeys: nil,
+			wantOutputFormat: "yaml",
+			wantKeyFormat:    "snake",
+			wantErrMsg:       "",
+		},
+		{
+			name:             "key format kebab with --key-format",
+			args:             []string{"--key-format", "kebab"},
+			wantQuery:        "",
+			wantRepoScopes:   nil,
+			wantSelectedKeys: nil,
+			wantOutputFormat: "yaml",
+			wantKeyFormat:    "kebab",
+			wantErrMsg:       "",
+		},
+		{
+			name:             "invalid key format",
+			args:             []string{"-f", "invalid"},
+			wantQuery:        "",
+			wantRepoScopes:   nil,
+			wantSelectedKeys: nil,
+			wantOutputFormat: "",
+			wantKeyFormat:    "",
+			wantErrMsg:       "invalid key format",
 		},
 		{
 			name:             "single vault",
@@ -76,6 +111,7 @@ func TestParseSearchArgs(t *testing.T) {
 			wantRepoScopes:   []string{"vault1"},
 			wantSelectedKeys: nil,
 			wantOutputFormat: "yaml",
+			wantKeyFormat:    "",
 			wantErrMsg:       "",
 		},
 		{
@@ -107,11 +143,12 @@ func TestParseSearchArgs(t *testing.T) {
 		},
 		{
 			name:             "all flags and query",
-			args:             []string{"myquery", "--vault", "vault1", "-i", "key1", "-o", "json"},
+			args:             []string{"myquery", "--vault", "vault1", "-i", "key1", "-o", "json", "-f", "env"},
 			wantQuery:        "myquery",
 			wantRepoScopes:   []string{"vault1"},
 			wantSelectedKeys: []string{"key1"},
 			wantOutputFormat: "json",
+			wantKeyFormat:    "env",
 			wantErrMsg:       "",
 		},
 		{
@@ -172,7 +209,7 @@ func TestParseSearchArgs(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			query, repoScopes, selectedKeys, outputFormat, showMeta, err := parseSearchArgs(tc.args)
+			query, repoScopes, selectedKeys, outputFormat, keyFormat, showMeta, err := parseSearchArgs(tc.args)
 
 			if tc.wantErrMsg != "" {
 				if err == nil {
@@ -205,6 +242,10 @@ func TestParseSearchArgs(t *testing.T) {
 			}
 			if showMeta != tc.wantShowMeta {
 				t.Errorf("parseSearchArgs() showMeta = %v, want %v", showMeta, tc.wantShowMeta)
+			}
+
+			if keyFormat != tc.wantKeyFormat {
+				t.Errorf("expected keyFormat %q, got %q", tc.wantKeyFormat, keyFormat)
 			}
 		})
 	}
@@ -675,4 +716,77 @@ func TestSearch(t *testing.T) {
 			t.Errorf("expected env formatted keys USERNAME and BIT_STRENGTH, got %s", output)
 		}
 	})
+}
+
+func TestSearch_InvalidKeyFormat(t *testing.T) {
+	oldStderr := os.Stderr
+	defer func() { os.Stderr = oldStderr }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stderr = w
+
+	args := []string{"-f", "camel", "query"}
+	cfg := &config.Config{
+		Vaults: make(map[string]config.VaultConfig),
+	}
+
+	exitCode := Search(args, cfg)
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("failed to read from pipe: %v", err)
+	}
+
+	if exitCode != 1 {
+		t.Errorf("expected exit code 1, got %d", exitCode)
+	}
+
+	if !strings.Contains(buf.String(), "invalid key format") {
+		t.Errorf("expected output to contain 'invalid key format', got %q", buf.String())
+	}
+}
+
+func TestSearch_RuntimeKeyFormatOverride(t *testing.T) {
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	args := []string{"title == 'Production SSH Key'", "-o", "json", "-f", "snake"}
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"my_yaml": {
+				Provider:  "yaml",
+				VaultPath: "../../testdata/test_entries.yaml",
+				KeyFormat: "env", // configured as env, overridden as snake
+			},
+		},
+	}
+	exitCode := Search(args, cfg)
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", exitCode)
+	}
+
+	var buf bytes.Buffer
+	_ = w.Close()
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("failed to copy: %v", err)
+	}
+	output := buf.String()
+
+	if !strings.Contains(output, `"username":`) || !strings.Contains(output, `"bit_strength":`) {
+		t.Errorf("expected formatted keys 'username' and 'bit_strength', got %s", output)
+	}
+
+	if !strings.Contains(output, `"title":`) || !strings.Contains(output, `"tags":`) {
+		t.Errorf("expected intact metadata keys 'title' and 'tags', got %s", output)
+	}
 }

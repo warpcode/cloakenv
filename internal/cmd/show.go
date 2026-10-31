@@ -18,6 +18,7 @@ type showOptions struct {
 	explicit      map[string]string
 	whitelist     []string
 	outputFormat  string
+	keyFormat     string
 	positionalURI string
 	showMeta      bool
 }
@@ -28,9 +29,16 @@ func parseShowFlags(args []string) (*showOptions, error) {
 		outputFormat: "yaml",
 	}
 
-	usageMsg := "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys] [--show-meta]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--show-meta]"
+	usageMsg := "Usage: cloakenv show <entry-uri> [-f format] [-o yaml | json | env | keys] [--show-meta]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-f format] [-o yaml | json | env | keys] [--show-meta]"
 
 	parser := NewFlagParser()
+	parser.Var([]string{"-f", "--key-format"}, true, "flag -f/--key-format requires an argument", func(name, val string) error {
+		if val != "none" && val != "env" && val != "snake" && val != "kebab" {
+			return fmt.Errorf("invalid key format %q (expected none, env, snake, or kebab)", val)
+		}
+		opts.keyFormat = val
+		return nil
+	})
 	parser.Var([]string{"--show-meta"}, false, "", func(name, val string) error {
 		opts.showMeta = true
 		return nil
@@ -224,6 +232,13 @@ func Show(args []string, cfg *config.Config) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
+	}
+
+	if opts.keyFormat != "" {
+		if cfg == nil {
+			cfg = &config.Config{}
+		}
+		cfg.KeyFormatOverride = opts.keyFormat
 	}
 
 	orch, err := engine.NewOrchestrator(cfg)

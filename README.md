@@ -212,7 +212,7 @@ cloakenv run -e DATABASE_URL='postgres://{{ get "env://DB_USER" }}:{{ get "keyri
 
 By default (`none`), `cloakenv` passes through original attribute key names unmodified as stored in the vault backend.
 
-Per vault, you can configure `key_format` in `config.yaml` to standardize attribute keys:
+Per vault, you can configure `key_format` in `config.yaml` to standardize attribute keys. You can also override this format at runtime using the `-f` or `--key-format` flag on `cloakenv run`, `cloakenv show`, or `cloakenv search`.
 - **`none`** (default): Passes through the original key name unmodified.
 - **`env`**: Uppercase with non-alphanumeric runs collapsed to a single underscore (`_`).
 - **`snake`**: Lowercase with non-alphanumeric runs collapsed to a single underscore (`_`).
@@ -268,6 +268,7 @@ cloakenv run [-E] [flags] -- <command> [args...]
 - `-t template_path`: Load a `.env` template file containing `KEY=uri` or literal definitions (repeatable).
 - `-m entry-uri`: Merge all attributes from a structured entry into the environment (repeatable). Can target a single attribute using `:attribute`.
 - `-i KEY`: Whitelist key filter (repeatable). When `-i` is specified, only the whitelisted keys from `-m` merges are injected. (`-e` mappings always bypass whitelist filtering).
+- `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
 - `--no-autoload`: Bypass configuration `autoload:` rules for this execution.
 
 #### Examples:
@@ -282,7 +283,10 @@ cloakenv run -m "work://Production/PostgreSQL" -- ./migrate-db
 # 3. Merge an entry but whitelist only specific fields
 cloakenv run -m "work://Production/PostgreSQL" -i USERNAME -i PASSWORD -- ./migrate-db
 
-# 4. Load a template .env file
+# 4. Override the vault key format to export kebab-case variables
+cloakenv run -f kebab -m "work://Production/PostgreSQL" -- ./deploy
+
+# 5. Load a template .env file
 cloakenv run -t ./deploy.env -- terraform apply
 
 # 5. Combine template, merge, and explicit overrides
@@ -392,6 +396,7 @@ cloakenv show -m <entry-uri> [-m <entry-uri> ...] [flags]
 - `-e KEY=uri`: Explicit key override (repeatable).
 - `-t template_path`: Load template `.env` file (repeatable).
 - `-i KEY`: Whitelist filter keys (repeatable).
+- `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
 
 #### Output Formats:
 1. **`yaml`** (Default): Formatted YAML document.
@@ -431,6 +436,7 @@ cloakenv search "[query_expression]" [flags]
 #### Flags:
 - `--vault <vault_name>`: Scope the search to one or more specific vaults (repeatable).
 - `-i KEY`: Select only specific attributes/fields in the output (repeatable).
+- `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
 - `-o, --output`: Output format: `yaml` (default) or `json`.
 
 #### Examples:
