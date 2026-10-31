@@ -113,6 +113,41 @@ func TestValidateCommand(t *testing.T) {
 			wantCode:   0,
 			wantStderr: "",
 		},
+		{
+			name:       "newline in command name",
+			cmdArgs:    []string{"echo\n"},
+			env:        []string{},
+			wantCode:   1,
+			wantStderr: "Invalid command: \"echo\\n\"\n",
+		},
+		{
+			name:       "carriage return in command name",
+			cmdArgs:    []string{"echo\r"},
+			env:        []string{},
+			wantCode:   1,
+			wantStderr: "Invalid command: \"echo\\r\"\n",
+		},
+		{
+			name:       "newline in env key",
+			cmdArgs:    []string{"echo", "hello"},
+			env:        []string{"INJECTED\nVAR=value"},
+			wantCode:   1,
+			wantStderr: "Invalid environment variable \"INJECTED\\nVAR\" at index 0: key contains newline or carriage return\n",
+		},
+		{
+			name:       "carriage return in env key",
+			cmdArgs:    []string{"echo", "hello"},
+			env:        []string{"INJECTED\rVAR=value"},
+			wantCode:   1,
+			wantStderr: "Invalid environment variable \"INJECTED\\rVAR\" at index 0: key contains newline or carriage return\n",
+		},
+		{
+			name:       "valid multiline env value",
+			cmdArgs:    []string{"echo", "hello"},
+			env:        []string{"CERT=line1\nline2\nline3"},
+			wantCode:   0,
+			wantStderr: "",
+		},
 	}
 
 	for _, tt := range tests {
