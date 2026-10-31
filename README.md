@@ -1191,20 +1191,26 @@ autoload:
 ### Common Makefile Targets
 
 ```bash
-make build       # Compile binary to bin/cloakenv
-make test        # Run tests with race detector (go test -v -race ./...)
-make bench        # Run performance benchmarks
-make fmt         # Format Go source code (go fmt ./...)
-make vet         # Run Go static analysis (go vet ./...)
-make test-all    # Run fmt, vet, test, and bench in sequence
-make install     # Install binary to $GOBIN or $GOPATH/bin
-make uninstall   # Remove installed binary
+make build         # Compile binary to bin/cloakenv
+make run           # Run application via go run .
+make test          # Run tests with race detector (go test -v -race ./...)
+make bench         # Run performance benchmarks
+make fmt           # Format Go source code (go fmt ./...)
+make vet           # Run Go static analysis (go vet ./...)
+make test-all      # Run fmt, vet, test, and bench in sequence
+make clean         # Remove build artifacts (bin/)
+make install       # Install binary to $GOBIN or $GOPATH/bin
+make uninstall     # Remove installed binary
+make verify        # Run complete verification: build, vet, format check, race tests
+make agents-check  # Run automated documentation & repository consistency checks
 ```
 
 > [!NOTE]
 > CI runs lint, cross-platform tests (Linux, macOS, Windows), and [Semgrep](https://semgrep.dev/) static analysis for code scanning. All checks must pass before merge.
 
 ### Running Test Verification with Test Fixture
+
+> See [testdata/README.md](testdata/README.md) for full fixture documentation, attribute reference, and credentials.
 
 A pre-built KeePass database fixture is available at `testdata/testDB.kdbx`:
 - **Master Password**: `password123`

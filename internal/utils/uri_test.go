@@ -88,3 +88,12 @@ func TestParseURI(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkParseURI(b *testing.B) {
+	uri := "search://tags=prod&title=db/Password"
+	b.ResetTimer()
+	b.ReportAllocs()
+	for range b.N {
+		_, _, _ = ParseURI(uri)
+	}
+}

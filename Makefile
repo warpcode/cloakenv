@@ -1,4 +1,4 @@
-.PHONY: all build run test clean fmt vet install uninstall
+.PHONY: all build run test bench test-all clean fmt vet install uninstall verify agents-check
 
 BINARY_NAME=cloakenv
 BUILD_DIR=bin
@@ -34,4 +34,15 @@ install:
 
 uninstall:
 	go clean -i
+
+verify:
+	@echo "==> Running full verification pipeline..."
+	go build ./...
+	go vet ./...
+	@test -z "$$(gofmt -l .)" || (echo "Unformatted Go files detected" && gofmt -l . && exit 1)
+	go test -race ./...
+	@echo "==> Verification passed."
+
+agents-check:
+	@./scripts/check_agents.sh
 
