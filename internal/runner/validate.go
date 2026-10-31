@@ -16,7 +16,7 @@ func validateCommand(cmdArgs []string, env []string) int {
 	}
 
 	commandName := cmdArgs[0]
-	if commandName == "" || commandName == "." || commandName == ".." {
+	if commandName == "" || commandName == "." || commandName == ".." || strings.ContainsAny(commandName, "\r\n") {
 		fmt.Fprintf(os.Stderr, "Invalid command: %q\n", commandName)
 		return 1
 	}
@@ -37,6 +37,13 @@ func validateCommand(cmdArgs []string, env []string) int {
 		key, _, ok := strings.Cut(e, "=")
 		if !ok || key == "" {
 			fmt.Fprintf(os.Stderr, "Invalid environment variable at index %d: missing '=' or key is empty\n", i)
+			return 1
+		}
+		// Security: Reject newline and carriage return characters in environment variable keys
+		// to prevent CRLF injection and environment variable injection (e.g. injecting LD_PRELOAD)
+		// into downstream child processes and shell wrappers.
+		if strings.ContainsAny(key, "\r\n") {
+			fmt.Fprintf(os.Stderr, "Invalid environment variable %q at index %d: key contains newline or carriage return\n", key, i)
 			return 1
 		}
 	}
