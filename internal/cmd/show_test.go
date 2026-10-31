@@ -482,3 +482,43 @@ func TestShow_InvalidKeyFormat(t *testing.T) {
 		t.Errorf("expected output to contain 'invalid key format', got %q", buf.String())
 	}
 }
+
+func TestShow_RuntimeKeyFormatOverride(t *testing.T) {
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	args := []string{"-f", "snake", "work://ssh_key_staging"}
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"work": {
+				Provider:  "yaml",
+				VaultPath: "../../testdata/test_entries.yaml",
+				KeyFormat: "env", // overridden by snake
+			},
+		},
+	}
+
+	t.Setenv("CLOAKENV_MASTER_PASSWORD", "password123")
+	exitCode := Show(args, cfg)
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", exitCode)
+	}
+
+	var buf bytes.Buffer
+	_ = w.Close()
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("failed to copy: %v", err)
+	}
+	output := buf.String()
+
+	// test_entries.yaml has USERNAME
+	if !strings.Contains(output, "username:") {
+		t.Errorf("expected output to contain snake_case formatted keys 'username:', got %s", output)
+	}
+}

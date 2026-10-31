@@ -28,7 +28,7 @@ func parseShowFlags(args []string) (*showOptions, error) {
 		outputFormat: "yaml",
 	}
 
-	usageMsg := "Usage: cloakenv show <entry-uri> [-o yaml | json | env | keys]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]"
+	usageMsg := "Usage: cloakenv show <entry-uri> [-f format] [-o yaml | json | env | keys]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-f format] [-o yaml | json | env | keys]"
 
 	parser := NewFlagParser()
 	parser.Var([]string{"-f", "--key-format"}, true, "flag -f/--key-format requires an argument", func(name, val string) error {

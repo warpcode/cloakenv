@@ -716,3 +716,44 @@ func TestSearch_InvalidKeyFormat(t *testing.T) {
 		t.Errorf("expected output to contain 'invalid key format', got %q", buf.String())
 	}
 }
+
+func TestSearch_RuntimeKeyFormatOverride(t *testing.T) {
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	args := []string{"title == 'Production SSH Key'", "-o", "json", "-f", "snake"}
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"my_yaml": {
+				Provider:  "yaml",
+				VaultPath: "../../testdata/test_entries.yaml",
+				KeyFormat: "env", // configured as env, overridden as snake
+			},
+		},
+	}
+	exitCode := Search(args, cfg)
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", exitCode)
+	}
+
+	var buf bytes.Buffer
+	_ = w.Close()
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("failed to copy: %v", err)
+	}
+	output := buf.String()
+
+	if !strings.Contains(output, `"username":`) || !strings.Contains(output, `"bit_strength":`) {
+		t.Errorf("expected formatted keys 'username' and 'bit_strength', got %s", output)
+	}
+
+	if !strings.Contains(output, `"title":`) || !strings.Contains(output, `"tags":`) {
+		t.Errorf("expected intact metadata keys 'title' and 'tags', got %s", output)
+	}
+}
