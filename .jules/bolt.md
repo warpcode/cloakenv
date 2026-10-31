@@ -1,0 +1,3 @@
+## 2026-10-31 - Search Result Sorting and Filter Environment Allocations
+**Learning:** In secret search queries across hundreds or thousands of vault entries, `sort.Slice` introduced measurable overhead through reflection and `reflect.Swapper`, and constructing a fresh nested `groupMap` for every candidate entry during AST query evaluation accounted for ~25% of total allocated memory.
+**Action:** Use `slices.SortFunc` with `cmp.Compare` for deterministic slice sorting on structs, and reuse cleared helper maps (`clear(groupMap)`) across evaluation loops alongside the parent evaluation environment.

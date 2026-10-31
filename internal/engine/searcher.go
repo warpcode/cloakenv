@@ -1,9 +1,10 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -155,6 +156,9 @@ func (s *Searcher) filterResultsByExpression(ctx context.Context, expressionStr 
 
 	var matchedResults []provider.SearchResult
 	env := make(map[string]any)
+	// Optimization: reuse groupMap across search result iterations using clear()
+	// to avoid allocating a new map for every candidate entry during query evaluation.
+	groupMap := map[string]any{"name": "", "uuid": "", "path": ""}
 	for _, r := range allResults {
 		clear(env)
 		env["title"] = r.Entry.Title
@@ -162,11 +166,15 @@ func (s *Searcher) filterResultsByExpression(ctx context.Context, expressionStr 
 		env["path"] = r.Path
 		env["uuid"] = r.Entry.UUID
 
-		groupMap := map[string]any{"name": "", "uuid": "", "path": ""}
+		clear(groupMap)
 		if r.Entry.Group != nil {
 			groupMap["name"] = r.Entry.Group.Name
 			groupMap["uuid"] = r.Entry.Group.UUID
 			groupMap["path"] = r.Entry.Group.Path
+		} else {
+			groupMap["name"] = ""
+			groupMap["uuid"] = ""
+			groupMap["path"] = ""
 		}
 		env["group"] = groupMap
 
@@ -321,11 +329,13 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 	// search:// URIs resolving results[0]) get stable, reproducible results
 	// regardless of Go's randomized map iteration order over vaults and
 	// provider-internal entity maps.
-	sort.Slice(allResults, func(i, j int) bool {
-		if allResults[i].Vault != allResults[j].Vault {
-			return allResults[i].Vault < allResults[j].Vault
+	// Optimization: slices.SortFunc avoids the reflection and closure conversion
+	// overhead of sort.Slice.
+	slices.SortFunc(allResults, func(a, b provider.SearchResult) int {
+		if c := cmp.Compare(a.Vault, b.Vault); c != 0 {
+			return c
 		}
-		return allResults[i].Path < allResults[j].Path
+		return cmp.Compare(a.Path, b.Path)
 	})
 
 	return s.filterResultsByExpression(ctx, expressionStr, allResults)
