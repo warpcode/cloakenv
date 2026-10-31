@@ -554,6 +554,57 @@ func TestProviderManagerConcurrentInitialization(t *testing.T) {
 	})
 }
 
+func TestProviderManager_KeyFormatOverride(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := &config.Config{
+		KeyFormatOverride: "snake",
+		Vaults: map[string]config.VaultConfig{
+			"vault_env": {
+				Provider:  "custom_vault",
+				KeyFormat: "env",
+			},
+			"vault_none": {
+				Provider:  "custom_vault",
+				KeyFormat: "env",
+			},
+		},
+	}
+	// Manually override after config definition to test "none"
+	cfg.KeyFormatOverride = "none"
+
+	pm := NewProviderManager(cfg, nil, nil)
+
+	// Ensure that when KeyFormatOverride is "none", no KeyFormatProvider is applied
+	p, err := pm.getVaultProvider(ctx, "vault_none")
+	if err != nil {
+		t.Fatalf("failed to get vault provider: %v", err)
+	}
+
+	_, isKFP := p.(*provider.SearchableValueResolvableKeyFormatProvider)
+	if isKFP {
+		t.Errorf("expected provider not to be wrapped in KeyFormatProvider when override is 'none'")
+	}
+
+	cfg.KeyFormatOverride = "snake"
+
+	p2, err := pm.getVaultProvider(ctx, "vault_env")
+	if err != nil {
+		t.Fatalf("failed to get vault provider: %v", err)
+	}
+
+	kfp, ok := p2.(interface {
+		Format() string
+	})
+	if !ok {
+		t.Fatalf("expected provider to be wrapped in KeyFormatProvider")
+	}
+
+	if kfp.Format() != "snake" {
+		t.Errorf("expected key format 'snake', got %q", kfp.Format())
+	}
+}
+
 func TestProviderManager_SetGetEntriesFunc_And_SetRenderTemplateFunc(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())

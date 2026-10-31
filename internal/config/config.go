@@ -45,12 +45,13 @@ func (t *TemplateConfig) UnmarshalYAML(value *goyaml.Node) error {
 // Config is the top-level configuration structure.
 type Config struct {
 	// ConfigPath is the absolute path to the configuration file.
-	ConfigPath string                    `yaml:"-"`
-	Cache      CacheConfig               `yaml:"cache"`
-	Keyring    KeyringConfig             `yaml:"keyring"`
-	Templates  map[string]TemplateConfig `yaml:"templates,omitempty"`
-	Vaults     map[string]VaultConfig    `yaml:"vaults"`
-	Autoload   []AutoloadRule            `yaml:"autoload"`
+	ConfigPath        string                    `yaml:"-"`
+	Cache             CacheConfig               `yaml:"cache"`
+	Keyring           KeyringConfig             `yaml:"keyring"`
+	Templates         map[string]TemplateConfig `yaml:"templates,omitempty"`
+	Vaults            map[string]VaultConfig    `yaml:"vaults"`
+	Autoload          []AutoloadRule            `yaml:"autoload"`
+	KeyFormatOverride string                    `yaml:"-"`
 }
 
 // AutoloadRule defines rules for matching, masking, and autoloading secret vaults/URIs/env vars
