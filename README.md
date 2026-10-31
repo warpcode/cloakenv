@@ -670,7 +670,7 @@ vaults:
 
 #### 5. Field Filtering (`include_fields` and `exclude_fields`)
 - Supported across structured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`).
-- **Default Metadata Fields**: Default metadata fields (`title`, `tags`, `uuid`, `group`, `group_name`, `group_uuid`, `group_path`, `path`, `vault`, `provider`) are treated as default metadata fields and are included by default alongside entry attributes.
+- **Default Metadata Fields**: Default metadata fields (`title`, `tags`, `uuid`, `group`, `group_name`, `group_uuid`, `group_path`, `path`) are treated as default metadata fields and are included by default alongside entry attributes. Vault and provider metadata can be requested via `--show-meta` or explicitly via `-i _meta_.provider` or `-i _meta_.vault`.
 - **`include_fields`**: When configured, restricts returned entry attributes to fields matching at least one glob pattern. **Include rules always take precedence over exclude rules** (evaluated first). An **empty list means filtering is disabled** (all unexcluded attributes allowed), not deny-all.
 - **`exclude_fields`**: Drops attributes matching any configured glob pattern before returning secrets when not explicitly permitted by include rules.
 - **Case-Sensitivity**: Glob patterns are evaluated **case-sensitively** (via Go's `path.Match`). A pattern like `"password"` will not match an attribute named `"Password"`. Ensure pattern casing matches the provider's attribute names.

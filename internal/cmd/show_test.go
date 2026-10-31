@@ -532,3 +532,121 @@ func TestShow_RuntimeKeyFormatOverride(t *testing.T) {
 		t.Errorf("expected output to contain snake_case formatted keys 'username:', got %s", output)
 	}
 }
+
+func TestShow_ShowMeta(t *testing.T) {
+	keyring.MockInit()
+	if err := keyring.Set("cloakenv", "provider/testdb", "password123"); err != nil {
+		t.Fatalf("failed to set mock credentials: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+	t.Setenv("XDG_CACHE_HOME", tempDir)
+	t.Setenv("LocalAppData", tempDir)
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"testdb": {
+				Provider:  "keepass",
+				VaultPath: "../../testdata/testDB.kdbx",
+			},
+		},
+	}
+
+	t.Run("JSON_WithMeta", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"testdb://website/Test Website", "-o", "json", "--show-meta"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, "_meta_") {
+			t.Errorf("expected json output to include _meta_, got: %s", output)
+		}
+		if !strings.Contains(output, `"vault": "testdb"`) || !strings.Contains(output, `"provider": "keepass"`) {
+			t.Errorf("expected _meta_ to include vault and provider, got: %s", output)
+		}
+	})
+
+	t.Run("JSON_NilConfigDoesNotPanic", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"testdb://website/Test Website", "-o", "json", "--show-meta"}, nil)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		// Even with nil config, should not panic
+		_ = exitCode
+	})
+
+	t.Run("EnvFormat_OmitsMeta", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"testdb://website/Test Website", "-o", "env", "--show-meta"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		output := buf.String()
+		if strings.Contains(output, "_meta_") {
+			t.Errorf("expected env format to omit _meta_, got: %s", output)
+		}
+	})
+
+	t.Run("KeysFormat_OmitsMeta", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"testdb://website/Test Website", "-o", "keys", "--show-meta"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		output := buf.String()
+		if strings.Contains(output, "_meta_") {
+			t.Errorf("expected keys format to omit _meta_, got: %s", output)
+		}
+	})
+}

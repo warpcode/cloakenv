@@ -20,6 +20,7 @@ type showOptions struct {
 	outputFormat  string
 	keyFormat     string
 	positionalURI string
+	showMeta      bool
 }
 
 func parseShowFlags(args []string) (*showOptions, error) {
@@ -28,7 +29,7 @@ func parseShowFlags(args []string) (*showOptions, error) {
 		outputFormat: "yaml",
 	}
 
-	usageMsg := "Usage: cloakenv show <entry-uri> [-f format] [-o yaml | json | env | keys]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-f format] [-o yaml | json | env | keys]"
+	usageMsg := "Usage: cloakenv show <entry-uri> [-f format] [-o yaml | json | env | keys] [--show-meta]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-f format] [-o yaml | json | env | keys] [--show-meta]"
 
 	parser := NewFlagParser()
 	parser.Var([]string{"-f", "--key-format"}, true, "flag -f/--key-format requires an argument", func(name, val string) error {
@@ -36,6 +37,10 @@ func parseShowFlags(args []string) (*showOptions, error) {
 			return fmt.Errorf("invalid key format %q (expected none, env, snake, or kebab)", val)
 		}
 		opts.keyFormat = val
+		return nil
+	})
+	parser.Var([]string{"--show-meta"}, false, "", func(name, val string) error {
+		opts.showMeta = true
 		return nil
 	})
 	parser.Var([]string{"-o", "--output"}, true, "", func(name, val string) error {
@@ -291,6 +296,33 @@ func Show(args []string, cfg *config.Config) int {
 	if entry.Group != nil {
 		if _, exists := out["group"]; !exists {
 			out["group"] = entry.Group
+		}
+	}
+
+	if opts.showMeta && (opts.outputFormat == "yaml" || opts.outputFormat == "json") {
+		primaryURI := opts.positionalURI
+		if primaryURI == "" && len(opts.merges) > 0 {
+			primaryURI = opts.merges[0]
+		}
+		if primaryURI != "" {
+			if scheme, _, err := utils.ParseURI(primaryURI); err == nil {
+				metaMap := make(map[string]any)
+				if cfg != nil && cfg.Vaults != nil {
+					if vCfg, exists := cfg.Vaults[scheme]; exists {
+						metaMap["vault"] = scheme
+						if vCfg.Provider != "" {
+							metaMap["provider"] = vCfg.Provider
+						}
+					} else {
+						metaMap["provider"] = scheme
+					}
+				} else {
+					metaMap["provider"] = scheme
+				}
+				if len(metaMap) > 0 {
+					out["_meta_"] = metaMap
+				}
+			}
 		}
 	}
 
