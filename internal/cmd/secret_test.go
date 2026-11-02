@@ -478,6 +478,54 @@ func TestSet(t *testing.T) {
 			t.Errorf("expected crlf_value without CRLF, got %q (exit: %d)", stdout, exitCode)
 		}
 	})
+
+	t.Run("ExceedsMaxSize", func(t *testing.T) {
+		keyring.MockInit()
+		cfg := &config.Config{
+			Vaults: make(map[string]config.VaultConfig),
+		}
+
+		oldStdin := os.Stdin
+		rIn, wIn, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create stdin pipe: %v", err)
+		}
+		os.Stdin = rIn
+		t.Cleanup(func() {
+			os.Stdin = oldStdin
+			_ = rIn.Close()
+		})
+
+		go func() {
+			defer func() { _ = wIn.Close() }()
+			chunk := bytes.Repeat([]byte("A"), 64*1024)
+			total := maxSecretInputSize + 1024
+			written := 0
+			for written < total {
+				toWrite := len(chunk)
+				if total-written < toWrite {
+					toWrite = total - written
+				}
+				n, wErr := wIn.Write(chunk[:toWrite])
+				if wErr != nil {
+					return
+				}
+				written += n
+			}
+		}()
+
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test_oversized"}, cfg)
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 for oversized input, got %d", exitCode)
+		}
+
+		if !strings.Contains(stderr, "Secret value exceeds maximum size limit") {
+			t.Errorf("expected maximum size limit error message, got %q", stderr)
+		}
+	})
 }
 
 func TestDelete(t *testing.T) {
