@@ -97,8 +97,15 @@ func lookupEntryAttributeRaw(entry Entry, attrName string) (canonicalKey string,
 	if strings.EqualFold(attrName, "title") {
 		return "Title", entry.Title, true
 	}
-	if strings.EqualFold(attrName, "tags") {
+	if strings.EqualFold(attrName, "tags") || strings.EqualFold(attrName, "_meta_.tags") || strings.EqualFold(attrName, "_meta_:tags") {
 		return "Tags", entry.Tags, true
+	}
+	if strings.EqualFold(attrName, "_meta_") {
+		meta := map[string]any{}
+		if len(entry.Tags) > 0 {
+			meta["tags"] = entry.Tags
+		}
+		return "_meta_", meta, true
 	}
 	if strings.EqualFold(attrName, "uuid") && entry.UUID != "" {
 		return "uuid", entry.UUID, true

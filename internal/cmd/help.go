@@ -156,7 +156,7 @@ Flags:
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
   -f, --key-format format  Override attribute key formatting (none, env, snake, kebab)
-  --show-meta     Include vault and provider metadata in a _meta_ object (yaml and json output only)
+  --show-meta     Include vault, provider, and tags metadata in a _meta_ object (yaml and json output only)
   -o, --output    Output format: yaml, json, env, or keys (default: yaml)`)
 }
 
@@ -166,7 +166,7 @@ func PrintSearchHelp() {
   cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]
 
 Description:
-  Search for structured entries matching the query (supporting query expressions on title, tags, uuid, group.name, group.path, etc.).
+  Search for structured entries matching the query (supporting query expressions on title, tags, _meta_.tags, uuid, group.name, group.path, etc.).
 
 Arguments:
   [query]         Optional query string to filter entries by title, tags, uuid, group, or fields
@@ -175,7 +175,7 @@ Flags:
   --vault vault   Scope search to a specific vault (repeatable)
   -i KEY          Select output fields/keys to return (e.g. uuid, group_name, group_uuid, group_path) (repeatable)
   -f, --key-format format  Override attribute key formatting (none, env, snake, kebab)
-  --show-meta     Include vault and provider metadata in a _meta_ object (yaml and json output only)
+  --show-meta     Include vault, provider, and tags metadata in a _meta_ object (yaml and json output only)
   -o, --output    Output format: yaml or json (default: yaml)`)
 }
 

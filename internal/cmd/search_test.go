@@ -326,7 +326,7 @@ func TestFlattenSearchResults(t *testing.T) {
 				{
 					"path":     "path/to/entry",
 					"title":    "My Title",
-					"tags":     []string{"tag1", "tag2"},
+					"TAGS":     "conflict_tags",
 					"password": "secret_password",
 					"USERNAME": "admin",
 					"some-key": "value",
@@ -343,13 +343,40 @@ func TestFlattenSearchResults(t *testing.T) {
 					"_meta_": map[string]any{
 						"provider": "keepass",
 						"vault":    "myvault",
+						"tags":     []string{"tag1", "tag2"},
 					},
 					"path":     "path/to/entry",
 					"title":    "My Title",
-					"tags":     []string{"tag1", "tag2"},
+					"TAGS":     "conflict_tags",
 					"password": "secret_password",
 					"USERNAME": "admin",
 					"some-key": "value",
+				},
+			},
+		},
+		{
+			name:         "_meta_.tags selected key",
+			results:      []provider.SearchResult{entry},
+			selectedKeys: []string{"_meta_.tags", "title"},
+			want: []map[string]any{
+				{
+					"_meta_.tags": []string{"tag1", "tag2"},
+					"title":       "My Title",
+				},
+			},
+		},
+		{
+			name:         "_meta_ object selected with tags",
+			results:      []provider.SearchResult{entry},
+			selectedKeys: []string{"_meta_", "title"},
+			want: []map[string]any{
+				{
+					"_meta_": map[string]any{
+						"provider": "keepass",
+						"vault":    "myvault",
+						"tags":     []string{"tag1", "tag2"},
+					},
+					"title": "My Title",
 				},
 			},
 		},
@@ -786,7 +813,50 @@ func TestSearch_RuntimeKeyFormatOverride(t *testing.T) {
 		t.Errorf("expected formatted keys 'username' and 'bit_strength', got %s", output)
 	}
 
-	if !strings.Contains(output, `"title":`) || !strings.Contains(output, `"tags":`) {
-		t.Errorf("expected intact metadata keys 'title' and 'tags', got %s", output)
+	if !strings.Contains(output, `"title":`) {
+		t.Errorf("expected intact metadata key 'title', got %s", output)
+	}
+
+	if strings.Contains(output, `"tags":`) {
+		t.Errorf("expected tags to be hidden by default without --show-meta, got %s", output)
+	}
+}
+
+func TestSearch_ShowMetaTags(t *testing.T) {
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	args := []string{"title == 'Production SSH Key'", "-o", "json", "--show-meta"}
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"my_yaml": {
+				Provider:  "yaml",
+				VaultPath: "../../testdata/test_entries.yaml",
+			},
+		},
+	}
+	exitCode := Search(args, cfg)
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", exitCode)
+	}
+
+	var buf bytes.Buffer
+	_ = w.Close()
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("failed to copy: %v", err)
+	}
+	output := buf.String()
+
+	if !strings.Contains(output, `"_meta_":`) {
+		t.Errorf("expected _meta_ object with --show-meta, got %s", output)
+	}
+	if !strings.Contains(output, `"auth:ssh"`) || !strings.Contains(output, `"env:prod"`) {
+		t.Errorf("expected tags within _meta_ object, got %s", output)
 	}
 }

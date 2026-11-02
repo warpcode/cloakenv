@@ -139,6 +139,11 @@ func (s *Searcher) filterResultsByExpression(ctx context.Context, expressionStr 
 				"path":  "",
 				"uuid":  "",
 				"group": map[string]any{"name": "", "uuid": "", "path": ""},
+				"_meta_": map[string]any{
+					"provider": "",
+					"vault":    "",
+					"tags":     []string{},
+				},
 			}
 
 			program, err = expr.Compile(expressionStr, expr.Env(sampleEnv), expr.AllowUndefinedVariables())
@@ -156,13 +161,28 @@ func (s *Searcher) filterResultsByExpression(ctx context.Context, expressionStr 
 
 	var matchedResults []provider.SearchResult
 	env := make(map[string]any)
-	// Optimization: reuse groupMap across search result iterations using clear()
+	// Optimization: reuse groupMap and metaMap across search result iterations using clear()
 	// to avoid allocating a new map for every candidate entry during query evaluation.
 	groupMap := map[string]any{"name": "", "uuid": "", "path": ""}
+	metaMap := map[string]any{"provider": "", "vault": "", "tags": []string{}}
 	for _, r := range allResults {
 		clear(env)
 		env["title"] = r.Entry.Title
-		env["tags"] = r.Entry.Tags
+		tags := r.Entry.Tags
+		if len(tags) == 0 {
+			if v, ok := r.Entry.Attributes["tags"]; ok {
+				if ts, ok := v.([]string); ok {
+					tags = ts
+				} else if ts, ok := v.([]any); ok {
+					for _, item := range ts {
+						if s, ok := item.(string); ok {
+							tags = append(tags, s)
+						}
+					}
+				}
+			}
+		}
+		env["tags"] = tags
 		env["path"] = r.Path
 		env["uuid"] = r.Entry.UUID
 
@@ -178,8 +198,14 @@ func (s *Searcher) filterResultsByExpression(ctx context.Context, expressionStr 
 		}
 		env["group"] = groupMap
 
+		clear(metaMap)
+		metaMap["provider"] = r.Provider
+		metaMap["vault"] = r.Vault
+		metaMap["tags"] = tags
+		env["_meta_"] = metaMap
+
 		for k, v := range r.Entry.Attributes {
-			if k != "title" && k != "tags" && k != "path" && (k != "uuid" || r.Entry.UUID == "") && (k != "group" || r.Entry.Group == nil) {
+			if k != "title" && k != "tags" && k != "path" && k != "_meta_" && (k != "uuid" || r.Entry.UUID == "") && (k != "group" || r.Entry.Group == nil) {
 				env[k] = v
 			}
 		}
@@ -428,7 +454,7 @@ func parseSearchURI(location string) (string, string, error) {
 		k = strings.TrimSpace(k)
 		v = strings.TrimSpace(v)
 		switch k {
-		case "tags":
+		case "tags", "_meta_.tags":
 			tagRemaining := v
 			for len(tagRemaining) > 0 {
 				var tag string

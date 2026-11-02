@@ -397,6 +397,7 @@ cloakenv show -m <entry-uri> [-m <entry-uri> ...] [flags]
 - `-t template_path`: Load template `.env` file (repeatable).
 - `-i KEY`: Whitelist filter keys (repeatable).
 - `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
+- `--show-meta`: Include vault and provider metadata in a `_meta_` object (`yaml` and `json` output only).
 
 #### Output Formats:
 1. **`yaml`** (Default): Formatted YAML document.
@@ -437,6 +438,7 @@ cloakenv search "[query_expression]" [flags]
 - `--vault <vault_name>`: Scope the search to one or more specific vaults (repeatable).
 - `-i KEY`: Select only specific attributes/fields in the output (repeatable).
 - `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
+- `--show-meta`: Include vault and provider metadata in a `_meta_` object (`yaml` and `json` output only).
 - `-o, --output`: Output format: `yaml` (default) or `json`.
 
 #### Examples:
@@ -670,7 +672,7 @@ vaults:
 
 #### 5. Field Filtering (`include_fields` and `exclude_fields`)
 - Supported across structured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`).
-- **Default Metadata Fields**: Default metadata fields (`title`, `tags`, `uuid`, `group`, `group_name`, `group_uuid`, `group_path`, `path`) are treated as default metadata fields and are included by default alongside entry attributes. Vault and provider metadata can be requested via `--show-meta` or explicitly via `-i _meta_.provider` or `-i _meta_.vault`.
+- **Default Metadata Fields**: Default metadata fields (`title`, `uuid`, `group`, `group_name`, `group_uuid`, `group_path`, `path`) are included by default alongside entry attributes. Entry classification metadata (`tags`) along with vault and provider metadata are consolidated into the `_meta_` object and can be requested via `--show-meta` or explicitly via `-i tags`, `-i _meta_.tags`, `-i _meta_.provider`, or `-i _meta_.vault`.
 - **`include_fields`**: When configured, restricts returned entry attributes to fields matching at least one glob pattern. **Include rules always take precedence over exclude rules** (evaluated first). An **empty list means filtering is disabled** (all unexcluded attributes allowed), not deny-all.
 - **`exclude_fields`**: Drops attributes matching any configured glob pattern before returning secrets when not explicitly permitted by include rules.
 - **Case-Sensitivity**: Glob patterns are evaluated **case-sensitively** (via Go's `path.Match`). A pattern like `"password"` will not match an attribute named `"Password"`. Ensure pattern casing matches the provider's attribute names.
@@ -681,7 +683,7 @@ vaults:
   - **Entry titles & qualified attributes**: e.g., `Test Website.notes`, `Test Website:notes`.
   - **Subtree exclusions via ancestor segments**: e.g., `exclude_fields: ["db"]` or `["entities.db"]` blocks all attributes beneath that container. Directly requesting and including a container grants its unexcluded nested attributes.
 - **Path Separators (`/` vs `.`) and Wildcards**:
-  - In Go's `path.Match`, the `*` wildcard does not match across `/` directory separators. However, for hierarchical vaults (`keepass`, `custom_vault`), each `/`-separated group prefix is also generated as a candidate path (`filter.go:679-682`, `749-752`). For example, resolving `keepass://website/Test Website:Password` generates the candidate prefix `website`. Because `path.Match("*", "website")` is true, an exclude pattern like `exclude_fields: ["*"]` matches the top-level group prefix and **excludes every secret in all top-level groups**.
+  - In Go's `path.Match`, the `*` wildcard does not match across `/` directory separators. However, for hierarchical vaults (`keepass`, `custom_vault`), each `/`-separated group prefix is also generated as a candidate path (`filter.go:835-838, 915-918`). For example, resolving `keepass://website/Test Website:Password` generates the candidate prefix `website`. Because `path.Match("*", "website")` is true, an exclude pattern like `exclude_fields: ["*"]` matches the top-level group prefix and **excludes every secret in all top-level groups**.
   - In contrast, the `*.notes` pattern below targets title-qualified attribute candidates (e.g. `Test Website.notes`), matching any entry's notes attribute without matching slashed group prefixes. To exclude specific hierarchical groups or subtrees safely without blocking entire vaults, use qualified patterns (e.g. `website/*` or `group/subgroup/*`).
 - Filters apply consistently across `GetEntry`, `Search`, and scalar `GetSecret` resolution.
 - Example config:
@@ -907,7 +909,7 @@ Evaluate configured templates using `{{ include "name" . }}` or evaluate externa
 |---|---|---|---|
 | `get` | `(uri string) (string, error)` | Resolves a single secret value from any vault or provider | `{{ get "keyring://pg/pass" }}` |
 | `entry` | `(uri string) (map[string]any, error)` | Resolves a complete entry into a structured context map (`.meta`, `.attributes`) | `{{ (entry "work://db").attributes.Password }}` |
-| `search` | `(query string) ([]map[string]any, error)` | Executes a search query across vaults and returns a slice of entry context maps | `{{ range search "tag=db" }}{{ .meta.Title }}: {{ .attributes.HOST }}{{ end }}` |
+| `search` | `(query string) ([]map[string]any, error)` | Executes a search query across vaults and returns a slice of entry context maps | `{{ range search "\"db\" in tags" }}{{ .meta.Title }}: {{ .attributes.HOST }}{{ end }}` |
 | `toEnv` | `(attrs any) (string, error)` | Serializes an attributes map into dotenv key-value format (sorted, excluding metadata) | `{{ .attributes \| toEnv }}` |
 | `toKv` | `(attrs any) (string, error)` | Alias for `toEnv` | `{{ .attributes \| toKv }}` |
 | `toJson` | `(v any) (string, error)` | Serializes a value or map to a JSON string | `{{ .attributes \| toJson }}` |
@@ -987,19 +989,20 @@ autoload:
 
 ## Search Query Language Reference
 
-`cloakenv search` evaluates queries using the fast, safe [Go expr](https://github.com/expr-lang/expr) engine. Queries run against flattened entry objects containing `title`, `path`, `tags`, and all custom attributes.
+`cloakenv search` evaluates queries using the fast, safe [Go expr](https://github.com/expr-lang/expr) engine. Queries run against flattened entry objects containing `title`, `path`, `tags`, `_meta_` (including `_meta_.tags`, `_meta_.provider`, `_meta_.vault`), and all custom attributes.
 
 ### 1. Tag & Array Membership (`in`, `not in`)
 
 ```bash
-# Entry must contain tag "auth:ssh"
+# Entry must contain tag "auth:ssh" (evaluates _meta_.tags or tags)
+cloakenv search '"auth:ssh" in _meta_.tags'
 cloakenv search '"auth:ssh" in tags'
 
 # Entry must NOT contain tag "deprecated"
-cloakenv search 'not ("deprecated" in tags)'
+cloakenv search 'not ("deprecated" in _meta_.tags)'
 
 # Combined tags
-cloakenv search '"env:prod" in tags and "role:db" in tags'
+cloakenv search '"env:prod" in _meta_.tags and "role:db" in _meta_.tags'
 ```
 
 ### 2. Numbers & Comparisons
@@ -1014,9 +1017,6 @@ cloakenv search 'port >= 8000 and port <= 9000'
 ```bash
 # Substring search
 cloakenv search 'title contains "Bastion"'
-
-# Case-insensitive substring search
-cloakenv search 'lower(title) contains "bastion"'
 
 # Prefix and Suffix matching
 cloakenv search 'title startsWith "Prod-"'
