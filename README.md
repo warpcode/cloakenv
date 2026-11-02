@@ -397,6 +397,7 @@ cloakenv show -m <entry-uri> [-m <entry-uri> ...] [flags]
 - `-t template_path`: Load template `.env` file (repeatable).
 - `-i KEY`: Whitelist filter keys (repeatable).
 - `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
+- `--show-meta`: Include vault and provider metadata in a `_meta_` object (`yaml` and `json` output only).
 
 #### Output Formats:
 1. **`yaml`** (Default): Formatted YAML document.
@@ -437,6 +438,7 @@ cloakenv search "[query_expression]" [flags]
 - `--vault <vault_name>`: Scope the search to one or more specific vaults (repeatable).
 - `-i KEY`: Select only specific attributes/fields in the output (repeatable).
 - `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
+- `--show-meta`: Include vault and provider metadata in a `_meta_` object (`yaml` and `json` output only).
 - `-o, --output`: Output format: `yaml` (default) or `json`.
 
 #### Examples:
@@ -907,7 +909,7 @@ Evaluate configured templates using `{{ include "name" . }}` or evaluate externa
 |---|---|---|---|
 | `get` | `(uri string) (string, error)` | Resolves a single secret value from any vault or provider | `{{ get "keyring://pg/pass" }}` |
 | `entry` | `(uri string) (map[string]any, error)` | Resolves a complete entry into a structured context map (`.meta`, `.attributes`) | `{{ (entry "work://db").attributes.Password }}` |
-| `search` | `(query string) ([]map[string]any, error)` | Executes a search query across vaults and returns a slice of entry context maps | `{{ range search "tag=db" }}{{ .meta.Title }}: {{ .attributes.HOST }}{{ end }}` |
+| `search` | `(query string) ([]map[string]any, error)` | Executes a search query across vaults and returns a slice of entry context maps | `{{ range search "\"db\" in tags" }}{{ .meta.Title }}: {{ .attributes.HOST }}{{ end }}` |
 | `toEnv` | `(attrs any) (string, error)` | Serializes an attributes map into dotenv key-value format (sorted, excluding metadata) | `{{ .attributes \| toEnv }}` |
 | `toKv` | `(attrs any) (string, error)` | Alias for `toEnv` | `{{ .attributes \| toKv }}` |
 | `toJson` | `(v any) (string, error)` | Serializes a value or map to a JSON string | `{{ .attributes \| toJson }}` |

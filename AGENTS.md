@@ -73,8 +73,6 @@ Equivalently, run `make verify` to execute this pipeline. Run `make agents-check
 |---|---|---|
 | Implement a secret backend | `.github/skills/cloakenv-add-provider` | Provider SOP, checklist, and `provider_checklist.sh` |
 | Review PRs & Jules runs | `.github/skills/cloakenv-pr-review` | PR audit SOP, review traps, and `pr_review_bundle.sh` |
-| Session health & stuck runners | `google-jules-triage` | Nudge-first protocol, stalled VM triage, and recovery |
-| Author pull requests | `github-pr` | Conventional commits, PR creation, and lifecycle |
 | Git workflow & commits | `CONTRIBUTING.md` | Branching, rebasing, and Conventional Commit format |
 | Test fixtures & credentials | `testdata/README.md` | Test database schema, entries, and master passwords |
 | Architecture decisions | `docs/adr/`, `docs/plans/` | ADR-0001 (templating/merge), RFCs, and design specs |
