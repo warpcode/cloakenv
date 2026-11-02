@@ -333,7 +333,9 @@ func matchTags(entryTags, queryTagsLower []string) bool {
 	for _, qt := range queryTagsLower {
 		found := false
 		for _, t := range entryTags {
-			if strings.ToLower(t) == qt {
+			// Optimization: strings.EqualFold performs Unicode case-folding directly without
+			// allocating new strings on the heap, unlike strings.ToLower(t).
+			if strings.EqualFold(t, qt) {
 				found = true
 				break
 			}
