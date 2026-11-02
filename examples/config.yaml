@@ -87,7 +87,7 @@ vaults:
         tags: [composed, production]
         merge:
           - "work://infra/db"
-          - "search://tag=api"
+          - 'search://"api" in tags'
         include_fields:
           - "DB_*"
           - "API_*"

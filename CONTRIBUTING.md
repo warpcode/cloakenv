@@ -7,7 +7,7 @@ Thank you for contributing to `cloakenv`! We welcome bug reports, feature reques
 ## 🛠️ Development Setup & Workflow
 
 ### Prerequisites
-- Go 1.22+ (or version matching `go.mod`)
+- Go 1.26.2+ (or version matching `go.mod`)
 - Git
 - `make`
 
