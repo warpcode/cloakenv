@@ -143,8 +143,20 @@ func buildDefaultFieldCandidates(fieldName, entryPath string, rootPrefixes []str
 	var candidates []string
 	candidates = append(candidates, fieldLower, fieldUpper)
 
-	if fieldLower == "provider" || fieldLower == "vault" {
+	if fieldLower == "provider" || fieldLower == "vault" || fieldLower == "tags" {
 		candidates = append(candidates, "_meta_", "_meta_."+fieldLower, "_meta_:"+fieldLower)
+	}
+	if fieldLower == "_meta_.tags" || fieldLower == "_meta_:tags" {
+		candidates = append(candidates, "tags", "TAGS", "_meta_", "_meta_.tags", "_meta_:tags")
+	}
+	if fieldLower == "_meta_.provider" || fieldLower == "_meta_:provider" {
+		candidates = append(candidates, "provider", "PROVIDER", "_meta_", "_meta_.provider", "_meta_:provider")
+	}
+	if fieldLower == "_meta_.vault" || fieldLower == "_meta_:vault" {
+		candidates = append(candidates, "vault", "VAULT", "_meta_", "_meta_.vault", "_meta_:vault")
+	}
+	if fieldLower == "_meta_" {
+		candidates = append(candidates, "_meta_", "provider", "vault", "tags")
 	}
 
 	cleanPath := normalizeDotPath(entryPath)

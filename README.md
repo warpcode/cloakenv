@@ -670,7 +670,7 @@ vaults:
 
 #### 5. Field Filtering (`include_fields` and `exclude_fields`)
 - Supported across structured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`).
-- **Default Metadata Fields**: Default metadata fields (`title`, `tags`, `uuid`, `group`, `group_name`, `group_uuid`, `group_path`, `path`) are treated as default metadata fields and are included by default alongside entry attributes. Vault and provider metadata can be requested via `--show-meta` or explicitly via `-i _meta_.provider` or `-i _meta_.vault`.
+- **Default Metadata Fields**: Default metadata fields (`title`, `uuid`, `group`, `group_name`, `group_uuid`, `group_path`, `path`) are included by default alongside entry attributes. Entry classification metadata (`tags`) along with vault and provider metadata are consolidated into the `_meta_` object and can be requested via `--show-meta` or explicitly via `-i tags`, `-i _meta_.tags`, `-i _meta_.provider`, or `-i _meta_.vault`.
 - **`include_fields`**: When configured, restricts returned entry attributes to fields matching at least one glob pattern. **Include rules always take precedence over exclude rules** (evaluated first). An **empty list means filtering is disabled** (all unexcluded attributes allowed), not deny-all.
 - **`exclude_fields`**: Drops attributes matching any configured glob pattern before returning secrets when not explicitly permitted by include rules.
 - **Case-Sensitivity**: Glob patterns are evaluated **case-sensitively** (via Go's `path.Match`). A pattern like `"password"` will not match an attribute named `"Password"`. Ensure pattern casing matches the provider's attribute names.
@@ -987,19 +987,20 @@ autoload:
 
 ## Search Query Language Reference
 
-`cloakenv search` evaluates queries using the fast, safe [Go expr](https://github.com/expr-lang/expr) engine. Queries run against flattened entry objects containing `title`, `path`, `tags`, and all custom attributes.
+`cloakenv search` evaluates queries using the fast, safe [Go expr](https://github.com/expr-lang/expr) engine. Queries run against flattened entry objects containing `title`, `path`, `tags`, `_meta_` (including `_meta_.tags`, `_meta_.provider`, `_meta_.vault`), and all custom attributes.
 
 ### 1. Tag & Array Membership (`in`, `not in`)
 
 ```bash
-# Entry must contain tag "auth:ssh"
+# Entry must contain tag "auth:ssh" (evaluates _meta_.tags or tags)
+cloakenv search '"auth:ssh" in _meta_.tags'
 cloakenv search '"auth:ssh" in tags'
 
 # Entry must NOT contain tag "deprecated"
-cloakenv search 'not ("deprecated" in tags)'
+cloakenv search 'not ("deprecated" in _meta_.tags)'
 
 # Combined tags
-cloakenv search '"env:prod" in tags and "role:db" in tags'
+cloakenv search '"env:prod" in _meta_.tags and "role:db" in _meta_.tags'
 ```
 
 ### 2. Numbers & Comparisons

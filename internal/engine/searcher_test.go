@@ -131,6 +131,38 @@ entries:
 			t.Errorf("expected 'my_raw_password', got %q", val)
 		}
 	})
+
+	t.Run("SearchExprByMetaTags", func(t *testing.T) {
+		results, err := orch.Search(ctx, `"auth:ssh" in _meta_.tags and not ("deprecated" in _meta_.tags)`, nil)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 2 {
+			t.Errorf("expected 2 matches using _meta_.tags, got %d", len(results))
+		}
+	})
+
+	t.Run("SearchExprByMetaProviderAndVault", func(t *testing.T) {
+		results, err := orch.Search(ctx, `_meta_.provider == "yaml" and _meta_.vault == "my_repo" and "env:prod" in _meta_.tags`, nil)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 match using _meta_.provider and _meta_.vault, got %d", len(results))
+		} else if results[0].Path != "ssh_prod" {
+			t.Errorf("expected 'ssh_prod', got %q", results[0].Path)
+		}
+	})
+
+	t.Run("SearchURIMetaTags", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, `{{ get "search://_meta_.tags=auth:ssh,env:prod/password" }}`)
+		if err != nil {
+			t.Fatalf("failed to resolve search://_meta_.tags URI: %v", err)
+		}
+		if val != "my_raw_password" {
+			t.Errorf("expected 'my_raw_password', got %q", val)
+		}
+	})
 	t.Run("MissingFields", func(t *testing.T) {
 		// 5. Test missing fields gracefulness: ssh_minimal does not have bit_strength,
 		// so evaluating bit_strength > 3000 should fail evaluation on it but pass

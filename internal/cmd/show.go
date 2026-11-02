@@ -169,7 +169,7 @@ func mergeTagsAndAttributes(entries []provider.Entry, whitelist []string) ([]str
 			tagSet[tag] = true
 		}
 		for k, v := range e.Attributes {
-			if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
+			if strings.EqualFold(k, "title") {
 				continue
 			}
 			if hasWhitelist && !whitelistSet[k] && !whitelistSet[utils.FormatKey(k)] && !whitelistSet[strings.ToLower(k)] {
@@ -267,7 +267,7 @@ func Show(args []string, cfg *config.Config) int {
 	// Strip internal metadata keys from entry.Attributes
 	formattedAttributes := make(map[string]any)
 	for k, v := range entry.Attributes {
-		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
+		if strings.EqualFold(k, "title") {
 			continue
 		}
 		formattedAttributes[k] = v
@@ -299,14 +299,25 @@ func Show(args []string, cfg *config.Config) int {
 		}
 	}
 
-	if opts.showMeta && (opts.outputFormat == "yaml" || opts.outputFormat == "json") {
+	var showMetaTags bool
+	var showTopTags bool
+	for _, w := range opts.whitelist {
+		wLower := strings.ToLower(w)
+		if wLower == "tags" {
+			showTopTags = true
+		} else if wLower == "_meta_" || wLower == "_meta_.tags" || wLower == "_meta_:tags" {
+			showMetaTags = true
+		}
+	}
+
+	if (opts.showMeta || showMetaTags) && (opts.outputFormat == "yaml" || opts.outputFormat == "json") {
 		primaryURI := opts.positionalURI
 		if primaryURI == "" && len(opts.merges) > 0 {
 			primaryURI = opts.merges[0]
 		}
+		metaMap := make(map[string]any)
 		if primaryURI != "" {
 			if scheme, _, err := utils.ParseURI(primaryURI); err == nil {
-				metaMap := make(map[string]any)
 				if cfg != nil && cfg.Vaults != nil {
 					if vCfg, exists := cfg.Vaults[scheme]; exists {
 						metaMap["vault"] = scheme
@@ -319,10 +330,19 @@ func Show(args []string, cfg *config.Config) int {
 				} else {
 					metaMap["provider"] = scheme
 				}
-				if len(metaMap) > 0 {
-					out["_meta_"] = metaMap
-				}
 			}
+		}
+		if len(entry.Tags) > 0 {
+			metaMap["tags"] = entry.Tags
+		}
+		if len(metaMap) > 0 {
+			out["_meta_"] = metaMap
+		}
+	}
+
+	if showTopTags && !opts.showMeta {
+		if _, exists := out["tags"]; !exists && len(entry.Tags) > 0 {
+			out["tags"] = entry.Tags
 		}
 	}
 
