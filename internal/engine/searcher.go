@@ -432,9 +432,21 @@ func parseSearchURI(location string) (string, string, error) {
 		attr = location[lastSlash+1:]
 	}
 
-	var conditions []string
-	parts := strings.Split(queryPart, "&")
-	for _, part := range parts {
+	// Optimization: construct the expression query directly with a strings.Builder
+	// and iterate via strings.Cut rather than allocating intermediate slices with
+	// strings.Split, strings.Join, and strconv.Quote.
+	var b strings.Builder
+	b.Grow(len(queryPart) * 2)
+
+	// Quote scratch buffer to avoid allocations from strconv.Quote.
+	var quoteBuf []byte
+	hasConditions := false
+
+	remaining := queryPart
+	for len(remaining) > 0 {
+		var part string
+		part, remaining, _ = strings.Cut(remaining, "&")
+
 		k, v, found := strings.Cut(part, "=")
 		if !found {
 			continue
@@ -443,29 +455,49 @@ func parseSearchURI(location string) (string, string, error) {
 		v = strings.TrimSpace(v)
 		switch k {
 		case "tags", "_meta_.tags":
-			tags := strings.Split(v, ",")
-			for _, tag := range tags {
+			tagRemaining := v
+			for len(tagRemaining) > 0 {
+				var tag string
+				tag, tagRemaining, _ = strings.Cut(tagRemaining, ",")
 				tag = strings.TrimSpace(tag)
 				if tag != "" {
-					conditions = append(conditions, strconv.Quote(tag)+" in tags")
+					if hasConditions {
+						b.WriteString(" and ")
+					}
+					quoteBuf = strconv.AppendQuote(quoteBuf[:0], tag)
+					b.Write(quoteBuf)
+					b.WriteString(" in tags")
+					hasConditions = true
 				}
 			}
 		case "title":
 			if v != "" {
-				conditions = append(conditions, "title contains "+strconv.Quote(v))
+				if hasConditions {
+					b.WriteString(" and ")
+				}
+				b.WriteString("title contains ")
+				quoteBuf = strconv.AppendQuote(quoteBuf[:0], v)
+				b.Write(quoteBuf)
+				hasConditions = true
 			}
 		case "path":
 			if v != "" {
-				conditions = append(conditions, "path contains "+strconv.Quote(v))
+				if hasConditions {
+					b.WriteString(" and ")
+				}
+				b.WriteString("path contains ")
+				quoteBuf = strconv.AppendQuote(quoteBuf[:0], v)
+				b.Write(quoteBuf)
+				hasConditions = true
 			}
 		default:
 			return "", "", fmt.Errorf("unsupported search parameter: %q", k)
 		}
 	}
 
-	if len(conditions) == 0 {
+	if !hasConditions {
 		return "", "", fmt.Errorf("invalid search URI: no query conditions specified")
 	}
 
-	return strings.Join(conditions, " and "), attr, nil
+	return b.String(), attr, nil
 }
