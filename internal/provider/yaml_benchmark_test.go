@@ -132,3 +132,16 @@ func BenchmarkYamlSearchTags(b *testing.B) {
 		_, _ = y.Search(ctx, query)
 	}
 }
+
+func BenchmarkMatchTags(b *testing.B) {
+	entryTags := []string{"Environment:Production", "Role:Database", "Team:Backend", "Tier:Primary"}
+	queryTagsLower := []string{"environment:production", "tier:primary"}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		if !matchTags(entryTags, queryTagsLower) {
+			b.Fatal("expected match")
+		}
+	}
+}
