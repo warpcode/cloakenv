@@ -681,7 +681,7 @@ vaults:
   - **Entry titles & qualified attributes**: e.g., `Test Website.notes`, `Test Website:notes`.
   - **Subtree exclusions via ancestor segments**: e.g., `exclude_fields: ["db"]` or `["entities.db"]` blocks all attributes beneath that container. Directly requesting and including a container grants its unexcluded nested attributes.
 - **Path Separators (`/` vs `.`) and Wildcards**:
-  - In Go's `path.Match`, the `*` wildcard does not match across `/` directory separators. However, for hierarchical vaults (`keepass`, `custom_vault`), each `/`-separated group prefix is also generated as a candidate path (`filter.go:679-682`, `749-752`). For example, resolving `keepass://website/Test Website:Password` generates the candidate prefix `website`. Because `path.Match("*", "website")` is true, an exclude pattern like `exclude_fields: ["*"]` matches the top-level group prefix and **excludes every secret in all top-level groups**.
+  - In Go's `path.Match`, the `*` wildcard does not match across `/` directory separators. However, for hierarchical vaults (`keepass`, `custom_vault`), each `/`-separated group prefix is also generated as a candidate path (`filter.go:835-838, 915-918`). For example, resolving `keepass://website/Test Website:Password` generates the candidate prefix `website`. Because `path.Match("*", "website")` is true, an exclude pattern like `exclude_fields: ["*"]` matches the top-level group prefix and **excludes every secret in all top-level groups**.
   - In contrast, the `*.notes` pattern below targets title-qualified attribute candidates (e.g. `Test Website.notes`), matching any entry's notes attribute without matching slashed group prefixes. To exclude specific hierarchical groups or subtrees safely without blocking entire vaults, use qualified patterns (e.g. `website/*` or `group/subgroup/*`).
 - Filters apply consistently across `GetEntry`, `Search`, and scalar `GetSecret` resolution.
 - Example config:
@@ -1015,9 +1015,6 @@ cloakenv search 'port >= 8000 and port <= 9000'
 ```bash
 # Substring search
 cloakenv search 'title contains "Bastion"'
-
-# Case-insensitive substring search
-cloakenv search 'lower(title) contains "bastion"'
 
 # Prefix and Suffix matching
 cloakenv search 'title startsWith "Prod-"'
