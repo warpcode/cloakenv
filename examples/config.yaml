@@ -123,7 +123,7 @@ vaults:
   # Example of generic field filtering on any vault provider using include_fields and exclude_fields:
   # include_fields: limits returned entry attributes to field names matching glob patterns
   # exclude_fields: removes entry attributes matching glob patterns before returning the entry
-  # Note: Default metadata fields (title, tags, uuid, group, group_name, group_uuid, group_path, path) are included by default.
+  # Note: Default metadata fields (title, uuid, group, group_name, group_uuid, group_path, path) are included by default. Metadata (tags, vault, provider) is consolidated under _meta_ when --show-meta is requested.
   # filtered_work:
   #   provider: "keepass"
   #   vault_path: "~/secrets/work_vault.kdbx"

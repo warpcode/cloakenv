@@ -57,6 +57,10 @@ func Get(args []string, cfg *config.Config) int {
 	return 0
 }
 
+// maxSecretInputSize defines the maximum allowed size (10 MiB) for secret values read from stdin
+// to prevent memory exhaustion / Denial of Service (DoS) attacks from unbounded input streams.
+const maxSecretInputSize = 10 * 1024 * 1024
+
 // Set handles "cloakenv set <uri> [--ttl <duration>]".
 func Set(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
@@ -99,7 +103,8 @@ func Set(args []string, cfg *config.Config) int {
 		b, readErr = term.ReadPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
 	} else {
-		b, readErr = io.ReadAll(os.Stdin)
+		// Enforce bounded reading using io.LimitReader to protect against unbounded stdin streams.
+		b, readErr = io.ReadAll(io.LimitReader(os.Stdin, maxSecretInputSize+1))
 	}
 
 	if readErr != nil {
@@ -107,6 +112,11 @@ func Set(args []string, cfg *config.Config) int {
 		return 1
 	}
 	defer utils.ZeroBytes(b)
+
+	if len(b) > maxSecretInputSize {
+		fmt.Fprintf(os.Stderr, "Secret value exceeds maximum size limit of %d MB\n", maxSecretInputSize/(1024*1024))
+		return 1
+	}
 
 	value = string(b)
 	if strings.HasSuffix(value, "\r\n") {

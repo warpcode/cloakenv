@@ -91,8 +91,9 @@ func renderMappingTemplate(templateStr string, rawEntry Entry, providerName stri
 		meta["group"] = nil
 	}
 	data := map[string]any{
-		"Meta": meta,
-		"meta": meta,
+		"Meta":   meta,
+		"meta":   meta,
+		"_meta_": meta,
 	}
 
 	var buf bytes.Buffer
@@ -427,7 +428,7 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 						return rawEntry.Title, true, nil
 					}
 				}
-				if strings.EqualFold(attrName, "tags") {
+				if strings.EqualFold(attrName, "tags") || strings.EqualFold(attrName, "_meta_.tags") || strings.EqualFold(attrName, "_meta_:tags") {
 					allowed := false
 					if len(m.rules) > 0 {
 						allowed = isDefaultFieldMappedOrIncluded("tags", m.rules, includeFields, excludeFields, authoritativePath, rootPrefixes, rawEntry, providerName, vaultName)
@@ -714,7 +715,7 @@ func IsDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule
 								newKey = renderedKey
 							}
 						}
-						if strings.EqualFold(newKey, fieldLower) {
+						if strings.EqualFold(newKey, fieldLower) || (fieldLower == "tags" && (strings.EqualFold(newKey, "_meta_.tags") || strings.EqualFold(newKey, "_meta_:tags"))) {
 							return true
 						}
 					}

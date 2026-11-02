@@ -650,3 +650,193 @@ func TestShow_ShowMeta(t *testing.T) {
 		}
 	})
 }
+
+func TestShow_TagsInMetaAndUnshadowed(t *testing.T) {
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"my_yaml": {
+				Provider:  "yaml",
+				VaultPath: "../../testdata/test_entries.yaml",
+			},
+			"custom_vault": {
+				Provider: "custom_vault",
+				Entities: map[string]config.CustomEntityConfig{
+					"app": {
+						Title:      "App Title",
+						Tags:       []string{"meta_tag1", "meta_tag2"},
+						IsComposed: true,
+						Attributes: map[string]any{
+							"tags":     "custom_tag_value",
+							"password": "secret",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("Show_WithShowMeta_IncludesTagsInMeta", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"my_yaml://ssh_key_prod", "-o", "json", "--show-meta"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, `"_meta_"`) {
+			t.Fatalf("expected _meta_ in output, got %s", output)
+		}
+		if !strings.Contains(output, `"auth:ssh"`) || !strings.Contains(output, `"env:prod"`) {
+			t.Errorf("expected tags inside _meta_, got %s", output)
+		}
+	})
+
+	t.Run("Show_WithoutShowMeta_HidesTagsByDefault", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"my_yaml://ssh_key_prod", "-o", "json"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		output := buf.String()
+		if strings.Contains(output, `"_meta_"`) {
+			t.Errorf("expected _meta_ to be hidden by default, got %s", output)
+		}
+		if strings.Contains(output, `"auth:ssh"`) {
+			t.Errorf("expected tags to be hidden by default, got %s", output)
+		}
+	})
+
+	t.Run("Show_WithIncludeTags_DisplaysTagsAtTopLevel", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"my_yaml://ssh_key_prod", "-i", "tags", "-o", "json"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, `"tags"`) || !strings.Contains(output, `"auth:ssh"`) {
+			t.Errorf("expected explicit -i tags to show tags, got %s", output)
+		}
+	})
+
+	t.Run("Show_WithIncludeMetaTags_DisplaysMetaTags", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"my_yaml://ssh_key_prod", "-i", "_meta_.tags", "-o", "json"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, `"_meta_"`) || !strings.Contains(output, `"auth:ssh"`) {
+			t.Errorf("expected explicit -i _meta_.tags to show _meta_ tags, got %s", output)
+		}
+	})
+
+	t.Run("Show_CustomAttributeNamedTags_NotShadowedWhenMetaHidden", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"custom_vault://app", "-o", "json"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		output := buf.String()
+		if strings.Contains(output, `"_meta_"`) {
+			t.Errorf("expected _meta_ to be hidden, got %s", output)
+		}
+		if !strings.Contains(output, `"tags": "custom_tag_value"`) {
+			t.Errorf("expected custom attribute 'tags' to be preserved, got %s", output)
+		}
+	})
+
+	t.Run("Show_CustomAttributeNamedTags_BothCustomAndMetaTagsShownWithShowMeta", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"custom_vault://app", "-o", "json", "--show-meta"}, cfg)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		output := buf.String()
+		if !strings.Contains(output, `"_meta_"`) {
+			t.Errorf("expected _meta_ with --show-meta, got %s", output)
+		}
+		if !strings.Contains(output, `"meta_tag1"`) {
+			t.Errorf("expected meta tags in _meta_, got %s", output)
+		}
+		if !strings.Contains(output, `"tags": "custom_tag_value"`) {
+			t.Errorf("expected custom attribute 'tags' to be preserved alongside _meta_, got %s", output)
+		}
+	})
+}
