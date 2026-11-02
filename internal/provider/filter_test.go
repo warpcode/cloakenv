@@ -3227,3 +3227,73 @@ func TestFilteringProvider_Search_UUIDAndGroup(t *testing.T) {
 		}
 	})
 }
+
+func TestFieldFiltering_MetaTags(t *testing.T) {
+	entry := Entry{
+		Title: "my-entry",
+		Tags:  []string{"prod", "web"},
+		Attributes: map[string]any{
+			"username": "admin",
+			"password": "secret",
+		},
+	}
+
+	t.Run("ExcludeMetaTags_StripsTags", func(t *testing.T) {
+		filtered := FilterEntryWithPath(entry, "my-entry", nil, nil, []string{"_meta_.tags"})
+		if len(filtered.Tags) != 0 {
+			t.Errorf("expected tags to be stripped when _meta_.tags excluded, got %v", filtered.Tags)
+		}
+		if filtered.Attributes["username"] != "admin" {
+			t.Errorf("expected username preserved, got %v", filtered.Attributes["username"])
+		}
+	})
+
+	t.Run("ExcludeMetaWildcard_StripsTags", func(t *testing.T) {
+		filtered := FilterEntryWithPath(entry, "my-entry", nil, nil, []string{"_meta_"})
+		if len(filtered.Tags) != 0 {
+			t.Errorf("expected tags to be stripped when _meta_ excluded, got %v", filtered.Tags)
+		}
+	})
+
+	t.Run("IncludeMetaTags_PreservesTagsAndExcludesOthers", func(t *testing.T) {
+		filtered := FilterEntryWithPath(entry, "my-entry", nil, []string{"_meta_.tags"}, nil)
+		if len(filtered.Tags) != 2 {
+			t.Errorf("expected tags preserved when _meta_.tags included, got %v", filtered.Tags)
+		}
+		if _, ok := filtered.Attributes["username"]; ok {
+			t.Errorf("expected username excluded when only _meta_.tags included")
+		}
+	})
+
+	t.Run("FilterSearchResult_MetaTagsAndProvider", func(t *testing.T) {
+		sr := SearchResult{
+			Provider: "keepass",
+			Vault:    "work",
+			Path:     "servers/db",
+			Entry:    entry,
+		}
+
+		res := FilterSearchResult(sr, nil, []string{"_meta_.tags", "_meta_.vault"}, nil)
+		if len(res.Entry.Tags) != 2 {
+			t.Errorf("expected tags preserved, got %v", res.Entry.Tags)
+		}
+		if res.Vault != "work" {
+			t.Errorf("expected vault preserved, got %q", res.Vault)
+		}
+		if res.Provider != "" {
+			t.Errorf("expected provider stripped when only _meta_.tags and _meta_.vault included, got %q", res.Provider)
+		}
+	})
+
+	t.Run("CandidateBuilding_Tags", func(t *testing.T) {
+		allowed := IsDefaultFieldAllowed("tags", "app/service", nil, "service", []string{"_meta_.tags"}, nil)
+		if !allowed {
+			t.Errorf("expected tags to be allowed when _meta_.tags is in include_fields")
+		}
+
+		disallowed := IsDefaultFieldAllowed("tags", "app/service", nil, "service", nil, []string{"_meta_.tags"})
+		if disallowed {
+			t.Errorf("expected tags to be disallowed when _meta_.tags is in exclude_fields")
+		}
+	})
+}

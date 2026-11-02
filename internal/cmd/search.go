@@ -134,6 +134,9 @@ func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selecte
 			if r.Vault != "" {
 				metaMap["vault"] = r.Vault
 			}
+			if len(r.Entry.Tags) > 0 {
+				metaMap["tags"] = r.Entry.Tags
+			}
 			if len(metaMap) > 0 {
 				flatRes["_meta_"] = metaMap
 			}
@@ -144,6 +147,10 @@ func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selecte
 		case "_meta_.vault":
 			if r.Vault != "" {
 				flatRes["_meta_.vault"] = r.Vault
+			}
+		case "_meta_.tags":
+			if len(r.Entry.Tags) > 0 {
+				flatRes["_meta_.tags"] = r.Entry.Tags
 			}
 		case "provider":
 			if r.Provider != "" {
@@ -241,6 +248,9 @@ func flattenDefaultEntry(r provider.SearchResult, showMeta bool) map[string]any 
 		if r.Vault != "" {
 			metaMap["vault"] = r.Vault
 		}
+		if len(r.Entry.Tags) > 0 {
+			metaMap["tags"] = r.Entry.Tags
+		}
 		if len(metaMap) > 0 {
 			flatRes["_meta_"] = metaMap
 		}
@@ -251,9 +261,6 @@ func flattenDefaultEntry(r provider.SearchResult, showMeta bool) map[string]any 
 	if r.Entry.Title != "" {
 		flatRes["title"] = r.Entry.Title
 	}
-	if len(r.Entry.Tags) > 0 {
-		flatRes["tags"] = r.Entry.Tags
-	}
 	if r.Entry.UUID != "" {
 		flatRes["uuid"] = r.Entry.UUID
 	}
@@ -263,9 +270,6 @@ func flattenDefaultEntry(r provider.SearchResult, showMeta bool) map[string]any 
 
 	for k, v := range r.Entry.Attributes {
 		if r.Entry.Title != "" && strings.EqualFold(k, "title") {
-			continue
-		}
-		if len(r.Entry.Tags) > 0 && strings.EqualFold(k, "tags") {
 			continue
 		}
 		if r.Entry.UUID != "" && strings.EqualFold(k, "uuid") {

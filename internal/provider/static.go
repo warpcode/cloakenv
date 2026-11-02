@@ -352,8 +352,18 @@ func matchEntry(entry Entry, path string, query SearchQuery, queryTitleLower, qu
 	if query.Path != "" && !strings.Contains(strings.ToLower(path), queryPathLower) {
 		return false
 	}
-	if len(query.Tags) > 0 && !matchTags(entry.Tags, queryTagsLower) {
-		return false
+	if len(query.Tags) > 0 {
+		tags := entry.Tags
+		if len(tags) == 0 {
+			if v, ok := entry.Attributes["tags"]; ok {
+				tags = utils.ParseTags(v)
+			} else if v, ok := entry.Attributes["Tags"]; ok {
+				tags = utils.ParseTags(v)
+			}
+		}
+		if !matchTags(tags, queryTagsLower) {
+			return false
+		}
 	}
 	return true
 }
