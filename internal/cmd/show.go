@@ -302,10 +302,10 @@ func Show(args []string, cfg *config.Config) int {
 	var showMetaTags bool
 	var showTopTags bool
 	for _, w := range opts.whitelist {
-		wLower := strings.ToLower(w)
-		if wLower == "tags" {
+		switch strings.ToLower(w) {
+		case "tags":
 			showTopTags = true
-		} else if wLower == "_meta_" || wLower == "_meta_.tags" || wLower == "_meta_:tags" {
+		case "_meta_", "_meta_.tags", "_meta_:tags":
 			showMetaTags = true
 		}
 	}
