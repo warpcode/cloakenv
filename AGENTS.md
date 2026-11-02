@@ -132,3 +132,4 @@ function fixPEM(str) {
 Rather than ritualistic end-of-task review checklists, repository integrity is enforced automatically:
 - Run `make agents-check` to verify that Makefile targets, internal package contracts, and referenced skills remain synchronized.
 - Run `make test-all` for full local verification (formatting, vetting, unit tests with race detection, and benchmarks).
+
