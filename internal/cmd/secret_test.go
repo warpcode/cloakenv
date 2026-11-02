@@ -194,15 +194,14 @@ func mockStdin(t *testing.T, content string) {
 		}
 	})
 
-	defer func() {
-		if closeErr := wIn.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
-			t.Errorf("failed to close stdin writer pipe: %v", closeErr)
-		}
+	go func() {
+		defer func() {
+			if closeErr := wIn.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+				t.Errorf("failed to close stdin writer pipe: %v", closeErr)
+			}
+		}()
+		_, _ = wIn.Write([]byte(content))
 	}()
-
-	if _, writeErr := wIn.Write([]byte(content)); writeErr != nil {
-		t.Fatalf("failed to write to stdin pipe: %v", writeErr)
-	}
 }
 
 // captureOutputWithExitCode captures stdout and stderr for the given function
@@ -476,6 +475,32 @@ func TestSet(t *testing.T) {
 		})
 		if exitCode != 0 || stdout != "crlf_value" {
 			t.Errorf("expected crlf_value without CRLF, got %q (exit: %d)", stdout, exitCode)
+		}
+	})
+
+	t.Run("ExceedsMaxSecretSize", func(t *testing.T) {
+		keyring.MockInit()
+		cfg := &config.Config{
+			Vaults: make(map[string]config.VaultConfig),
+		}
+
+		cacheDir := t.TempDir()
+		t.Setenv("XDG_CACHE_HOME", cacheDir)
+
+		// Generate 1 MB + 10 bytes payload
+		oversizedPayload := strings.Repeat("A", 1*1024*1024+10)
+		mockStdin(t, oversizedPayload)
+
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test_oversized"}, cfg)
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 for oversized secret input, got %d", exitCode)
+		}
+
+		if !strings.Contains(stderr, "secret value exceeds maximum allowed size") {
+			t.Errorf("expected maximum allowed size error in stderr, got %q", stderr)
 		}
 	})
 }
