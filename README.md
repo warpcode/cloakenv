@@ -33,9 +33,15 @@
 - [Secret Providers & Schemes](#secret-providers--schemes)
   - [Built-In Providers (Zero Setup)](#built-in-providers-zero-setup)
   - [Configured Vaults](#configured-vaults)
-    - [Custom Vault (`custom_vault`)](#3-custom-vault-custom_vault)
-    - [Universal Per-Entry Attributes Decorator (`attributes`)](#8-universal-per-entry-attributes-decorator-attributes)
-    - [KeePass Placeholders & Cross-Entry References (`resolve_references`)](#9-keepass-placeholders--cross-entry-references-resolve_references)
+    - [1. KeePass (`keepass`)](#1-keepass-keepass)
+    - [2. YAML (`yaml`) & JSON (`json`)](#2-yaml-yaml--json-json)
+    - [3. Custom Vault (`custom_vault`)](#3-custom-vault-custom_vault)
+    - [4. Stored Search Vault (`search`)](#4-stored-search-vault-search)
+    - [5. Field Filtering (`include_fields` and `exclude_fields`)](#5-field-filtering-include_fields-and-exclude_fields)
+    - [6. Field Key Mapping (`mapping`)](#6-field-key-mapping-mapping)
+    - [7. Key Formatting (`key_format`)](#7-key-formatting-key_format)
+    - [8. Universal Per-Entry Attributes Decorator (`attributes`)](#8-universal-per-entry-attributes-decorator-attributes)
+    - [9. KeePass Placeholders & Cross-Entry References (`resolve_references`)](#9-keepass-placeholders--cross-entry-references-resolve_references)
 - [Template Engine & FuncMap Reference](#template-engine--funcmap-reference)
 - [Command Autoloading & Alias Masking](#command-autoloading--alias-masking)
 - [Search Query Language Reference](#search-query-language-reference)
@@ -66,7 +72,7 @@ Managing application credentials usually forces bad trade-offs:
 ```mermaid
 flowchart TD
     subgraph CLI ["1. You run a command wrapped with cloakenv"]
-        Cmd["cloakenv run -e DB_PASS='{{ get \"keyring://db/prod\" }}' -- ./my-app"]
+        Cmd["cloakenv run -e DB_PASS='{{ get #quot;keyring://db/prod#quot; }}' -- ./my-app"]
     end
 
     subgraph Engine ["2. cloakenv Orchestrator"]
@@ -289,7 +295,7 @@ cloakenv run -f kebab -m "work://Production/PostgreSQL" -- ./deploy
 # 5. Load a template .env file
 cloakenv run -t ./deploy.env -- terraform apply
 
-# 5. Combine template, merge, and explicit overrides
+# 6. Combine template, merge, and explicit overrides
 cloakenv run \
   -t .env.template \
   -m "work://Cloud/AWS_Production" \
@@ -334,6 +340,7 @@ cloakenv set <uri> [--ttl <duration>]
 ```
 
 - The secret value is securely read from standard input (stdin) or prompted interactively if running in a terminal.
+- Bounded input: Reading from stdin enforces a maximum size limit of 10 MiB to prevent memory exhaustion from unbounded input streams.
 - `--ttl <duration>`: Optional Time-To-Live expiration (e.g. `5m`, `1h`, `24h`) for `cache://` secrets.
 
 #### Examples:
@@ -397,7 +404,7 @@ cloakenv show -m <entry-uri> [-m <entry-uri> ...] [flags]
 - `-t template_path`: Load template `.env` file (repeatable).
 - `-i KEY`: Whitelist filter keys (repeatable).
 - `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
-- `--show-meta`: Include vault and provider metadata in a `_meta_` object (`yaml` and `json` output only).
+- `--show-meta`: Include vault, provider, and tags metadata in a `_meta_` object (`yaml` and `json` output only).
 
 #### Output Formats:
 1. **`yaml`** (Default): Formatted YAML document.
@@ -438,7 +445,7 @@ cloakenv search "[query_expression]" [flags]
 - `--vault <vault_name>`: Scope the search to one or more specific vaults (repeatable).
 - `-i KEY`: Select only specific attributes/fields in the output (repeatable).
 - `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
-- `--show-meta`: Include vault and provider metadata in a `_meta_` object (`yaml` and `json` output only).
+- `--show-meta`: Include vault, provider, and tags metadata in a `_meta_` object (`yaml` and `json` output only).
 - `-o, --output`: Output format: `yaml` (default) or `json`.
 
 #### Examples:
@@ -1030,6 +1037,17 @@ cloakenv search 'hostname matches "db-[0-9]+\\.example\\.com"'
 
 ```bash
 cloakenv search '("auth:ssh" in tags or "auth:tls" in tags) and bit_strength >= 2048'
+```
+
+### 5. UUID & Group Querying
+
+```bash
+# Query by exact entry UUID
+cloakenv search 'uuid == "10203040-5060-7080-90a0-b0c0d0e0f001"'
+
+# Query by KeePass group name or path
+cloakenv search 'group.name == "website"'
+cloakenv search 'group.path startsWith "website"'
 ```
 
 > [!NOTE]
