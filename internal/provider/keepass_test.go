@@ -310,7 +310,9 @@ func TestKeePassProvider(t *testing.T) {
 			}
 		}
 
-		traverse(&kp.db.Content.Root.Groups[0])
+		for i := range kp.db.Content.Root.Groups {
+			traverse(&kp.db.Content.Root.Groups[i])
+		}
 
 		if len(collected) == 0 {
 			t.Fatalf("expected at least one entry in test database fixture, found none")
