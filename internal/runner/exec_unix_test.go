@@ -218,6 +218,60 @@ func TestRunCommand_NotFound(t *testing.T) {
 	}
 }
 
+func TestRunCommand_ErrDotSecurity(t *testing.T) {
+	// Test that running a command that resolves to the current directory via PATH
+	// (exec.ErrDot) is explicitly rejected with a security error.
+	dir := t.TempDir()
+	cmdName := "malicious-cmd-test"
+	binPath := dir + "/" + cmdName
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("Failed to create test executable: %v", err)
+	}
+
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current dir: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Failed to chdir: %v", err)
+	}
+	defer func() { _ = os.Chdir(origDir) }()
+
+	t.Setenv("PATH", "."+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var stderr bytes.Buffer
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create pipe: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	defer func() { _ = w.Close() }()
+
+	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = oldStderr
+	})
+
+	exitCode := RunCommand([]string{cmdName}, os.Environ())
+
+	_ = w.Close()
+	os.Stderr = oldStderr
+	_, err = stderr.ReadFrom(r)
+	if err != nil {
+		t.Fatalf("Failed to read from stderr pipe: %v", err)
+	}
+
+	if exitCode != 1 {
+		t.Errorf("Expected exit code 1, got %d", exitCode)
+	}
+
+	wantSubstr := "is blocked due to security risks"
+	if !strings.Contains(stderr.String(), wantSubstr) {
+		t.Errorf("Expected stderr to contain %q, got %q", wantSubstr, stderr.String())
+	}
+}
+
 func TestRunCommand_ExecFailure(t *testing.T) {
 	// Create a temporary file that is executable but not a valid executable
 	// This will pass exec.LookPath but fail syscall.Exec with ENOEXEC
