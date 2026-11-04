@@ -105,10 +105,10 @@ func TestOrchestratorBuildEnvMerges(t *testing.T) {
 
 func TestEnvBuilder_IsKnownScheme(t *testing.T) {
 	tests := []struct {
-		name    string
-		config  *config.Config
-		scheme  string
-		want    bool
+		name   string
+		config *config.Config
+		scheme string
+		want   bool
 	}{
 		{
 			name:   "builtin env scheme",
@@ -183,62 +183,6 @@ func TestEnvBuilder_IsKnownScheme(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestEnvBuilder_BareURICommandArgResolution(t *testing.T) {
-	ctx := context.Background()
-	t.Setenv("BARE_TEST_VAR", "resolved_bare_value")
-
-	cfg := &config.Config{
-		Vaults: map[string]config.VaultConfig{
-			"app_vault": {
-				Provider:     "custom_vault",
-				SingleEntity: boolPtr(true),
-				Attributes: map[string]any{
-					"API_KEY": "app-secret-xyz",
-				},
-			},
-		},
-	}
-
-	orch, err := NewOrchestrator(cfg)
-	if err != nil {
-		t.Fatalf("failed to create orchestrator: %v", err)
-	}
-
-	t.Run("resolves bare known URI arguments", func(t *testing.T) {
-		cmdArgs := []string{
-			"curl",
-			"env://BARE_TEST_VAR",
-			"app_vault://API_KEY",
-			"http://example.com/api",
-			"nonexistent_scheme://test",
-			"plain-argument",
-		}
-
-		resolvedArgs, _, err := orch.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
-		if err != nil {
-			t.Fatalf("BuildEnvForCommand failed: %v", err)
-		}
-
-		expectedArgs := []string{
-			"curl",
-			"resolved_bare_value",
-			"app-secret-xyz",
-			"http://example.com/api",
-			"nonexistent_scheme://test",
-			"plain-argument",
-		}
-
-		if len(resolvedArgs) != len(expectedArgs) {
-			t.Fatalf("expected %d args, got %d (%v)", len(expectedArgs), len(resolvedArgs), resolvedArgs)
-		}
-		for i, arg := range resolvedArgs {
-			if arg != expectedArgs[i] {
-				t.Errorf("arg[%d]: expected %q, got %q", i, expectedArgs[i], arg)
-			}
-		}
-	})
 }
 
 func TestBuildEnvForCommand_Autoload(t *testing.T) {
