@@ -1221,7 +1221,6 @@ make test          # Run tests with race detector (go test -v -race ./...)
 make bench         # Run performance benchmarks
 make fmt           # Format Go source code (go fmt ./...)
 make vet           # Run Go static analysis (go vet ./...)
-make lint          # Run static analysis with golangci-lint (golangci-lint run)
 make test-all      # Run fmt, vet, test, and bench in sequence
 make clean         # Remove build artifacts (bin/)
 make install       # Install binary to $GOBIN or $GOPATH/bin

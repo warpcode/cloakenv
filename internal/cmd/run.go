@@ -60,35 +60,12 @@ func Run(args []string, cfg *config.Config) int {
 	parser.StringSlice([]string{"-m"}, &merges, "")
 	parser.StringSlice([]string{"-i"}, &whitelist, "")
 
-	dashDashIdx := -1
-	for i, arg := range args {
-		if arg == "--" {
-			dashDashIdx = i
-			break
-		}
+	rem, err := parser.Parse(args)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
-
-	if dashDashIdx >= 0 {
-		parser.StopAtNonFlag = false
-		flagArgs := args[:dashDashIdx]
-		rem, err := parser.Parse(flagArgs)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		if len(rem) > 0 {
-			fmt.Fprintf(os.Stderr, "unexpected argument: %s\n", rem[0])
-			return 1
-		}
-		cmdArgs = args[dashDashIdx+1:]
-	} else {
-		rem, err := parser.Parse(args)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		cmdArgs = rem
-	}
+	cmdArgs = rem
 
 	if len(cmdArgs) == 0 {
 		fmt.Fprintln(os.Stderr, "No command specified. Usage: cloakenv run [flags] -- <command> [args]")

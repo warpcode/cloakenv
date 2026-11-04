@@ -148,9 +148,7 @@ func (s *SearchableKeyFormatProvider) GetEntryWithPath(ctx context.Context, loca
 		if err != nil {
 			return Entry{}, "", err
 		}
-		if !IsRawKeys(ctx) {
-			entry.Attributes = s.formatAttributes(entry.Attributes)
-		}
+		entry.Attributes = s.formatAttributes(entry.Attributes)
 		return entry, path, nil
 	}
 	entry, err := s.GetEntry(ctx, location)
@@ -163,9 +161,7 @@ func (s *SearchableKeyFormatProvider) GetEntry(ctx context.Context, location str
 	if err != nil {
 		return Entry{}, err
 	}
-	if !IsRawKeys(ctx) {
-		entry.Attributes = s.formatAttributes(entry.Attributes)
-	}
+	entry.Attributes = s.formatAttributes(entry.Attributes)
 	return entry, nil
 }
 
@@ -174,9 +170,6 @@ func (s *SearchableKeyFormatProvider) Search(ctx context.Context, query SearchQu
 	results, err := s.underlying.(SearchableProvider).Search(ctx, query)
 	if err != nil {
 		return nil, err
-	}
-	if IsRawKeys(ctx) {
-		return results, nil
 	}
 	formattedResults := make([]SearchResult, len(results))
 	for i, r := range results {

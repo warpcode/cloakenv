@@ -435,42 +435,21 @@ func matchWildcard(pattern, text string) bool {
 	if !strings.Contains(pattern, "*") {
 		return pattern == text
 	}
-
-	// Optimization: Single wildcard fast path avoids any slice allocations or iterations
-	// for common patterns like "aws*", "*test", or "git*push".
-	firstStar := strings.IndexByte(pattern, '*')
-	lastStar := strings.LastIndexByte(pattern, '*')
-	if firstStar == lastStar {
-		prefix := pattern[:firstStar]
-		suffix := pattern[firstStar+1:]
-		if len(text) < len(prefix)+len(suffix) {
-			return false
-		}
-		return strings.HasPrefix(text, prefix) && strings.HasSuffix(text, suffix)
-	}
-
-	// Multi-wildcard optimization: scan iteratively with strings.Cut instead of
-	// strings.Split to eliminate heap slice allocations entirely (0 allocs/op).
-	prefix, remaining, _ := strings.Cut(pattern, "*")
-	if !strings.HasPrefix(text, prefix) {
+	parts := strings.Split(pattern, "*")
+	if !strings.HasPrefix(text, parts[0]) {
 		return false
 	}
-	text = text[len(prefix):]
-
-	for {
-		var part string
-		var found bool
-		part, remaining, found = strings.Cut(remaining, "*")
-		if !found {
-			// part is the final suffix
-			return strings.HasSuffix(text, part)
+	text = text[len(parts[0]):]
+	for i := 1; i < len(parts)-1; i++ {
+		p := parts[i]
+		if p == "" {
+			continue
 		}
-		if part != "" {
-			idx := strings.Index(text, part)
-			if idx == -1 {
-				return false
-			}
-			text = text[idx+len(part):]
+		idx := strings.Index(text, p)
+		if idx == -1 {
+			return false
 		}
+		text = text[idx+len(p):]
 	}
+	return strings.HasSuffix(text, parts[len(parts)-1])
 }
