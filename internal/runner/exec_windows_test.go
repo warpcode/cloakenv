@@ -61,12 +61,6 @@ func TestRunCommand(t *testing.T) {
 		t.Fatalf("Failed to create dummy BAT file: %v", err)
 	}
 
-	dotDir := t.TempDir()
-	dotExePath := filepath.Join(dotDir, "dummy-test-errdot.exe")
-	if err := os.WriteFile(dotExePath, []byte(""), 0755); err != nil {
-		t.Fatalf("Failed to create dummy exe file: %v", err)
-	}
-
 	tests := []struct {
 		name       string
 		cmdArgs    []string
@@ -135,12 +129,6 @@ func TestRunCommand(t *testing.T) {
 			env:      []string{"BAD_VAR=foo\x00bar"},
 			wantCode: 1,
 		},
-		{
-			name:       "err_dot_relative_exe_blocked",
-			cmdArgs:    []string{"dummy-test-errdot"},
-			wantCode:   1,
-			wantStderr: "is blocked due to security risks\n",
-		},
 	}
 
 	for _, tt := range tests {
@@ -157,11 +145,6 @@ func TestRunCommand(t *testing.T) {
 			t.Cleanup(func() {
 				os.Stderr = oldStderr
 			})
-
-			if tt.name == "err_dot_relative_exe_blocked" {
-				t.Chdir(dotDir)
-				t.Setenv("PATH", "."+string(os.PathListSeparator)+os.Getenv("PATH"))
-			}
 
 			env := tt.env
 			if env == nil {

@@ -67,7 +67,6 @@ func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, err
 	}
 
 	nextCtx := context.WithValue(ctx, ContextKeyDepth, depth+1)
-	nextCtx = WithRawKeys(nextCtx)
 	if len(s.includeFields) > 0 || len(s.excludeFields) > 0 || len(s.mapping) > 0 {
 		nextCtx = WithFieldPolicyAndMapping(nextCtx, s.includeFields, s.excludeFields, s.mapping)
 	}
