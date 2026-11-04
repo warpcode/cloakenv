@@ -17,6 +17,7 @@ import (
 	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
+// bufPool pools *bytes.Buffer instances to reduce heap allocations during template rendering.
 var bufPool = sync.Pool{
 	New: func() any {
 		return new(bytes.Buffer)
@@ -351,10 +352,7 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 	execData := wrapTemplateData(data)
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
-	defer func() {
-		buf.Reset()
-		bufPool.Put(buf)
-	}()
+	defer bufPool.Put(buf)
 
 	if err := tmpl.Execute(buf, execData); err != nil {
 		keyPart := ""
