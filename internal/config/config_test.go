@@ -738,7 +738,8 @@ func TestLoad_RelativeVaultPath(t *testing.T) {
 	}
 	defer func() { userHomeDir = oldUserHomeDir }()
 
-	yamlContent := `
+	absVaultPath := filepath.Join(tempDir, "abs", "secrets.json")
+	yamlContent := fmt.Sprintf(`
 vaults:
   rel_dot:
     provider: "keepass"
@@ -751,10 +752,10 @@ vaults:
     vault_path: "~/secrets.kdbx"
   abs_vault:
     provider: "json"
-    vault_path: "/abs/path/secrets.json"
+    vault_path: %q
   empty_vault:
     provider: "custom_vault"
-`
+`, absVaultPath)
 	configFilePath := filepath.Join(configDir, "config.yaml")
 	if err := os.WriteFile(configFilePath, []byte(yamlContent), 0644); err != nil {
 		t.Fatalf("failed to write config file: %v", err)
@@ -762,16 +763,7 @@ vaults:
 
 	// Change working directory to a completely different directory to ensure
 	// relative paths do not evaluate against the process CWD.
-	origWd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("failed to get wd: %v", err)
-	}
-	if err := os.Chdir(otherDir); err != nil {
-		t.Fatalf("failed to chdir to otherDir: %v", err)
-	}
-	defer func() {
-		_ = os.Chdir(origWd)
-	}()
+	t.Chdir(otherDir)
 
 	cfg, err := Load(configFilePath)
 	if err != nil {
@@ -801,7 +793,7 @@ vaults:
 		{
 			name:     "absolute path unchanged",
 			vault:    "abs_vault",
-			expected: "/abs/path/secrets.json",
+			expected: absVaultPath,
 		},
 		{
 			name:     "empty vault path unchanged",
