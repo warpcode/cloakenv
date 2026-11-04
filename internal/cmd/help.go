@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -45,14 +46,19 @@ URI schemes:
   search://query/attribute     Built-in: resolve dynamically matched credentials
   <vault>://Path/To/Entry      Config-defined: resolved via ~/.config/cloakenv/config.yaml`
 
+// PrintUsageTo writes the general usage instructions to the provided writer.
+func PrintUsageTo(w io.Writer) {
+	fmt.Fprintln(w, generalUsage)
+}
+
 // PrintUsage prints the general usage instructions to stderr.
 func PrintUsage() {
-	fmt.Fprintln(os.Stderr, generalUsage)
+	PrintUsageTo(os.Stderr)
 }
 
 // PrintUsageStdout prints the general usage instructions to stdout.
 func PrintUsageStdout() {
-	fmt.Fprintln(os.Stdout, generalUsage)
+	PrintUsageTo(os.Stdout)
 }
 
 // PrintRunHelp prints usage help for the run subcommand.

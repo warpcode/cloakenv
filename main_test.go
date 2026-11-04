@@ -117,21 +117,44 @@ func TestMainArgsParsing(t *testing.T) {
 }
 
 func TestRunDirectIsolation(t *testing.T) {
+	tempDir := t.TempDir()
+
+	validConfigPath := filepath.Join(tempDir, "valid.yaml")
+	validYAML := `
+vaults:
+  custom:
+    provider: custom_vault
+    entities:
+      demo:
+        api_key: "secret123"
+`
+	if err := os.WriteFile(validConfigPath, []byte(validYAML), 0644); err != nil {
+		t.Fatalf("failed to write valid config: %v", err)
+	}
+
+	invalidConfigPath := filepath.Join(tempDir, "invalid.yaml")
+	if err := os.WriteFile(invalidConfigPath, []byte("invalid: yaml: :"), 0644); err != nil {
+		t.Fatalf("failed to write invalid config: %v", err)
+	}
+
 	tests := []struct {
 		name     string
 		args     []string
 		wantExit int
+		wantOut  string
 		wantErr  string
 	}{
 		{
 			name:     "direct empty args",
 			args:     []string{},
 			wantExit: 1,
+			wantErr:  "cloakenv \u2014 pluggable secret orchestrator",
 		},
 		{
 			name:     "direct no command args",
 			args:     []string{"cloakenv"},
 			wantExit: 1,
+			wantErr:  "cloakenv \u2014 pluggable secret orchestrator",
 		},
 		{
 			name:     "direct config flag without value",
@@ -142,6 +165,30 @@ func TestRunDirectIsolation(t *testing.T) {
 		{
 			name:     "direct help flag",
 			args:     []string{"cloakenv", "--help"},
+			wantExit: 0,
+			wantOut:  "cloakenv \u2014 pluggable secret orchestrator",
+		},
+		{
+			name:     "direct short help flag",
+			args:     []string{"cloakenv", "-h"},
+			wantExit: 0,
+			wantOut:  "cloakenv \u2014 pluggable secret orchestrator",
+		},
+		{
+			name:     "direct unknown command",
+			args:     []string{"cloakenv", "unknown"},
+			wantExit: 1,
+			wantErr:  "Unknown command: unknown",
+		},
+		{
+			name:     "direct custom config invalid path",
+			args:     []string{"cloakenv", "-c", invalidConfigPath, "get", "env://FOO"},
+			wantExit: 1,
+			wantErr:  "Config error:",
+		},
+		{
+			name:     "direct custom config valid path",
+			args:     []string{"cloakenv", "-c", validConfigPath, "show", "custom://demo", "-o", "keys"},
 			wantExit: 0,
 		},
 	}
@@ -154,10 +201,33 @@ func TestRunDirectIsolation(t *testing.T) {
 			if exitCode != tt.wantExit {
 				t.Errorf("run(%v) = %d, want %d", tt.args, exitCode, tt.wantExit)
 			}
+			if tt.wantOut != "" && !strings.Contains(stdout.String(), tt.wantOut) {
+				t.Errorf("run(%v) stdout = %q, want contain %q", tt.args, stdout.String(), tt.wantOut)
+			}
 			if tt.wantErr != "" && !strings.Contains(stderr.String(), tt.wantErr) {
 				t.Errorf("run(%v) stderr = %q, want contain %q", tt.args, stderr.String(), tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestRunnerContextLoadConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	validPath := filepath.Join(tempDir, "runner_valid.yaml")
+	if err := os.WriteFile(validPath, []byte("cache:\n  default_ttl: 4h\n"), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	r := &runnerContext{
+		customConfigPath: validPath,
+	}
+
+	cfg, err := r.loadConfig()
+	if err != nil {
+		t.Fatalf("r.loadConfig() unexpected error: %v", err)
+	}
+	if cfg.Cache.DefaultTTL != "4h" {
+		t.Errorf("r.loadConfig() default_ttl = %q, want 4h", cfg.Cache.DefaultTTL)
 	}
 }
 

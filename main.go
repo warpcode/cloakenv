@@ -23,14 +23,14 @@ func main() {
 // run parses arguments and configuration within an isolated runner context,
 // executing the requested subcommand and returning its exit code.
 func run(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		cmd.PrintUsage()
-		return 1
-	}
-
 	r := &runnerContext{
 		stdout: stdout,
 		stderr: stderr,
+	}
+
+	if len(args) == 0 {
+		cmd.PrintUsageTo(r.stderr)
+		return 1
 	}
 
 	parsedArgs := []string{args[0]}
@@ -54,12 +54,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if len(parsedArgs) < 2 {
-		cmd.PrintUsage()
+		cmd.PrintUsageTo(r.stderr)
 		return 1
 	}
 
 	if parsedArgs[1] == "--help" || parsedArgs[1] == "-h" {
-		cmd.PrintUsageStdout()
+		cmd.PrintUsageTo(r.stdout)
 		return 0
 	}
 
@@ -91,7 +91,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmd.Internal(parsedArgs[2:], cfg)
 	default:
 		fmt.Fprintf(r.stderr, "Unknown command: %s\n", parsedArgs[1])
-		cmd.PrintUsage()
+		cmd.PrintUsageTo(r.stderr)
 		return 1
 	}
 }
