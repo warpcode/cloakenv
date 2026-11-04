@@ -271,9 +271,6 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 	g.SetLimit(maxConcurrency)
 
 	for name, searchable := range providersToSearch {
-		name := name
-		searchable := searchable
-
 		g.Go(func() error {
 			results, err := searchable.Search(gctx, provider.SearchQuery{})
 			if err != nil {
