@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"io"
 	"os"
@@ -61,6 +62,11 @@ func Get(args []string, cfg *config.Config) int {
 // to prevent memory exhaustion / Denial of Service (DoS) attacks from unbounded input streams.
 const maxSecretInputSize = 10 * 1024 * 1024
 
+var (
+	isTerminal   = term.IsTerminal
+	readPassword = term.ReadPassword
+)
+
 // Set handles "cloakenv set <uri> [--ttl <duration>]".
 func Set(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
@@ -98,20 +104,38 @@ func Set(args []string, cfg *config.Config) int {
 
 	var b []byte
 	var readErr error
-	if term.IsTerminal(int(os.Stdin.Fd())) {
+	if isTerminal(int(os.Stdin.Fd())) {
 		fmt.Fprint(os.Stderr, "Enter secret value: ")
-		b, readErr = term.ReadPassword(int(os.Stdin.Fd()))
+		b, readErr = readPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
+		if readErr != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read secret: %v\n", readErr)
+			return 1
+		}
+		defer utils.ZeroBytes(b)
+
+		fmt.Fprint(os.Stderr, "Confirm secret: ")
+		confirmBytes, confirmErr := readPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		if confirmErr != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read confirmation: %v\n", confirmErr)
+			return 1
+		}
+		defer utils.ZeroBytes(confirmBytes)
+
+		if subtle.ConstantTimeCompare(b, confirmBytes) != 1 {
+			fmt.Fprintln(os.Stderr, "Error: secret confirmation does not match")
+			return 1
+		}
 	} else {
 		// Enforce bounded reading using io.LimitReader to protect against unbounded stdin streams.
 		b, readErr = io.ReadAll(io.LimitReader(os.Stdin, maxSecretInputSize+1))
+		if readErr != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", readErr)
+			return 1
+		}
+		defer utils.ZeroBytes(b)
 	}
-
-	if readErr != nil {
-		fmt.Fprintf(os.Stderr, "Failed to read from stdin: %v\n", readErr)
-		return 1
-	}
-	defer utils.ZeroBytes(b)
 
 	if len(b) > maxSecretInputSize {
 		fmt.Fprintf(os.Stderr, "Secret value exceeds maximum size limit of %d MB\n", maxSecretInputSize/(1024*1024))
