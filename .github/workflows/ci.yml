@@ -98,7 +98,7 @@ jobs:
           if-no-files-found: error
 
   publish-lint-review:
-    name: Publish Lint Review
+    name: Publish Lint and Test Review
     if: >-
       always() &&
       github.event_name == 'pull_request_target' &&
@@ -127,7 +127,7 @@ jobs:
           path: ${{ runner.temp }}/test-reports
           merge-multiple: true
 
-      - name: Publish lint review
+      - name: Publish failure review
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -164,6 +164,7 @@ jobs:
               ] | unique[]
             ' "$test_report" >> "$test_findings"
           done
+          sort -u "$test_findings" -o "$test_findings"
           test_count=$(wc -l < "$test_findings")
           if ((issue_count == 0 && test_count == 0)); then
             echo "No lint or test findings; skipping review."
