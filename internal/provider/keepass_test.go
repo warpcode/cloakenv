@@ -276,6 +276,60 @@ func TestKeePassProvider(t *testing.T) {
 			t.Errorf("expected error to contain 'read-only', got %q", err.Error())
 		}
 	})
+
+	t.Run("VerifyDatabaseEntriesAndTags", func(t *testing.T) {
+		// Validates fixture database entries and tags across all groups,
+		// converting diagnostic checks from testdata/test_tags_check.go into an automated test.
+		if len(kp.db.Content.Root.Groups) == 0 {
+			t.Fatalf("expected at least one root group in test database fixture")
+		}
+
+		type entryInfo struct {
+			title string
+			tags  string
+		}
+
+		var collected []entryInfo
+		var traverse func(g *gokeepasslib.Group)
+		traverse = func(g *gokeepasslib.Group) {
+			for _, e := range g.Entries {
+				var title string
+				for _, v := range e.Values {
+					if v.Key == "Title" {
+						title = v.Value.Content
+						break
+					}
+				}
+				collected = append(collected, entryInfo{
+					title: title,
+					tags:  e.Tags,
+				})
+			}
+			for i := range g.Groups {
+				traverse(&g.Groups[i])
+			}
+		}
+
+		traverse(&kp.db.Content.Root.Groups[0])
+
+		if len(collected) == 0 {
+			t.Fatalf("expected at least one entry in test database fixture, found none")
+		}
+
+		foundTestWebsite := false
+		for _, info := range collected {
+			if info.title == "Test Website" {
+				foundTestWebsite = true
+				if info.tags != "" {
+					t.Errorf("expected entry %q tags to be empty string, got %q", info.title, info.tags)
+				}
+			}
+		}
+
+		if !foundTestWebsite {
+			t.Errorf("expected to find entry with title 'Test Website' in test database fixture")
+		}
+	})
 }
 
 func TestKeePassProvider_SetSecret(t *testing.T) {
