@@ -268,7 +268,7 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(maxConcurrency)
+	g.SetLimit(maxConcurrency) // Bound concurrent vault searches to maxConcurrency
 
 	for name, searchable := range providersToSearch {
 		g.Go(func() error {
