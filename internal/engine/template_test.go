@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-
+	"strings"
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
@@ -231,5 +231,84 @@ func TestTemplateEngine_LowercaseDotMetaAndAttributes(t *testing.T) {
 	want := "My Title / My Group = val"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTemplateEngine_RenderBufferPool(t *testing.T) {
+	ctx := context.Background()
+	te := engine.NewTemplateEngine(nil)
+
+	// Verify sequential calls with differing output sizes do not bleed state.
+	for i := 0; i < 50; i++ {
+		data := map[string]any{"val": i}
+		got, err := te.Render(ctx, `value={{ .val }}`, data, 0, "")
+		if err != nil {
+			t.Fatalf("unexpected error at iteration %d: %v", i, err)
+		}
+		want := "value=" + string(rune('0'+i%10))
+		if i >= 10 {
+			want = "value=" + string([]byte{byte('0' + i/10), byte('0' + i%10)})
+		}
+		if got != want {
+			t.Errorf("iteration %d: got %q, want %q", i, got, want)
+		}
+	}
+
+	// Verify concurrent calls do not race or corrupt data.
+	t.Run("concurrent renders", func(t *testing.T) {
+		t.Parallel()
+		const goroutines = 20
+		const iters = 50
+		errCh := make(chan error, goroutines)
+
+		for g := 0; g < goroutines; g++ {
+			go func(gid int) {
+				var workerErr error
+				for j := 0; j < iters; j++ {
+					data := map[string]any{"id": gid, "iter": j}
+					res, err := te.Render(ctx, `id={{ .id }}-iter={{ .iter }}`, data, 0, "")
+					if err != nil {
+						workerErr = err
+						break
+					}
+					expected := string(rune('0' + gid%10))
+					_ = expected
+					if res == "" || !strings.HasPrefix(res, "id=") {
+						t.Errorf("unexpected output format: %q", res)
+					}
+				}
+				errCh <- workerErr
+			}(g)
+		}
+
+		for g := 0; g < goroutines; g++ {
+			if err := <-errCh; err != nil {
+				t.Fatalf("concurrent render failed: %v", err)
+			}
+		}
+	})
+}
+
+func BenchmarkTemplateEngine_Render(b *testing.B) {
+	ctx := context.Background()
+	te := engine.NewTemplateEngine(nil)
+	data := engine.TemplateContext{
+		Meta: map[string]any{
+			"Title": "Benchmark Title",
+		},
+		Attributes: map[string]any{
+			"Username": "admin",
+			"Password": "supersecretpassword",
+		},
+	}
+	tmpl := `user={{ index .Attributes "Username" }} pass={{ index .Attributes "Password" }} title={{ .Meta.Title }}`
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, err := te.Render(ctx, tmpl, data, 0, "")
+		if err != nil {
+			b.Fatalf("render failed: %v", err)
+		}
 	}
 }
