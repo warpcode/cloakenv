@@ -78,7 +78,24 @@ jobs:
           cache: ${{ github.event_name == 'push' }}
 
       - name: Run Tests
-        run: go test -v -race ./...
+        id: tests
+        shell: bash
+        env:
+          TEST_REPORT: ${{ runner.temp }}/go-test-${{ matrix.os }}.log
+        run: |
+          touch "$TEST_REPORT"
+          set +e
+          go test -v -race ./... 2>&1 | tee "$TEST_REPORT"
+          test_status=${PIPESTATUS[0]}
+          exit "$test_status"
+
+      - name: Upload Test Results
+        if: always() && github.event_name == 'pull_request_target' && steps.tests.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          name: go-test-${{ matrix.os }}
+          path: ${{ runner.temp }}/go-test-${{ matrix.os }}.log
+          if-no-files-found: error
 
   publish-lint-review:
     name: Publish Lint Review
@@ -86,7 +103,7 @@ jobs:
       always() &&
       github.event_name == 'pull_request_target' &&
       github.event.pull_request.head.repo.full_name == github.repository
-    needs: golangci
+    needs: [golangci, test]
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -101,28 +118,55 @@ jobs:
           name: golangci-report
           path: ${{ runner.temp }}/lint-report
 
+      - name: Download test reports
+        id: test-reports
+        continue-on-error: true
+        uses: actions/download-artifact@v6
+        with:
+          pattern: go-test-*
+          path: ${{ runner.temp }}/test-reports
+          merge-multiple: true
+
       - name: Publish lint review
-        if: steps.report.outcome == 'success'
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           LINT_REPORT: ${{ runner.temp }}/lint-report/golangci-report.sarif
           PR_HEAD_SHA_FILE: ${{ runner.temp }}/lint-report/pr-head-sha
+          TEST_REPORTS: ${{ runner.temp }}/test-reports
         run: |
           current_pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
           if [[ $(jq -r '.state' <<<"$current_pr") != open ||
                 $(jq -r '.head.sha' <<<"$current_pr") != "$PR_HEAD_SHA" ||
                 $(jq -r '.head.repo.full_name // ""' <<<"$current_pr") != "$GITHUB_REPOSITORY" ||
-                $(<"$PR_HEAD_SHA_FILE") != "$PR_HEAD_SHA" ]]; then
+                ( -f "$PR_HEAD_SHA_FILE" && $(<"$PR_HEAD_SHA_FILE") != "$PR_HEAD_SHA" ) ]]; then
             echo "Skipping stale, closed, or non-local pull request."
             exit 0
           fi
 
+          mkdir -p "$(dirname "$LINT_REPORT")"
+          if [[ ! -f "$LINT_REPORT" ]]; then
+            printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"golangci-lint"}},"results":[]}]}\n' > "$LINT_REPORT"
+          fi
           jq -e '.version == "2.1.0" and (.runs | type == "array")' "$LINT_REPORT" >/dev/null
           issue_count=$(jq '[.runs[].results[]?] | length' "$LINT_REPORT")
-          if ((issue_count == 0)); then
-            echo "No lint findings; skipping review."
+
+          test_findings="$RUNNER_TEMP/test-findings.txt"
+          : > "$test_findings"
+          for test_report in "$TEST_REPORTS"/go-test-*.log; do
+            [[ -f "$test_report" ]] || continue
+            jq -Rn '
+              [
+                inputs | select(test("\\.go:[0-9]+:|^--- FAIL:|^FAIL([[:space:]]|$)"))
+                | "- \(.)"
+              ] | unique[]
+            ' "$test_report" >> "$test_findings"
+          done
+          test_count=$(wc -l < "$test_findings")
+          if ((issue_count == 0 && test_count == 0)); then
+            echo "No lint or test findings; skipping review."
             exit 0
           fi
 
@@ -130,6 +174,7 @@ jobs:
             --arg sha "$PR_HEAD_SHA" \
             --arg repository "$GITHUB_REPOSITORY" \
             --slurpfile report "$LINT_REPORT" \
+            --rawfile tests "$test_findings" \
             '
             [ $report[0].runs[].results[]? |
               {
@@ -138,19 +183,28 @@ jobs:
                 body: "**\(.ruleId // "golangci-lint") (\(.level // "warning"))**: \(.message.text // "No diagnostic message")"
               }
             ] as $findings |
+            ($tests | split("\n") | map(select(length > 0))) as $test_findings |
             {
               commit_id: $sha,
               event: "REQUEST_CHANGES",
               body: (
-                "golangci-lint reported \($findings | length) finding(s). "
-                + "The lint check remains failing independently of this review.\n\n"
-                + ([$findings[] |
+                (if ($findings | length) > 0 then
+                  "golangci-lint reported \($findings | length) finding(s). The lint check remains failing.\n\n"
+                else "" end)
+                + (if ($test_findings | length) > 0 then
+                  "go test reported \($test_findings | length) finding(s):\n\n"
+                  + ($test_findings | join("\n"))
+                else "" end)
+                + (if ($findings | length) > 0 then
+                  "\n\n"
+                  + ([$findings[] |
                     if .path != null and .line != null then
                       "- [`\(.path):\(.line)`](https://github.com/\($repository)/blob/\($sha)/\(.path)#L\(.line)) \(.body)"
                     else
                       "- \(.body)"
                     end
                   ] | join("\n"))
+                else "" end)
               )
             }
           ' > "$RUNNER_TEMP/review.json"
@@ -160,5 +214,5 @@ jobs:
             --input "$RUNNER_TEMP/review.json"
 
       - name: Report missing lint report
-        if: steps.report.outcome != 'success'
-        run: echo "::warning::Lint report artifact is unavailable; the lint check remains authoritative."
+        if: always() && (steps.report.outcome != 'success' || steps.test-reports.outcome != 'success')
+        run: echo "::warning::One or more lint/test report artifacts are unavailable; CI status checks remain authoritative."
