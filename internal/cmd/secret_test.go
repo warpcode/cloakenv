@@ -526,6 +526,169 @@ func TestSet(t *testing.T) {
 			t.Errorf("expected maximum size limit error message, got %q", stderr)
 		}
 	})
+
+	t.Run("Interactive_Success", func(t *testing.T) {
+		keyring.MockInit()
+		cfg := &config.Config{
+			Vaults: make(map[string]config.VaultConfig),
+		}
+
+		cacheDir := t.TempDir()
+		t.Setenv("XDG_CACHE_HOME", cacheDir)
+		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+
+		origIsTerminal := isTerminal
+		origReadPassword := readPassword
+		t.Cleanup(func() {
+			isTerminal = origIsTerminal
+			readPassword = origReadPassword
+		})
+
+		isTerminal = func(fd int) bool { return true }
+		passwords := [][]byte{[]byte("secret123"), []byte("secret123")}
+		callCount := 0
+		readPassword = func(fd int) ([]byte, error) {
+			if callCount < len(passwords) {
+				p := passwords[callCount]
+				callCount++
+				return p, nil
+			}
+			return nil, errors.New("unexpected readPassword call")
+		}
+
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test_interactive"}, cfg)
+		})
+
+		if exitCode != 0 {
+			t.Errorf("expected exit code 0 for matching interactive input, got %d (stderr: %s)", exitCode, stderr)
+		}
+
+		if !strings.Contains(stderr, "Enter secret value: ") {
+			t.Errorf("expected 'Enter secret value: ' in stderr, got %q", stderr)
+		}
+		if !strings.Contains(stderr, "Confirm secret: ") {
+			t.Errorf("expected 'Confirm secret: ' in stderr, got %q", stderr)
+		}
+
+		exitCode, stdout, _ := captureOutputWithExitCode(t, func() int {
+			return Get([]string{"cache://test_interactive"}, cfg)
+		})
+		if exitCode != 0 || stdout != "secret123" {
+			t.Errorf("expected stored secret 'secret123', got %q (exit: %d)", stdout, exitCode)
+		}
+	})
+
+	t.Run("Interactive_Mismatch", func(t *testing.T) {
+		keyring.MockInit()
+		cfg := &config.Config{
+			Vaults: make(map[string]config.VaultConfig),
+		}
+
+		cacheDir := t.TempDir()
+		t.Setenv("XDG_CACHE_HOME", cacheDir)
+		t.Setenv("CLOAKENV_ENCRYPTION_KEY", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+
+		origIsTerminal := isTerminal
+		origReadPassword := readPassword
+		t.Cleanup(func() {
+			isTerminal = origIsTerminal
+			readPassword = origReadPassword
+		})
+
+		isTerminal = func(fd int) bool { return true }
+		passwords := [][]byte{[]byte("secret123"), []byte("secret456")}
+		callCount := 0
+		readPassword = func(fd int) ([]byte, error) {
+			if callCount < len(passwords) {
+				p := passwords[callCount]
+				callCount++
+				return p, nil
+			}
+			return nil, errors.New("unexpected readPassword call")
+		}
+
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test_mismatch"}, cfg)
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 for mismatched confirmation, got %d", exitCode)
+		}
+
+		if !strings.Contains(stderr, "Enter secret value: ") {
+			t.Errorf("expected 'Enter secret value: ' in stderr, got %q", stderr)
+		}
+		if !strings.Contains(stderr, "Confirm secret: ") {
+			t.Errorf("expected 'Confirm secret: ' in stderr, got %q", stderr)
+		}
+		if !strings.Contains(stderr, "Error: secret confirmation does not match") {
+			t.Errorf("expected mismatch error in stderr, got %q", stderr)
+		}
+
+		// Ensure nothing was written
+		exitCode, _, _ = captureOutputWithExitCode(t, func() int {
+			return Get([]string{"cache://test_mismatch"}, cfg)
+		})
+		if exitCode == 0 {
+			t.Errorf("expected secret not to be written on confirmation mismatch")
+		}
+	})
+
+	t.Run("Interactive_FirstPromptReadError", func(t *testing.T) {
+		origIsTerminal := isTerminal
+		origReadPassword := readPassword
+		t.Cleanup(func() {
+			isTerminal = origIsTerminal
+			readPassword = origReadPassword
+		})
+
+		isTerminal = func(fd int) bool { return true }
+		readPassword = func(fd int) ([]byte, error) {
+			return nil, errors.New("read error on first prompt")
+		}
+
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test_err1"}, &config.Config{})
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 on first prompt error, got %d", exitCode)
+		}
+		if !strings.Contains(stderr, "Failed to read secret: read error on first prompt") {
+			t.Errorf("expected error message in stderr, got %q", stderr)
+		}
+	})
+
+	t.Run("Interactive_SecondPromptReadError", func(t *testing.T) {
+		origIsTerminal := isTerminal
+		origReadPassword := readPassword
+		t.Cleanup(func() {
+			isTerminal = origIsTerminal
+			readPassword = origReadPassword
+		})
+
+		isTerminal = func(fd int) bool { return true }
+		callCount := 0
+		readPassword = func(fd int) ([]byte, error) {
+			callCount++
+			if callCount == 1 {
+				return []byte("secret123"), nil
+			}
+			return nil, errors.New("read error on confirmation prompt")
+		}
+
+		exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+			return Set([]string{"cache://test_err2"}, &config.Config{})
+		})
+
+		if exitCode != 1 {
+			t.Errorf("expected exit code 1 on second prompt error, got %d", exitCode)
+		}
+		if !strings.Contains(stderr, "Failed to read confirmation: read error on confirmation prompt") {
+			t.Errorf("expected confirmation error message in stderr, got %q", stderr)
+		}
+	})
 }
 
 func TestDelete(t *testing.T) {

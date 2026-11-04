@@ -20,12 +20,15 @@ make test             # Runs tests with race detector (go test -v -race ./...)
 make bench            # Runs engine performance benchmarks
 make fmt              # Formats Go code (go fmt ./...)
 make vet              # Runs go vet analysis
+make lint             # Runs golangci-lint static analysis (golangci-lint run)
 make verify           # Complete pipeline: build, vet, format check, race tests
 ```
 
 ### Linting
 CI runs full static analysis using `golangci-lint`:
 ```bash
+make lint
+# or directly via go run:
 go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run
 ```
 
