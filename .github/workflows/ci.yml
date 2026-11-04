@@ -10,12 +10,13 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   golangci:
     name: Lint Code
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
@@ -26,8 +27,31 @@ jobs:
           go-version-file: 'go.mod'
           cache: true
 
+      - name: Initialize lint report
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          printf '{"Issues":[]}\n' > "$RUNNER_TEMP/golangci-report.json"
+          printf '%s\n' "$PR_HEAD_SHA" > "$RUNNER_TEMP/pr-head-sha"
+
       - name: golangci-lint
-        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run
+        id: lint
+        continue-on-error: true
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run --output.json.path="$RUNNER_TEMP/golangci-report.json"
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: golangci-report
+          path: |
+            ${{ runner.temp }}/golangci-report.json
+            ${{ runner.temp }}/pr-head-sha
+          if-no-files-found: error
+
+      - name: Preserve lint failure
+        if: always() && steps.lint.outcome == 'failure'
+        run: exit 1
 
   test:
     name: Run Tests

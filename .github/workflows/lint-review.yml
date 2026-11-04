@@ -1,0 +1,47 @@
+name: Publish Lint Review
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.pull_requests[0].number != null
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted default branch
+        uses: actions/checkout@v7
+
+      - name: Download lint report
+        id: report
+        continue-on-error: true
+        uses: actions/download-artifact@v6
+        with:
+          name: golangci-report
+          path: ${{ runner.temp }}/lint-report
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Publish lint review
+        if: steps.report.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          LINT_REPORT: ${{ runner.temp }}/lint-report/golangci-report.json
+          PR_HEAD_SHA_FILE: ${{ runner.temp }}/lint-report/pr-head-sha
+        run: bash .github/scripts/publish_lint_review.sh
+
+      - name: Report missing lint report
+        if: steps.report.outcome != 'success'
+        run: echo "::warning::Lint report artifact is unavailable; the CI run's lint result remains authoritative."

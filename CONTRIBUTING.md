@@ -32,6 +32,19 @@ make lint
 go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run
 ```
 
+On same-repository pull requests, CI publishes lint findings as a review from
+`github-actions[bot]`: findings on added lines receive inline comments, while
+other findings are listed in the review summary. Lint findings continue to fail
+the CI check independently of review publication. Fork pull requests still run
+lint, but do not receive automated reviews because their workflow token cannot
+write pull request reviews.
+
+The review publisher runs from the trusted default branch after CI completes; it
+does not check out or execute pull request code with its write-enabled token.
+To use these reviews as a merge gate, enable pull request reviews in the
+repository ruleset or branch protection settings and keep the lint status check
+required. Automated change requests do not replace any required human approvals.
+
 ---
 
 ## 🔀 Git Workflow & Branching
