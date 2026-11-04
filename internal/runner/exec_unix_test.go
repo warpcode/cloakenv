@@ -228,14 +228,7 @@ func TestRunCommand_ErrDotSecurity(t *testing.T) {
 		t.Fatalf("Failed to create test executable: %v", err)
 	}
 
-	origDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get current dir: %v", err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatalf("Failed to chdir: %v", err)
-	}
-	defer func() { _ = os.Chdir(origDir) }()
+	t.Chdir(dir)
 
 	t.Setenv("PATH", "."+string(os.PathListSeparator)+os.Getenv("PATH"))
 
