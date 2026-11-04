@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-  pull_request:
+  pull_request_target:
     branches:
       - main
 
@@ -20,32 +20,37 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/head', github.event.pull_request.number) || github.sha }}
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
-          cache: true
+          cache: ${{ github.event_name == 'push' }}
 
       - name: Initialize lint report
         env:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          printf '{"Issues":[]}\n' > "$RUNNER_TEMP/golangci-report.json"
-          printf '%s\n' "$PR_HEAD_SHA" > "$RUNNER_TEMP/pr-head-sha"
+          printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"golangci-lint"}},"results":[]}]}\n' > "$RUNNER_TEMP/golangci-report.sarif"
+          if [[ -n "$PR_HEAD_SHA" ]]; then
+            printf '%s\n' "$PR_HEAD_SHA" > "$RUNNER_TEMP/pr-head-sha"
+          fi
 
       - name: golangci-lint
         id: lint
         continue-on-error: true
-        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run --output.json.path="$RUNNER_TEMP/golangci-report.json"
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run --output.sarif.path="$RUNNER_TEMP/golangci-report.sarif"
 
       - name: Upload lint report
-        if: always()
+        if: always() && github.event_name == 'pull_request_target'
         uses: actions/upload-artifact@v6
         with:
           name: golangci-report
           path: |
-            ${{ runner.temp }}/golangci-report.json
+            ${{ runner.temp }}/golangci-report.sarif
             ${{ runner.temp }}/pr-head-sha
           if-no-files-found: error
 
@@ -62,12 +67,138 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/head', github.event.pull_request.number) || github.sha }}
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
-          cache: true
+          cache: ${{ github.event_name == 'push' }}
 
       - name: Run Tests
         run: go test -v -race ./...
+
+  publish-lint-review:
+    name: Publish Lint Review
+    if: >-
+      always() &&
+      github.event_name == 'pull_request_target' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    needs: golangci
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: none
+      pull-requests: write
+    steps:
+      - name: Download lint report
+        id: report
+        continue-on-error: true
+        uses: actions/download-artifact@v6
+        with:
+          name: golangci-report
+          path: ${{ runner.temp }}/lint-report
+
+      - name: Publish lint review
+        if: steps.report.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          LINT_REPORT: ${{ runner.temp }}/lint-report/golangci-report.sarif
+          PR_HEAD_SHA_FILE: ${{ runner.temp }}/lint-report/pr-head-sha
+        run: |
+          current_pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
+          if [[ $(jq -r '.state' <<<"$current_pr") != open ||
+                $(jq -r '.head.sha' <<<"$current_pr") != "$PR_HEAD_SHA" ||
+                $(jq -r '.head.repo.full_name // ""' <<<"$current_pr") != "$GITHUB_REPOSITORY" ||
+                $(<"$PR_HEAD_SHA_FILE") != "$PR_HEAD_SHA" ]]; then
+            echo "Skipping stale, closed, or non-local pull request."
+            exit 0
+          fi
+
+          jq -e '.version == "2.1.0" and (.runs | type == "array")' "$LINT_REPORT" >/dev/null
+          issue_count=$(jq '[.runs[].results[]?] | length' "$LINT_REPORT")
+          if ((issue_count == 0)); then
+            echo "No lint findings; skipping review."
+            exit 0
+          fi
+
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" > "$RUNNER_TEMP/pr-files.json"
+
+          jq -n \
+            --arg sha "$PR_HEAD_SHA" \
+            --slurpfile report "$LINT_REPORT" \
+            --slurpfile pages "$RUNNER_TEMP/pr-files.json" '
+            def changed_lines:
+              reduce ((.patch // "") | split("\n")[]) as $line
+                ({line: null, added: []};
+                 if ($line | startswith("@@ ")) then
+                   .line = (($line | capture("^@@ -[0-9]+(,[0-9]+)? \\+(?<number>[0-9]+)").number) | tonumber)
+                 elif .line == null then .
+                 elif ($line | startswith("+")) then
+                   .added += [.line] | .line += 1
+                 elif ($line | startswith("-")) then .
+                 elif ($line | startswith(" ")) then .line += 1
+                 else .
+                 end) | .added;
+
+            ($pages[0] | add) as $files |
+            (reduce $files[] as $file
+              ({}; .[$file.filename] = ($file | changed_lines))) as $changed |
+            [ $report[0].runs[].results[]? |
+              {
+                path: (.locations[0].physicalLocation.artifactLocation.uri // null |
+                  if type == "string" then sub("^\\./"; "") else null end),
+                line: (.locations[0].physicalLocation.region.startLine // null),
+                body: "**\(.ruleId // "golangci-lint") (\(.level // "warning"))**: \(.message.text // "No diagnostic message")"
+              }
+            ] as $findings |
+            [ $findings[] |
+              select(.path != null and .line != null) |
+              select(.line as $line | ($changed[.path] // [] | index($line)) != null)
+            ] | group_by([.path, .line]) |
+            map({
+              path: .[0].path,
+              line: .[0].line,
+              side: "RIGHT",
+              body: (map(.body) | join("\n"))
+            }) as $inline |
+            [ $findings[] |
+              select(
+                .path == null or .line == null or
+                (.line as $line | ($changed[.path] // [] | index($line)) == null)
+              ) |
+              if .path != null and .line != null then
+                "- `\(.path):\(.line)` \(.body)"
+              else
+                "- \(.body)"
+              end
+            ] as $not_inline |
+            ($inline[:100]) as $comments |
+            ($not_inline + [
+              $inline[100:][] | "- `\(.path):\(.line)` \(.body)"
+            ]) as $summary |
+            {
+              commit_id: $sha,
+              event: "REQUEST_CHANGES",
+              body: (
+                "golangci-lint reported \($findings | length) finding(s). "
+                + "The lint check remains failing independently of this review."
+                + (if ($summary | length) > 0 then
+                    "\n\nFindings not attached inline:\n" + ($summary | join("\n"))
+                  else "" end)
+              ),
+              comments: $comments
+            }
+          ' > "$RUNNER_TEMP/review.json"
+
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+            --method POST \
+            --input "$RUNNER_TEMP/review.json"
+
+      - name: Report missing lint report
+        if: steps.report.outcome != 'success'
+        run: echo "::warning::Lint report artifact is unavailable; the lint check remains authoritative."

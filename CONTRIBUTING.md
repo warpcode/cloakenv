@@ -39,11 +39,15 @@ the CI check independently of review publication. Fork pull requests still run
 lint, but do not receive automated reviews because their workflow token cannot
 write pull request reviews.
 
-The review publisher runs from the trusted default branch after CI completes; it
-does not check out or execute pull request code with its write-enabled token.
-To use these reviews as a merge gate, enable pull request reviews in the
-repository ruleset or branch protection settings and keep the lint status check
-required. Automated change requests do not replace any required human approvals.
+The lint job produces a SARIF 2.1.0 report, which the review job converts to
+GitHub review comments.
+
+The `pull_request_target` workflow checks out PR code only in read-only lint
+and test jobs. The review job does not check out or execute PR code and is the
+only job granted `pull-requests: write`. To use these reviews as a merge gate,
+enable pull request reviews in repository rulesets or branch protection and
+keep the lint status check required. Automated change requests do not replace
+required human approvals.
 
 ---
 
