@@ -4,19 +4,14 @@ import "strings"
 
 // ParseTagString splits a comma-separated tags string into a slice of strings.
 // It scans the string incrementally using strings.IndexByte to avoid allocating
-// an intermediate slice from strings.Split, and pre-counts commas to size the
-// returned slice buffer in a single allocation.
+// an intermediate slice from strings.Split, and pre-counts commas via strings.Count
+// to size the returned slice buffer in a single allocation.
 func ParseTagString(tagsStr string) []string {
 	if tagsStr == "" {
 		return nil
 	}
 
-	n := 1
-	for i := 0; i < len(tagsStr); i++ {
-		if tagsStr[i] == ',' {
-			n++
-		}
-	}
+	n := strings.Count(tagsStr, ",") + 1
 
 	var tags []string
 	s := tagsStr
@@ -42,15 +37,19 @@ func ParseTagString(tagsStr string) []string {
 }
 
 // ParseTags parses a generic value into a slice of tags.
-// It supports []string directly, a slice of any, or a comma-separated string.
+// It supports either a slice of strings, a slice of any, or a comma-separated string.
+// If a []string is provided, it returns a clone to preserve slice immutability.
 func ParseTags(v any) []string {
 	switch val := v.(type) {
 	case []string:
-		return val
+		return append([]string(nil), val...)
 	case []any:
-		tags := make([]string, 0, len(val))
+		var tags []string
 		for _, t := range val {
 			if str, ok := t.(string); ok {
+				if tags == nil {
+					tags = make([]string, 0, len(val))
+				}
 				tags = append(tags, str)
 			}
 		}

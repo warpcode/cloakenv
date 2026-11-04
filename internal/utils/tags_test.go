@@ -39,16 +39,33 @@ func TestParseTags(t *testing.T) {
 		{"string", "tag1,tag2", []string{"tag1", "tag2"}},
 		{"string with spaces", "tag1 , tag2 ", []string{"tag1", "tag2"}},
 		{"slice of string direct", []string{"tag1", "tag2"}, []string{"tag1", "tag2"}},
-		{"slice of any with strings", []any{"tag1", "tag2"}, []string{"tag1", "tag2"}},
+		{"slice of any", []any{"tag1", "tag2"}, []string{"tag1", "tag2"}},
 		{"slice with non-string", []any{"tag1", 123, "tag2"}, []string{"tag1", "tag2"}},
 		{"other type", 123, nil},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ParseTags(tt.v); !reflect.DeepEqual(got, tt.want) {
+			got := ParseTags(tt.v)
+			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ParseTags() = %v, want %v", got, tt.want)
 			}
+			// Verify immutability/cloning for []string input
+			if inSlice, ok := tt.v.([]string); ok && len(inSlice) > 0 {
+				got[0] = "mutated"
+				if inSlice[0] == "mutated" {
+					t.Errorf("ParseTags modified original slice backing array")
+				}
+			}
 		})
+	}
+}
+
+func BenchmarkParseTagString(b *testing.B) {
+	tagStr := "tag1, tag2, tag3, auth:ssh, env:prod"
+	b.ResetTimer()
+	b.ReportAllocs()
+	for range b.N {
+		_ = ParseTagString(tagStr)
 	}
 }
