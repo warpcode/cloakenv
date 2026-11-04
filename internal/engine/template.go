@@ -351,7 +351,10 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 	execData := wrapTemplateData(data)
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
-	defer bufPool.Put(buf)
+	defer func() {
+		buf.Reset()
+		bufPool.Put(buf)
+	}()
 
 	if err := tmpl.Execute(buf, execData); err != nil {
 		keyPart := ""
