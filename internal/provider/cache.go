@@ -57,9 +57,14 @@ func (c *CacheProvider) Initialize(_ context.Context, cfg ProviderConfig) error 
 	}
 	c.cacheDir = filepath.Join(userCache, prefix)
 
-	// Ensure the cache directory exists and is restricted to the user
+	// Ensure the cache directory exists and is restricted to the user.
+	// os.MkdirAll does not modify permissions if the directory already exists,
+	// so explicitly chmod 0700 to protect against permissive umasks or pre-existing dirs.
 	if err := os.MkdirAll(c.cacheDir, 0700); err != nil {
 		return fmt.Errorf("cache provider: failed to create cache directory: %w", err)
+	}
+	if err := os.Chmod(c.cacheDir, 0700); err != nil {
+		return fmt.Errorf("cache provider: failed to set permissions on cache directory: %w", err)
 	}
 
 	// Fetch or generate the AES-256 key from OS keyring

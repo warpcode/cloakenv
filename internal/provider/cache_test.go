@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
@@ -84,6 +85,40 @@ func TestCacheProvider(t *testing.T) {
 		}
 		if cp.cacheDir == "" {
 			t.Error("expected cacheDir to be set after Initialize")
+		}
+
+		if runtime.GOOS != "windows" {
+			t.Run("HardensPreExistingPermissiveDirectory", func(t *testing.T) {
+				tempUserCache := t.TempDir()
+				t.Setenv("XDG_CACHE_HOME", tempUserCache)
+
+				prefix := "cloakenv_test_permissive_dir"
+				dir := filepath.Join(tempUserCache, prefix)
+				if err := os.MkdirAll(dir, 0777); err != nil {
+					t.Fatalf("failed to create permissive test directory: %v", err)
+				}
+				if err := os.Chmod(dir, 0777); err != nil {
+					t.Fatalf("failed to chmod test directory to 0777: %v", err)
+				}
+
+				cpPerm := NewCacheProvider()
+				permCfg := ProviderConfig{
+					Settings: map[string]string{
+						"keyring_prefix": prefix,
+					},
+				}
+				if err := cpPerm.Initialize(ctx, permCfg); err != nil {
+					t.Fatalf("Initialize failed: %v", err)
+				}
+
+				info, err := os.Stat(dir)
+				if err != nil {
+					t.Fatalf("failed to stat cache directory: %v", err)
+				}
+				if perm := info.Mode().Perm(); perm != 0700 {
+					t.Errorf("expected hardened permissions 0700, got %o", perm)
+				}
+			})
 		}
 	})
 
