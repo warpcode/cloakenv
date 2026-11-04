@@ -715,6 +715,114 @@ func TestLoad_ExamplesConfigYaml(t *testing.T) {
 	}
 }
 
+func TestLoad_RelativeVaultPath(t *testing.T) {
+	tempDir := t.TempDir()
+	configDir := filepath.Join(tempDir, "custom", "config_dir")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create configDir: %v", err)
+	}
+
+	otherDir := filepath.Join(tempDir, "other_work_dir")
+	if err := os.MkdirAll(otherDir, 0755); err != nil {
+		t.Fatalf("failed to create otherDir: %v", err)
+	}
+
+	mockHome := filepath.Join(tempDir, "home")
+	if err := os.MkdirAll(mockHome, 0755); err != nil {
+		t.Fatalf("failed to create mockHome: %v", err)
+	}
+
+	oldUserHomeDir := userHomeDir
+	userHomeDir = func() (string, error) {
+		return mockHome, nil
+	}
+	defer func() { userHomeDir = oldUserHomeDir }()
+
+	yamlContent := `
+vaults:
+  rel_dot:
+    provider: "keepass"
+    vault_path: "./database.kdbx"
+  rel_sub:
+    provider: "yaml"
+    vault_path: "sub/dir/secrets.yaml"
+  home_vault:
+    provider: "keepass"
+    vault_path: "~/secrets.kdbx"
+  abs_vault:
+    provider: "json"
+    vault_path: "/abs/path/secrets.json"
+  empty_vault:
+    provider: "custom_vault"
+`
+	configFilePath := filepath.Join(configDir, "config.yaml")
+	if err := os.WriteFile(configFilePath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// Change working directory to a completely different directory to ensure
+	// relative paths do not evaluate against the process CWD.
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get wd: %v", err)
+	}
+	if err := os.Chdir(otherDir); err != nil {
+		t.Fatalf("failed to chdir to otherDir: %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(origWd)
+	}()
+
+	cfg, err := Load(configFilePath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		vault    string
+		expected string
+	}{
+		{
+			name:     "relative path with ./ anchored to config directory",
+			vault:    "rel_dot",
+			expected: filepath.Join(configDir, "database.kdbx"),
+		},
+		{
+			name:     "relative path without ./ anchored to config directory",
+			vault:    "rel_sub",
+			expected: filepath.Join(configDir, "sub", "dir", "secrets.yaml"),
+		},
+		{
+			name:     "home directory path expanded and not anchored to config directory",
+			vault:    "home_vault",
+			expected: filepath.Join(mockHome, "secrets.kdbx"),
+		},
+		{
+			name:     "absolute path unchanged",
+			vault:    "abs_vault",
+			expected: "/abs/path/secrets.json",
+		},
+		{
+			name:     "empty vault path unchanged",
+			vault:    "empty_vault",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v, ok := cfg.Vaults[tt.vault]
+			if !ok {
+				t.Fatalf("expected vault %q to exist", tt.vault)
+			}
+			if v.VaultPath != tt.expected {
+				t.Errorf("vault %q: expected vault_path %q, got %q", tt.vault, tt.expected, v.VaultPath)
+			}
+		})
+	}
+}
+
 func TestLoad_InvalidGlobPattern(t *testing.T) {
 	tempDir := t.TempDir()
 
