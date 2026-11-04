@@ -105,7 +105,6 @@ func TestOSKeyringProvider_Validate(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			err := p.Validate(tt.settings)
@@ -200,7 +199,6 @@ func TestOSKeyringProvider_RawSecrets(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			store := NewMockKeyringStore()
@@ -226,14 +224,13 @@ func TestMockKeyringStore_Concurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
 
-	for g := 0; g < numGoroutines; g++ {
-		g := g
+	for g := range numGoroutines {
 		go func() {
 			defer wg.Done()
 			service := fmt.Sprintf("svc-%d", g%4)
 			account := fmt.Sprintf("acc-%d", g)
 
-			for i := 0; i < numOps; i++ {
+			for i := range numOps {
 				val := fmt.Sprintf("secret-%d-%d", g, i)
 				location := fmt.Sprintf("%s/%s", service, account)
 
