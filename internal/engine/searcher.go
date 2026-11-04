@@ -15,6 +15,7 @@ import (
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
+	"golang.org/x/sync/errgroup"
 )
 
 // AttributeResolver defines the method to resolve nested attributes.
@@ -261,94 +262,117 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 	fieldPolicy := provider.FieldPolicyFromContext(ctx)
 
 	cfg := s.providers.Config()
-	var allResults []provider.SearchResult
+	var (
+		allResults []provider.SearchResult
+		resultsMu  sync.Mutex
+	)
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrency)
+
 	for name, searchable := range providersToSearch {
-		results, err := searchable.Search(ctx, provider.SearchQuery{})
-		if err != nil {
-			return nil, fmt.Errorf("failed to retrieve entries from repo %q: %w", name, err)
-		}
+		name := name
+		searchable := searchable
 
-		var rootPrefixes []string
-		if rpProvider, ok := searchable.(interface{ RootPrefixes() []string }); ok {
-			rootPrefixes = rpProvider.RootPrefixes()
-		}
-		if len(rootPrefixes) == 0 && cfg != nil {
-			if vc, ok := cfg.Vaults[name]; ok {
-				if vc.EntitiesRootKey != "" && vc.EntitiesRootKey != "." {
-					rootPrefixes = []string{vc.EntitiesRootKey}
-				}
+		g.Go(func() error {
+			results, err := searchable.Search(gctx, provider.SearchQuery{})
+			if err != nil {
+				return fmt.Errorf("failed to retrieve entries from repo %q: %w", name, err)
 			}
-		}
 
-		for _, r := range results {
-			origTitle := r.Entry.Title
-			origPath := r.Path
-
-			if cfg != nil {
+			var rootPrefixes []string
+			if rpProvider, ok := searchable.(interface{ RootPrefixes() []string }); ok {
+				rootPrefixes = rpProvider.RootPrefixes()
+			}
+			if len(rootPrefixes) == 0 && cfg != nil {
 				if vc, ok := cfg.Vaults[name]; ok {
-					if r.Provider == "" {
-						r.Provider = vc.Provider
-					}
-					if r.Vault == "" {
-						r.Vault = name
-					}
-
-					if len(vc.Mapping) > 0 {
-						if !provider.IsDefaultFieldMappedOrIncluded("provider", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
-							r.Provider = ""
-						}
-						if !provider.IsDefaultFieldMappedOrIncluded("vault", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
-							r.Vault = ""
-						}
-						if !provider.IsDefaultFieldMappedOrIncluded("path", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
-							r.Path = ""
-						}
-					} else if len(vc.IncludeFields) > 0 || len(vc.ExcludeFields) > 0 {
-						if !provider.IsDefaultFieldAllowed("provider", origPath, rootPrefixes, origTitle, vc.IncludeFields, vc.ExcludeFields) {
-							r.Provider = ""
-						}
-						if !provider.IsDefaultFieldAllowed("vault", origPath, rootPrefixes, origTitle, vc.IncludeFields, vc.ExcludeFields) {
-							r.Vault = ""
-						}
-						if !provider.IsDefaultFieldAllowed("path", origPath, rootPrefixes, origTitle, vc.IncludeFields, vc.ExcludeFields) {
-							r.Path = ""
-						}
+					if vc.EntitiesRootKey != "" && vc.EntitiesRootKey != "." {
+						rootPrefixes = []string{vc.EntitiesRootKey}
 					}
 				}
 			}
 
-			if fieldPolicy != nil {
-				var fpIncludes []string
-				for _, layer := range fieldPolicy.IncludeLayers {
-					fpIncludes = append(fpIncludes, layer...)
+			vaultResults := make([]provider.SearchResult, 0, len(results))
+			for _, r := range results {
+				origTitle := r.Entry.Title
+				origPath := r.Path
+
+				if cfg != nil {
+					if vc, ok := cfg.Vaults[name]; ok {
+						if r.Provider == "" {
+							r.Provider = vc.Provider
+						}
+						if r.Vault == "" {
+							r.Vault = name
+						}
+
+						if len(vc.Mapping) > 0 {
+							if !provider.IsDefaultFieldMappedOrIncluded("provider", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
+								r.Provider = ""
+							}
+							if !provider.IsDefaultFieldMappedOrIncluded("vault", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
+								r.Vault = ""
+							}
+							if !provider.IsDefaultFieldMappedOrIncluded("path", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
+								r.Path = ""
+							}
+						} else if len(vc.IncludeFields) > 0 || len(vc.ExcludeFields) > 0 {
+							if !provider.IsDefaultFieldAllowed("provider", origPath, rootPrefixes, origTitle, vc.IncludeFields, vc.ExcludeFields) {
+								r.Provider = ""
+							}
+							if !provider.IsDefaultFieldAllowed("vault", origPath, rootPrefixes, origTitle, vc.IncludeFields, vc.ExcludeFields) {
+								r.Vault = ""
+							}
+							if !provider.IsDefaultFieldAllowed("path", origPath, rootPrefixes, origTitle, vc.IncludeFields, vc.ExcludeFields) {
+								r.Path = ""
+							}
+						}
+					}
 				}
 
-				if len(fieldPolicy.MappingRules) > 0 {
-					if !provider.IsDefaultFieldMappedOrIncluded("provider", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
-						r.Provider = ""
+				if fieldPolicy != nil {
+					var fpIncludes []string
+					for _, layer := range fieldPolicy.IncludeLayers {
+						fpIncludes = append(fpIncludes, layer...)
 					}
-					if !provider.IsDefaultFieldMappedOrIncluded("vault", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
-						r.Vault = ""
-					}
-					if !provider.IsDefaultFieldMappedOrIncluded("path", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
-						r.Path = ""
-					}
-				} else if len(fpIncludes) > 0 || len(fieldPolicy.ExcludeFields) > 0 {
-					if !provider.IsDefaultFieldAllowed("provider", origPath, rootPrefixes, origTitle, fpIncludes, fieldPolicy.ExcludeFields) {
-						r.Provider = ""
-					}
-					if !provider.IsDefaultFieldAllowed("vault", origPath, rootPrefixes, origTitle, fpIncludes, fieldPolicy.ExcludeFields) {
-						r.Vault = ""
-					}
-					if !provider.IsDefaultFieldAllowed("path", origPath, rootPrefixes, origTitle, fpIncludes, fieldPolicy.ExcludeFields) {
-						r.Path = ""
-					}
-				}
 
-				r.Entry = fieldPolicy.ApplyToEntry(r.Entry, origPath, rootPrefixes)
+					if len(fieldPolicy.MappingRules) > 0 {
+						if !provider.IsDefaultFieldMappedOrIncluded("provider", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
+							r.Provider = ""
+						}
+						if !provider.IsDefaultFieldMappedOrIncluded("vault", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
+							r.Vault = ""
+						}
+						if !provider.IsDefaultFieldMappedOrIncluded("path", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
+							r.Path = ""
+						}
+					} else if len(fpIncludes) > 0 || len(fieldPolicy.ExcludeFields) > 0 {
+						if !provider.IsDefaultFieldAllowed("provider", origPath, rootPrefixes, origTitle, fpIncludes, fieldPolicy.ExcludeFields) {
+							r.Provider = ""
+						}
+						if !provider.IsDefaultFieldAllowed("vault", origPath, rootPrefixes, origTitle, fpIncludes, fieldPolicy.ExcludeFields) {
+							r.Vault = ""
+						}
+						if !provider.IsDefaultFieldAllowed("path", origPath, rootPrefixes, origTitle, fpIncludes, fieldPolicy.ExcludeFields) {
+							r.Path = ""
+						}
+					}
+
+					r.Entry = fieldPolicy.ApplyToEntry(r.Entry, origPath, rootPrefixes)
+				}
+				vaultResults = append(vaultResults, s.resolveSearchResultAttributes(gctx, r, depth))
 			}
-			allResults = append(allResults, s.resolveSearchResultAttributes(ctx, r, depth))
-		}
+
+			resultsMu.Lock()
+			allResults = append(allResults, vaultResults...)
+			resultsMu.Unlock()
+
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	// Sort deterministically so consumers selecting the first match (e.g.
