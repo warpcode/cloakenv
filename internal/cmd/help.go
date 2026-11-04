@@ -220,11 +220,14 @@ Arguments:
 // PrintAuthStatusHelp prints usage help for the auth status subcommand.
 func PrintAuthStatusHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv auth status [vault]
+  cloakenv auth status [vault] [-o text | json | yaml]
 
 Description:
   Check if configured vaults are active and accessible.
 
 Arguments:
-  [vault]         Optional name of the vault to check`)
+  [vault]         Optional name of the vault to check
+
+Flags:
+  -o, --output    Output format: text, json, or yaml (default: text)`)
 }
