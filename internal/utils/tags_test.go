@@ -17,6 +17,7 @@ func TestParseTagString(t *testing.T) {
 		{"with spaces", "tag1 , tag2, tag3 ", []string{"tag1", "tag2", "tag3"}},
 		{"empty parts", "tag1,,tag2", []string{"tag1", "tag2"}},
 		{"only spaces", " ,  , ", nil},
+		{"leading trailing commas", ",tag1,tag2,", []string{"tag1", "tag2"}},
 	}
 
 	for _, tt := range tests {
@@ -37,7 +38,8 @@ func TestParseTags(t *testing.T) {
 		{"nil", nil, nil},
 		{"string", "tag1,tag2", []string{"tag1", "tag2"}},
 		{"string with spaces", "tag1 , tag2 ", []string{"tag1", "tag2"}},
-		{"slice of string", []any{"tag1", "tag2"}, []string{"tag1", "tag2"}},
+		{"slice of string direct", []string{"tag1", "tag2"}, []string{"tag1", "tag2"}},
+		{"slice of any with strings", []any{"tag1", "tag2"}, []string{"tag1", "tag2"}},
 		{"slice with non-string", []any{"tag1", 123, "tag2"}, []string{"tag1", "tag2"}},
 		{"other type", 123, nil},
 	}
