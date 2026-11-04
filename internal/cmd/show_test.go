@@ -13,6 +13,63 @@ import (
 	"github.com/warpcode/cloakenv/internal/engine"
 )
 
+func TestShow_EnvFormat(t *testing.T) {
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	t.Setenv("SHOW_TEST_VAR_A", "valA")
+	t.Setenv("SHOW_TEST_VAR_B", "valB with space")
+	t.Setenv("SHOW_TEST_VAR_C", "valC")
+
+	args := []string{
+		"-e", `KEY_C={{ get "env://SHOW_TEST_VAR_C" }}`,
+		"-e", `KEY_A={{ get "env://SHOW_TEST_VAR_A" }}`,
+		"-e", `KEY_B={{ get "env://SHOW_TEST_VAR_B" }}`,
+		"-o", "env",
+	}
+	cfg := &config.Config{
+		Vaults: make(map[string]config.VaultConfig),
+	}
+
+	exitCode := Show(args, cfg)
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("failed to read from pipe: %v", err)
+	}
+
+	if exitCode != 0 {
+		t.Errorf("expected exit code 0, got %d", exitCode)
+	}
+
+	actualOutput := buf.String()
+	actualOutput = strings.ReplaceAll(actualOutput, "\r\n", "\n")
+	lines := strings.Split(strings.TrimSpace(actualOutput), "\n")
+
+	wantLines := []string{
+		"KEY_A=valA",
+		`KEY_B="valB with space"`,
+		"KEY_C=valC",
+	}
+
+	if len(lines) != len(wantLines) {
+		t.Fatalf("expected %d lines, got %d. Output: %q", len(wantLines), len(lines), actualOutput)
+	}
+
+	for i, want := range wantLines {
+		if lines[i] != want {
+			t.Errorf("lines[%d] = %q; want %q", i, lines[i], want)
+		}
+	}
+}
+
 func TestShow_KeysFormat(t *testing.T) {
 	// Keep original stdout
 	oldStdout := os.Stdout
@@ -51,18 +108,13 @@ func TestShow_KeysFormat(t *testing.T) {
 	actualOutput = strings.ReplaceAll(actualOutput, "\r\n", "\n")
 	lines := strings.Split(strings.TrimSpace(actualOutput), "\n")
 
-	expectedKeys := map[string]bool{
-		"KEY_A": true,
-		"KEY_B": true,
+	wantKeys := []string{"KEY_A", "KEY_B"}
+	if len(lines) != len(wantKeys) {
+		t.Fatalf("expected %d keys, got %d. Output: %q", len(wantKeys), len(lines), actualOutput)
 	}
-
-	if len(lines) != len(expectedKeys) {
-		t.Fatalf("expected %d keys, got %d. Output: %q", len(expectedKeys), len(lines), actualOutput)
-	}
-
-	for _, line := range lines {
-		if !expectedKeys[line] {
-			t.Errorf("unexpected key in output: %q", line)
+	for i, want := range wantKeys {
+		if lines[i] != want {
+			t.Errorf("lines[%d] = %q; want %q", i, lines[i], want)
 		}
 	}
 }
@@ -107,19 +159,19 @@ func TestShow_KeysFormattingBehavior(t *testing.T) {
 	actualOutput = strings.ReplaceAll(actualOutput, "\r\n", "\n")
 	lines := strings.Split(strings.TrimSpace(actualOutput), "\n")
 
-	expectedKeys := map[string]bool{
-		"db-user":                true,
-		"api--key":               true,
-		"multiple___underscores": true,
+	wantKeys := []string{
+		"api--key",
+		"db-user",
+		"multiple___underscores",
 	}
 
-	if len(lines) != len(expectedKeys) {
-		t.Fatalf("expected %d keys, got %d. Output: %q", len(expectedKeys), len(lines), actualOutput)
+	if len(lines) != len(wantKeys) {
+		t.Fatalf("expected %d keys, got %d. Output: %q", len(wantKeys), len(lines), actualOutput)
 	}
 
-	for _, line := range lines {
-		if !expectedKeys[line] {
-			t.Errorf("unexpected formatted key in output: %q", line)
+	for i, want := range wantKeys {
+		if lines[i] != want {
+			t.Errorf("lines[%d] = %q; want %q", i, lines[i], want)
 		}
 	}
 }
@@ -169,19 +221,19 @@ func TestShow_VaultKeyFormat(t *testing.T) {
 	actualOutput = strings.ReplaceAll(actualOutput, "\r\n", "\n")
 	lines := strings.Split(strings.TrimSpace(actualOutput), "\n")
 
-	expectedKeys := map[string]bool{
-		"API_KEY":              true,
-		"DATABASE_USER_NAME":   true,
-		"MULTIPLE_UNDERSCORES": true,
+	wantKeys := []string{
+		"API_KEY",
+		"DATABASE_USER_NAME",
+		"MULTIPLE_UNDERSCORES",
 	}
 
-	if len(lines) != len(expectedKeys) {
-		t.Fatalf("expected %d keys, got %d. Output: %q", len(expectedKeys), len(lines), actualOutput)
+	if len(lines) != len(wantKeys) {
+		t.Fatalf("expected %d keys, got %d. Output: %q", len(wantKeys), len(lines), actualOutput)
 	}
 
-	for _, line := range lines {
-		if !expectedKeys[line] {
-			t.Errorf("unexpected formatted key in output: %q", line)
+	for i, want := range wantKeys {
+		if lines[i] != want {
+			t.Errorf("lines[%d] = %q; want %q", i, lines[i], want)
 		}
 	}
 }
@@ -223,19 +275,19 @@ func TestShow_TemplateFlag(t *testing.T) {
 	actualOutput = strings.ReplaceAll(actualOutput, "\r\n", "\n")
 	lines := strings.Split(strings.TrimSpace(actualOutput), "\n")
 
-	expectedKeys := map[string]bool{
-		"TEST_TEMPLATE_A":  true,
-		"TEST_TEMPLATE_B":  true,
-		"TEST_LITERAL_VAL": true,
+	wantKeys := []string{
+		"TEST_LITERAL_VAL",
+		"TEST_TEMPLATE_A",
+		"TEST_TEMPLATE_B",
 	}
 
-	if len(lines) != len(expectedKeys) {
-		t.Fatalf("expected %d keys, got %d. Output: %q", len(expectedKeys), len(lines), actualOutput)
+	if len(lines) != len(wantKeys) {
+		t.Fatalf("expected %d keys, got %d. Output: %q", len(wantKeys), len(lines), actualOutput)
 	}
 
-	for _, line := range lines {
-		if !expectedKeys[line] {
-			t.Errorf("unexpected key in output: %q", line)
+	for i, want := range wantKeys {
+		if lines[i] != want {
+			t.Errorf("lines[%d] = %q; want %q", i, lines[i], want)
 		}
 	}
 }
