@@ -352,9 +352,16 @@ func Load(path string) (*Config, error) {
 		cfg.Vaults = make(map[string]VaultConfig)
 	}
 
-	// Expand ~ in all vault paths
+	// Expand ~ and anchor relative paths to config directory in all vault paths
 	for name, vault := range cfg.Vaults {
-		vault.VaultPath = expandHome(vault.VaultPath)
+		if vault.VaultPath != "" {
+			vaultPath := expandHome(vault.VaultPath)
+			if !filepath.IsAbs(vaultPath) && cfg.ConfigPath != "" {
+				baseDir := filepath.Dir(cfg.ConfigPath)
+				vaultPath = filepath.Join(baseDir, vaultPath)
+			}
+			vault.VaultPath = vaultPath
+		}
 		cfg.Vaults[name] = vault
 	}
 
