@@ -28,7 +28,7 @@ echo "--- [1/3] Checking Makefile targets documentation..."
 MAKEFILE_TARGETS=$(grep -E '^[a-zA-Z0-9_-]+:' Makefile | cut -d: -f1 | grep -v '^\.' | sort -u)
 
 # Expected public targets that MUST be documented in README.md
-REQUIRED_TARGETS="build run test bench test-all clean fmt vet install uninstall verify agents-check"
+REQUIRED_TARGETS="build run test bench test-all clean fmt vet lint install uninstall verify agents-check"
 
 MISSING_TARGETS=()
 for target in ${REQUIRED_TARGETS}; do
