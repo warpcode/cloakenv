@@ -24,6 +24,8 @@ const (
 	keyringAccount = "cache_token"
 )
 
+var userCacheDir = os.UserCacheDir
+
 // CacheProvider implements SecretProvider for the cache:// scheme.
 // It encrypts cached secrets in local files under ~/.cache/cloakenv/
 // using AES-GCM with a dynamically generated key stored in the OS keyring.
@@ -51,15 +53,20 @@ func (c *CacheProvider) Initialize(_ context.Context, cfg ProviderConfig) error 
 	}
 
 	// Set default cache directory: ~/.cache/<prefix>
-	userCache, err := os.UserCacheDir()
+	userCache, err := userCacheDir()
 	if err != nil {
 		return fmt.Errorf("cache provider: failed to get user cache dir: %w", err)
 	}
 	c.cacheDir = filepath.Join(userCache, prefix)
 
-	// Ensure the cache directory exists and is restricted to the user
+	// Ensure the cache directory exists and is restricted to the user.
+	// os.MkdirAll does not modify permissions if the directory already exists,
+	// so explicitly chmod 0700 to protect against permissive umasks or pre-existing dirs.
 	if err := os.MkdirAll(c.cacheDir, 0700); err != nil {
 		return fmt.Errorf("cache provider: failed to create cache directory: %w", err)
+	}
+	if err := os.Chmod(c.cacheDir, 0700); err != nil { //nolint:gosec // directory permissions require execute bit (0700)
+		return fmt.Errorf("cache provider: failed to set permissions on cache directory: %w", err)
 	}
 
 	// Fetch or generate the AES-256 key from OS keyring
