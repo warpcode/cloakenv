@@ -217,3 +217,4 @@
 | Date | Action | IDs | Evidence | Rationale |
 |---|---|---|---|---|
 | 2026-10-24 | Created plan | `G-001`..`G-003`, `NG-001`..`NG-003`, `REQ-001`..`REQ-007`, `TSK-001`..`TSK-006`, `ADR-0001` | — | Socratic design review completed for unified `text/template` engine, per-entry vault attributes, and composed `custom_vault` entities |
+| 2026-11-04 | Archived charter | `TSK-001`..`TSK-006` | PR #357 | Moved completed design charter to docs/plans/archive/ upon full implementation and merge into main |
