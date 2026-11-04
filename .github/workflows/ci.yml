@@ -126,72 +126,32 @@ jobs:
             exit 0
           fi
 
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" > "$RUNNER_TEMP/pr-files.json"
-
           jq -n \
             --arg sha "$PR_HEAD_SHA" \
+            --arg repository "$GITHUB_REPOSITORY" \
             --slurpfile report "$LINT_REPORT" \
-            --slurpfile pages "$RUNNER_TEMP/pr-files.json" '
-            def changed_lines:
-              reduce ((.patch // "") | split("\n")[]) as $line
-                ({line: null, added: []};
-                 if ($line | startswith("@@ ")) then
-                   .line = (($line | capture("^@@ -[0-9]+(,[0-9]+)? \\+(?<number>[0-9]+)").number) | tonumber)
-                 elif .line == null then .
-                 elif ($line | startswith("+")) then
-                   .added += [.line] | .line += 1
-                 elif ($line | startswith("-")) then .
-                 elif ($line | startswith(" ")) then .line += 1
-                 else .
-                 end) | .added;
-
-            ($pages[0] | add) as $files |
-            (reduce $files[] as $file
-              ({}; .[$file.filename] = ($file | changed_lines))) as $changed |
+            '
             [ $report[0].runs[].results[]? |
               {
-                path: (.locations[0].physicalLocation.artifactLocation.uri // null |
-                  if type == "string" then sub("^\\./"; "") else null end),
+                path: (.locations[0].physicalLocation.artifactLocation.uri // null),
                 line: (.locations[0].physicalLocation.region.startLine // null),
                 body: "**\(.ruleId // "golangci-lint") (\(.level // "warning"))**: \(.message.text // "No diagnostic message")"
               }
             ] as $findings |
-            [ $findings[] |
-              select(.path != null and .line != null) |
-              select(.line as $line | ($changed[.path] // [] | index($line)) != null)
-            ] | group_by([.path, .line]) |
-            map({
-              path: .[0].path,
-              line: .[0].line,
-              side: "RIGHT",
-              body: (map(.body) | join("\n"))
-            }) as $inline |
-            [ $findings[] |
-              select(
-                .path == null or .line == null or
-                (.line as $line | ($changed[.path] // [] | index($line)) == null)
-              ) |
-              if .path != null and .line != null then
-                "- `\(.path):\(.line)` \(.body)"
-              else
-                "- \(.body)"
-              end
-            ] as $not_inline |
-            ($inline[:100]) as $comments |
-            ($not_inline + [
-              $inline[100:][] | "- `\(.path):\(.line)` \(.body)"
-            ]) as $summary |
             {
               commit_id: $sha,
               event: "REQUEST_CHANGES",
               body: (
                 "golangci-lint reported \($findings | length) finding(s). "
-                + "The lint check remains failing independently of this review."
-                + (if ($summary | length) > 0 then
-                    "\n\nFindings not attached inline:\n" + ($summary | join("\n"))
-                  else "" end)
-              ),
-              comments: $comments
+                + "The lint check remains failing independently of this review.\n\n"
+                + ([$findings[] |
+                    if .path != null and .line != null then
+                      "- [`\(.path):\(.line)`](https://github.com/\($repository)/blob/\($sha)/\(.path)#L\(.line)) \(.body)"
+                    else
+                      "- \(.body)"
+                    end
+                  ] | join("\n"))
+              )
             }
           ' > "$RUNNER_TEMP/review.json"
 

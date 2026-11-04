@@ -33,14 +33,13 @@ go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run
 ```
 
 On same-repository pull requests, CI publishes lint findings as a review from
-`github-actions[bot]`: findings on added lines receive inline comments, while
-other findings are listed in the review summary. Lint findings continue to fail
-the CI check independently of review publication. Fork pull requests still run
-lint, but do not receive automated reviews because their workflow token cannot
-write pull request reviews.
+`github-actions[bot]`, with each finding linked to its source file and line in
+the review summary. Lint findings continue to fail the CI check independently
+of review publication. Fork pull requests still run lint, but do not receive
+automated reviews because their workflow token cannot write pull request reviews.
 
 The lint job produces a SARIF 2.1.0 report, which the review job converts to
-GitHub review comments.
+GitHub review requests.
 
 The `pull_request_target` workflow checks out PR code only in read-only lint
 and test jobs. The review job does not check out or execute PR code and is the
