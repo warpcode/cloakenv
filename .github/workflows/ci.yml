@@ -31,13 +31,8 @@ jobs:
           cache: ${{ github.event_name == 'push' }}
 
       - name: Initialize lint report
-        env:
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"golangci-lint"}},"results":[]}]}\n' > "$RUNNER_TEMP/golangci-report.sarif"
-          if [[ -n "$PR_HEAD_SHA" ]]; then
-            printf '%s\n' "$PR_HEAD_SHA" > "$RUNNER_TEMP/pr-head-sha"
-          fi
 
       - name: golangci-lint
         id: lint
@@ -49,9 +44,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: golangci-report
-          path: |
-            ${{ runner.temp }}/golangci-report.sarif
-            ${{ runner.temp }}/pr-head-sha
+          path: ${{ runner.temp }}/golangci-report.sarif
           if-no-files-found: error
 
       - name: Preserve lint failure
@@ -77,6 +70,10 @@ jobs:
           go-version-file: 'go.mod'
           cache: ${{ github.event_name == 'push' }}
 
+      - name: Test SARIF publisher
+        if: matrix.os == 'ubuntu-latest'
+        run: bash .github/scripts/test_sarif_to_comment.sh
+
       - name: Run Tests
         id: tests
         shell: bash
@@ -89,12 +86,47 @@ jobs:
           test_status=${PIPESTATUS[0]}
           exit "$test_status"
 
-      - name: Upload Test Results
+      - name: Convert test output to SARIF
+        if: always() && github.event_name == 'pull_request_target' && steps.tests.outcome == 'failure'
+        env:
+          TEST_REPORT: ${{ runner.temp }}/go-test-${{ matrix.os }}.log
+          TEST_SARIF: ${{ runner.temp }}/go-test-${{ matrix.os }}.sarif
+        run: |
+          jq -Rn '
+            [inputs] as $lines |
+            [
+              $lines[] |
+              try (capture("(?<path>[^[:space:]]+\\.go):(?<line>[0-9]+):[[:space:]]*(?<message>.*)") as $location |
+              {
+                ruleId: "go-test",
+                level: "error",
+                message: {text: $location.message},
+                locations: [{
+                  physicalLocation: {
+                    artifactLocation: {uri: $location.path},
+                    region: {startLine: ($location.line | tonumber)}
+                  }
+                }]
+              }) catch empty
+            ] + [
+              $lines[] | select(test("^--- FAIL:")) |
+              {ruleId: "go-test-failure", level: "error", message: {text: .}}
+            ] as $results |
+            {
+              version: "2.1.0",
+              runs: [{
+                tool: {driver: {name: "go test"}},
+                results: $results
+              }]
+            }
+          ' "$TEST_REPORT" > "$TEST_SARIF"
+
+      - name: Upload Test SARIF
         if: always() && github.event_name == 'pull_request_target' && steps.tests.outcome == 'failure'
         uses: actions/upload-artifact@v6
         with:
-          name: go-test-${{ matrix.os }}
-          path: ${{ runner.temp }}/go-test-${{ matrix.os }}.log
+          name: go-test-sarif-${{ matrix.os }}
+          path: ${{ runner.temp }}/go-test-${{ matrix.os }}.sarif
           if-no-files-found: error
 
   publish-lint-review:
@@ -107,113 +139,47 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: read
-      contents: none
+      contents: read
       pull-requests: write
     steps:
+      - name: Checkout trusted workflow revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
       - name: Download lint report
-        id: report
         continue-on-error: true
         uses: actions/download-artifact@v6
         with:
           name: golangci-report
           path: ${{ runner.temp }}/lint-report
 
-      - name: Download test reports
-        id: test-reports
+      - name: Download test SARIF reports
         continue-on-error: true
         uses: actions/download-artifact@v6
         with:
-          pattern: go-test-*
+          pattern: go-test-sarif-*
           path: ${{ runner.temp }}/test-reports
           merge-multiple: true
 
-      - name: Publish failure review
+      - name: Publish findings
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          LINT_REPORT: ${{ runner.temp }}/lint-report/golangci-report.sarif
-          PR_HEAD_SHA_FILE: ${{ runner.temp }}/lint-report/pr-head-sha
-          TEST_REPORTS: ${{ runner.temp }}/test-reports
         run: |
-          current_pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
-          if [[ $(jq -r '.state' <<<"$current_pr") != open ||
-                $(jq -r '.head.sha' <<<"$current_pr") != "$PR_HEAD_SHA" ||
-                $(jq -r '.head.repo.full_name // ""' <<<"$current_pr") != "$GITHUB_REPOSITORY" ||
-                ( -f "$PR_HEAD_SHA_FILE" && $(<"$PR_HEAD_SHA_FILE") != "$PR_HEAD_SHA" ) ]]; then
-            echo "Skipping stale, closed, or non-local pull request."
-            exit 0
+          reports=()
+          lint_report="$RUNNER_TEMP/lint-report/golangci-report.sarif"
+          if [[ -f "$lint_report" ]]; then
+            reports+=("$lint_report")
           fi
-
-          mkdir -p "$(dirname "$LINT_REPORT")"
-          if [[ ! -f "$LINT_REPORT" ]]; then
-            printf '{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"golangci-lint"}},"results":[]}]}\n' > "$LINT_REPORT"
-          fi
-          jq -e '.version == "2.1.0" and (.runs | type == "array")' "$LINT_REPORT" >/dev/null
-          issue_count=$(jq '[.runs[].results[]?] | length' "$LINT_REPORT")
-
-          test_findings="$RUNNER_TEMP/test-findings.txt"
-          : > "$test_findings"
-          for test_report in "$TEST_REPORTS"/go-test-*.log; do
-            [[ -f "$test_report" ]] || continue
-            jq -Rn '
-              [
-                inputs | select(test("\\.go:[0-9]+:|^--- FAIL:|^FAIL([[:space:]]|$)"))
-                | "- \(.)"
-              ] | unique[]
-            ' "$test_report" >> "$test_findings"
+          for report in "$RUNNER_TEMP"/test-reports/*.sarif; do
+            [[ -f "$report" ]] && reports+=("$report")
           done
-          sort -u "$test_findings" -o "$test_findings"
-          test_count=$(wc -l < "$test_findings")
-          if ((issue_count == 0 && test_count == 0)); then
-            echo "No lint or test findings; skipping review."
+          if ((${#reports[@]} == 0)); then
+            echo "::warning::No SARIF reports were downloaded; CI status checks remain authoritative."
             exit 0
           fi
-
-          jq -n \
-            --arg sha "$PR_HEAD_SHA" \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --slurpfile report "$LINT_REPORT" \
-            --rawfile tests "$test_findings" \
-            '
-            [ $report[0].runs[].results[]? |
-              {
-                path: (.locations[0].physicalLocation.artifactLocation.uri // null),
-                line: (.locations[0].physicalLocation.region.startLine // null),
-                body: "**\(.ruleId // "golangci-lint") (\(.level // "warning"))**: \(.message.text // "No diagnostic message")"
-              }
-            ] as $findings |
-            ($tests | split("\n") | map(select(length > 0))) as $test_findings |
-            {
-              commit_id: $sha,
-              event: "REQUEST_CHANGES",
-              body: (
-                (if ($findings | length) > 0 then
-                  "golangci-lint reported \($findings | length) finding(s). The lint check remains failing.\n\n"
-                else "" end)
-                + (if ($test_findings | length) > 0 then
-                  "go test reported \($test_findings | length) finding(s):\n\n"
-                  + ($test_findings | join("\n"))
-                else "" end)
-                + (if ($findings | length) > 0 then
-                  "\n\n"
-                  + ([$findings[] |
-                    if .path != null and .line != null then
-                      "- [`\(.path):\(.line)`](https://github.com/\($repository)/blob/\($sha)/\(.path)#L\(.line)) \(.body)"
-                    else
-                      "- \(.body)"
-                    end
-                  ] | join("\n"))
-                else "" end)
-              )
-            }
-          ' > "$RUNNER_TEMP/review.json"
-
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
-            --method POST \
-            --input "$RUNNER_TEMP/review.json"
-
-      - name: Report missing lint report
-        if: always() && (steps.report.outcome != 'success' || steps.test-reports.outcome != 'success')
-        run: echo "::warning::One or more lint/test report artifacts are unavailable; CI status checks remain authoritative."
+          bash .github/scripts/sarif-to-comment.sh "${reports[@]}"

@@ -39,8 +39,10 @@ checks continue to fail independently of review publication. Fork pull requests
 still run lint and tests, but do not receive automated reviews because their
 workflow token cannot write pull request reviews.
 
-The lint job produces a SARIF 2.1.0 report, which the review job converts to
-GitHub review requests.
+The lint job produces a SARIF 2.1.0 report. Failed Go test jobs also convert
+their file/line diagnostics and failed test names to SARIF; the review job
+combines all available reports with `sarif-to-comment.sh` into one GitHub review
+request. The script skips posting when the reports contain no findings.
 
 The `pull_request_target` workflow checks out PR code only in read-only lint
 and test jobs. The review job does not check out or execute PR code and is the
