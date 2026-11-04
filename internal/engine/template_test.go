@@ -239,7 +239,7 @@ func TestTemplateEngine_RenderBufferPool(t *testing.T) {
 	te := engine.NewTemplateEngine(nil)
 
 	// Verify sequential calls with differing output sizes do not bleed state.
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		data := map[string]any{"val": i}
 		got, err := te.Render(ctx, `value={{ .val }}`, data, 0, "")
 		if err != nil {
@@ -261,10 +261,10 @@ func TestTemplateEngine_RenderBufferPool(t *testing.T) {
 		const iters = 50
 		errCh := make(chan error, goroutines)
 
-		for g := 0; g < goroutines; g++ {
+		for g := range goroutines {
 			go func(gid int) {
 				var workerErr error
-				for j := 0; j < iters; j++ {
+				for j := range iters {
 					data := map[string]any{"id": gid, "iter": j}
 					res, err := te.Render(ctx, `id={{ .id }}-iter={{ .iter }}`, data, 0, "")
 					if err != nil {
@@ -281,7 +281,7 @@ func TestTemplateEngine_RenderBufferPool(t *testing.T) {
 			}(g)
 		}
 
-		for g := 0; g < goroutines; g++ {
+		for range goroutines {
 			if err := <-errCh; err != nil {
 				t.Fatalf("concurrent render failed: %v", err)
 			}
@@ -305,7 +305,7 @@ func BenchmarkTemplateEngine_Render(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := te.Render(ctx, tmpl, data, 0, "")
 		if err != nil {
 			b.Fatalf("render failed: %v", err)
