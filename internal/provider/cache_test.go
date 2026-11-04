@@ -90,7 +90,15 @@ func TestCacheProvider(t *testing.T) {
 		if runtime.GOOS != "windows" {
 			t.Run("HardensPreExistingPermissiveDirectory", func(t *testing.T) {
 				tempUserCache := t.TempDir()
+				t.Setenv("HOME", tempUserCache)
 				t.Setenv("XDG_CACHE_HOME", tempUserCache)
+				origUserCacheDir := userCacheDir
+				userCacheDir = func() (string, error) {
+					return tempUserCache, nil
+				}
+				t.Cleanup(func() {
+					userCacheDir = origUserCacheDir
+				})
 
 				prefix := "cloakenv_test_permissive_dir"
 				dir := filepath.Join(tempUserCache, prefix)
