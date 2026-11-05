@@ -29,6 +29,12 @@ jobs:
       - name: golangci-lint
         run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run
 
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: Verify Documentation & Agent Consistency
+        run: make agents-check
+
   test:
     name: Run Tests
     runs-on: ${{ matrix.os }}
