@@ -180,8 +180,92 @@ func (c *CustomVaultProvider) Search(ctx context.Context, query SearchQuery) ([]
 			return nil, err
 		}
 
+		// Optimization: Filter by path early before resolving or allocating entry data.
+		if lowerQueryPath != "" {
+			if !strings.Contains(strings.ToLower(name), lowerQueryPath) {
+				continue
+			}
+		}
+
 		var entry Entry
 		if !entity.IsComposed {
+			// Optimization: Check title on the entity directly before allocating full entry.
+			// In toEntry, Title defaults to name, overridden by entity.Title or attributes["title"].
+			titleCandidate := entity.Title
+			if titleCandidate == "" {
+				if tAttr, ok := entity.Attributes["title"]; ok {
+					if s, ok := tAttr.(string); ok {
+						titleCandidate = s
+					}
+				} else if tAttr, ok := entity.Attributes["Title"]; ok {
+					if s, ok := tAttr.(string); ok {
+						titleCandidate = s
+					}
+				} else {
+					titleCandidate = name
+				}
+			}
+			if lowerQueryTitle != "" && !strings.Contains(strings.ToLower(titleCandidate), lowerQueryTitle) {
+				continue
+			}
+
+			// Optimization: Check tags on the entity directly before allocating attributes map in toEntry.
+			if len(query.Tags) > 0 {
+				tags := entity.Tags
+				if len(tags) == 0 {
+					if v, ok := entity.Attributes["tags"]; ok {
+						if tagSlice, ok := v.([]string); ok {
+							tags = tagSlice
+						} else {
+							tags = utils.ParseTags(v)
+						}
+					} else if v, ok := entity.Attributes["Tags"]; ok {
+						if tagSlice, ok := v.([]string); ok {
+							tags = tagSlice
+						} else {
+							tags = utils.ParseTags(v)
+						}
+					}
+				} else {
+					// Check if attributes also contain additional tags to append
+					var extraTags []string
+					if v, ok := entity.Attributes["tags"]; ok {
+						if tagSlice, ok := v.([]string); ok {
+							extraTags = tagSlice
+						} else {
+							extraTags = utils.ParseTags(v)
+						}
+					} else if v, ok := entity.Attributes["Tags"]; ok {
+						if tagSlice, ok := v.([]string); ok {
+							extraTags = tagSlice
+						} else {
+							extraTags = utils.ParseTags(v)
+						}
+					}
+					if len(extraTags) > 0 {
+						tags = uniqueStrings(append(extraTags, tags...))
+					}
+				}
+
+				match := true
+				for _, qt := range query.Tags {
+					found := false
+					for _, t := range tags {
+						if strings.EqualFold(t, qt) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						match = false
+						break
+					}
+				}
+				if !match {
+					continue
+				}
+			}
+
 			entry = toEntry(name, entity.Attributes)
 			if entity.Title != "" {
 				entry.Title = entity.Title
@@ -198,37 +282,31 @@ func (c *CustomVaultProvider) Search(ctx context.Context, query SearchQuery) ([]
 				continue
 			}
 			entry = e
-		}
 
-		if lowerQueryTitle != "" {
-			if !strings.Contains(strings.ToLower(entry.Title), lowerQueryTitle) {
-				continue
+			if lowerQueryTitle != "" {
+				if !strings.Contains(strings.ToLower(entry.Title), lowerQueryTitle) {
+					continue
+				}
 			}
-		}
 
-		if lowerQueryPath != "" {
-			if !strings.Contains(strings.ToLower(name), lowerQueryPath) {
-				continue
-			}
-		}
-
-		if len(query.Tags) > 0 {
-			match := true
-			for _, qt := range query.Tags {
-				found := false
-				for _, t := range entry.Tags {
-					if strings.EqualFold(t, qt) {
-						found = true
+			if len(query.Tags) > 0 {
+				match := true
+				for _, qt := range query.Tags {
+					found := false
+					for _, t := range entry.Tags {
+						if strings.EqualFold(t, qt) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						match = false
 						break
 					}
 				}
-				if !found {
-					match = false
-					break
+				if !match {
+					continue
 				}
-			}
-			if !match {
-				continue
 			}
 		}
 
