@@ -149,6 +149,33 @@ func TestInternalMatchAlias(t *testing.T) {
 		}
 	})
 
+	t.Run("Internal help flag --help", func(t *testing.T) {
+		out := captureStdout(t, func() {
+			exitCode := Internal([]string{"--help"}, cfg)
+			if exitCode != 0 {
+				t.Errorf("expected exit code 0 for --help, got %d", exitCode)
+			}
+		})
+		if !strings.Contains(out, "Usage:\n  cloakenv internal <subcommand> [args]") {
+			t.Errorf("expected usage output, got %q", out)
+		}
+		if !strings.Contains(out, "match-alias") {
+			t.Errorf("expected output to mention match-alias, got %q", out)
+		}
+	})
+
+	t.Run("Internal help flag -h", func(t *testing.T) {
+		out := captureStdout(t, func() {
+			exitCode := Internal([]string{"-h"}, cfg)
+			if exitCode != 0 {
+				t.Errorf("expected exit code 0 for -h, got %d", exitCode)
+			}
+		})
+		if !strings.Contains(out, "Usage:\n  cloakenv internal <subcommand> [args]") {
+			t.Errorf("expected usage output, got %q", out)
+		}
+	})
+
 	t.Run("Unknown internal subcommand", func(t *testing.T) {
 		exitCode := Internal([]string{"unknown-cmd"}, cfg)
 		if exitCode != 1 {
