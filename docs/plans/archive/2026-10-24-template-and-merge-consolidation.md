@@ -1,9 +1,9 @@
 # `2026-10-24-template-and-merge-consolidation` — Unified Go `text/template` Engine, Per-Entry Vault Attributes, and Composed `custom_vault` Entities
 
 > **Status**: Done
-> **Created**: 2026-10-24 · **Parent**: none
+> **Created**: 2026-10-24 · **Archived**: 2026-11-04 · **Parent**: none
 > **Charter**: Replace `${scheme://...}` string interpolation with a unified Go `text/template` (`{{ ... }}`) engine, enable per-entry computed/templated `attributes:` across all vault types, support entry-metadata interpolation in `mapping.key`, and expand `custom_vault` entities into composable single-entry K/V stores that can merge, filter, map, and format entries from any vault or `search` provider for config generation (`get`/`show`) and environment injection (`run`).
-> **Sources**: [ADR-0001](../adr/0001-unify-templating-on-go-text-template-and-composed-custom-vaults.md) · [Epic #261](https://github.com/warpcode/cloakenv/issues/261) · Base Branch: `epic/2026-10-24-template-and-merge-consolidation`
+> **Sources**: [ADR-0001](../../adr/0001-unify-templating-on-go-text-template-and-composed-custom-vaults.md) · [Epic #261](https://github.com/warpcode/cloakenv/issues/261) · Base Branch: `epic/2026-10-24-template-and-merge-consolidation`
 
 ## Goals
 
