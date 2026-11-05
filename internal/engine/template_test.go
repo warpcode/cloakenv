@@ -2,9 +2,9 @@ package engine_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
@@ -264,17 +264,17 @@ func TestTemplateEngine_RenderBufferPool(t *testing.T) {
 		for g := range goroutines {
 			go func(gid int) {
 				var workerErr error
-				for j := range iters {
-					data := map[string]any{"id": gid, "iter": j}
+				for iterIndex := range iters {
+					data := map[string]any{"id": gid, "iter": iterIndex}
 					res, err := te.Render(ctx, `id={{ .id }}-iter={{ .iter }}`, data, 0, "")
 					if err != nil {
 						workerErr = err
 						break
 					}
-					expected := string(rune('0' + gid%10))
-					_ = expected
-					if res == "" || !strings.HasPrefix(res, "id=") {
-						t.Errorf("unexpected output format: %q", res)
+					want := fmt.Sprintf("id=%d-iter=%d", gid, iterIndex)
+					if res != want {
+						workerErr = fmt.Errorf("unexpected output format: %q", res)
+						break
 					}
 				}
 				errCh <- workerErr
