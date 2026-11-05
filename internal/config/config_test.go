@@ -755,6 +755,9 @@ vaults:
     vault_path: %q
   empty_vault:
     provider: "custom_vault"
+  rel_parent:
+    provider: "json"
+    vault_path: "../shared/vault.kdbx"
 `, absVaultPath)
 	configFilePath := filepath.Join(configDir, "config.yaml")
 	if err := os.WriteFile(configFilePath, []byte(yamlContent), 0644); err != nil {
@@ -799,6 +802,11 @@ vaults:
 			name:     "empty vault path unchanged",
 			vault:    "empty_vault",
 			expected: "",
+		},
+		{
+			name:     "relative path with parent directory anchored to config directory",
+			vault:    "rel_parent",
+			expected: filepath.Join(filepath.Dir(configDir), "shared", "vault.kdbx"),
 		},
 	}
 
