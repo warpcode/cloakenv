@@ -686,7 +686,10 @@ func TestResolve_BareURIQuoteEscaping(t *testing.T) {
 	sem := make(chan struct{}, 10)
 	res := NewResolver(pm, sem)
 
+	var receivedQuery string
+
 	res.SetSearchFunc(func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]provider.SearchResult, error) {
+		receivedQuery = expressionStr
 		return []provider.SearchResult{
 			{
 				Entry: provider.Entry{
@@ -700,27 +703,34 @@ func TestResolve_BareURIQuoteEscaping(t *testing.T) {
 	})
 
 	tests := []struct {
-		uri  string
-		want string
+		uri       string
+		want      string
+		wantQuery string
 	}{
 		{
-			uri:  `search://tags="api"/Password`,
-			want: "super_secret_password",
+			uri:       `search://tags="api"/Password`,
+			want:      "super_secret_password",
+			wantQuery: `"\"api\"" in tags`,
 		},
 		{
-			uri:  `search://title=api/Password`,
-			want: "super_secret_password",
+			uri:       `search://title=api/Password`,
+			want:      "super_secret_password",
+			wantQuery: `title contains "api"`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.uri, func(t *testing.T) {
+			receivedQuery = ""
 			got, err := res.Resolve(ctx, tt.uri)
 			if err != nil {
 				t.Fatalf("unexpected error resolving %q: %v", tt.uri, err)
 			}
 			if got != tt.want {
 				t.Errorf("Resolve(%q) = %q, want %q", tt.uri, got, tt.want)
+			}
+			if receivedQuery != tt.wantQuery {
+				t.Errorf("expected search query %q, got %q", tt.wantQuery, receivedQuery)
 			}
 		})
 	}
