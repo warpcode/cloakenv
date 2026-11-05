@@ -52,17 +52,17 @@ fi
 
 # Check for existing bot review for the exact head SHA with pagination to prevent duplicate reviews
 existing_reviews=$(gh api --paginate --slurp "repos/$repository/pulls/$pull_number/reviews")
-if jq -n -e --arg sha "$head_sha" '
+if jq -n -e --arg sha "$head_sha" --argjson existing_reviews "$existing_reviews" '
   ($existing_reviews | flatten) as $all_revs |
   any($all_revs[];
     .commit_id == $sha and
     (
-      (.user.login // "" | test("github-actions\\[bot\\]|bot|warpcode-bot"; "i")) or
-      ((.body // "") | contains("<!-- cloakenv-sarif-review -->"))
+      ((.body // "") | contains("<!-- cloakenv-sarif-review -->")) or
+      ((.user.login // "") | test("^github-actions\\[bot\\]$"))
     ) and
     (.state == "CHANGES_REQUESTED" or .state == "COMMENTED")
   )
-' --argjson existing_reviews "$existing_reviews" >/dev/null 2>&1; then
+' >/dev/null 2>&1; then
   echo "Review already submitted for commit $head_sha; skipping duplicate review."
   exit 0
 fi
@@ -151,7 +151,9 @@ jq -s \
     select(.line as $l | ($changed[.path] // [] | index($l)) != null)
   ] as $diff_matches |
 
-  ($diff_matches | group_by([.path, .line]) | map({
+  ($diff_matches | group_by([.path, .line])) as $diff_groups |
+
+  ($diff_groups[:50] | map({
     path: .[0].path,
     line: .[0].line,
     side: "RIGHT",
@@ -160,13 +162,11 @@ jq -s \
            else
              ([.[] | "- **\(.rule)**: \(.message)"] | join("\n"))
            end)
-  })) as $all_inline_comments |
+  })) as $comments |
 
-  ($all_inline_comments[:50]) as $comments |
-
-  # Map diff findings into inline list and overflow
-  ($diff_matches[:50]) as $inline_findings |
-  ($diff_matches[50:]) as $overflow_findings |
+  # Derive inline findings and overflow findings consistently from group slices
+  ($diff_groups[:50] | flatten) as $inline_findings |
+  ($diff_groups[50:] | flatten) as $overflow_findings |
 
   [
     $findings[] |

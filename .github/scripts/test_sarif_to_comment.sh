@@ -101,7 +101,7 @@ echo "PASS: Clean report skipped."
 
 echo "--- Test 2: Clean SARIF report on failing CI emits error and fails ---"
 set +e
-GOLANGCI_STATUS="failure" bash "$script" "$temp_dir/clean.sarif" 2>"$temp_dir/err.log"
+(export GOLANGCI_STATUS="failure"; bash "$script" "$temp_dir/clean.sarif" 2>"$temp_dir/err.log")
 clean_fail_code=$?
 set -e
 if [[ $clean_fail_code -eq 0 ]] || ! grep -q "CI checks failed" "$temp_dir/err.log"; then
@@ -112,7 +112,7 @@ echo "PASS: Clean report with failing CI failed as expected."
 
 echo "--- Test 3: Validation of parameters ---"
 set +e
-PR_NUMBER="not-a-number" bash "$script" "$temp_dir/clean.sarif" 2>/dev/null
+(export PR_NUMBER="not-a-number"; bash "$script" "$temp_dir/clean.sarif" 2>/dev/null)
 p_code=$?
 set -e
 if [[ $p_code -ne 2 ]]; then
@@ -171,7 +171,7 @@ jq -e '
 ' "$GH_PAYLOAD" >/dev/null
 echo "PASS: Diff mapping, formatting without double bullets, and sanitization verified."
 
-echo "--- Test 5: Human review on head SHA does not suppress bot review ---"
+echo "--- Test 5: Human review with 'bot' in username does not suppress bot review ---"
 > "$GH_CALLS"
 rm -f "$GH_PAYLOAD"
 cat >"$GH_EXISTING_REVIEWS" <<'REVIEWS'
@@ -179,7 +179,7 @@ cat >"$GH_EXISTING_REVIEWS" <<'REVIEWS'
   {
     "commit_id": "0123456789abcdef0123456789abcdef01234567",
     "state": "COMMENTED",
-    "user": {"login": "human-reviewer"},
+    "user": {"login": "abbot"},
     "body": "Looks good so far!"
   }
 ]
