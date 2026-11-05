@@ -356,6 +356,7 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 	buf.Reset()
 	defer func() {
 		if buf.Cap() <= maxPooledBufferCap {
+			clear(buf.Bytes())
 			bufPool.Put(buf)
 		}
 	}()

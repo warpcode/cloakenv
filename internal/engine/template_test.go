@@ -266,13 +266,13 @@ func TestTemplateEngine_RenderBufferPool(t *testing.T) {
 			go func(gid int) {
 				var workerErr error
 				for j := range iters {
-					data := map[string]any{"id": gid%10, "iter": j%10}
+					data := map[string]any{"id": gid, "iter": j}
 					res, err := te.Render(ctx, `id={{ .id }}-iter={{ .iter }}`, data, 0, "")
 					if err != nil {
 						workerErr = err
 						break
 					}
-					expected := fmt.Sprintf("id=%d-iter=%d", gid%10, j%10)
+					expected := fmt.Sprintf("id=%d-iter=%d", gid, j)
 					if res != expected {
 						t.Errorf("got %q, want %q", res, expected)
 					}
@@ -289,7 +289,7 @@ func TestTemplateEngine_RenderBufferPool(t *testing.T) {
 	})
 
 	t.Run("large template payload", func(t *testing.T) {
-		largeStr := strings.Repeat("A", 65000)
+		largeStr := strings.Repeat("A", 128000)
 		data := map[string]any{"val": largeStr}
 		res, err := te.Render(ctx, `{{ .val }}`, data, 0, "")
 		if err != nil {
