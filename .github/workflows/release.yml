@@ -53,7 +53,25 @@ jobs:
         run: |
           echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> $GITHUB_ENV
           echo "COMMIT_MSG=$(git log -1 --format=%s)" >> $GITHUB_ENV
-          DEV_TAG="dev-$(date -u +'%Y-%m-%d')"
+          BASE_TAG="dev-$(date -u +'%Y-%m-%d')"
+          DEV_TAG="${BASE_TAG}"
+
+          # Probe if the base tag can be created on origin, or fallback to an incremental suffix
+          # if GitHub locked the tag name due to a prior immutable release.
+          if [[ "${GITHUB_REF}" != refs/tags/v* ]]; then
+            if ! git push origin "HEAD:refs/tags/${DEV_TAG}" 2>/dev/null; then
+              SUFFIX=1
+              while ! git push origin "HEAD:refs/tags/${BASE_TAG}.${SUFFIX}" 2>/dev/null; do
+                SUFFIX=$((SUFFIX + 1))
+                if [ "${SUFFIX}" -gt 20 ]; then
+                  echo "Failed to create dev tag on origin after 20 attempts" >&2
+                  exit 1
+                fi
+              done
+              DEV_TAG="${BASE_TAG}.${SUFFIX}"
+            fi
+            git tag -f "${DEV_TAG}" HEAD
+          fi
           echo "DEV_TAG=${DEV_TAG}" >> $GITHUB_ENV
 
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
@@ -147,16 +165,6 @@ jobs:
       # ----------------------------------------------------
       # Mode A: Dev Release (Nightly or manual dispatch)
       # ----------------------------------------------------
-      - name: Create Dev Tag
-        if: |
-          steps.check-commits.outputs.has_commits == 'true' &&
-          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -f "${DEV_TAG}"
-          git push --force origin "${DEV_TAG}"
-
       - name: Publish Dev Release
         if: |
           steps.check-commits.outputs.has_commits == 'true' &&
