@@ -378,7 +378,7 @@ func Load(path string) (*Config, error) {
 				expandedPath = filepath.Join(baseDir, expandedPath)
 			}
 			expandedPath = filepath.Clean(expandedPath)
-			data, err := os.ReadFile(expandedPath) //nolint:gosec
+			data, err := os.ReadFile(expandedPath) //nolint:gosec // path is supplied by operator-owned configuration
 			if err != nil {
 				return nil, fmt.Errorf("template %q: failed to read path %q: %w", tmplName, tmpl.Path, err)
 			}
