@@ -678,3 +678,50 @@ func TestResolver_GetEntries_And_GetEntriesRecursive(t *testing.T) {
 		})
 	}
 }
+
+func TestResolve_BareURIQuoteEscaping(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.Config{}
+	pm := NewProviderManager(cfg, nil, nil)
+	sem := make(chan struct{}, 10)
+	res := NewResolver(pm, sem)
+
+	res.SetSearchFunc(func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]provider.SearchResult, error) {
+		return []provider.SearchResult{
+			{
+				Entry: provider.Entry{
+					Title: "api",
+					Attributes: map[string]any{
+						"Password": "super_secret_password",
+					},
+				},
+			},
+		}, nil
+	})
+
+	tests := []struct {
+		uri  string
+		want string
+	}{
+		{
+			uri:  `search://tags="api"/Password`,
+			want: "super_secret_password",
+		},
+		{
+			uri:  `search://title=api/Password`,
+			want: "super_secret_password",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.uri, func(t *testing.T) {
+			got, err := res.Resolve(ctx, tt.uri)
+			if err != nil {
+				t.Fatalf("unexpected error resolving %q: %v", tt.uri, err)
+			}
+			if got != tt.want {
+				t.Errorf("Resolve(%q) = %q, want %q", tt.uri, got, tt.want)
+			}
+		})
+	}
+}
