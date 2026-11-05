@@ -17,6 +17,8 @@ import (
 	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
+const maxPooledBufferCap = 64 * 1024
+
 // bufPool pools *bytes.Buffer instances to reduce heap allocations during template rendering.
 var bufPool = sync.Pool{
 	New: func() any {
@@ -352,7 +354,11 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 	execData := wrapTemplateData(data)
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
-	defer bufPool.Put(buf)
+	defer func() {
+		if buf.Cap() <= maxPooledBufferCap {
+			bufPool.Put(buf)
+		}
+	}()
 
 	if err := tmpl.Execute(buf, execData); err != nil {
 		keyPart := ""

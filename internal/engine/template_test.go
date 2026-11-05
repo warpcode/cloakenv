@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,16 +266,15 @@ func TestTemplateEngine_RenderBufferPool(t *testing.T) {
 			go func(gid int) {
 				var workerErr error
 				for j := range iters {
-					data := map[string]any{"id": gid, "iter": j}
+					data := map[string]any{"id": gid%10, "iter": j%10}
 					res, err := te.Render(ctx, `id={{ .id }}-iter={{ .iter }}`, data, 0, "")
 					if err != nil {
 						workerErr = err
 						break
 					}
-					expected := string(rune('0' + gid%10))
-					_ = expected
-					if res == "" || !strings.HasPrefix(res, "id=") {
-						t.Errorf("unexpected output format: %q", res)
+					expected := fmt.Sprintf("id=%d-iter=%d", gid%10, j%10)
+					if res != expected {
+						t.Errorf("got %q, want %q", res, expected)
 					}
 				}
 				errCh <- workerErr
@@ -285,6 +285,18 @@ func TestTemplateEngine_RenderBufferPool(t *testing.T) {
 			if err := <-errCh; err != nil {
 				t.Fatalf("concurrent render failed: %v", err)
 			}
+		}
+	})
+
+	t.Run("large template payload", func(t *testing.T) {
+		largeStr := strings.Repeat("A", 65000)
+		data := map[string]any{"val": largeStr}
+		res, err := te.Render(ctx, `{{ .val }}`, data, 0, "")
+		if err != nil {
+			t.Fatalf("unexpected error rendering large payload: %v", err)
+		}
+		if res != largeStr {
+			t.Errorf("expected string of length %d, got %d", len(largeStr), len(res))
 		}
 	})
 }
