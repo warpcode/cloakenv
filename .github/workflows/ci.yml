@@ -4,9 +4,13 @@ on:
   push:
     branches:
       - main
-  pull_request_target:
+  pull_request:
     branches:
       - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -15,14 +19,12 @@ jobs:
   golangci:
     name: Lint Code
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/head', github.event.pull_request.number) || github.sha }}
-          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -40,7 +42,7 @@ jobs:
         run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run --output.sarif.path="$RUNNER_TEMP/golangci-report.sarif"
 
       - name: Upload lint report
-        if: always() && github.event_name == 'pull_request_target'
+        if: always() && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v6
         with:
           name: golangci-report
@@ -54,15 +56,13 @@ jobs:
   test:
     name: Run Tests
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/head', github.event.pull_request.number) || github.sha }}
-          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v7
@@ -87,16 +87,18 @@ jobs:
           exit "$test_status"
 
       - name: Convert test output to SARIF
-        if: always() && github.event_name == 'pull_request_target' && steps.tests.outcome == 'failure'
+        if: always() && github.event_name == 'pull_request' && steps.tests.outcome == 'failure'
         env:
           TEST_REPORT: ${{ runner.temp }}/go-test-${{ matrix.os }}.log
           TEST_SARIF: ${{ runner.temp }}/go-test-${{ matrix.os }}.sarif
+          TAIL_REPORT: ${{ runner.temp }}/go-test-${{ matrix.os }}-tail.log
         run: |
+          tail -n 2000 "$TEST_REPORT" > "$TAIL_REPORT"
           jq -Rn '
             [inputs] as $lines |
             [
               $lines[] |
-              try (capture("(?<path>[^[:space:]]+\\.go):(?<line>[0-9]+):[[:space:]]*(?<message>.*)") as $location |
+              try (capture("^[[:space:]]+(?<path>[a-zA-Z0-9_./\\\\-]+\\.go):(?<line>[0-9]+):[[:space:]]*(?<message>.*)") as $location |
               {
                 ruleId: "go-test",
                 level: "error",
@@ -109,20 +111,22 @@ jobs:
                 }]
               }) catch empty
             ] + [
-              $lines[] | select(test("^--- FAIL:")) |
-              {ruleId: "go-test-failure", level: "error", message: {text: .}}
+              $lines[] |
+              try (capture("^--- FAIL:[[:space:]]+(?<test>[A-Za-z0-9_]+)") as $fail |
+              {ruleId: "go-test-failure", level: "error", message: {text: "Test failed: \($fail.test)"}}) catch empty
             ] as $results |
+            ($results | .[:50]) as $capped_results |
             {
               version: "2.1.0",
               runs: [{
                 tool: {driver: {name: "go test"}},
-                results: $results
+                results: $capped_results
               }]
             }
-          ' "$TEST_REPORT" > "$TEST_SARIF"
+          ' "$TAIL_REPORT" > "$TEST_SARIF"
 
       - name: Upload Test SARIF
-        if: always() && github.event_name == 'pull_request_target' && steps.tests.outcome == 'failure'
+        if: always() && github.event_name == 'pull_request' && steps.tests.outcome == 'failure'
         uses: actions/upload-artifact@v6
         with:
           name: go-test-sarif-${{ matrix.os }}
@@ -133,19 +137,18 @@ jobs:
     name: Publish Lint and Test Review
     if: >-
       always() &&
-      github.event_name == 'pull_request_target' &&
+      github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository
     needs: [golangci, test]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
-      actions: read
       contents: read
       pull-requests: write
     steps:
-      - name: Checkout trusted workflow revision
+      - name: Checkout Code
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
       - name: Download lint report
@@ -167,8 +170,11 @@ jobs:
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GOLANGCI_STATUS: ${{ needs.golangci.result }}
+          TEST_STATUS: ${{ needs.test.result }}
         run: |
           reports=()
           lint_report="$RUNNER_TEMP/lint-report/golangci-report.sarif"
@@ -179,7 +185,11 @@ jobs:
             [[ -f "$report" ]] && reports+=("$report")
           done
           if ((${#reports[@]} == 0)); then
-            echo "::warning::No SARIF reports were downloaded; CI status checks remain authoritative."
+            if [[ "${GOLANGCI_STATUS}" == "failure" || "${TEST_STATUS}" == "failure" ]]; then
+              echo "::error::CI checks failed (golangci: ${GOLANGCI_STATUS}, test: ${TEST_STATUS}) but no SARIF reports were downloaded." >&2
+              exit 1
+            fi
+            echo "No SARIF reports were downloaded; CI status checks remain authoritative."
             exit 0
           fi
           bash .github/scripts/sarif-to-comment.sh "${reports[@]}"
