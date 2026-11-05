@@ -323,7 +323,7 @@ func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, en
 		if c.getEntriesFunc == nil {
 			return Entry{}, fmt.Errorf("custom_vault: merge execution not supported in this context")
 		}
-		entries, err := c.getEntriesFunc(ctx, mURI)
+		entries, err := c.getEntriesFunc(WithRawKeys(ctx), mURI)
 		if err != nil {
 			return Entry{}, fmt.Errorf("custom_vault: failed to merge %q: %w", mURI, err)
 		}
