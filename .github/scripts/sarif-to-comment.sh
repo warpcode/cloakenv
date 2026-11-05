@@ -50,9 +50,19 @@ if [[ "$pr_state" != "open" || "$pr_head_sha" != "$head_sha" || "${pr_repo,,}" !
   exit 0
 fi
 
-# Check for existing bot review for the exact head SHA to prevent duplicates
-existing_reviews=$(gh api "repos/$repository/pulls/$pull_number/reviews")
-if jq -e --arg sha "$head_sha" 'any(.[]; .commit_id == $sha and (.state == "CHANGES_REQUESTED" or .state == "COMMENTED"))' <<<"$existing_reviews" >/dev/null 2>&1; then
+# Check for existing bot review for the exact head SHA with pagination to prevent duplicate reviews
+existing_reviews=$(gh api --paginate --slurp "repos/$repository/pulls/$pull_number/reviews")
+if jq -n -e --arg sha "$head_sha" '
+  ($existing_reviews | flatten) as $all_revs |
+  any($all_revs[];
+    .commit_id == $sha and
+    (
+      (.user.login // "" | test("github-actions\\[bot\\]|bot|warpcode-bot"; "i")) or
+      ((.body // "") | contains("<!-- cloakenv-sarif-review -->"))
+    ) and
+    (.state == "CHANGES_REQUESTED" or .state == "COMMENTED")
+  )
+' --argjson existing_reviews "$existing_reviews" >/dev/null 2>&1; then
   echo "Review already submitted for commit $head_sha; skipping duplicate review."
   exit 0
 fi
@@ -145,11 +155,18 @@ jq -s \
     path: .[0].path,
     line: .[0].line,
     side: "RIGHT",
-    body: (map("- **\(.rule)**: \(.message)") | join("\n\n"))
+    body: (if length == 1 then
+             "**\(.[0].rule)**: \(.[0].message)"
+           else
+             ([.[] | "- **\(.rule)**: \(.message)"] | join("\n"))
+           end)
   })) as $all_inline_comments |
 
   ($all_inline_comments[:50]) as $comments |
-  ($all_inline_comments[50:]) as $overflow_inline |
+
+  # Map diff findings into inline list and overflow
+  ($diff_matches[:50]) as $inline_findings |
+  ($diff_matches[50:]) as $overflow_findings |
 
   [
     $findings[] |
@@ -160,18 +177,19 @@ jq -s \
   ] as $not_inline |
 
   (
+    "<!-- cloakenv-sarif-review -->\n" +
     "Automated analysis found \($findings | length) issue(s):\n\n" +
     (
-      if ($comments | length) > 0 then
+      if ($inline_findings | length) > 0 then
         "### Inline Findings\n" +
-        ([$comments[] | "- [`\(.path):\(.line)`](https://github.com/\($repository)/blob/\($sha)/\(.path)#L\(.line)) \(.body)"] | join("\n")) +
+        ([$inline_findings[] | "- [`\(.path):\(.line)`](https://github.com/\($repository)/blob/\($sha)/\(.path)#L\(.line)) **\(.rule)**: \(.message)"] | join("\n")) +
         "\n\n"
       else "" end
     ) +
     (
-      if ($overflow_inline | length) > 0 then
+      if ($overflow_findings | length) > 0 then
         "### Additional Changed-Line Findings\n" +
-        ([$overflow_inline[] | "- [`\(.path):\(.line)`](https://github.com/\($repository)/blob/\($sha)/\(.path)#L\(.line)) \(.body)"] | join("\n")) +
+        ([$overflow_findings[] | "- [`\(.path):\(.line)`](https://github.com/\($repository)/blob/\($sha)/\(.path)#L\(.line)) **\(.rule)**: \(.message)"] | join("\n")) +
         "\n\n"
       else "" end
     ) +
