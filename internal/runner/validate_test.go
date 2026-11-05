@@ -142,6 +142,27 @@ func TestValidateCommand(t *testing.T) {
 			wantStderr: "Invalid environment variable \"INJECTED\\rVAR\" at index 0: key contains newline or carriage return\n",
 		},
 		{
+			name:       "space in env key",
+			cmdArgs:    []string{"echo", "hello"},
+			env:        []string{"BAD KEY=value"},
+			wantCode:   1,
+			wantStderr: "Invalid environment variable \"BAD KEY\" at index 0: key contains invalid character\n",
+		},
+		{
+			name:       "tab in env key",
+			cmdArgs:    []string{"echo", "hello"},
+			env:        []string{"BAD\tKEY=value"},
+			wantCode:   1,
+			wantStderr: "Invalid environment variable \"BAD\\tKEY\" at index 0: key contains invalid character\n",
+		},
+		{
+			name:       "control char in env key",
+			cmdArgs:    []string{"echo", "hello"},
+			env:        []string{"BAD\x07KEY=value"},
+			wantCode:   1,
+			wantStderr: "Invalid environment variable \"BAD\\aKEY\" at index 0: key contains invalid character\n",
+		},
+		{
 			name:       "valid multiline env value",
 			cmdArgs:    []string{"echo", "hello"},
 			env:        []string{"CERT=line1\nline2\nline3"},
