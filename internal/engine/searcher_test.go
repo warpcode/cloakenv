@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -194,9 +195,11 @@ entries:
 }
 
 type delayedSearchableProvider struct {
-	delay time.Duration
-	err   error
-	items []provider.SearchResult
+	delay       time.Duration
+	err         error
+	items       []provider.SearchResult
+	inFlight    *atomic.Int64
+	maxInFlight *atomic.Int64
 }
 
 func (d *delayedSearchableProvider) Scheme() string { return "delayed" }
@@ -216,6 +219,21 @@ func (d *delayedSearchableProvider) Validate(settings map[string]string) error {
 	return nil
 }
 func (d *delayedSearchableProvider) Search(ctx context.Context, query provider.SearchQuery) ([]provider.SearchResult, error) {
+	if d.inFlight != nil && d.maxInFlight != nil {
+		current := d.inFlight.Add(1)
+		defer d.inFlight.Add(-1)
+
+		for {
+			max := d.maxInFlight.Load()
+			if current <= max {
+				break
+			}
+			if d.maxInFlight.CompareAndSwap(max, current) {
+				break
+			}
+		}
+	}
+
 	select {
 	case <-time.After(d.delay):
 	case <-ctx.Done():
@@ -246,20 +264,28 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 		}
 
 		delay := 50 * time.Millisecond
+		var inFlight, maxInFlight atomic.Int64
+
 		p1 := &delayedSearchableProvider{
-			delay: delay,
+			delay:       delay,
+			inFlight:    &inFlight,
+			maxInFlight: &maxInFlight,
 			items: []provider.SearchResult{
 				{Vault: "v1", Path: "p1", Entry: provider.Entry{Title: "t1"}},
 			},
 		}
 		p2 := &delayedSearchableProvider{
-			delay: delay,
+			delay:       delay,
+			inFlight:    &inFlight,
+			maxInFlight: &maxInFlight,
 			items: []provider.SearchResult{
 				{Vault: "v2", Path: "p2", Entry: provider.Entry{Title: "t2"}},
 			},
 		}
 		p3 := &delayedSearchableProvider{
-			delay: delay,
+			delay:       delay,
+			inFlight:    &inFlight,
+			maxInFlight: &maxInFlight,
 			items: []provider.SearchResult{
 				{Vault: "v3", Path: "p3", Entry: provider.Entry{Title: "t3"}},
 			},
@@ -269,9 +295,7 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 		orch.providerManager.vaultCache["v2"] = p2
 		orch.providerManager.vaultCache["v3"] = p3
 
-		start := time.Now()
 		results, err := orch.Search(context.Background(), "", nil)
-		elapsed := time.Since(start)
 
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
@@ -280,10 +304,8 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 			t.Fatalf("expected 3 results, got %d", len(results))
 		}
 
-		// If sequential, elapsed would be at least 3 * 50ms = 150ms.
-		// Concurrent execution scales with slowest single vault (~50ms).
-		if elapsed >= 3*delay {
-			t.Errorf("multi-vault search executed sequentially: took %v, expected < %v", elapsed, 3*delay)
+		if maxInFlight.Load() < 2 {
+			t.Errorf("multi-vault search executed sequentially: max in-flight = %d, expected >= 2", maxInFlight.Load())
 		}
 	})
 

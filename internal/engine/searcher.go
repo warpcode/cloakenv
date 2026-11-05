@@ -15,7 +15,6 @@ import (
 	"github.com/expr-lang/expr/ast"
 	"github.com/expr-lang/expr/parser"
 	"github.com/expr-lang/expr/vm"
-	"golang.org/x/sync/errgroup"
 )
 
 // AttributeResolver defines the method to resolve nested attributes.
@@ -265,16 +264,35 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 	var (
 		allResults []provider.SearchResult
 		resultsMu  sync.Mutex
+		errOnce    sync.Once
+		firstErr   error
+		wg         sync.WaitGroup
 	)
 
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(maxConcurrency) // Bound concurrent vault searches to maxConcurrency
+	gctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	sem := make(chan struct{}, maxConcurrency)
 
 	for name, searchable := range providersToSearch {
-		g.Go(func() error {
+		wg.Add(1)
+		go func(name string, searchable provider.SearchableProvider) {
+			defer wg.Done()
+
+			select {
+			case sem <- struct{}{}:
+			case <-gctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+
 			results, err := searchable.Search(gctx, provider.SearchQuery{})
 			if err != nil {
-				return fmt.Errorf("failed to retrieve entries from repo %q: %w", name, err)
+				errOnce.Do(func() {
+					firstErr = fmt.Errorf("failed to retrieve entries from repo %q: %w", name, err)
+					cancel()
+				})
+				return
 			}
 
 			var rootPrefixes []string
@@ -363,13 +381,12 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 			resultsMu.Lock()
 			allResults = append(allResults, vaultResults...)
 			resultsMu.Unlock()
-
-			return nil
-		})
+		}(name, searchable)
 	}
 
-	if err := g.Wait(); err != nil {
-		return nil, err
+	wg.Wait()
+	if firstErr != nil {
+		return nil, firstErr
 	}
 
 	// Sort deterministically so consumers selecting the first match (e.g.
