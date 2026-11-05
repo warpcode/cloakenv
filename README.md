@@ -476,7 +476,10 @@ cloakenv auth <login|forget|status> [vault_name]
 
 - **`login <vault>`**: Prompts for the vault master password and securely stores it in your OS Keyring under the `cloakenv` service prefix.
 - **`forget <vault>`**: Clears the saved master password from the OS Keyring.
-- **`status [vault]`**: Tests if configured vaults are currently unlocked and accessible.
+- **`status [vault] [-o text|json|yaml]`**: Tests if configured vaults are currently unlocked and accessible. Supports structured output via `-o, --output` (`text`, `json`, `yaml`).
+
+#### Flags:
+- `-o, --output`: Output format: `text` (default), `json`, or `yaml` (`auth status` only).
 
 #### Examples:
 
@@ -484,13 +487,31 @@ cloakenv auth <login|forget|status> [vault_name]
 # 1. Unlock your work KeePass database once
 cloakenv auth login work
 
-# 2. Verify all vaults are active
+# 2. Verify all vaults are active (default text format)
 cloakenv auth status
 # Output:
 # work: ACTIVE
 # home: ACTIVE
 
-# 3. Clear credentials when locking down
+# 3. Check vault status with structured JSON output for monitoring
+cloakenv auth status -o json
+# Output:
+# [
+#   {
+#     "vault": "home",
+#     "status": "ACTIVE",
+#     "vault_path": "/path/to/home.kdbx",
+#     "latency": "1.234ms"
+#   },
+#   {
+#     "vault": "work",
+#     "status": "ACTIVE",
+#     "vault_path": "/path/to/work.kdbx",
+#     "latency": "2.345ms"
+#   }
+# ]
+
+# 4. Clear credentials when locking down
 cloakenv auth forget work
 ```
 
