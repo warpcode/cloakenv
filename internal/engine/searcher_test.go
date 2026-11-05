@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/expr-lang/expr/ast"
 	"github.com/zalando/go-keyring"
@@ -188,6 +189,140 @@ entries:
 		_, err = orch.Search(ctx, `title.ToUpper() == "TEST"`, nil)
 		if err == nil || !strings.Contains(err.Error(), "method calls are not allowed") {
 			t.Errorf("expected error about method calls, got: %v", err)
+		}
+	})
+}
+
+type delayedSearchableProvider struct {
+	delay time.Duration
+	err   error
+	items []provider.SearchResult
+}
+
+func (d *delayedSearchableProvider) Scheme() string { return "delayed" }
+func (d *delayedSearchableProvider) Initialize(ctx context.Context, cfg provider.ProviderConfig) error {
+	return nil
+}
+func (d *delayedSearchableProvider) GetSecret(ctx context.Context, location string) (string, error) {
+	return "", nil
+}
+func (d *delayedSearchableProvider) SetSecret(ctx context.Context, location, value string) error {
+	return nil
+}
+func (d *delayedSearchableProvider) DeleteSecret(ctx context.Context, location string) error {
+	return nil
+}
+func (d *delayedSearchableProvider) Validate(settings map[string]string) error {
+	return nil
+}
+func (d *delayedSearchableProvider) Search(ctx context.Context, query provider.SearchQuery) ([]provider.SearchResult, error) {
+	select {
+	case <-time.After(d.delay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if d.err != nil {
+		return nil, d.err
+	}
+	return d.items, nil
+}
+func (d *delayedSearchableProvider) GetEntry(ctx context.Context, location string) (provider.Entry, error) {
+	return provider.Entry{}, nil
+}
+
+func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
+	t.Run("ConcurrentMultiVaultExecution", func(t *testing.T) {
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"v1": {Provider: "custom_vault"},
+				"v2": {Provider: "custom_vault"},
+				"v3": {Provider: "custom_vault"},
+			},
+		}
+
+		orch, err := NewOrchestrator(cfg)
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		delay := 50 * time.Millisecond
+		p1 := &delayedSearchableProvider{
+			delay: delay,
+			items: []provider.SearchResult{
+				{Vault: "v1", Path: "p1", Entry: provider.Entry{Title: "t1"}},
+			},
+		}
+		p2 := &delayedSearchableProvider{
+			delay: delay,
+			items: []provider.SearchResult{
+				{Vault: "v2", Path: "p2", Entry: provider.Entry{Title: "t2"}},
+			},
+		}
+		p3 := &delayedSearchableProvider{
+			delay: delay,
+			items: []provider.SearchResult{
+				{Vault: "v3", Path: "p3", Entry: provider.Entry{Title: "t3"}},
+			},
+		}
+
+		orch.providerManager.vaultCache["v1"] = p1
+		orch.providerManager.vaultCache["v2"] = p2
+		orch.providerManager.vaultCache["v3"] = p3
+
+		start := time.Now()
+		results, err := orch.Search(context.Background(), "", nil)
+		elapsed := time.Since(start)
+
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 3 {
+			t.Fatalf("expected 3 results, got %d", len(results))
+		}
+
+		// If sequential, elapsed would be at least 3 * 50ms = 150ms.
+		// Concurrent execution scales with slowest single vault (~50ms).
+		if elapsed >= 3*delay {
+			t.Errorf("multi-vault search executed sequentially: took %v, expected < %v", elapsed, 3*delay)
+		}
+	})
+
+	t.Run("ErrorPropagationAndCancellation", func(t *testing.T) {
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"v_ok":   {Provider: "custom_vault"},
+				"v_fail": {Provider: "custom_vault"},
+			},
+		}
+
+		orch, err := NewOrchestrator(cfg)
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+
+		pOK := &delayedSearchableProvider{
+			delay: 200 * time.Millisecond,
+			items: []provider.SearchResult{
+				{Vault: "v_ok", Path: "p_ok", Entry: provider.Entry{Title: "t_ok"}},
+			},
+		}
+		pFail := &delayedSearchableProvider{
+			delay: 10 * time.Millisecond,
+			err:   errors.New("db decryption failure"),
+		}
+
+		orch.providerManager.vaultCache["v_ok"] = pOK
+		orch.providerManager.vaultCache["v_fail"] = pFail
+
+		_, err = orch.Search(context.Background(), "", nil)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "failed to retrieve entries from repo \"v_fail\"") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+		if !strings.Contains(err.Error(), "db decryption failure") {
+			t.Errorf("expected underlying error in message, got: %v", err)
 		}
 	})
 }

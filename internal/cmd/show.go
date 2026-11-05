@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -356,10 +357,17 @@ func Show(args []string, cfg *config.Config) int {
 }
 
 func printEnvFormat(attributes map[string]any) {
-	for k, v := range attributes {
+	keys := make([]string, 0, len(attributes))
+	for k := range attributes {
 		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+
+	for _, k := range keys {
+		v := attributes[k]
 		strVal, _ := utils.SerializeAttrValue(v)
 		if shouldQuoteDotenvValue(strVal) {
 			escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(strVal)
@@ -375,10 +383,16 @@ func shouldQuoteDotenvValue(s string) bool {
 }
 
 func printKeysFormat(attributes map[string]any) {
+	keys := make([]string, 0, len(attributes))
 	for k := range attributes {
 		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 			continue
 		}
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+
+	for _, k := range keys {
 		fmt.Println(k)
 	}
 }

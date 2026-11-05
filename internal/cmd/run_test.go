@@ -26,6 +26,11 @@ func TestHelperProcess(t *testing.T) {
 			fmt.Println(env)
 		}
 	}
+	for _, arg := range os.Args {
+		if strings.HasPrefix(arg, "CLOAKENV_ARG_") {
+			fmt.Println(arg)
+		}
+	}
 	os.Exit(0)
 }
 
@@ -70,6 +75,18 @@ func TestRun_Errors(t *testing.T) {
 			args:     []string{"--", "this_command_should_not_exist_xyz123"},
 			wantExit: 1,
 			wantErr:  "this_command_should_not_exist_xyz123",
+		},
+		{
+			name:     "Unknown Flag Before DashDash",
+			args:     []string{"--whitelst", "FOO", "--", "echo", "1"},
+			wantExit: 1,
+			wantErr:  "unknown flag: --whitelst",
+		},
+		{
+			name:     "Unexpected Positional Argument Before DashDash",
+			args:     []string{"unexpected_arg", "--", "echo", "1"},
+			wantExit: 1,
+			wantErr:  "unexpected argument: unexpected_arg",
 		},
 	}
 
@@ -166,6 +183,21 @@ TEST_LITERAL_VAL=literal_value_here
 			},
 			expectedOutput: []string{
 				"CLOAKENV_TEST_A=value_from_env_b",
+			},
+		},
+		{
+			name: "Positional arguments and flags after dash dash execute normally",
+			envVars: map[string]string{
+				"CLOAKENV_TEST_B": "value_from_env_b",
+			},
+			runArgs: []string{
+				"-e", `CLOAKENV_TEST_A={{ get "env://CLOAKENV_TEST_B" }}`,
+				"--",
+				os.Args[0], "-test.run=TestHelperProcess", "--", "CLOAKENV_ARG_POS=passed",
+			},
+			expectedOutput: []string{
+				"CLOAKENV_TEST_A=value_from_env_b",
+				"CLOAKENV_ARG_POS=passed",
 			},
 		},
 		{
