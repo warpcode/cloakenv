@@ -69,3 +69,21 @@ func BenchmarkParseTagString(b *testing.B) {
 		_ = ParseTagString(tagStr)
 	}
 }
+
+func BenchmarkParseTags_SliceString(b *testing.B) {
+	tagsSlice := []string{"tag1", "tag2", "tag3", "auth:ssh", "env:prod"}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for range b.N {
+		_ = ParseTags(tagsSlice)
+	}
+}
+
+func BenchmarkParseTags_SliceAny(b *testing.B) {
+	tagsSlice := []any{"tag1", "tag2", "tag3", "auth:ssh", "env:prod"}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for range b.N {
+		_ = ParseTags(tagsSlice)
+	}
+}
