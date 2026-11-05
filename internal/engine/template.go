@@ -9,12 +9,20 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"text/template"
 
 	"github.com/warpcode/cloakenv/internal/provider"
 	"github.com/warpcode/cloakenv/internal/utils"
 	"github.com/warpcode/cloakenv/internal/yaml"
 )
+
+// bufPool pools *bytes.Buffer instances to reduce heap allocations during template rendering.
+var bufPool = sync.Pool{
+	New: func() any {
+		return new(bytes.Buffer)
+	},
+}
 
 var userHomeDir = os.UserHomeDir
 
@@ -342,8 +350,14 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 	}
 
 	execData := wrapTemplateData(data)
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, execData); err != nil {
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer func() {
+		buf.Reset()
+		bufPool.Put(buf)
+	}()
+
+	if err := tmpl.Execute(buf, execData); err != nil {
 		keyPart := ""
 		if configKey != "" {
 			keyPart = fmt.Sprintf(" in configuration key %q", configKey)
