@@ -166,6 +166,7 @@ jobs:
       # Mode A: Dev Release (Nightly or manual dispatch)
       # ----------------------------------------------------
       - name: Publish Dev Release
+        id: publish-dev-release
         if: |
           steps.check-commits.outputs.has_commits == 'true' &&
           (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
@@ -179,6 +180,15 @@ jobs:
           files: |
             dist/cloakenv-*
             dist/checksums.txt
+
+      - name: Undraft Dev Release
+        if: |
+          steps.check-commits.outputs.has_commits == 'true' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${DEV_TAG}" --draft=false
 
       # ----------------------------------------------------
       # Mode B: Official Release (For Version Tag Pushes)
