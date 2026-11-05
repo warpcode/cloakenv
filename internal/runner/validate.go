@@ -4,7 +4,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode"
 )
+
+// isInvalidEnvKeyChar returns true if r is a control character or space.
+func isInvalidEnvKeyChar(r rune) bool {
+	return unicode.IsSpace(r) || unicode.IsControl(r)
+}
 
 // validateCommand performs platform-agnostic checks on cmdArgs and env.
 // It verifies that command args are non-empty, valid, and contain no null bytes,
@@ -39,11 +45,15 @@ func validateCommand(cmdArgs []string, env []string) int {
 			fmt.Fprintf(os.Stderr, "Invalid environment variable at index %d: missing '=' or key is empty\n", i)
 			return 1
 		}
-		// Security: Reject newline and carriage return characters in environment variable keys
+		// Security: Reject whitespace and control characters in environment variable keys
 		// to prevent CRLF injection and environment variable injection (e.g. injecting LD_PRELOAD)
 		// into downstream child processes and shell wrappers.
 		if strings.ContainsAny(key, "\r\n") {
 			fmt.Fprintf(os.Stderr, "Invalid environment variable %q at index %d: key contains newline or carriage return\n", key, i)
+			return 1
+		}
+		if strings.IndexFunc(key, isInvalidEnvKeyChar) != -1 {
+			fmt.Fprintf(os.Stderr, "Invalid environment variable %q at index %d: key contains invalid character\n", key, i)
 			return 1
 		}
 	}
