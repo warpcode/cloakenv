@@ -353,8 +353,12 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
 	defer func() {
-		buf.Reset()
-		bufPool.Put(buf)
+		if buf.Cap() <= 64*1024 {
+			b := buf.Bytes()
+			clear(b[:cap(b)])
+			buf.Reset()
+			bufPool.Put(buf)
+		}
 	}()
 
 	if err := tmpl.Execute(buf, execData); err != nil {
