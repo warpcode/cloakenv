@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload lint report
         if: always() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: golangci-report
           path: ${{ runner.temp }}/golangci-report.sarif
@@ -127,7 +127,7 @@ jobs:
 
       - name: Upload Test SARIF
         if: always() && github.event_name == 'pull_request' && steps.tests.outcome == 'failure'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: go-test-sarif-${{ matrix.os }}
           path: ${{ runner.temp }}/go-test-${{ matrix.os }}.sarif
@@ -153,14 +153,14 @@ jobs:
 
       - name: Download lint report
         continue-on-error: true
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: golangci-report
           path: ${{ runner.temp }}/lint-report
 
       - name: Download test SARIF reports
         continue-on-error: true
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           pattern: go-test-sarif-*
           path: ${{ runner.temp }}/test-reports
