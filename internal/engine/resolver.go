@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -52,7 +53,7 @@ func (r *Resolver) Resolve(ctx context.Context, uri string) (string, error) {
 func (r *Resolver) ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error) {
 	if !strings.Contains(uri, "{{") {
 		if scheme, _, err := utils.ParseURI(uri); err == nil && r.isKnownScheme(scheme) {
-			uri = `{{ get "` + uri + `" }}`
+			uri = "{{ get " + strconv.Quote(uri) + " }}"
 		}
 	}
 	return r.expandString(ctx, uri, 0, configKey)

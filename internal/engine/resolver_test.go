@@ -550,6 +550,48 @@ func (f *falseReturnResolvableProvider) Search(ctx context.Context, q provider.S
 	return nil, nil
 }
 
+func TestResolve_BareURIQuoteEscaping(t *testing.T) {
+	ctx := context.Background()
+	pm := NewProviderManager(&config.Config{}, nil, nil)
+	sem := make(chan struct{}, 10)
+	res := NewResolver(pm, sem)
+
+	var receivedQuery string
+	res.SetSearchFunc(func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]provider.SearchResult, error) {
+		receivedQuery = expressionStr
+		return []provider.SearchResult{
+			{
+				Entry: provider.Entry{
+					Title: "Matched Entry",
+					Attributes: map[string]any{
+						"Password": "super_secret_password",
+					},
+				},
+			},
+		}, nil
+	})
+
+	// Test a bare URI with quotes directly embedded in the URI string (e.g. search://"api" in tags/Password or custom vault URI)
+	customVal, err := res.Resolve(ctx, `search://tags="api"/Password`)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if customVal != "super_secret_password" {
+		t.Errorf("got %q, want %q", customVal, "super_secret_password")
+	}
+
+	val, err := res.Resolve(ctx, `search://title=api/Password`)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if val != "super_secret_password" {
+		t.Errorf("got %q, want %q", val, "super_secret_password")
+	}
+	if !strings.Contains(receivedQuery, `title contains "api"`) {
+		t.Errorf("expected received query to contain %q, got %q", `title contains "api"`, receivedQuery)
+	}
+}
+
 func TestResolver_GetEntries_And_GetEntriesRecursive(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
