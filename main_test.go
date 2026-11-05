@@ -121,6 +121,7 @@ func TestRunDirectIsolation(t *testing.T) {
 		name     string
 		args     []string
 		wantExit int
+		wantErr  string
 	}{
 		{
 			name:     "direct empty args",
@@ -136,6 +137,7 @@ func TestRunDirectIsolation(t *testing.T) {
 			name:     "direct config flag without value",
 			args:     []string{"cloakenv", "-c"},
 			wantExit: 1,
+			wantErr:  "Error: -c flag requires a config path argument",
 		},
 		{
 			name:     "direct help flag",
@@ -147,9 +149,13 @@ func TestRunDirectIsolation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			exitCode := run(tt.args)
+			var stderr bytes.Buffer
+			exitCode := run(tt.args, &stderr)
 			if exitCode != tt.wantExit {
 				t.Errorf("run(%v) = %d, want %d", tt.args, exitCode, tt.wantExit)
+			}
+			if tt.wantErr != "" && !strings.Contains(stderr.String(), tt.wantErr) {
+				t.Errorf("run(%v) stderr = %q, want contain %q", tt.args, stderr.String(), tt.wantErr)
 			}
 		})
 	}

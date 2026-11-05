@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/warpcode/cloakenv/internal/cmd"
@@ -9,12 +10,12 @@ import (
 )
 
 func main() {
-	os.Exit(run(os.Args))
+	os.Exit(run(os.Args, os.Stderr))
 }
 
-// run parses arguments and configuration,
-// executing the requested subcommand and returning its exit code.
-func run(args []string) int {
+// run parses arguments and configuration, executes the requested
+// subcommand, and returns its exit code.
+func run(args []string, stderr io.Writer) int {
 	if len(args) == 0 {
 		cmd.PrintUsage()
 		return 1
@@ -30,7 +31,7 @@ func run(args []string) int {
 		}
 		if args[i] == "-c" {
 			if i+1 >= len(args) {
-				fmt.Fprintln(os.Stderr, "Error: -c flag requires a config path argument")
+				fmt.Fprintln(stderr, "Error: -c flag requires a config path argument")
 				return 1
 			}
 			customConfigPath = args[i+1]
@@ -53,7 +54,7 @@ func run(args []string) int {
 
 	cfg, err := loadConfig(customConfigPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
+		fmt.Fprintf(stderr, "Config error: %v\n", err)
 		return 1
 	}
 
@@ -78,7 +79,7 @@ func run(args []string) int {
 	case "internal":
 		return cmd.Internal(parsedArgs[2:], cfg)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", parsedArgs[1])
+		fmt.Fprintf(stderr, "Unknown command: %s\n", parsedArgs[1])
 		cmd.PrintUsage()
 		return 1
 	}
