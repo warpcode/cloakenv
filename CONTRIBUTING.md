@@ -33,23 +33,27 @@ go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run
 ```
 
 On same-repository pull requests, CI publishes lint findings and Go test
-failures as a review from `github-actions[bot]`. Lint findings link to their
-source file and line; test failures include failure output and test names. The
-checks continue to fail independently of review publication. Fork pull requests
-still run lint and tests, but do not receive automated reviews because their
-workflow token cannot write pull request reviews.
+failures as an automated review with inline comments from `github-actions[bot]`.
+Lint findings link to their source file and line, anchoring inline comments to
+changed lines in the pull request diff; test failures include failure output and
+test names. Status checks continue to fail independently of review publication.
+Fork pull requests run lint and tests in an isolated, read-only context, but do
+not receive automated reviews because their workflow token cannot write pull
+request reviews.
 
 The lint job produces a SARIF 2.1.0 report. Failed Go test jobs also convert
 their file/line diagnostics and failed test names to SARIF; the review job
 combines all available reports with `sarif-to-comment.sh` into one GitHub review
-request. The script skips posting when the reports contain no findings.
+request. The script skips posting when reports contain no findings, or surfaces
+errors if checks failed without diagnostics.
 
-The `pull_request_target` workflow checks out PR code only in read-only lint
-and test jobs. The review job does not check out or execute PR code and is the
-only job granted `pull-requests: write`. To use these reviews as a merge gate,
-enable pull request reviews in repository rulesets or branch protection and
-keep the lint status check required. Automated change requests do not replace
-required human approvals.
+The CI workflow runs on `pull_request` with least-privilege `contents: read`
+permissions for code execution in the lint and test jobs. The review job is
+the only job granted `pull-requests: write`, and only executes on
+same-repository pull requests. To use these reviews as a merge gate, enable
+pull request reviews in repository rulesets or branch protection and keep the
+lint status check required. Automated change requests do not replace required
+human approvals.
 
 ---
 
