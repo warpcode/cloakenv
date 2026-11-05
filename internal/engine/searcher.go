@@ -282,6 +282,10 @@ func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, re
 			select {
 			case sem <- struct{}{}:
 			case <-gctx.Done():
+				errOnce.Do(func() {
+					firstErr = ctx.Err()
+					cancel()
+				})
 				return
 			}
 			defer func() { <-sem }()
