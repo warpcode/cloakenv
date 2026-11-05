@@ -312,6 +312,8 @@ templates:
   inline_tmpl: "Host {{ .meta.Title }}"
   file_tmpl:
     path: "templates/model.tmpl"
+  cleaned_tmpl:
+    path: "sub/../templates/model.tmpl"
 `
 	configPath := filepath.Join(tempDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
@@ -323,8 +325,8 @@ templates:
 		t.Fatalf("Load failed for templates config: %v", err)
 	}
 
-	if len(cfg.Templates) != 2 {
-		t.Fatalf("expected 2 templates, got %d", len(cfg.Templates))
+	if len(cfg.Templates) != 3 {
+		t.Fatalf("expected 3 templates, got %d", len(cfg.Templates))
 	}
 
 	inlineTmpl, ok := cfg.Templates["inline_tmpl"]
@@ -335,6 +337,15 @@ templates:
 	fileTmpl, ok := cfg.Templates["file_tmpl"]
 	if !ok || fileTmpl.Template != fileContent {
 		t.Errorf("unexpected file_tmpl: %+v", fileTmpl)
+	}
+
+	cleanedTmpl, ok := cfg.Templates["cleaned_tmpl"]
+	if !ok || cleanedTmpl.Template != fileContent {
+		t.Errorf("unexpected cleaned_tmpl: %+v", cleanedTmpl)
+	}
+	expectedCleanedPath := filepath.Join(tempDir, "templates", "model.tmpl")
+	if cleanedTmpl.Path != expectedCleanedPath {
+		t.Errorf("unexpected cleaned_tmpl.Path: got %q, want %q", cleanedTmpl.Path, expectedCleanedPath)
 	}
 
 	// Test non-existent template path
@@ -755,7 +766,16 @@ vaults:
     vault_path: %q
   empty_vault:
     provider: "custom_vault"
-`, absVaultPath)
+  rel_parent:
+    provider: "json"
+    vault_path: "../shared/vault.kdbx"
+  abs_vault_dirty:
+    provider: "json"
+    vault_path: %q
+  home_vault_dirty:
+    provider: "keepass"
+    vault_path: "~/sub/../secrets.kdbx"
+`, absVaultPath, filepath.Join(tempDir, "var", "lib", "..", "vault.kdbx"))
 	configFilePath := filepath.Join(configDir, "config.yaml")
 	if err := os.WriteFile(configFilePath, []byte(yamlContent), 0644); err != nil {
 		t.Fatalf("failed to write config file: %v", err)
@@ -799,6 +819,21 @@ vaults:
 			name:     "empty vault path unchanged",
 			vault:    "empty_vault",
 			expected: "",
+		},
+		{
+			name:     "relative path with parent directory anchored to config directory",
+			vault:    "rel_parent",
+			expected: filepath.Join(filepath.Dir(configDir), "shared", "vault.kdbx"),
+		},
+		{
+			name:     "dirty absolute path is cleaned",
+			vault:    "abs_vault_dirty",
+			expected: filepath.Join(tempDir, "var", "vault.kdbx"),
+		},
+		{
+			name:     "dirty home path is cleaned",
+			vault:    "home_vault_dirty",
+			expected: filepath.Join(mockHome, "secrets.kdbx"),
 		},
 	}
 

@@ -360,7 +360,7 @@ func Load(path string) (*Config, error) {
 				baseDir := filepath.Dir(cfg.ConfigPath)
 				vaultPath = filepath.Join(baseDir, vaultPath)
 			}
-			vault.VaultPath = vaultPath
+			vault.VaultPath = filepath.Clean(vaultPath)
 		}
 		cfg.Vaults[name] = vault
 	}
@@ -377,6 +377,7 @@ func Load(path string) (*Config, error) {
 				baseDir := filepath.Dir(cfg.ConfigPath)
 				expandedPath = filepath.Join(baseDir, expandedPath)
 			}
+			expandedPath = filepath.Clean(expandedPath)
 			data, err := os.ReadFile(expandedPath) //nolint:gosec
 			if err != nil {
 				return nil, fmt.Errorf("template %q: failed to read path %q: %w", tmplName, tmpl.Path, err)
