@@ -167,6 +167,7 @@ jobs:
           name: "Development Build (${{ env.DEV_TAG }})"
           body_path: release-notes.md
           prerelease: true
+          draft: true
           files: |
             dist/cloakenv-*
             dist/checksums.txt
