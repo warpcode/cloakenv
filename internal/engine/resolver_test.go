@@ -579,6 +579,9 @@ func TestResolve_BareURIQuoteEscaping(t *testing.T) {
 	if customVal != "super_secret_password" {
 		t.Errorf("got %q, want %q", customVal, "super_secret_password")
 	}
+	if receivedQuery != `"\"api\"" in tags` {
+		t.Errorf("expected received query to be \"\\\"api\\\"\" in tags, got %q", receivedQuery)
+	}
 
 	val, err := res.Resolve(ctx, `search://title=api/Password`)
 	if err != nil {
