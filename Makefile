@@ -1,4 +1,4 @@
-.PHONY: all build run test bench test-all clean fmt vet install uninstall verify agents-check
+.PHONY: all build run test bench test-all clean fmt vet lint install uninstall verify agents-check
 
 BINARY_NAME=cloakenv
 BUILD_DIR=bin
@@ -28,6 +28,9 @@ fmt:
 
 vet:
 	go vet ./...
+
+lint:
+	golangci-lint run
 
 install:
 	go install
