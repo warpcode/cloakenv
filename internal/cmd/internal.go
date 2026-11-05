@@ -23,6 +23,10 @@ type MatchAliasResult struct {
 
 // Internal handles internal helper commands, specifically "cloakenv internal match-alias [--json] -- <command> [args]".
 func Internal(args []string, cfg *config.Config) int {
+	if utils.HasHelpFlag(args) && (len(args) < 1 || args[0] != "match-alias") {
+		PrintInternalHelp()
+		return 0
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: cloakenv internal <subcommand> [args]")
 		return 1
