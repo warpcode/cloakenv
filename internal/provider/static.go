@@ -164,7 +164,7 @@ func (p *staticProvider) parseSingleEntity(cfg ProviderConfig, raw map[string]an
 		tags = cfg.Tags
 	}
 	entry.Tags = tags
-	p.entries[""] = entry
+	p.entries[""] = entry.EnsureOriginal()
 }
 
 func (p *staticProvider) parseMultiEntities(raw map[string]any, entitiesRootKey string) error {
@@ -207,7 +207,7 @@ func (p *staticProvider) parseMultiEntities(raw map[string]any, entitiesRootKey 
 			}
 		}
 
-		p.entries[name] = entry
+		p.entries[name] = entry.EnsureOriginal()
 	}
 
 	return nil
