@@ -207,7 +207,7 @@ cloakenv run -e DATABASE_URL='postgres://{{ get "env://DB_USER" }}:{{ get "keyri
    - **`.entries` / `.Entries`**: Slice of upstream source entry contexts when resolving composed `custom_vault` entities.
 4. **Child Command Argument Pass-Through Safety (`resolveCmdArgs`)**:
    When `cloakenv run` executes child processes, command-line arguments are safely inspected:
-   - Arguments that are bare known `scheme://...` URIs or templates invoking `cloakenv` functions (`get`, `entry`, `search`, `include`, `includeFile`) are resolved before process execution.
+   - Arguments that are bare known `scheme://...` URIs or templates invoking `cloakenv` functions (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`) are resolved before process execution.
    - Foreign templates (such as Docker format strings `'{{.State.Status}}'`, Helm templates, or Kubernetes format strings) pass through to the child command untouched without evaluation errors.
 5. **Recursion Limit**: Dynamic resolution and template inclusion are capped at depth 5 (`maxDepth = 5`) to prevent circular evaluation or infinite recursion.
 6. **Legacy `${...}` Removed**: The legacy `${scheme://...}` syntax has been completely removed in favor of `{{ get "scheme://..." }}`. Bare `scheme://...` URIs remain supported in explicit CLI contexts (`get`, `show`, `-e`, `-m`), `merge:`, and `autoload.env`.
@@ -936,6 +936,9 @@ Evaluate configured templates using `{{ include "name" . }}` or evaluate externa
 | Function | Signature | Description | Example |
 |---|---|---|---|
 | `get` | `(uri string) (string, error)` | Resolves a single secret value from any vault or provider | `{{ get "keyring://pg/pass" }}` |
+| `tryGet` | `(uris ...string) string` | Resolves the first available secret across candidate URIs without failing on missing entries | `{{ tryGet "env://GH_TOKEN" "keyring://github/pat" }}` |
+| `default` | `(fallback any, given ...any) any` | Returns the first non-empty value in `given`, or `fallback` if all are empty | `{{ tryGet "env://TOKEN" \| default "fallback" }}` |
+| `coalesce` | `(vals ...any) string` | Returns the first non-empty string argument | `{{ coalesce (tryGet "env://A") (tryGet "env://B") "default" }}` |
 | `entry` | `(uri string) (map[string]any, error)` | Resolves a complete entry into a structured context map (`.meta`, `.attributes`) | `{{ (entry "work://db").attributes.Password }}` |
 | `search` | `(query string) ([]map[string]any, error)` | Executes a search query across vaults and returns a slice of entry context maps | `{{ range search "\"db\" in tags" }}{{ .meta.Title }}: {{ .attributes.HOST }}{{ end }}` |
 | `toEnv` | `(attrs any) (string, error)` | Serializes an attributes map into dotenv key-value format (sorted, excluding metadata) | `{{ .attributes \| toEnv }}` |
