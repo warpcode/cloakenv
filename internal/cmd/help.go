@@ -58,7 +58,7 @@ func PrintUsageStdout() {
 // PrintRunHelp prints usage help for the run subcommand.
 func PrintRunHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] -- <command> [args]
+  cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] [--dry-run] -- <command> [args]
 
 Description:
   Wrap a binary execution, resolving and injecting secret environment variables.
@@ -72,7 +72,8 @@ Flags:
   -m entry-uri    Merge attributes from an entry into the environment. Can target a single attribute using :attribute (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
   -f, --key-format format  Override attribute key formatting (none, env, snake, kebab)
-  --no-autoload   Disable config command autoloading rules for this run execution`)
+  --no-autoload   Disable config command autoloading rules for this run execution
+  --dry-run       Preview injected environment variable names and transformed command without executing`)
 }
 
 // PrintGetHelp prints usage help for the get subcommand.
