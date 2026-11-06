@@ -33,12 +33,8 @@ func (e *EnvProvider) Initialize(_ context.Context, _ ProviderConfig) error {
 // Returns an error if the variable is unset or empty.
 func (e *EnvProvider) GetSecret(_ context.Context, location string) (string, error) {
 	loc := location
-	if strings.HasPrefix(loc, "env:") {
-		loc = strings.TrimPrefix(loc, "env:")
-	}
-	if strings.HasPrefix(loc, ":") {
-		loc = strings.TrimPrefix(loc, ":")
-	}
+	loc = strings.TrimPrefix(loc, "env:")
+	loc = strings.TrimPrefix(loc, ":")
 
 	val, ok := os.LookupEnv(loc)
 	if !ok {
@@ -111,12 +107,8 @@ func (e *EnvProvider) Search(_ context.Context, query SearchQuery) ([]SearchResu
 // When location specifies a variable name, it returns an entry containing that single variable for backwards compatibility.
 func (e *EnvProvider) GetEntry(_ context.Context, location string) (Entry, error) {
 	key := location
-	if strings.HasPrefix(key, "env:") {
-		key = strings.TrimPrefix(key, "env:")
-	}
-	if strings.HasPrefix(key, ":") {
-		key = strings.TrimPrefix(key, ":")
-	}
+	key = strings.TrimPrefix(key, "env:")
+	key = strings.TrimPrefix(key, ":")
 
 	if key == "" || location == "env" {
 		return e.getAllEnvEntry(), nil
@@ -144,12 +136,8 @@ func (e *EnvProvider) GetEntryWithPath(ctx context.Context, location string) (En
 		return Entry{}, "", err
 	}
 	key := location
-	if strings.HasPrefix(key, "env:") {
-		key = strings.TrimPrefix(key, "env:")
-	}
-	if strings.HasPrefix(key, ":") {
-		key = strings.TrimPrefix(key, ":")
-	}
+	key = strings.TrimPrefix(key, "env:")
+	key = strings.TrimPrefix(key, ":")
 	if key == "" || location == "env" {
 		return entry, "env", nil
 	}

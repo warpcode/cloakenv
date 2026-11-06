@@ -289,7 +289,7 @@ func (pm *ProviderManager) initJson(ctx context.Context, vaultName string, vault
 }
 
 // initEnv bootstraps an Env provider.
-func (pm *ProviderManager) initEnv(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
+func (pm *ProviderManager) initEnv(ctx context.Context, _ string, _ config.VaultConfig) (provider.SecretProvider, error) {
 	ep := provider.NewEnvProvider()
 	if err := ep.Initialize(ctx, provider.ProviderConfig{}); err != nil {
 		return nil, err

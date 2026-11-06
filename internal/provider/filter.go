@@ -877,12 +877,8 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 	case "env":
 		// Format: "location" or ":VAR" or "env:VAR" or "VAR"
 		loc := location
-		if strings.HasPrefix(loc, "env:") {
-			loc = strings.TrimPrefix(loc, "env:")
-		}
-		if strings.HasPrefix(loc, ":") {
-			loc = strings.TrimPrefix(loc, ":")
-		}
+		loc = strings.TrimPrefix(loc, "env:")
+		loc = strings.TrimPrefix(loc, ":")
 		if loc == "" || loc == "env" {
 			return f.underlying.GetSecret(ctx, location)
 		}
