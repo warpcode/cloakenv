@@ -224,7 +224,7 @@ func TestMockKeyringStore_Concurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(workers)
 
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		workerID := i
 		go func() {
 			defer wg.Done()
