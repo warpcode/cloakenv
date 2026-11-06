@@ -116,6 +116,51 @@ func TestMainArgsParsing(t *testing.T) {
 	}
 }
 
+func TestRunDirectIsolation(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		wantExit int
+		wantErr  string
+	}{
+		{
+			name:     "direct empty args",
+			args:     []string{},
+			wantExit: 1,
+		},
+		{
+			name:     "direct no command args",
+			args:     []string{"cloakenv"},
+			wantExit: 1,
+		},
+		{
+			name:     "direct config flag without value",
+			args:     []string{"cloakenv", "-c"},
+			wantExit: 1,
+			wantErr:  "Error: -c flag requires a config path argument",
+		},
+		{
+			name:     "direct help flag",
+			args:     []string{"cloakenv", "--help"},
+			wantExit: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var stderr bytes.Buffer
+			exitCode := run(tt.args, &stderr)
+			if exitCode != tt.wantExit {
+				t.Errorf("run(%v) = %d, want %d", tt.args, exitCode, tt.wantExit)
+			}
+			if tt.wantErr != "" && !strings.Contains(stderr.String(), tt.wantErr) {
+				t.Errorf("run(%v) stderr = %q, want contain %q", tt.args, stderr.String(), tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestLoadConfig(t *testing.T) {
 	tempDir := t.TempDir()
 
@@ -136,9 +181,6 @@ keyring:
 	}
 
 	nonExistentPath := filepath.Join(tempDir, "does-not-exist.yaml")
-
-	originalConfigPath := customConfigPath
-	defer func() { customConfigPath = originalConfigPath }()
 
 	tests := []struct {
 		name       string
@@ -187,13 +229,11 @@ keyring:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			customConfigPath = tt.configPath
-
 			if tt.setupEnv != nil {
 				tt.setupEnv(t)
 			}
 
-			cfg, err := loadConfig()
+			cfg, err := loadConfig(tt.configPath)
 
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("loadConfig() error = %v, wantErr %v", err, tt.wantErr)
