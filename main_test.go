@@ -69,6 +69,13 @@ func TestMainArgsParsing(t *testing.T) {
 			wantErr:  "Unknown command: unknown",
 		},
 		{
+			name:     "sync missing args",
+			args:     []string{"sync"},
+			wantExit: 1,
+			wantOut:  "",
+			wantErr:  "Usage: cloakenv sync <source> <target> [flags]",
+		},
+		{
 			name:     "config flag no arg",
 			args:     []string{"-c"},
 			wantExit: 1,

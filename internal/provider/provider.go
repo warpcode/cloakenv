@@ -104,6 +104,16 @@ type ValueResolvableProvider interface {
 	SupportsValueResolution() bool
 }
 
+// WritableProvider is an interface implemented by secret providers that support
+// writing and deleting secrets.
+type WritableProvider interface {
+	// SetSecret writes a secret value to the provider at the given location.
+	SetSecret(ctx context.Context, location string, value string) error
+
+	// DeleteSecret removes the secret at the given location from the provider.
+	DeleteSecret(ctx context.Context, location string) error
+}
+
 // ContextKey represents a custom type for context values to avoid collisions.
 type ContextKey string
 
