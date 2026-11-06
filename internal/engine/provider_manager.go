@@ -87,10 +87,22 @@ func (pm *ProviderManager) HasBuiltin(scheme string) bool {
 // Returns the provider, and a boolean indicating if it is a built-in provider.
 func (pm *ProviderManager) GetProvider(ctx context.Context, scheme string) (provider.SecretProvider, bool, error) {
 	pm.mu.Lock()
+	cfg := pm.config
 	p, isBuiltin := pm.builtins[scheme]
 	pm.mu.Unlock()
 
 	if isBuiltin {
+		// If "env" is configured in vaults, route it through the vault provider pipeline
+		if scheme == "env" && cfg != nil {
+			if _, ok := cfg.Vaults["env"]; ok {
+				vaultP, err := pm.getVaultProvider(ctx, "env")
+				if err != nil {
+					return nil, false, err
+				}
+				return vaultP, false, nil
+			}
+		}
+
 		if err := pm.EnsureInitialized(ctx, scheme, p); err != nil {
 			return nil, true, err
 		}
@@ -181,6 +193,8 @@ func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName stri
 		p, err = pm.initJson(ctx, vaultName, vault)
 	case "custom_vault":
 		p, err = pm.initCustomVault(ctx, vaultName, vault)
+	case "env":
+		p, err = pm.initEnv(ctx, vaultName, vault)
 	case "search":
 		p, err = pm.initSearch(ctx, vaultName, vault)
 	default:
@@ -326,6 +340,15 @@ func (pm *ProviderManager) initJson(ctx context.Context, vaultName string, vault
 	}
 
 	return jp, nil
+}
+
+// initEnv bootstraps an Env provider.
+func (pm *ProviderManager) initEnv(ctx context.Context, _ string, _ config.VaultConfig) (provider.SecretProvider, error) {
+	ep := provider.NewEnvProvider()
+	if err := ep.Initialize(ctx, provider.ProviderConfig{}); err != nil {
+		return nil, err
+	}
+	return ep, nil
 }
 
 // initCustomVault bootstraps a CustomVault provider using config settings.
@@ -611,6 +634,8 @@ func newBareProvider(providerType string) (provider.SecretProvider, error) {
 		return provider.NewJsonProvider(), nil
 	case "custom_vault":
 		return provider.NewCustomVaultProvider(), nil
+	case "env":
+		return provider.NewEnvProvider(), nil
 	case "search":
 		return provider.NewSearchProvider(), nil
 	default:

@@ -876,6 +876,21 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		}
 		return f.underlying.GetSecret(ctx, location)
 
+	case "env":
+		// Format: "location" or ":VAR" or "env:VAR" or "VAR"
+		loc := location
+		loc = strings.TrimPrefix(loc, "env:")
+		loc = strings.TrimPrefix(loc, ":")
+		if loc == "" || loc == "env" {
+			return f.underlying.GetSecret(ctx, location)
+		}
+		var candidates []string
+		candidates = append(candidates, loc, "env."+loc, "env:"+loc)
+		if !isFieldAuthorized(loc, candidates, f.includeFields, f.excludeFields) {
+			return "", fmt.Errorf("field %q is excluded by vault configuration", loc)
+		}
+		return f.underlying.GetSecret(ctx, location)
+
 	case "custom_vault":
 		// Format: "entity[:attribute]". Bare location defaults to "Password".
 		effectiveAttr := "Password"

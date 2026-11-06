@@ -75,7 +75,12 @@ func (s *Searcher) getSearchableProviders(ctx context.Context, repoScopes []stri
 			if vaultConfig.Provider == "search" {
 				continue
 			}
-			if vaultConfig.Searchable != nil && !*vaultConfig.Searchable {
+			// When vaultName is "env", default searchable to false unless explicitly set to true.
+			if vaultName == "env" {
+				if vaultConfig.Searchable == nil || !*vaultConfig.Searchable {
+					continue
+				}
+			} else if vaultConfig.Searchable != nil && !*vaultConfig.Searchable {
 				continue
 			}
 			p, _, err := s.providers.GetProvider(ctx, vaultName)

@@ -263,3 +263,15 @@ Flags:
   --prefix prefix Filter keys by prefix
   -r, --regex pat Filter keys by regular expression`)
 }
+
+// PrintInternalHelp prints usage help for the internal subcommand.
+func PrintInternalHelp() {
+	fmt.Fprintln(os.Stdout, `Usage:
+  cloakenv internal <subcommand> [args]
+
+Description:
+  Internal helper commands for cloakenv integrations.
+
+Subcommands:
+  match-alias     Check if a command matches any configured autoload/run alias rule`)
+}
