@@ -148,7 +148,6 @@ func (s *SearchableKeyFormatProvider) GetEntryWithPath(ctx context.Context, loca
 		if err != nil {
 			return Entry{}, "", err
 		}
-		entry = entry.EnsureOriginal()
 		if !IsRawKeys(ctx) {
 			entry.Attributes = s.formatAttributes(entry.Attributes)
 		}
@@ -164,7 +163,6 @@ func (s *SearchableKeyFormatProvider) GetEntry(ctx context.Context, location str
 	if err != nil {
 		return Entry{}, err
 	}
-	entry = entry.EnsureOriginal()
 	if !IsRawKeys(ctx) {
 		entry.Attributes = s.formatAttributes(entry.Attributes)
 	}

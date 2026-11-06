@@ -67,13 +67,6 @@ func (pm *ProviderManager) SetRenderTemplateFunc(exec provider.TemplateRenderFun
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	pm.renderTemplateFunc = exec
-	for _, p := range pm.vaultCache {
-		if tr, ok := p.(interface {
-			SetRenderTemplateFunc(provider.TemplateRenderFunc)
-		}); ok {
-			tr.SetRenderTemplateFunc(exec)
-		}
-	}
 }
 
 func (pm *ProviderManager) HasBuiltin(scheme string) bool {
@@ -195,21 +188,10 @@ func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName stri
 		p = provider.NewFilteringProvider(p, vault.IncludeFields, vault.ExcludeFields)
 	}
 
-	pm.mu.Lock()
-	renderTemplate := pm.renderTemplateFunc
-	pm.mu.Unlock()
-
 	if len(vault.Mapping) > 0 {
 		p, err = provider.NewMappingProvider(p, vault.Mapping)
 		if err != nil {
 			return nil, err
-		}
-		if renderTemplate != nil {
-			if tr, ok := p.(interface {
-				SetRenderTemplateFunc(provider.TemplateRenderFunc)
-			}); ok {
-				tr.SetRenderTemplateFunc(renderTemplate)
-			}
 		}
 	}
 
@@ -223,13 +205,6 @@ func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName stri
 
 	if len(vault.Attributes) > 0 {
 		p = provider.NewAttributesProvider(p, vault.Attributes)
-		if renderTemplate != nil {
-			if tr, ok := p.(interface {
-				SetRenderTemplateFunc(provider.TemplateRenderFunc)
-			}); ok {
-				tr.SetRenderTemplateFunc(renderTemplate)
-			}
-		}
 	}
 
 	if vault.Cache.Enabled {

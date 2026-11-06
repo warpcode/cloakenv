@@ -15,14 +15,8 @@ import (
 // AttributesProvider wraps a SecretProvider and injects configured attributes
 // into every entry returned by the underlying provider.
 type AttributesProvider struct {
-	underlying         SecretProvider
-	attributes         map[string]any
-	renderTemplateFunc TemplateRenderFunc
-}
-
-// SetRenderTemplateFunc sets the template renderer function.
-func (a *AttributesProvider) SetRenderTemplateFunc(fn TemplateRenderFunc) {
-	a.renderTemplateFunc = fn
+	underlying SecretProvider
+	attributes map[string]any
 }
 
 // Scheme returns the underlying provider's scheme.
@@ -55,10 +49,19 @@ func (a *AttributesProvider) Underlying() SecretProvider {
 	return a.underlying
 }
 
-// GetSecret resolves a secret. Computed attributes in a.attributes take precedence;
-// if the secret is not in a.attributes, it delegates to the underlying provider.
+// GetSecret resolves a secret. It first queries the underlying provider.
+// If the underlying provider does not have the secret and it is searchable,
+// it fetches the entry and checks if the requested attribute was injected.
 func (a *AttributesProvider) GetSecret(ctx context.Context, location string) (string, error) {
+	val, err := a.underlying.GetSecret(ctx, location)
+	if err == nil {
+		return val, nil
+	}
+
 	searchable, isSearchable := a.underlying.(SearchableProvider)
+	if !isSearchable {
+		return "", err
+	}
 
 	var entryLoc, attrName string
 	if strings.Contains(location, ":") {
@@ -94,50 +97,46 @@ func (a *AttributesProvider) GetSecret(ctx context.Context, location string) (st
 			return "", getErr
 		}
 
-		targetEntry = targetEntry.EnsureOriginal()
-
 		providerName, vaultName, _ := utils.ParseURI(location)
 		if providerName == "" {
 			providerName = a.underlying.Scheme()
 		}
 
-		rendered, renderErr := a.renderAttributeTemplate(ctx, strVal, targetEntry, providerName, vaultName, entryPath)
+		rendered, renderErr := renderAttributeTemplate(strVal, targetEntry, providerName, vaultName, entryPath)
 		if renderErr != nil {
 			return "", renderErr
 		}
 		return rendered, nil
 	}
 
-	if isSearchable {
-		// Check if the attribute is in our injected attributes
-		if injectedVal, ok := a.attributes[attrName]; ok {
-			return resolveFromEntry(injectedVal)
-		}
+	// Check if the attribute is in our injected attributes
+	if injectedVal, ok := a.attributes[attrName]; ok {
+		return resolveFromEntry(injectedVal)
+	}
 
-		// Check if the attribute was accessed via dot path within an injected attribute
-		if strings.Contains(attrName, ".") {
-			val, resolveErr := resolveDotPath(a.attributes, attrName)
-			if resolveErr == nil {
-				return resolveFromEntry(val)
-			}
+	// Check if the attribute was accessed via dot path within an injected attribute
+	// e.g. location is "my-entry:nested.attr", attrName is "nested.attr"
+	if strings.Contains(attrName, ".") {
+		val, resolveErr := resolveDotPath(a.attributes, attrName)
+		if resolveErr == nil {
+			return resolveFromEntry(val)
 		}
 	}
 
-	return a.underlying.GetSecret(ctx, location)
+	return "", err
 }
 
-func (a *AttributesProvider) injectAttributes(ctx context.Context, entry Entry, providerName string, vaultName string, entryPath string) map[string]any {
+func (a *AttributesProvider) injectAttributes(entry Entry, providerName string, vaultName string, entryPath string) map[string]any {
 	if a.attributes == nil {
 		return entry.Attributes
 	}
-	entry = entry.EnsureOriginal()
 	attrs := make(map[string]any, len(entry.Attributes)+len(a.attributes))
 	for k, v := range entry.Attributes {
 		attrs[k] = v
 	}
 	for k, v := range a.attributes {
 		if strVal, isStr := v.(string); isStr && strings.Contains(strVal, "{{") && strings.Contains(strVal, "}}") {
-			rendered, err := a.renderAttributeTemplate(ctx, strVal, entry, providerName, vaultName, entryPath)
+			rendered, err := renderAttributeTemplate(strVal, entry, providerName, vaultName, entryPath)
 			if err == nil {
 				attrs[k] = rendered
 			} else {
@@ -150,13 +149,7 @@ func (a *AttributesProvider) injectAttributes(ctx context.Context, entry Entry, 
 	return attrs
 }
 
-func (a *AttributesProvider) renderAttributeTemplate(ctx context.Context, templateStr string, entry Entry, providerName string, vaultName string, entryPath string) (string, error) {
-	data := BuildTemplateData(entry, providerName, vaultName, entryPath)
-
-	if a.renderTemplateFunc != nil {
-		return a.renderTemplateFunc(ctx, templateStr, data)
-	}
-
+func renderAttributeTemplate(templateStr string, rawEntry Entry, providerName string, vaultName string, entryPath string) (string, error) {
 	funcs := template.FuncMap{
 		"upper":    strings.ToUpper,
 		"lower":    strings.ToLower,
@@ -178,6 +171,33 @@ func (a *AttributesProvider) renderAttributeTemplate(ctx context.Context, templa
 	tmpl, err := template.New("tmpl").Option("missingkey=error").Funcs(funcs).Parse(templateStr)
 	if err != nil {
 		return "", err
+	}
+
+	meta := map[string]any{
+		"Title": rawEntry.Title, "title": rawEntry.Title,
+		"Tags": rawEntry.Tags, "tags": rawEntry.Tags,
+		"UUID": rawEntry.UUID, "uuid": rawEntry.UUID,
+		"Path": entryPath, "path": entryPath,
+		"Vault": vaultName, "vault": vaultName,
+		"Provider": providerName, "provider": providerName,
+	}
+	if rawEntry.Group != nil {
+		grp := map[string]any{
+			"Name": rawEntry.Group.Name, "name": rawEntry.Group.Name,
+			"UUID": rawEntry.Group.UUID, "uuid": rawEntry.Group.UUID,
+			"Path": rawEntry.Group.Path, "path": rawEntry.Group.Path,
+		}
+		meta["Group"] = grp
+		meta["group"] = grp
+	} else {
+		meta["Group"] = nil
+		meta["group"] = nil
+	}
+	data := map[string]any{
+		"Meta":       meta,
+		"meta":       meta,
+		"Attributes": rawEntry.Attributes,
+		"attributes": rawEntry.Attributes,
 	}
 
 	var buf bytes.Buffer
@@ -240,8 +260,7 @@ func (s *SearchableAttributesProvider) GetEntryWithPath(ctx context.Context, loc
 		if err != nil {
 			return Entry{}, "", err
 		}
-		entry = entry.EnsureOriginal()
-		entry.Attributes = s.injectAttributes(ctx, entry, providerName, vaultName, path)
+		entry.Attributes = s.injectAttributes(entry, providerName, vaultName, path)
 		return entry, path, nil
 	}
 	entry, err := s.GetEntry(ctx, location)
@@ -259,8 +278,7 @@ func (s *SearchableAttributesProvider) GetEntry(ctx context.Context, location st
 	if err != nil {
 		return Entry{}, err
 	}
-	entry = entry.EnsureOriginal()
-	entry.Attributes = s.injectAttributes(ctx, entry, providerName, vaultName, location)
+	entry.Attributes = s.injectAttributes(entry, providerName, vaultName, location)
 	return entry, nil
 }
 
@@ -271,8 +289,7 @@ func (s *SearchableAttributesProvider) Search(ctx context.Context, query SearchQ
 		return nil, err
 	}
 	for i := range results {
-		results[i].Entry = results[i].Entry.EnsureOriginal()
-		results[i].Entry.Attributes = s.injectAttributes(ctx, results[i].Entry, results[i].Provider, results[i].Vault, results[i].Path)
+		results[i].Entry.Attributes = s.injectAttributes(results[i].Entry, results[i].Provider, results[i].Vault, results[i].Path)
 	}
 	return results, nil
 }

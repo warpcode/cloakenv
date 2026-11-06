@@ -4,62 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 
-	"github.com/warpcode/cloakenv/internal/config"
-	"github.com/warpcode/cloakenv/internal/provider"
 	"github.com/zalando/go-keyring"
+
+	"github.com/warpcode/cloakenv/internal/config"
 )
-
-type mockWritableProvider struct {
-	mu      sync.Mutex
-	secrets map[string]string
-	scheme  string
-}
-
-func newMockWritableProvider(scheme string) *mockWritableProvider {
-	return &mockWritableProvider{
-		scheme:  scheme,
-		secrets: make(map[string]string),
-	}
-}
-
-func (m *mockWritableProvider) Scheme() string {
-	return m.scheme
-}
-
-func (m *mockWritableProvider) Initialize(_ context.Context, _ provider.ProviderConfig) error {
-	return nil
-}
-
-func (m *mockWritableProvider) GetSecret(_ context.Context, location string) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	val, ok := m.secrets[location]
-	if !ok {
-		return "", fmt.Errorf("secret not found: %s", location)
-	}
-	return val, nil
-}
-
-func (m *mockWritableProvider) SetSecret(_ context.Context, location string, value string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.secrets[location] = value
-	return nil
-}
-
-func (m *mockWritableProvider) DeleteSecret(_ context.Context, location string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.secrets, location)
-	return nil
-}
-
-func (m *mockWritableProvider) Validate(_ map[string]string) error {
-	return nil
-}
 
 func TestOrchestrator_Sync(t *testing.T) {
 	keyring.MockInit()

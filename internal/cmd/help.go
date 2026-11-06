@@ -16,6 +16,7 @@ Usage:
   cloakenv [-c config_path] show <entry-uri> [args]
   cloakenv [-c config_path] search [query] [args]
   cloakenv [-c config_path] auth <login|forget|status> [vault]
+  cloakenv [-c config_path] sync <source> <target> [flags]
 
 Commands:
   run     Wrap a binary with injected environment variables

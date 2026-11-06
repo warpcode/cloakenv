@@ -1,13 +1,11 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
-	"text/template"
 
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/utils"
@@ -246,91 +244,6 @@ func TestCustomVaultProvider_Search(t *testing.T) {
 				t.Errorf("expected %d results, got %d", tt.wantResults, len(results))
 			}
 		})
-	}
-}
-
-func TestCustomVault_ComposedEntity_OriginalStateAccess(t *testing.T) {
-	ctx := context.Background()
-
-	p := NewCustomVaultProvider()
-	p.SetGetEntriesFunc(func(ctx context.Context, uri string) ([]Entry, error) {
-		if uri == "mock://db" {
-			return []Entry{
-				{
-					Title: "Database",
-					Attributes: map[string]any{
-						"db_user": "pgadmin",
-						"db_pass": "supersecret",
-						"host":    "db.prod.internal",
-						"port":    "5432",
-					},
-				},
-			}, nil
-		}
-		return nil, fmt.Errorf("unknown uri: %s", uri)
-	})
-
-	p.SetRenderTemplateFunc(func(ctx context.Context, tmplStr string, data any) (string, error) {
-		tmpl, err := template.New("cv_test").Parse(tmplStr)
-		if err != nil {
-			return "", err
-		}
-		var buf bytes.Buffer
-		if err := tmpl.Execute(&buf, data); err != nil {
-			return "", err
-		}
-		return buf.String(), nil
-	})
-
-	cfg := ProviderConfig{
-		Entities: map[string]config.CustomEntityConfig{
-			"app_env": {
-				Title:         "App Production Env",
-				IsComposed:    true,
-				Merge:         []string{"mock://db"},
-				ExcludeFields: []string{"db_*"},
-				KeyFormat:     "env",
-				Attributes: map[string]any{
-					"DATABASE_URL": "postgres://{{ .original.attributes.db_user }}:{{ .original.attributes.db_pass }}@{{ .attributes.HOST }}:{{ .attributes.PORT }}",
-				},
-			},
-		},
-	}
-	if err := p.Initialize(ctx, cfg); err != nil {
-		t.Fatalf("Initialize failed: %v", err)
-	}
-
-	entry, err := p.GetEntry(ctx, "app_env")
-	if err != nil {
-		t.Fatalf("GetEntry failed: %v", err)
-	}
-
-	wantURL := "postgres://pgadmin:supersecret@db.prod.internal:5432"
-	if entry.Attributes["DATABASE_URL"] != wantURL {
-		t.Errorf("DATABASE_URL = %v, want %v", entry.Attributes["DATABASE_URL"], wantURL)
-	}
-	if entry.Attributes["HOST"] != "db.prod.internal" {
-		t.Errorf("HOST = %v, want 'db.prod.internal'", entry.Attributes["HOST"])
-	}
-	if entry.Attributes["PORT"] != "5432" {
-		t.Errorf("PORT = %v, want '5432'", entry.Attributes["PORT"])
-	}
-	if _, hasUser := entry.Attributes["db_user"]; hasUser {
-		t.Errorf("db_user should be excluded from final attributes")
-	}
-	if _, hasPass := entry.Attributes["db_pass"]; hasPass {
-		t.Errorf("db_pass should be excluded from final attributes")
-	}
-	if entry.Original == nil || entry.Original.Attributes["db_user"] != "pgadmin" || entry.Original.Attributes["db_pass"] != "supersecret" {
-		t.Errorf("entry.Original not preserved: %v", entry.Original)
-	}
-
-	secretVal, err := p.GetSecret(ctx, "app_env:DATABASE_URL")
-	if err != nil {
-		t.Fatalf("GetSecret failed: %v", err)
-	}
-	if secretVal != wantURL {
-		t.Errorf("GetSecret = %q, want %q", secretVal, wantURL)
 	}
 }
 
