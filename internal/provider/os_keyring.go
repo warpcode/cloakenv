@@ -85,6 +85,13 @@ func (o *OSKeyringProvider) DeleteSecret(_ context.Context, location string) err
 
 // parseKeyringLocation splits a "service/account" string.
 func parseKeyringLocation(location string) (string, string, error) {
+	// Defense-in-depth: Reject null bytes in keyring locations.
+	// Null bytes can cause string truncation or memory safety issues in native C-bindings
+	// and system APIs (macOS Keychain, Linux Secret Service / libsecret, Windows Credential Manager).
+	if strings.IndexByte(location, 0) != -1 {
+		return "", "", errors.New("invalid keyring location: contains null byte")
+	}
+
 	parts := strings.SplitN(location, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", "", errors.New("invalid keyring location; expected format: service/account")
