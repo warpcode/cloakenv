@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -30,47 +31,39 @@ var userHomeDir = os.UserHomeDir
 type TemplateContext struct {
 	Meta       map[string]any
 	Attributes map[string]any
+	Original   *TemplateContext
 	Entries    []TemplateContext
 }
 
 // ToMap converts TemplateContext into a map supporting both lowercase and PascalCase keys
-// so missingkey=error works with .meta.*, .attributes.*, and .entries.
+// so missingkey=error works with .meta.*, .attributes.*, .original.*, .output.*, and .entries.
 func (tc TemplateContext) ToMap() map[string]any {
-	metaMap := make(map[string]any)
-	for k, v := range tc.Meta {
-		metaMap[k] = v
-		metaMap[strings.ToLower(k)] = v
-		if k == "UUID" {
-			metaMap["uuid"] = v
-		}
-	}
-	if grp, ok := tc.Meta["Group"].(map[string]any); ok && grp != nil {
-		grpMap := make(map[string]any)
-		for k, v := range grp {
-			grpMap[k] = v
-			grpMap[strings.ToLower(k)] = v
-			if k == "UUID" {
-				grpMap["uuid"] = v
-			}
-		}
-		metaMap["Group"] = grpMap
-		metaMap["group"] = grpMap
-	} else if grp, ok := tc.Meta["group"].(map[string]any); ok && grp != nil {
-		grpMap := make(map[string]any)
-		for k, v := range grp {
-			grpMap[k] = v
-			grpMap[strings.ToLower(k)] = v
-			if k == "UUID" {
-				grpMap["uuid"] = v
-			}
-		}
-		metaMap["Group"] = grpMap
-		metaMap["group"] = grpMap
-	}
+	metaMap := normalizeMetaMap(tc.Meta)
 
 	attrsMap := make(map[string]any)
 	for k, v := range tc.Attributes {
 		attrsMap[k] = v
+	}
+
+	var origMap map[string]any
+	if tc.Original != nil {
+		origMap = tc.Original.ToMap()
+	} else {
+		origMap = map[string]any{
+			"Meta":       metaMap,
+			"meta":       metaMap,
+			"_meta_":     metaMap,
+			"Attributes": attrsMap,
+			"attributes": attrsMap,
+		}
+	}
+
+	outputMap := map[string]any{
+		"Meta":       metaMap,
+		"meta":       metaMap,
+		"_meta_":     metaMap,
+		"Attributes": attrsMap,
+		"attributes": attrsMap,
 	}
 
 	var entriesList []any
@@ -81,11 +74,54 @@ func (tc TemplateContext) ToMap() map[string]any {
 	return map[string]any{
 		"Meta":       metaMap,
 		"meta":       metaMap,
+		"_meta_":     metaMap,
 		"Attributes": attrsMap,
 		"attributes": attrsMap,
+		"Output":     outputMap,
+		"output":     outputMap,
+		"Original":   origMap,
+		"original":   origMap,
 		"Entries":    entriesList,
 		"entries":    entriesList,
 	}
+}
+
+func normalizeMetaMap(rawMeta map[string]any) map[string]any {
+	if rawMeta == nil {
+		return make(map[string]any)
+	}
+	metaMap := make(map[string]any, len(rawMeta)*2)
+	for mk, mv := range rawMeta {
+		metaMap[mk] = mv
+		metaMap[strings.ToLower(mk)] = mv
+		if mk == "UUID" {
+			metaMap["uuid"] = mv
+		}
+	}
+	if grp, ok := rawMeta["Group"].(map[string]any); ok && grp != nil {
+		grpMap := make(map[string]any, len(grp)*2)
+		for gk, gv := range grp {
+			grpMap[gk] = gv
+			grpMap[strings.ToLower(gk)] = gv
+			if gk == "UUID" {
+				grpMap["uuid"] = gv
+			}
+		}
+		metaMap["Group"] = grpMap
+		metaMap["group"] = grpMap
+	} else if grp, ok := rawMeta["group"].(map[string]any); ok && grp != nil {
+		grpMap := make(map[string]any, len(grp)*2)
+		for gk, gv := range grp {
+			grpMap[gk] = gv
+			grpMap[strings.ToLower(gk)] = gv
+			if gk == "UUID" {
+				grpMap["uuid"] = gv
+			}
+		}
+		metaMap["Group"] = grpMap
+		metaMap["group"] = grpMap
+	}
+	return metaMap
 }
 
 func wrapTemplateData(data any) any {
@@ -106,47 +142,20 @@ func wrapTemplateData(data any) any {
 			out[k] = val
 		}
 
-		// Normalize meta/Meta
+		// Normalize meta/Meta/_meta_
 		var rawMeta map[string]any
 		if m, ok := out["Meta"].(map[string]any); ok {
 			rawMeta = m
 		} else if m, ok := out["meta"].(map[string]any); ok {
 			rawMeta = m
+		} else if m, ok := out["_meta_"].(map[string]any); ok {
+			rawMeta = m
 		}
 		if rawMeta != nil {
-			metaMap := make(map[string]any, len(rawMeta)*2)
-			for mk, mv := range rawMeta {
-				metaMap[mk] = mv
-				metaMap[strings.ToLower(mk)] = mv
-				if mk == "UUID" {
-					metaMap["uuid"] = mv
-				}
-			}
-			if grp, ok := rawMeta["Group"].(map[string]any); ok && grp != nil {
-				grpMap := make(map[string]any, len(grp)*2)
-				for gk, gv := range grp {
-					grpMap[gk] = gv
-					grpMap[strings.ToLower(gk)] = gv
-					if gk == "UUID" {
-						grpMap["uuid"] = gv
-					}
-				}
-				metaMap["Group"] = grpMap
-				metaMap["group"] = grpMap
-			} else if grp, ok := rawMeta["group"].(map[string]any); ok && grp != nil {
-				grpMap := make(map[string]any, len(grp)*2)
-				for gk, gv := range grp {
-					grpMap[gk] = gv
-					grpMap[strings.ToLower(gk)] = gv
-					if gk == "UUID" {
-						grpMap["uuid"] = gv
-					}
-				}
-				metaMap["Group"] = grpMap
-				metaMap["group"] = grpMap
-			}
+			metaMap := normalizeMetaMap(rawMeta)
 			out["Meta"] = metaMap
 			out["meta"] = metaMap
+			out["_meta_"] = metaMap
 		}
 
 		// Normalize attributes/Attributes
@@ -163,6 +172,47 @@ func wrapTemplateData(data any) any {
 			out["Entries"] = entries
 		}
 
+		hasMeta := (out["Meta"] != nil || out["meta"] != nil || out["_meta_"] != nil)
+		hasAttrs := (out["Attributes"] != nil || out["attributes"] != nil)
+		hasOrig := (out["Original"] != nil || out["original"] != nil)
+		hasOutput := (out["Output"] != nil || out["output"] != nil)
+
+		if hasMeta || hasAttrs || hasOrig || hasOutput {
+			// Normalize original/Original
+			var rawOrig map[string]any
+			if o, ok := out["Original"].(map[string]any); ok {
+				rawOrig = o
+			} else if o, ok := out["original"].(map[string]any); ok {
+				rawOrig = o
+			}
+			if rawOrig != nil {
+				wrappedOrig := wrapTemplateData(rawOrig).(map[string]any)
+				out["Original"] = wrappedOrig
+				out["original"] = wrappedOrig
+			} else {
+				origMap := map[string]any{
+					"meta":       out["meta"],
+					"Meta":       out["Meta"],
+					"_meta_":     out["_meta_"],
+					"attributes": out["attributes"],
+					"Attributes": out["Attributes"],
+				}
+				out["Original"] = origMap
+				out["original"] = origMap
+			}
+
+			// Normalize output/Output
+			outMap := map[string]any{
+				"meta":       out["meta"],
+				"Meta":       out["Meta"],
+				"_meta_":     out["_meta_"],
+				"attributes": out["attributes"],
+				"Attributes": out["Attributes"],
+			}
+			out["Output"] = outMap
+			out["output"] = outMap
+		}
+
 		return out
 	default:
 		return data
@@ -170,35 +220,21 @@ func wrapTemplateData(data any) any {
 }
 
 func entryToTemplateContext(e provider.Entry, providerName, vault, path string) TemplateContext {
-	meta := map[string]any{
-		"Title":    e.Title,
-		"title":    e.Title,
-		"Tags":     e.Tags,
-		"tags":     e.Tags,
-		"UUID":     e.UUID,
-		"uuid":     e.UUID,
-		"Provider": providerName,
-		"provider": providerName,
-		"Vault":    vault,
-		"vault":    vault,
-		"Path":     path,
-		"path":     path,
+	meta := provider.BuildMetaMap(e, providerName, vault, path)
+
+	origEntry := e
+	if e.Original != nil {
+		origEntry = *e.Original
 	}
-	if e.Group != nil {
-		grp := map[string]any{
-			"Name": e.Group.Name,
-			"name": e.Group.Name,
-			"UUID": e.Group.UUID,
-			"uuid": e.Group.UUID,
-			"Path": e.Group.Path,
-			"path": e.Group.Path,
-		}
-		meta["Group"] = grp
-		meta["group"] = grp
-	}
+	origMeta := provider.BuildMetaMap(origEntry, providerName, vault, path)
+
 	return TemplateContext{
 		Meta:       meta,
 		Attributes: e.Attributes,
+		Original: &TemplateContext{
+			Meta:       origMeta,
+			Attributes: origEntry.Attributes,
+		},
 	}
 }
 
@@ -222,6 +258,20 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 		"get": func(uri string) (string, error) {
 			return te.resolver.resolveSingleURI(ctx, uri, depth+1, configKey)
 		},
+		"tryGet": func(uris ...string) string {
+			for _, uri := range uris {
+				if uri == "" {
+					continue
+				}
+				val, err := te.resolver.resolveSingleURI(ctx, uri, depth+1, configKey)
+				if err == nil && val != "" {
+					return val
+				}
+			}
+			return ""
+		},
+		"default":  templateDefault,
+		"coalesce": templateCoalesce,
 		"entry": func(uri string) (map[string]any, error) {
 			e, err := te.resolver.GetEntryRecursive(ctx, uri, depth+1)
 			if err != nil {
@@ -244,18 +294,20 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 			}
 			return tcs, nil
 		},
-		"toEnv": toEnv,
-		"toKv":  toEnv,
-		"toJson": func(v any) (string, error) {
-			b, err := json.Marshal(v)
-			return string(b), err
-		},
-		"toYaml": func(v any) (string, error) {
-			b, err := yaml.Marshal(v)
-			return strings.TrimSpace(string(b)), err
-		},
-		"upper": strings.ToUpper,
-		"lower": strings.ToLower,
+		"toEnv":    toEnv,
+		"toKv":     toEnv,
+		"toJSON":   toJSON,
+		"toJson":   toJSON,
+		"json":     toJSON,
+		"fromJSON": fromJSON,
+		"fromJson": fromJSON,
+		"toYAML":   toYAML,
+		"toYaml":   toYAML,
+		"yaml":     toYAML,
+		"fromYAML": fromYAML,
+		"fromYaml": fromYAML,
+		"upper":    strings.ToUpper,
+		"lower":    strings.ToLower,
 		"env": func(s string) string {
 			return utils.FormatKeyWithFormat(s, utils.KeyFormatEnv)
 		},
@@ -371,11 +423,99 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 	return buf.String(), nil
 }
 
+func toJSON(v any) (string, error) {
+	b, err := json.Marshal(v)
+	return string(b), err
+}
+
+func fromJSON(str string) (any, error) {
+	var out any
+	if err := json.Unmarshal([]byte(str), &out); err != nil {
+		return nil, fmt.Errorf("fromJSON failed: %w", err)
+	}
+	return out, nil
+}
+
+func toYAML(v any) (string, error) {
+	b, err := yaml.Marshal(v)
+	return strings.TrimSpace(string(b)), err
+}
+
+func fromYAML(str string) (any, error) {
+	var out any
+	if err := yaml.Unmarshal([]byte(str), &out); err != nil {
+		return nil, fmt.Errorf("fromYAML failed: %w", err)
+	}
+	return out, nil
+}
+
+// isEmpty determines if a value is consider empty for template helpers like default.
+func isEmpty(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.String:
+		return rv.Len() == 0
+	case reflect.Bool:
+		return !rv.Bool()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return rv.Int() == 0
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return rv.Uint() == 0
+	case reflect.Float32, reflect.Float64:
+		return rv.Float() == 0
+	case reflect.Slice, reflect.Map, reflect.Array:
+		return rv.Len() == 0
+	case reflect.Chan, reflect.Pointer, reflect.UnsafePointer, reflect.Func, reflect.Interface:
+		return rv.IsNil()
+	default:
+		return false
+	}
+}
+
+// templateDefault returns the first non-empty value in given, or fallback if all are empty.
+// In pipelines like {{ given | default fallback }}, Go's text/template passes pipeline as the last argument,
+// so given will contain [pipelineVal].
+func templateDefault(fallback any, given ...any) any {
+	if len(given) == 0 {
+		return fallback
+	}
+	for _, val := range given {
+		if !isEmpty(val) {
+			return val
+		}
+	}
+	return fallback
+}
+
+// templateCoalesce returns the first non-empty string argument.
+func templateCoalesce(vals ...any) string {
+	for _, val := range vals {
+		if val == nil {
+			continue
+		}
+		if s, ok := val.(string); ok {
+			if s != "" {
+				return s
+			}
+			continue
+		}
+		strVal := fmt.Sprintf("%v", val)
+		if strVal != "" {
+			return strVal
+		}
+	}
+	return ""
+}
+
 func toEnv(m map[string]any) (string, error) {
 	var ks []string
 	for k := range m {
 		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") || strings.EqualFold(k, "uuid") || strings.EqualFold(k, "group") ||
-			strings.EqualFold(k, "meta") || strings.EqualFold(k, "entries") || strings.EqualFold(k, "attributes") {
+			strings.EqualFold(k, "meta") || strings.EqualFold(k, "entries") || strings.EqualFold(k, "attributes") ||
+			strings.EqualFold(k, "original") || strings.EqualFold(k, "output") {
 			continue
 		}
 		ks = append(ks, k)

@@ -568,8 +568,8 @@ func TestMappingProvider_MultiEntityYamlJsonDotPathResolution(t *testing.T) {
 	yp := NewYamlProvider()
 	_ = yp.Initialize(ctx, ProviderConfig{
 		Settings: map[string]string{
-			"vault_path":  "../../testdata/test_hosts.yaml",
-			"entries_key": "hosts",
+			"vault_path":        "../../testdata/test_hosts.yaml",
+			"entities_root_key": "hosts",
 		},
 		EntitiesRootKey: "hosts",
 	})
@@ -1625,6 +1625,60 @@ func TestMappingProvider_MetadataTemplate(t *testing.T) {
 		wantKey := "PRODUCTION INFRA_CLUSTER MASTER_ADMIN"
 		if got.Attributes[wantKey] != "adm-token-999" {
 			t.Errorf("expected mapped key %q with value 'adm-token-999', got: %v", wantKey, got.Attributes)
+		}
+	})
+
+	t.Run("mapping template can interpolate .original.attributes and .original.meta", func(t *testing.T) {
+		ctx := context.Background()
+
+		rule := config.MappingRule{
+			Match: "^auth_secret$",
+			Key:   "{{ lower .original.meta.title }}_{{ .original.attributes.scope }}_key",
+		}
+		if err := rule.Compile(); err != nil {
+			t.Fatalf("compile rule failed: %v", err)
+		}
+
+		rawAttrs := map[string]any{
+			"auth_secret": "sk-live-12345",
+			"scope":       "readonly",
+		}
+		rawEntry := Entry{
+			Title:      "AuthService",
+			Attributes: rawAttrs,
+		}
+
+		sp := NewSearchProvider()
+		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
+			return []SearchResult{
+				{
+					Path:  "services/auth",
+					Entry: rawEntry,
+				},
+			}, nil
+		})
+
+		prov, err := NewMappingProvider(sp, []config.MappingRule{rule})
+		if err != nil {
+			t.Fatalf("failed to create mapping provider: %v", err)
+		}
+
+		searchable, ok := prov.(SearchableProvider)
+		if !ok {
+			t.Fatalf("expected SearchableProvider")
+		}
+
+		got, err := searchable.GetEntry(ctx, "services/auth")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+
+		wantKey := "authservice_readonly_key"
+		if got.Attributes[wantKey] != "sk-live-12345" {
+			t.Errorf("expected mapped key %q, got attributes: %v", wantKey, got.Attributes)
+		}
+		if got.Original == nil || got.Original.Attributes["auth_secret"] != "sk-live-12345" {
+			t.Errorf("Original attributes not preserved: %v", got.Original)
 		}
 	})
 }

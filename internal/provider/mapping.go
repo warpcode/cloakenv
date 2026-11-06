@@ -56,7 +56,14 @@ func HasMappedDescendant(val any, rules []config.MappingRule) bool {
 // Mapped fields always show regardless of include_fields or exclude_fields configured on the vault.
 
 // renderMappingTemplate renders a text/template mapping key.
-func renderMappingTemplate(templateStr string, rawEntry Entry, providerName string, vaultName string, entryPath string) (string, error) {
+func renderMappingTemplate(ctx context.Context, templateStr string, rawEntry Entry, providerName string, vaultName string, entryPath string, renderFn TemplateRenderFunc) (string, error) {
+	rawEntry = rawEntry.EnsureOriginal()
+	data := BuildTemplateData(rawEntry, providerName, vaultName, entryPath)
+
+	if renderFn != nil {
+		return renderFn(ctx, templateStr, data)
+	}
+
 	funcs := template.FuncMap{
 		"upper": strings.ToUpper,
 		"lower": strings.ToLower,
@@ -68,32 +75,6 @@ func renderMappingTemplate(templateStr string, rawEntry Entry, providerName stri
 	tmpl, err := template.New("tmpl").Option("missingkey=error").Funcs(funcs).Parse(templateStr)
 	if err != nil {
 		return "", err
-	}
-
-	meta := map[string]any{
-		"Title": rawEntry.Title, "title": rawEntry.Title,
-		"Tags": rawEntry.Tags, "tags": rawEntry.Tags,
-		"UUID": rawEntry.UUID, "uuid": rawEntry.UUID,
-		"Path": entryPath, "path": entryPath,
-		"Vault": vaultName, "vault": vaultName,
-		"Provider": providerName, "provider": providerName,
-	}
-	if rawEntry.Group != nil {
-		grp := map[string]any{
-			"Name": rawEntry.Group.Name, "name": rawEntry.Group.Name,
-			"UUID": rawEntry.Group.UUID, "uuid": rawEntry.Group.UUID,
-			"Path": rawEntry.Group.Path, "path": rawEntry.Group.Path,
-		}
-		meta["Group"] = grp
-		meta["group"] = grp
-	} else {
-		meta["Group"] = nil
-		meta["group"] = nil
-	}
-	data := map[string]any{
-		"Meta":   meta,
-		"meta":   meta,
-		"_meta_": meta,
 	}
 
 	var buf bytes.Buffer
@@ -113,11 +94,43 @@ func ApplyMappingAndFilteringToAttributes(
 	providerName string,
 	vaultName string,
 ) (map[string]any, error) {
-	filtered, _, err := applyMappingAndFiltering(attrs, rules, includeFields, excludeFields, entryPath, rootPrefixes, rawEntry, providerName, vaultName)
+	return ApplyMappingAndFilteringToAttributesWithContextAndRenderer(
+		context.Background(),
+		nil,
+		attrs,
+		rules,
+		includeFields,
+		excludeFields,
+		entryPath,
+		rootPrefixes,
+		rawEntry,
+		providerName,
+		vaultName,
+	)
+}
+
+// ApplyMappingAndFilteringToAttributesWithContextAndRenderer transforms an attribute map by applying regex key mapping rules,
+// evaluating mapping templates using renderFn if provided.
+func ApplyMappingAndFilteringToAttributesWithContextAndRenderer(
+	ctx context.Context,
+	renderFn TemplateRenderFunc,
+	attrs map[string]any,
+	rules []config.MappingRule,
+	includeFields, excludeFields []string,
+	entryPath string,
+	rootPrefixes []string,
+	rawEntry Entry,
+	providerName string,
+	vaultName string,
+) (map[string]any, error) {
+	rawEntry = rawEntry.EnsureOriginal()
+	filtered, _, err := applyMappingAndFiltering(ctx, renderFn, attrs, rules, includeFields, excludeFields, entryPath, rootPrefixes, rawEntry, providerName, vaultName)
 	return filtered, err
 }
 
 func applyMappingAndFiltering(
+	ctx context.Context,
+	renderFn TemplateRenderFunc,
 	attrs map[string]any,
 	rules []config.MappingRule,
 	includeFields, excludeFields []string,
@@ -183,7 +196,7 @@ func applyMappingAndFiltering(
 				newKey := rule.CompiledRegex.ReplaceAllString(k, templateStr)
 				if newKey != "" {
 					if strings.Contains(newKey, "{{") && strings.Contains(newKey, "}}") {
-						renderedKey, err := renderMappingTemplate(newKey, rawEntry, providerName, vaultName, entryPath)
+						renderedKey, err := renderMappingTemplate(ctx, newKey, rawEntry, providerName, vaultName, entryPath, renderFn)
 						if err == nil {
 							newKey = renderedKey
 						} else {
@@ -205,7 +218,7 @@ func applyMappingAndFiltering(
 		valToUse := v
 		childHasMapped := false
 		if m, isMap := normalizeEntryMap(v); isMap {
-			mappedSub, subHasMapped, err := applyMappingAndFiltering(m, compiledRules, includeFields, excludeFields, childPath, rootPrefixes, rawEntry, providerName, vaultName)
+			mappedSub, subHasMapped, err := applyMappingAndFiltering(ctx, renderFn, m, compiledRules, includeFields, excludeFields, childPath, rootPrefixes, rawEntry, providerName, vaultName)
 			if err != nil {
 				return nil, false, err
 			}
@@ -215,7 +228,7 @@ func applyMappingAndFiltering(
 			newSlice := make([]any, len(sliceVal))
 			for i, elem := range sliceVal {
 				if elemMap, isMap := normalizeEntryMap(elem); isMap {
-					mappedSub, subHasMapped, err := applyMappingAndFiltering(elemMap, compiledRules, includeFields, excludeFields, childPath, rootPrefixes, rawEntry, providerName, vaultName)
+					mappedSub, subHasMapped, err := applyMappingAndFiltering(ctx, renderFn, elemMap, compiledRules, includeFields, excludeFields, childPath, rootPrefixes, rawEntry, providerName, vaultName)
 					if err != nil {
 						return nil, false, err
 					}
@@ -287,8 +300,14 @@ func applyMappingAndFiltering(
 
 // MappingProvider wraps a SecretProvider to perform regex key mapping on entry attributes.
 type MappingProvider struct {
-	underlying SecretProvider
-	rules      []config.MappingRule
+	underlying         SecretProvider
+	rules              []config.MappingRule
+	renderTemplateFunc TemplateRenderFunc
+}
+
+// SetRenderTemplateFunc sets the template renderer function.
+func (m *MappingProvider) SetRenderTemplateFunc(fn TemplateRenderFunc) {
+	m.renderTemplateFunc = fn
 }
 
 // Scheme delegates to the underlying provider.
@@ -709,7 +728,7 @@ func IsDefaultFieldMappedOrIncluded(fieldName string, rules []config.MappingRule
 					newKey := r.CompiledRegex.ReplaceAllString(c, templateStr)
 					if newKey != "" {
 						if strings.Contains(newKey, "{{") && strings.Contains(newKey, "}}") {
-							renderedKey, err := renderMappingTemplate(newKey, rawEntry, providerName, vaultName, entryPath)
+							renderedKey, err := renderMappingTemplate(context.Background(), newKey, rawEntry, providerName, vaultName, entryPath, nil)
 							// If template evaluation fails, we just skip it as it might not be relevant
 							if err == nil {
 								newKey = renderedKey
@@ -737,6 +756,7 @@ func (s *SearchableMappingProvider) GetEntryWithPath(ctx context.Context, locati
 	if err != nil {
 		return Entry{}, "", err
 	}
+	rawEntry = rawEntry.EnsureOriginal()
 
 	includeFields, excludeFields := getFilteringParams(s.underlying)
 	rootPrefixes := s.RootPrefixes()
@@ -745,7 +765,9 @@ func (s *SearchableMappingProvider) GetEntryWithPath(ctx context.Context, locati
 	if providerName == "" && s.underlying != nil {
 		providerName = s.underlying.Scheme()
 	}
-	mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
+	mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributesWithContextAndRenderer(
+		ctx,
+		s.renderTemplateFunc,
 		rawEntry.Attributes,
 		s.rules,
 		includeFields,
@@ -828,7 +850,10 @@ func (s *SearchableMappingProvider) Search(ctx context.Context, query SearchQuer
 		origTitle := r.Entry.Title
 		origPath := r.Path
 
-		mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributes(
+		r.Entry = r.Entry.EnsureOriginal()
+		mappedAttrs, mapErr := ApplyMappingAndFilteringToAttributesWithContextAndRenderer(
+			ctx,
+			s.renderTemplateFunc,
 			r.Entry.Attributes,
 			s.rules,
 			includeFields,

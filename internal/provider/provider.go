@@ -1,5 +1,22 @@
 // Package provider defines the SecretProvider interface for pluggable
 // credential backends and the shared ProviderConfig type.
+//
+// Entry Processing Hierarchy (Filter Chain):
+// Every entry is processed through a strict, deterministic 5-stage filter chain:
+//   - Stage 1 — Raw Retrieval & Native Resolution: Load raw entry from backend
+//     (resolving native placeholders/refs and URI references) or fold merge: sources.
+//     Capture an immutable snapshot of the raw state as Entry.Original.
+//   - Stage 2 — Field Filtering (include_fields -> exclude_fields): Filter candidate
+//     attributes for the output projection (include_fields takes precedence over
+//     exclude_fields; mapped fields are preserved for Stage 3).
+//   - Stage 3 — Key Mapping (mapping): Apply regex capture groups and template
+//     interpolation ({{ .meta.* }}, {{ .original.* }}) to transform matched keys.
+//   - Stage 4 — Key Formatting (key_format): Transform output attribute keys
+//     (env, snake, kebab, none).
+//   - Stage 5 — Computed Attributes (attributes): Evaluate per-entry attributes:
+//     templates using TemplateEngine, with access to both the transformed output
+//     state (.attributes, .output.attributes) and immutable original state
+//     (.original.attributes, .original.meta), injecting resulting keys into output.
 package provider
 
 import (
@@ -62,12 +79,166 @@ type GroupInfo struct {
 }
 
 // Entry represents a multi-secret credential record with metadata.
+// It preserves an immutable snapshot of its raw, pre-transform state in Original
+// across all filter chain stages (filtering, mapping, key formatting, and computed attributes).
 type Entry struct {
 	Title      string         `json:"title" yaml:"title"`
 	Tags       []string       `json:"tags" yaml:"tags"`
 	UUID       string         `json:"uuid,omitempty" yaml:"uuid,omitempty"`
 	Group      *GroupInfo     `json:"group,omitempty" yaml:"group,omitempty"`
 	Attributes map[string]any `json:"attributes" yaml:"attributes"`
+	Original   *Entry         `json:"original,omitempty" yaml:"original,omitempty"`
+}
+
+// Clone returns an independent deep copy of the Entry with Original set to nil.
+func (e Entry) Clone() Entry {
+	clone := Entry{
+		Title: e.Title,
+		UUID:  e.UUID,
+	}
+	if e.Tags != nil {
+		clone.Tags = make([]string, len(e.Tags))
+		copy(clone.Tags, e.Tags)
+	}
+	if e.Group != nil {
+		clone.Group = &GroupInfo{
+			Name: e.Group.Name,
+			UUID: e.Group.UUID,
+			Path: e.Group.Path,
+		}
+	}
+	if e.Attributes != nil {
+		clone.Attributes = make(map[string]any, len(e.Attributes))
+		for k, v := range e.Attributes {
+			clone.Attributes[k] = CloneValue(v)
+		}
+	}
+	return clone
+}
+
+// EnsureOriginal ensures that e.Original holds an immutable snapshot of e.
+// If e.Original is already non-nil, it is retained; otherwise a deep clone of e is stored.
+func (e Entry) EnsureOriginal() Entry {
+	if e.Original == nil {
+		orig := e.Clone()
+		e.Original = &orig
+	}
+	return e
+}
+
+// CloneValue creates a deep copy of maps, slices, and scalar values.
+func CloneValue(val any) any {
+	if val == nil {
+		return nil
+	}
+	switch v := val.(type) {
+	case map[string]any:
+		cp := make(map[string]any, len(v))
+		for k, item := range v {
+			cp[k] = CloneValue(item)
+		}
+		return cp
+	case map[any]any:
+		cp := make(map[any]any, len(v))
+		for k, item := range v {
+			cp[k] = CloneValue(item)
+		}
+		return cp
+	case []any:
+		cp := make([]any, len(v))
+		for i, item := range v {
+			cp[i] = CloneValue(item)
+		}
+		return cp
+	case []string:
+		cp := make([]string, len(v))
+		copy(cp, v)
+		return cp
+	default:
+		return v
+	}
+}
+
+// BuildMetaMap constructs a normalized metadata map for an Entry.
+func BuildMetaMap(e Entry, providerName, vaultName, entryPath string) map[string]any {
+	meta := map[string]any{
+		"Title":    e.Title,
+		"title":    e.Title,
+		"Tags":     e.Tags,
+		"tags":     e.Tags,
+		"UUID":     e.UUID,
+		"uuid":     e.UUID,
+		"Path":     entryPath,
+		"path":     entryPath,
+		"Vault":    vaultName,
+		"vault":    vaultName,
+		"Provider": providerName,
+		"provider": providerName,
+	}
+	if e.Group != nil {
+		grp := map[string]any{
+			"Name": e.Group.Name,
+			"name": e.Group.Name,
+			"UUID": e.Group.UUID,
+			"uuid": e.Group.UUID,
+			"Path": e.Group.Path,
+			"path": e.Group.Path,
+		}
+		meta["Group"] = grp
+		meta["group"] = grp
+	} else {
+		meta["Group"] = nil
+		meta["group"] = nil
+	}
+	return meta
+}
+
+// BuildTemplateData constructs the dual-state evaluation context (.original vs .output)
+// for template interpolation in mapping rules, computed attributes, and composed entities.
+func BuildTemplateData(entry Entry, providerName, vaultName, entryPath string) map[string]any {
+	meta := BuildMetaMap(entry, providerName, vaultName, entryPath)
+
+	origEntry := entry
+	if entry.Original != nil {
+		origEntry = *entry.Original
+	}
+	origMeta := BuildMetaMap(origEntry, providerName, vaultName, entryPath)
+
+	origAttrs := origEntry.Attributes
+	if origAttrs == nil {
+		origAttrs = make(map[string]any)
+	}
+	outAttrs := entry.Attributes
+	if outAttrs == nil {
+		outAttrs = make(map[string]any)
+	}
+
+	originalData := map[string]any{
+		"Meta":       origMeta,
+		"meta":       origMeta,
+		"_meta_":     origMeta,
+		"Attributes": origAttrs,
+		"attributes": origAttrs,
+	}
+	outputData := map[string]any{
+		"Meta":       meta,
+		"meta":       meta,
+		"_meta_":     meta,
+		"Attributes": outAttrs,
+		"attributes": outAttrs,
+	}
+
+	return map[string]any{
+		"Meta":       meta,
+		"meta":       meta,
+		"_meta_":     meta,
+		"Attributes": outAttrs,
+		"attributes": outAttrs,
+		"Output":     outputData,
+		"output":     outputData,
+		"Original":   originalData,
+		"original":   originalData,
+	}
 }
 
 // SearchQuery defines criteria for filtering entries.
@@ -157,6 +328,7 @@ func (fp *FieldPolicy) ApplyToEntry(entry Entry, entryPath string, rootPrefixes 
 	if fp == nil {
 		return entry
 	}
+	entry = entry.EnsureOriginal()
 	origTitle := entry.Title
 	origTags := entry.Tags
 	origUUID := entry.UUID
@@ -241,6 +413,7 @@ func (fp *FieldPolicy) ApplyToEntry(entry Entry, entryPath string, rootPrefixes 
 		UUID:       origUUID,
 		Group:      origGroup,
 		Attributes: resultAttrs,
+		Original:   entry.Original,
 	}
 }
 
