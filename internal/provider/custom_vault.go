@@ -380,10 +380,11 @@ func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, en
 		if len(entity.Tags) > 0 {
 			e.Tags = uniqueStrings(append(e.Tags, entity.Tags...))
 		}
-		return e, nil
+		return e.EnsureOriginal(), nil
 	}
 
 	mergedAttributes := make(map[string]any)
+	rawFoldedAttributes := make(map[string]any)
 	var mergedTags []string
 	var mergedEntries []Entry
 
@@ -399,6 +400,17 @@ func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, en
 			return Entry{}, fmt.Errorf("custom_vault: failed to merge %q: %w", mURI, err)
 		}
 		for _, e := range entries {
+			e = e.EnsureOriginal()
+			if e.Original != nil {
+				for k, v := range e.Original.Attributes {
+					rawFoldedAttributes[k] = v
+				}
+			} else {
+				for k, v := range e.Attributes {
+					rawFoldedAttributes[k] = v
+				}
+			}
+
 			entryAttrs := e.Attributes
 			if len(entity.Mapping) > 0 || len(entity.IncludeFields) > 0 || len(entity.ExcludeFields) > 0 {
 				entryPath := e.Title
@@ -428,6 +440,7 @@ func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, en
 				UUID:       e.UUID,
 				Group:      e.Group,
 				Attributes: entryAttrs,
+				Original:   e.Original,
 			}
 
 			if entity.KeyFormat != "" && entity.KeyFormat != "none" {
@@ -445,11 +458,6 @@ func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, en
 
 	mergedTags = uniqueStrings(mergedTags)
 
-	// Note: Mapping, filtering, and key formatting transforms are applied per source entry
-	// above before appending to mergedEntries and folding into mergedAttributes.
-	// We avoid applying the transforms a second time here to prevent destructively re-transforming
-	// already processed keys or stripping mapped fields.
-
 	if len(entity.Tags) > 0 {
 		mergedTags = append(mergedTags, entity.Tags...)
 		mergedTags = uniqueStrings(mergedTags)
@@ -460,24 +468,43 @@ func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, en
 		title = name
 	}
 
-	meta := map[string]any{
-		"Title":    title,
-		"title":    title,
-		"Tags":     mergedTags,
-		"tags":     mergedTags,
-		"Vault":    "custom_vault",
-		"vault":    "custom_vault",
-		"Provider": "custom_vault",
-		"provider": "custom_vault",
+	rawEntry := Entry{
+		Title:      title,
+		Tags:       mergedTags,
+		Attributes: rawFoldedAttributes,
+	}
+	origSnapshot := rawEntry.Clone()
+
+	outputMeta := BuildMetaMap(Entry{Title: title, Tags: mergedTags}, "custom_vault", "custom_vault", name)
+	origMeta := BuildMetaMap(rawEntry, "custom_vault", "custom_vault", name)
+
+	originalData := map[string]any{
+		"meta":       origMeta,
+		"Meta":       origMeta,
+		"_meta_":     origMeta,
+		"attributes": rawFoldedAttributes,
+		"Attributes": rawFoldedAttributes,
+	}
+	outputData := map[string]any{
+		"meta":       outputMeta,
+		"Meta":       outputMeta,
+		"_meta_":     outputMeta,
+		"attributes": mergedAttributes,
+		"Attributes": mergedAttributes,
 	}
 
 	templateCtx := map[string]any{
-		"meta":       meta,
-		"Meta":       meta,
+		"meta":       outputMeta,
+		"Meta":       outputMeta,
+		"_meta_":     outputMeta,
 		"entries":    mergedEntries,
 		"Entries":    mergedEntries,
 		"attributes": mergedAttributes,
 		"Attributes": mergedAttributes,
+		"output":     outputData,
+		"Output":     outputData,
+		"original":   originalData,
+		"Original":   originalData,
 	}
 
 	for k, v := range entity.Attributes {
@@ -499,6 +526,7 @@ func (c *CustomVaultProvider) resolveEntity(ctx context.Context, name string, en
 		Title:      title,
 		Tags:       mergedTags,
 		Attributes: mergedAttributes,
+		Original:   &origSnapshot,
 	}, nil
 }
 

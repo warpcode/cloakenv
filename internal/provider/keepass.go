@@ -507,13 +507,14 @@ func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry, parentGroup *gokeep
 		}
 	}
 
-	return Entry{
+	resEntry := Entry{
 		Title:      title,
 		Tags:       tags,
 		UUID:       hex.EncodeToString(entry.UUID[:]),
 		Group:      groupInfo,
 		Attributes: attrs,
-	}, nil
+	}
+	return resEntry.EnsureOriginal(), nil
 }
 
 // parseKeePassLocation splits "Path/To/Entry:Attribute" into path and attribute.
