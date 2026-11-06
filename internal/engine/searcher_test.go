@@ -603,16 +603,7 @@ func TestBuiltinsNonSearchable(t *testing.T) {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
 
-		// Searching with "env" scope should fail and tell the user it doesn't support searching.
-		_, err = orch.Search(ctx, `title == "test"`, []string{"env"})
-		if err == nil {
-			t.Fatal("expected error searching env, got nil")
-		}
-		if !strings.Contains(err.Error(), "does not support searching") {
-			t.Errorf("expected 'does not support searching' error, got: %v", err)
-		}
-
-		// Searching with "keyring" scope should fail similarly.
+		// Searching with "keyring" scope should fail as keyring does not support searching.
 		_, err = orch.Search(ctx, `title == "test"`, []string{"keyring"})
 		if err == nil {
 			t.Fatal("expected error searching keyring, got nil")

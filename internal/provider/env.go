@@ -2,9 +2,9 @@ package provider
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // EnvProvider implements SecretProvider for the built-in env:// scheme.
@@ -32,13 +32,17 @@ func (e *EnvProvider) Initialize(_ context.Context, _ ProviderConfig) error {
 // Location format: the bare variable name (e.g., "MY_API_KEY").
 // Returns an error if the variable is unset or empty.
 func (e *EnvProvider) GetSecret(_ context.Context, location string) (string, error) {
-	val, ok := os.LookupEnv(location)
+	loc := location
+	loc = strings.TrimPrefix(loc, "env:")
+	loc = strings.TrimPrefix(loc, ":")
+
+	val, ok := os.LookupEnv(loc)
 	if !ok {
-		return "", fmt.Errorf("environment variable %q is not set", location)
+		return "", fmt.Errorf("environment variable %q is not set", loc)
 	}
 
 	if val == "" {
-		return "", fmt.Errorf("environment variable %q is set but empty", location)
+		return "", fmt.Errorf("environment variable %q is set but empty", loc)
 	}
 
 	return val, nil
@@ -59,29 +63,83 @@ func (e *EnvProvider) Validate(settings map[string]string) error {
 	return nil
 }
 
+// getAllEnvEntry constructs the canonical single entry representing all current environment variables.
+func (e *EnvProvider) getAllEnvEntry() Entry {
+	attrs := make(map[string]any)
+	for _, envStr := range os.Environ() {
+		k, v, ok := strings.Cut(envStr, "=")
+		if ok && k != "" {
+			attrs[k] = v
+		}
+	}
+	return Entry{
+		Title:      "Environment Variables",
+		Tags:       []string{},
+		Attributes: attrs,
+	}
+}
+
 // Search retrieves all entries matching the query criteria.
-// Env provider is intentionally non-searchable.
-func (e *EnvProvider) Search(ctx context.Context, query SearchQuery) ([]SearchResult, error) {
-	return nil, fmt.Errorf("does not support searching")
+// EnvProvider represents the host environment as a single-entry vault.
+func (e *EnvProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
+	entry := e.getAllEnvEntry()
+
+	if query.Title != "" && !strings.Contains(strings.ToLower(entry.Title), strings.ToLower(query.Title)) {
+		return []SearchResult{}, nil
+	}
+	if query.Path != "" && !strings.Contains(strings.ToLower("env"), strings.ToLower(query.Path)) {
+		return []SearchResult{}, nil
+	}
+	if len(query.Tags) > 0 {
+		return []SearchResult{}, nil
+	}
+
+	return []SearchResult{
+		{
+			Path:  "env",
+			Entry: entry,
+		},
+	}, nil
 }
 
 // GetEntry retrieves a complete structured entry representing environment variables.
-// Location cannot be empty as returning all environment variables is not supported for security reasons.
-func (e *EnvProvider) GetEntry(ctx context.Context, location string) (Entry, error) {
-	if location == "" {
-		return Entry{}, errors.New("location cannot be empty")
+// When location is empty or "env", it returns the single entry containing all environment variables.
+// When location specifies a variable name, it returns an entry containing that single variable for backwards compatibility.
+func (e *EnvProvider) GetEntry(_ context.Context, location string) (Entry, error) {
+	key := location
+	key = strings.TrimPrefix(key, "env:")
+	key = strings.TrimPrefix(key, ":")
+
+	if key == "" || location == "env" {
+		return e.getAllEnvEntry(), nil
+	}
+
+	val, ok := os.LookupEnv(key)
+	if !ok {
+		return Entry{}, fmt.Errorf("environment variable %q is not set", key)
 	}
 
 	attrs := make(map[string]any)
-	val, ok := os.LookupEnv(location)
-	if !ok {
-		return Entry{}, fmt.Errorf("environment variable %q is not set", location)
-	}
-	attrs[location] = val
+	attrs[key] = val
 
 	return Entry{
 		Title:      "Environment Variables",
 		Tags:       []string{},
 		Attributes: attrs,
 	}, nil
+}
+
+// GetEntryWithPath retrieves a structured entry along with its authoritative path.
+func (e *EnvProvider) GetEntryWithPath(ctx context.Context, location string) (Entry, string, error) {
+	entry, err := e.GetEntry(ctx, location)
+	if err != nil {
+		return Entry{}, "", err
+	}
+	key := location
+	key = strings.TrimPrefix(key, "env:")
+	key = strings.TrimPrefix(key, ":")
+	if key == "" || location == "env" {
+		return entry, "env", nil
+	}
+	return entry, key, nil
 }
