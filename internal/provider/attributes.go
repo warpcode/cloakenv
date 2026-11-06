@@ -3,11 +3,13 @@ package provider
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"text/template"
 
 	"github.com/warpcode/cloakenv/internal/utils"
+	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 // AttributesProvider wraps a SecretProvider and injects configured attributes
@@ -156,11 +158,21 @@ func (a *AttributesProvider) renderAttributeTemplate(ctx context.Context, templa
 	}
 
 	funcs := template.FuncMap{
-		"upper": strings.ToUpper,
-		"lower": strings.ToLower,
-		"snake": func(s string) string { return utils.FormatKeyWithFormat(s, utils.KeyFormatSnake) },
-		"kebab": func(s string) string { return utils.FormatKeyWithFormat(s, utils.KeyFormatKebab) },
-		"env":   func(s string) string { return utils.FormatKeyWithFormat(s, utils.KeyFormatEnv) },
+		"upper":    strings.ToUpper,
+		"lower":    strings.ToLower,
+		"snake":    func(s string) string { return utils.FormatKeyWithFormat(s, utils.KeyFormatSnake) },
+		"kebab":    func(s string) string { return utils.FormatKeyWithFormat(s, utils.KeyFormatKebab) },
+		"env":      func(s string) string { return utils.FormatKeyWithFormat(s, utils.KeyFormatEnv) },
+		"toJSON":   toJSON,
+		"toJson":   toJSON,
+		"json":     toJSON,
+		"fromJSON": fromJSON,
+		"fromJson": fromJSON,
+		"toYAML":   toYAML,
+		"toYaml":   toYAML,
+		"yaml":     toYAML,
+		"fromYAML": fromYAML,
+		"fromYaml": fromYAML,
 	}
 
 	tmpl, err := template.New("tmpl").Option("missingkey=error").Funcs(funcs).Parse(templateStr)
@@ -173,6 +185,32 @@ func (a *AttributesProvider) renderAttributeTemplate(ctx context.Context, templa
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+func toJSON(v any) (string, error) {
+	b, err := json.Marshal(v)
+	return string(b), err
+}
+
+func fromJSON(str string) (any, error) {
+	var out any
+	if err := json.Unmarshal([]byte(str), &out); err != nil {
+		return nil, fmt.Errorf("fromJSON failed: %w", err)
+	}
+	return out, nil
+}
+
+func toYAML(v any) (string, error) {
+	b, err := yaml.Marshal(v)
+	return strings.TrimSpace(string(b)), err
+}
+
+func fromYAML(str string) (any, error) {
+	var out any
+	if err := yaml.Unmarshal([]byte(str), &out); err != nil {
+		return nil, fmt.Errorf("fromYAML failed: %w", err)
+	}
+	return out, nil
 }
 
 // SearchableAttributesProvider implements SearchableProvider when the underlying provider is searchable.
