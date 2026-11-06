@@ -269,6 +269,7 @@ func hasCloakenvInvocation(arg string) bool {
 
 		for _, fn := range []string{
 			"get ", "get\t", "get\"", "get`",
+			"tryGet ", "tryGet\t", "tryGet\"", "tryGet`",
 			"entry ", "entry\t", "entry\"", "entry`",
 			"search ", "search\t", "search\"", "search`",
 			"include ", "include\t", "include\"", "include`",

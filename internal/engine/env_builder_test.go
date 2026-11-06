@@ -471,6 +471,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		cmdArgs := []string{
 			"mycli",
 			"--token={{ get \"env://CLI_TOKEN\" }}",
+			"--fallback={{ tryGet \"env://NONEXISTENT\" \"env://CLI_TOKEN\" }}",
 			`{"id":"{{.Id}}"}`,
 			"'{{.State.Status}}'",
 			"plain-arg",
@@ -483,6 +484,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		expectedArgs := []string{
 			"mycli",
 			"--token=secret-token-123",
+			"--fallback=secret-token-123",
 			`{"id":"{{.Id}}"}`,
 			"'{{.State.Status}}'",
 			"plain-arg",
