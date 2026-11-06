@@ -44,7 +44,7 @@ func BenchmarkCachingProvider(b *testing.B) {
 	b.Run("NoCache", func(b *testing.B) {
 		p := &expensiveSimulatedProvider{delay: 1 * time.Millisecond}
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_, _ = p.GetSecret(ctx, "db/password")
 		}
 	})
@@ -62,7 +62,7 @@ func BenchmarkCachingProvider(b *testing.B) {
 		}
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_, _ = cp.GetSecret(ctx, "db/password")
 		}
 	})
@@ -80,7 +80,7 @@ func BenchmarkCachingProvider(b *testing.B) {
 		}
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_, _ = cp.GetSecret(ctx, "db/password")
 		}
 	})
