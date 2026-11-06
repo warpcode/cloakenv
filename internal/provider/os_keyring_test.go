@@ -10,6 +10,14 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
+func TestOSKeyringProvider_WritableProvider(t *testing.T) {
+	kp := NewOSKeyringProvider()
+	var _ WritableProvider = kp
+	if _, ok := any(kp).(WritableProvider); !ok {
+		t.Errorf("expected OSKeyringProvider to implement WritableProvider")
+	}
+}
+
 func TestOSKeyringProvider(t *testing.T) {
 	t.Parallel()
 

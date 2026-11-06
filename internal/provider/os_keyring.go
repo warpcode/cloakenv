@@ -109,6 +109,8 @@ type OSKeyringProvider struct {
 	store KeyringStore
 }
 
+var _ WritableProvider = (*OSKeyringProvider)(nil)
+
 // NewOSKeyringProvider returns a new keyring provider instance using the default OS keyring store.
 func NewOSKeyringProvider() *OSKeyringProvider {
 	return &OSKeyringProvider{

@@ -23,6 +23,7 @@ Commands:
   set     Store a secret value at a writable URI (keyring://, cache://)
   delete  Remove a secret from a writable URI (keyring://, cache://)
   cache   Manage local encrypted cache (subcommands: clear, prune)
+  sync    Unidirectional cross-vault secret synchronization
   show    Retrieve and display a structured entry
   search  Search for structured entries
   auth    Manage vault credentials and status (subcommands: login, forget, status)
@@ -241,6 +242,26 @@ Arguments:
 
 Flags:
   -o, --output    Output format: text, json, or yaml (default: text)`)
+}
+
+// PrintSyncHelp prints usage help for the sync subcommand.
+func PrintSyncHelp() {
+	fmt.Fprintln(os.Stdout, `Usage:
+  cloakenv sync <source> <target> [--dry-run] [--tags <tags>] [--prefix <prefix>] [--regex <pattern>]
+
+Description:
+  Unidirectional cross-vault secret synchronization from a source vault/URI to a destination writable vault.
+  All synchronization operations occur strictly in memory with zero secret leakage.
+
+Arguments:
+  <source>        Source vault URI or entry URI (e.g. work://, keepass://website/Test Website, env://)
+  <target>        Destination writable vault URI (e.g. keyring://my_service)
+
+Flags:
+  --dry-run       Preview additions, updates, and skips without writing
+  --tags tags     Filter source entries by tag (comma-separated, e.g. sync:keyring)
+  --prefix prefix Filter keys by prefix
+  -r, --regex pat Filter keys by regular expression`)
 }
 
 // PrintInternalHelp prints usage help for the internal subcommand.
