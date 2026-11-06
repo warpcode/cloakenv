@@ -69,6 +69,25 @@ func TestOSKeyringProvider(t *testing.T) {
 	if err := kp.DeleteSecret(ctx, "invalid-no-slash"); err == nil {
 		t.Errorf("expected error deleting invalid location")
 	}
+
+	// Test null bytes in location format
+	nullByteLocations := []string{
+		"test\x00svc/account",
+		"service/test\x00account",
+		"svc/acc\x00",
+		"\x00svc/account",
+	}
+	for _, badLoc := range nullByteLocations {
+		if err := kp.SetSecret(ctx, badLoc, "val"); err == nil {
+			t.Errorf("expected error setting location with null byte: %q", badLoc)
+		}
+		if _, err := kp.GetSecret(ctx, badLoc); err == nil {
+			t.Errorf("expected error getting location with null byte: %q", badLoc)
+		}
+		if err := kp.DeleteSecret(ctx, badLoc); err == nil {
+			t.Errorf("expected error deleting location with null byte: %q", badLoc)
+		}
+	}
 }
 
 func TestOSKeyringProvider_Validate(t *testing.T) {
