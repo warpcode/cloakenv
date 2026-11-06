@@ -22,7 +22,7 @@ Commands:
   get     Retrieve and print a single secret value raw to stdout (no trailing newline)
   set     Store a secret value at a writable URI (keyring://, cache://)
   delete  Remove a secret from a writable URI (keyring://, cache://)
-  cache   Manage local encrypted cache (subcommands: clear, prune)
+  cache   Manage local encrypted cache (subcommand: clear)
   show    Retrieve and display a structured entry
   search  Search for structured entries
   auth    Manage vault credentials and status (subcommands: login, forget, status)
@@ -58,7 +58,7 @@ func PrintUsageStdout() {
 // PrintRunHelp prints usage help for the run subcommand.
 func PrintRunHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] [--dry-run] -- <command> [args]
+  cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] -- <command> [args]
 
 Description:
   Wrap a binary execution, resolving and injecting secret environment variables.
@@ -72,8 +72,7 @@ Flags:
   -m entry-uri    Merge attributes from an entry into the environment. Can target a single attribute using :attribute (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
   -f, --key-format format  Override attribute key formatting (none, env, snake, kebab)
-  --no-autoload   Disable config command autoloading rules for this run execution
-  --dry-run       Preview injected environment variable names and transformed command without executing`)
+  --no-autoload   Disable config command autoloading rules for this run execution`)
 }
 
 // PrintGetHelp prints usage help for the get subcommand.
@@ -120,14 +119,13 @@ Arguments:
 // PrintCacheHelp prints usage help for the cache subcommand.
 func PrintCacheHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv cache <clear|prune>
+  cloakenv cache clear
 
 Description:
   Manage local encrypted cache.
 
 Subcommands:
-  clear           Clear all entries in the local encrypted cache
-  prune           Remove expired entries from the local encrypted cache`)
+  clear           Clear all entries in the local encrypted cache`)
 }
 
 // PrintCacheClearHelp prints usage help for the cache clear subcommand.
@@ -137,15 +135,6 @@ func PrintCacheClearHelp() {
 
 Description:
   Clear all entries in the local encrypted cache.`)
-}
-
-// PrintCachePruneHelp prints usage help for the cache prune subcommand.
-func PrintCachePruneHelp() {
-	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv cache prune
-
-Description:
-  Remove expired entries from the local encrypted cache.`)
 }
 
 // PrintShowHelp prints usage help for the show subcommand.

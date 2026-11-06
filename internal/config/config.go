@@ -135,51 +135,6 @@ type CacheConfig struct {
 	DefaultTTL string `yaml:"default_ttl"`
 }
 
-// VaultCacheConfig defines transparent caching settings for a vault.
-type VaultCacheConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	TTL     string `yaml:"ttl"`
-	Mode    string `yaml:"mode"` // "keyring" (default) or "encrypted_disk"
-}
-
-// UnmarshalYAML implements custom unmarshaling for VaultCacheConfig.
-// It supports boolean scalar (`cache: true`), string scalar (`cache: "15m"`), or mapping (`cache: { ttl: 15m, mode: keyring }`).
-func (c *VaultCacheConfig) UnmarshalYAML(value *goyaml.Node) error {
-	if value.Kind == goyaml.ScalarNode {
-		if value.Tag == "!!bool" || value.Value == "true" || value.Value == "false" {
-			var enabled bool
-			if err := value.Decode(&enabled); err != nil {
-				return err
-			}
-			c.Enabled = enabled
-			return nil
-		}
-		// String scalar (e.g. cache: "15m")
-		c.Enabled = true
-		c.TTL = value.Value
-		return nil
-	}
-
-	type rawVaultCache VaultCacheConfig
-	var raw rawVaultCache
-	if err := value.Decode(&raw); err != nil {
-		return err
-	}
-	*c = VaultCacheConfig(raw)
-	// If unmarshaled from a mapping, default Enabled to true unless explicitly set false
-	c.Enabled = true
-	for i := 0; i < len(value.Content); i += 2 {
-		if value.Content[i].Value == "enabled" {
-			var explicitEnabled bool
-			if err := value.Content[i+1].Decode(&explicitEnabled); err == nil {
-				c.Enabled = explicitEnabled
-			}
-			break
-		}
-	}
-	return nil
-}
-
 // KeyringConfig holds keyring-related configuration settings.
 type KeyringConfig struct {
 	Prefix  string `yaml:"prefix"`
@@ -335,9 +290,6 @@ type VaultConfig struct {
 	// Defaults to false.
 	ResolveReferences bool `yaml:"resolve_references"`
 
-	// Cache configures transparent caching for this vault.
-	Cache VaultCacheConfig `yaml:"cache,omitempty"`
-
 	// IncludeFields limits returned entry attributes to field names matching these glob patterns.
 	IncludeFields []string `yaml:"include_fields,omitempty"`
 
@@ -461,15 +413,6 @@ func Load(path string) (*Config, error) {
 			// valid key format
 		default:
 			return nil, fmt.Errorf("vault %q: invalid key_format %q (must be one of: none, env, snake, kebab)", vaultName, vault.KeyFormat)
-		}
-
-		if vault.Cache.Enabled {
-			switch vault.Cache.Mode {
-			case "", "keyring", "encrypted_disk":
-				// valid mode
-			default:
-				return nil, fmt.Errorf("vault %q: invalid cache mode %q (must be one of: keyring, encrypted_disk)", vaultName, vault.Cache.Mode)
-			}
 		}
 
 		for entityName, entity := range vault.Entities {

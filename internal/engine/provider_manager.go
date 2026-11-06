@@ -2,10 +2,8 @@ package engine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/provider"
@@ -219,33 +217,6 @@ func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName stri
 
 	if len(vault.Attributes) > 0 {
 		p = provider.NewAttributesProvider(p, vault.Attributes)
-	}
-
-	if vault.Cache.Enabled {
-		var ttl time.Duration
-		if vault.Cache.TTL != "" {
-			d, parseErr := time.ParseDuration(vault.Cache.TTL)
-			if parseErr != nil {
-				return nil, fmt.Errorf("vault %q: invalid cache ttl %q: %w", vaultName, vault.Cache.TTL, parseErr)
-			}
-			ttl = d
-		} else if pm.config != nil && pm.config.Cache.DefaultTTL != "" {
-			d, parseErr := time.ParseDuration(pm.config.Cache.DefaultTTL)
-			if parseErr == nil {
-				ttl = d
-			}
-		}
-
-		cachingProv, err := provider.NewCachingProvider(p, provider.CachingConfig{
-			VaultName:     vaultName,
-			TTL:           ttl,
-			Mode:          vault.Cache.Mode,
-			KeyringPrefix: pm.config.KeyringPrefix(),
-		})
-		if err != nil {
-			return nil, fmt.Errorf("vault %q: failed to initialize cache: %w", vaultName, err)
-		}
-		p = cachingProv
 	}
 
 	return p, nil
@@ -483,64 +454,23 @@ func (pm *ProviderManager) Delete(ctx context.Context, uri string) error {
 	return p.DeleteSecret(ctx, location)
 }
 
-// ClearCache clears all local cache files and keyring vault caches.
+// ClearCache clears all local cache files.
 func (pm *ProviderManager) ClearCache(ctx context.Context) error {
-	var errs []error
-
-	// 1. Clear standalone cache:// provider
 	p, isBuiltin, err := pm.GetProvider(ctx, "cache")
 	if err != nil {
-		errs = append(errs, fmt.Errorf("cache provider not registered or failed to initialize: %w", err))
-	} else if !isBuiltin {
-		errs = append(errs, fmt.Errorf("invalid cache provider type"))
-	} else {
-		cacheProv, ok := p.(interface{ ClearCache() error })
-		if !ok {
-			errs = append(errs, fmt.Errorf("invalid cache provider type"))
-		} else if err := cacheProv.ClearCache(); err != nil {
-			errs = append(errs, err)
-		}
+		return fmt.Errorf("cache provider not registered or failed to initialize: %w", err)
+	}
+	if !isBuiltin {
+		return fmt.Errorf("invalid cache provider type")
 	}
 
-	// 2. Clear vault caches for all configured vaults that have caching enabled
-	if pm.config != nil {
-		for vaultName, vCfg := range pm.config.Vaults {
-			if vCfg.Cache.Enabled {
-				prov, getErr := pm.getVaultProvider(ctx, vaultName)
-				if getErr != nil {
-					continue
-				}
-				if clearer, ok := prov.(interface{ Clear() error }); ok {
-					if cErr := clearer.Clear(); cErr != nil {
-						errs = append(errs, fmt.Errorf("vault %q cache clear: %w", vaultName, cErr))
-					}
-				}
-			}
-		}
+	cacheProv, ok := p.(interface {
+		ClearCache() error
+	})
+	if !ok {
+		return fmt.Errorf("invalid cache provider type")
 	}
-
-	return errors.Join(errs...)
-}
-
-// PruneCache removes expired cache entries across all configured vaults.
-func (pm *ProviderManager) PruneCache(ctx context.Context) error {
-	var errs []error
-	if pm.config != nil {
-		for vaultName, vCfg := range pm.config.Vaults {
-			if vCfg.Cache.Enabled {
-				prov, getErr := pm.getVaultProvider(ctx, vaultName)
-				if getErr != nil {
-					continue
-				}
-				if pruner, ok := prov.(interface{ Prune() error }); ok {
-					if pErr := pruner.Prune(); pErr != nil {
-						errs = append(errs, fmt.Errorf("vault %q cache prune: %w", vaultName, pErr))
-					}
-				}
-			}
-		}
-	}
-	return errors.Join(errs...)
+	return cacheProv.ClearCache()
 }
 
 // Login triggers authentication setup for a vault/scheme.

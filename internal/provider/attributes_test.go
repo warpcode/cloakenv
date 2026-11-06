@@ -118,10 +118,8 @@ func TestAttributesProvider_TemplateRendering(t *testing.T) {
 			"prod/api": {
 				Title: "API Service",
 				Attributes: map[string]any{
-					"username":    "deploy-user",
-					"port":        "8080",
-					"json_config": `{"db":{"host":"db.internal","port":5432}}`,
-					"yaml_config": "creds:\n  user: svc_admin\n  key: secret123",
+					"username": "deploy-user",
+					"port":     "8080",
 				},
 			},
 		},
@@ -133,10 +131,8 @@ func TestAttributesProvider_TemplateRendering(t *testing.T) {
 				Entry: Entry{
 					Title: "API Service",
 					Attributes: map[string]any{
-						"username":    "deploy-user",
-						"port":        "8080",
-						"json_config": `{"db":{"host":"db.internal","port":5432}}`,
-						"yaml_config": "creds:\n  user: svc_admin\n  key: secret123",
+						"username": "deploy-user",
+						"port":     "8080",
 					},
 				},
 			},
@@ -147,8 +143,6 @@ func TestAttributesProvider_TemplateRendering(t *testing.T) {
 		"url":         "https://{{ lower .meta.title }}.internal:{{ .attributes.port }}",
 		"auth_header": "Bearer {{ upper .attributes.username }}",
 		"static_tag":  "managed",
-		"db_host":     "{{ (fromJSON .attributes.json_config).db.host }}",
-		"svc_user":    "{{ (fromYAML .attributes.yaml_config).creds.user }}",
 	}
 
 	p := NewAttributesProvider(underlying, attributes)
@@ -171,12 +165,6 @@ func TestAttributesProvider_TemplateRendering(t *testing.T) {
 		if entry.Attributes["static_tag"] != "managed" {
 			t.Errorf("static_tag = %q, want 'managed'", entry.Attributes["static_tag"])
 		}
-		if entry.Attributes["db_host"] != "db.internal" {
-			t.Errorf("db_host = %q, want 'db.internal'", entry.Attributes["db_host"])
-		}
-		if entry.Attributes["svc_user"] != "svc_admin" {
-			t.Errorf("svc_user = %q, want 'svc_admin'", entry.Attributes["svc_user"])
-		}
 	})
 
 	t.Run("Search renders meta and attributes templates", func(t *testing.T) {
@@ -193,12 +181,6 @@ func TestAttributesProvider_TemplateRendering(t *testing.T) {
 		}
 		if entry.Attributes["auth_header"] != "Bearer DEPLOY-USER" {
 			t.Errorf("Search auth_header = %q, want 'Bearer DEPLOY-USER'", entry.Attributes["auth_header"])
-		}
-		if entry.Attributes["db_host"] != "db.internal" {
-			t.Errorf("Search db_host = %q, want 'db.internal'", entry.Attributes["db_host"])
-		}
-		if entry.Attributes["svc_user"] != "svc_admin" {
-			t.Errorf("Search svc_user = %q, want 'svc_admin'", entry.Attributes["svc_user"])
 		}
 	})
 
@@ -225,22 +207,6 @@ func TestAttributesProvider_TemplateRendering(t *testing.T) {
 		}
 		if valStatic != "managed" {
 			t.Errorf("GetSecret static_tag = %q, want 'managed'", valStatic)
-		}
-
-		valDBHost, err := p.GetSecret(ctx, "prod/api:db_host")
-		if err != nil {
-			t.Fatalf("GetSecret db_host failed: %v", err)
-		}
-		if valDBHost != "db.internal" {
-			t.Errorf("GetSecret db_host = %q, want 'db.internal'", valDBHost)
-		}
-
-		valSvcUser, err := p.GetSecret(ctx, "prod/api:svc_user")
-		if err != nil {
-			t.Fatalf("GetSecret svc_user failed: %v", err)
-		}
-		if valSvcUser != "svc_admin" {
-			t.Errorf("GetSecret svc_user = %q, want 'svc_admin'", valSvcUser)
 		}
 	})
 }

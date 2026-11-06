@@ -269,7 +269,6 @@ func hasCloakenvInvocation(arg string) bool {
 
 		for _, fn := range []string{
 			"get ", "get\t", "get\"", "get`",
-			"tryGet ", "tryGet\t", "tryGet\"", "tryGet`",
 			"entry ", "entry\t", "entry\"", "entry`",
 			"search ", "search\t", "search\"", "search`",
 			"include ", "include\t", "include\"", "include`",
@@ -324,20 +323,11 @@ func (eb *EnvBuilder) resolveCmdArgs(ctx context.Context, cmdArgs []string) ([]s
 	return resolvedCmdArgs, nil
 }
 
-// CommandEnvDetails contains the execution details for a command environment.
-type CommandEnvDetails struct {
-	Command      []string
-	RawCommand   []string
-	Env          []string
-	InjectedKeys []string
-}
-
-// BuildEnvForCommandDetails constructs the full environment block, evaluates autoload rules,
-// and returns execution details including the sorted list of injected variable keys.
-func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConfig) (*CommandEnvDetails, error) {
+// BuildEnvForCommand constructs the full environment block and evaluates config autoload rules.
+func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cfg EnvConfig) ([]string, []string, error) {
 	autoMerges, autoExplicit, autoWhitelist, currentCmdArgs, err := eb.evalAutoloadRules(cfg.CmdArgs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	combinedMerges := append(autoMerges, cfg.Merges...)
@@ -360,32 +350,23 @@ func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConf
 
 	mergedSources, err := eb.resolveMergeSources(ctx, combinedMerges, combinedWhitelist)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
-	injectedKeysSet := make(map[string]bool)
 	for _, src := range mergedSources {
 		for _, kv := range src {
 			finalEnv[kv.k] = kv.v
-			injectedKeysSet[kv.k] = true
 		}
 	}
 
 	explicitResolved, err := eb.resolveExplicitMappings(ctx, combinedExplicit)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	for k, v := range explicitResolved {
 		finalEnv[k] = v
-		injectedKeysSet[k] = true
 	}
-
-	injectedKeys := make([]string, 0, len(injectedKeysSet))
-	for k := range injectedKeysSet {
-		injectedKeys = append(injectedKeys, k)
-	}
-	slices.Sort(injectedKeys)
 
 	result := formatEnvMap(finalEnv)
 
@@ -393,26 +374,10 @@ func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConf
 		currentCmdArgs = cfg.CmdArgs
 	}
 
-	rawCmdArgs := slices.Clone(currentCmdArgs)
-
 	resolvedCmdArgs, err := eb.resolveCmdArgs(ctx, currentCmdArgs)
-	if err != nil {
-		return nil, err
-	}
-
-	return &CommandEnvDetails{
-		Command:      resolvedCmdArgs,
-		RawCommand:   rawCmdArgs,
-		Env:          result,
-		InjectedKeys: injectedKeys,
-	}, nil
-}
-
-// BuildEnvForCommand constructs the full environment block and evaluates config autoload rules.
-func (eb *EnvBuilder) BuildEnvForCommand(ctx context.Context, cfg EnvConfig) ([]string, []string, error) {
-	details, err := eb.BuildEnvForCommandDetails(ctx, cfg)
 	if err != nil {
 		return nil, nil, err
 	}
-	return details.Command, details.Env, nil
+
+	return resolvedCmdArgs, result, nil
 }

@@ -568,8 +568,8 @@ func TestMappingProvider_MultiEntityYamlJsonDotPathResolution(t *testing.T) {
 	yp := NewYamlProvider()
 	_ = yp.Initialize(ctx, ProviderConfig{
 		Settings: map[string]string{
-			"vault_path":        "../../testdata/test_hosts.yaml",
-			"entities_root_key": "hosts",
+			"vault_path":  "../../testdata/test_hosts.yaml",
+			"entries_key": "hosts",
 		},
 		EntitiesRootKey: "hosts",
 	})

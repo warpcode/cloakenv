@@ -19,14 +19,6 @@ cache:
 keyring:
   # The service prefix used in the OS keyring for master passwords & tokens
   prefix: "cloakenv"
-  # Isolate credentials by configuration file path.
-  # When set to true and a custom configuration file is loaded (via -c <config_path>),
-  # a 10-character SHA-256 hash of the configuration file's absolute path is appended
-  # to the keyring prefix (<prefix>_<hash>). This prevents credential and master
-  # password collisions across different projects, repositories, or environments.
-  # When using the default configuration path (~/.config/cloakenv/config.yaml), the prefix
-  # remains unhashed. Defaults to false.
-  isolate: false
 
 # Custom vault definitions. Each mapping key becomes a custom URI scheme (ref).
 # Supported provider types: keepass, json, yaml, custom_vault, search

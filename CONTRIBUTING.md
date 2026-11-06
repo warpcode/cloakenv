@@ -17,7 +17,7 @@ Thank you for contributing to `cloakenv`! We welcome bug reports, feature reques
 make build            # Compiles binary to bin/cloakenv
 make run              # Runs cloakenv via go run .
 make test             # Runs tests with race detector (go test -v -race ./...)
-make bench            # Runs performance benchmarks across all packages
+make bench            # Runs engine performance benchmarks
 make fmt              # Formats Go code (go fmt ./...)
 make vet              # Runs go vet analysis
 make lint             # Runs golangci-lint static analysis (golangci-lint run)

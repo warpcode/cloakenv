@@ -134,11 +134,6 @@ func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cfg EnvConfig) ([
 	return o.envBuilder.BuildEnvForCommand(ctx, cfg)
 }
 
-// BuildEnvForCommandDetails constructs the full environment block and returns execution details.
-func (o *Orchestrator) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConfig) (*CommandEnvDetails, error) {
-	return o.envBuilder.BuildEnvForCommandDetails(ctx, cfg)
-}
-
 // Keyring returns the built-in keyring provider for direct access
 // (used by the config subcommands).
 func (o *Orchestrator) Keyring() *provider.OSKeyringProvider {
@@ -155,14 +150,9 @@ func (o *Orchestrator) Delete(ctx context.Context, uri string) error {
 	return o.providerManager.Delete(ctx, uri)
 }
 
-// ClearCache clears all local cache files and vault caches.
+// ClearCache clears all local cache files.
 func (o *Orchestrator) ClearCache(ctx context.Context) error {
 	return o.providerManager.ClearCache(ctx)
-}
-
-// PruneCache removes expired cache entries across all configured vaults.
-func (o *Orchestrator) PruneCache(ctx context.Context) error {
-	return o.providerManager.PruneCache(ctx)
 }
 
 // Login triggers authentication setup for a vault/scheme.
