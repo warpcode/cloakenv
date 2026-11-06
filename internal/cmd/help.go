@@ -22,7 +22,7 @@ Commands:
   get     Retrieve and print a single secret value raw to stdout (no trailing newline)
   set     Store a secret value at a writable URI (keyring://, cache://)
   delete  Remove a secret from a writable URI (keyring://, cache://)
-  cache   Manage local encrypted cache (subcommand: clear)
+  cache   Manage local encrypted cache (subcommands: clear, prune)
   show    Retrieve and display a structured entry
   search  Search for structured entries
   auth    Manage vault credentials and status (subcommands: login, forget, status)
@@ -119,13 +119,14 @@ Arguments:
 // PrintCacheHelp prints usage help for the cache subcommand.
 func PrintCacheHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv cache clear
+  cloakenv cache <clear|prune>
 
 Description:
   Manage local encrypted cache.
 
 Subcommands:
-  clear           Clear all entries in the local encrypted cache`)
+  clear           Clear all entries in the local encrypted cache
+  prune           Remove expired entries from the local encrypted cache`)
 }
 
 // PrintCacheClearHelp prints usage help for the cache clear subcommand.
@@ -135,6 +136,15 @@ func PrintCacheClearHelp() {
 
 Description:
   Clear all entries in the local encrypted cache.`)
+}
+
+// PrintCachePruneHelp prints usage help for the cache prune subcommand.
+func PrintCachePruneHelp() {
+	fmt.Fprintln(os.Stdout, `Usage:
+  cloakenv cache prune
+
+Description:
+  Remove expired entries from the local encrypted cache.`)
 }
 
 // PrintShowHelp prints usage help for the show subcommand.

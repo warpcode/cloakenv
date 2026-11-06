@@ -150,9 +150,14 @@ func (o *Orchestrator) Delete(ctx context.Context, uri string) error {
 	return o.providerManager.Delete(ctx, uri)
 }
 
-// ClearCache clears all local cache files.
+// ClearCache clears all local cache files and vault caches.
 func (o *Orchestrator) ClearCache(ctx context.Context) error {
 	return o.providerManager.ClearCache(ctx)
+}
+
+// PruneCache removes expired cache entries across all configured vaults.
+func (o *Orchestrator) PruneCache(ctx context.Context) error {
+	return o.providerManager.PruneCache(ctx)
 }
 
 // Login triggers authentication setup for a vault/scheme.
