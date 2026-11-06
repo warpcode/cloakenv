@@ -276,6 +276,7 @@ cloakenv run [-E] [flags] -- <command> [args...]
 - `-i KEY`: Whitelist key filter (repeatable). When `-i` is specified, only the whitelisted keys from `-m` merges are injected. (`-e` mappings always bypass whitelist filtering).
 - `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
 - `--no-autoload`: Bypass configuration `autoload:` rules for this execution.
+- `--dry-run`: Preview injected environment variable keys and transformed command without executing.
 
 #### Examples:
 
@@ -298,6 +299,12 @@ cloakenv run -t ./deploy.env -- terraform apply
 # 6. Combine template, merge, and explicit overrides
 cloakenv run \
   -t .env.template \
+  -m "work://Cloud/AWS_Production" \
+  -e REGION="us-east-1" \
+  -- aws s3 ls
+
+# 7. Preview injected variables and transformed command without executing
+cloakenv run --dry-run \
   -m "work://Cloud/AWS_Production" \
   -e REGION="us-east-1" \
   -- aws s3 ls

@@ -474,7 +474,6 @@ func templateCoalesce(vals ...any) string {
 	}
 	return ""
 }
-}
 
 func toEnv(m map[string]any) (string, error) {
 	var ks []string
