@@ -9,30 +9,19 @@ import (
 	"github.com/warpcode/cloakenv/internal/config"
 )
 
-// runnerContext holds CLI execution parameters and dependencies.
-type runnerContext struct {
-	customConfigPath string
-	stdout           io.Writer
-	stderr           io.Writer
-}
-
 func main() {
-	os.Exit(run(os.Args, os.Stdout, os.Stderr))
+	os.Exit(run(os.Args, os.Stderr))
 }
 
-// run parses arguments and configuration within an isolated runner context,
-// executing the requested subcommand and returning its exit code.
-func run(args []string, stdout, stderr io.Writer) int {
+// run parses arguments and configuration, executes the requested
+// subcommand, and returns its exit code.
+func run(args []string, stderr io.Writer) int {
 	if len(args) == 0 {
 		cmd.PrintUsage()
 		return 1
 	}
 
-	r := &runnerContext{
-		stdout: stdout,
-		stderr: stderr,
-	}
-
+	var customConfigPath string
 	parsedArgs := []string{args[0]}
 	i := 1
 	for i < len(args) {
@@ -42,10 +31,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		if args[i] == "-c" {
 			if i+1 >= len(args) {
-				fmt.Fprintln(r.stderr, "Error: -c flag requires a config path argument")
+				fmt.Fprintln(stderr, "Error: -c flag requires a config path argument")
 				return 1
 			}
-			r.customConfigPath = args[i+1]
+			customConfigPath = args[i+1]
 			i += 2
 			continue
 		}
@@ -63,9 +52,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	cfg, err := r.loadConfig()
+	cfg, err := loadConfig(customConfigPath)
 	if err != nil {
-		fmt.Fprintf(r.stderr, "Config error: %v\n", err)
+		fmt.Fprintf(stderr, "Config error: %v\n", err)
 		return 1
 	}
 
@@ -90,14 +79,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "internal":
 		return cmd.Internal(parsedArgs[2:], cfg)
 	default:
-		fmt.Fprintf(r.stderr, "Unknown command: %s\n", parsedArgs[1])
+		fmt.Fprintf(stderr, "Unknown command: %s\n", parsedArgs[1])
 		cmd.PrintUsage()
 		return 1
 	}
-}
-
-func (r *runnerContext) loadConfig() (*config.Config, error) {
-	return loadConfig(r.customConfigPath)
 }
 
 func loadConfig(configPath string) (*config.Config, error) {

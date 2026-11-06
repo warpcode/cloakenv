@@ -149,8 +149,8 @@ func TestRunDirectIsolation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			var stdout, stderr bytes.Buffer
-			exitCode := run(tt.args, &stdout, &stderr)
+			var stderr bytes.Buffer
+			exitCode := run(tt.args, &stderr)
 			if exitCode != tt.wantExit {
 				t.Errorf("run(%v) = %d, want %d", tt.args, exitCode, tt.wantExit)
 			}
