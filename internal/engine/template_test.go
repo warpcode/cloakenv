@@ -2,9 +2,9 @@ package engine_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
-
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
@@ -175,6 +175,81 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 			want: "file content: v",
 		},
 		{
+			name: "tryGet_existing",
+			tmpl: `{{ tryGet "vault_a://myentity:Password" }}`,
+			want: "secret_pass",
+		},
+		{
+			name: "tryGet_missing",
+			tmpl: `{{ tryGet "vault_a://missing:Password" }}`,
+			want: "",
+		},
+		{
+			name: "tryGet_invalid_scheme",
+			tmpl: `{{ tryGet "nonexistent_scheme://foo" }}`,
+			want: "",
+		},
+		{
+			name: "tryGet_variadic_fallback_first_match",
+			tmpl: `{{ tryGet "vault_a://missing:val" "vault_a://myentity:Password" "vault_a://myentity:k" }}`,
+			want: "secret_pass",
+		},
+		{
+			name: "tryGet_variadic_all_missing",
+			tmpl: `{{ tryGet "vault_a://missing:a" "vault_a://missing:b" }}`,
+			want: "",
+		},
+		{
+			name: "tryGet_empty_args",
+			tmpl: `{{ tryGet }}`,
+			want: "",
+		},
+		{
+			name: "tryGet_depth_limit",
+			tmpl: `{{ tryGet "vault_a://deep:val" }}`,
+			want: "",
+		},
+		{
+			name: "default_pipeline_with_tryGet_fallback",
+			tmpl: `{{ tryGet "vault_a://missing:Password" | default "default_secret" }}`,
+			want: "default_secret",
+		},
+		{
+			name: "default_pipeline_with_tryGet_found",
+			tmpl: `{{ tryGet "vault_a://myentity:Password" | default "default_secret" }}`,
+			want: "secret_pass",
+		},
+		{
+			name: "default_direct_invocation_empty",
+			tmpl: `{{ default "my_default" "" }}`,
+			want: "my_default",
+		},
+		{
+			name: "default_direct_invocation_nonempty",
+			tmpl: `{{ default "my_default" "given_val" }}`,
+			want: "given_val",
+		},
+		{
+			name: "default_types_empty_int_and_nil",
+			tmpl: `{{ default "def" 0 }} / {{ default "def" nil }}`,
+			want: "def / def",
+		},
+		{
+			name: "coalesce_first_nonempty",
+			tmpl: `{{ coalesce "" (tryGet "vault_a://missing:k") "first_valid" "second" }}`,
+			want: "first_valid",
+		},
+		{
+			name: "coalesce_pipeline",
+			tmpl: `{{ "pipeline_val" | coalesce }}`,
+			want: "pipeline_val",
+		},
+		{
+			name: "coalesce_all_empty",
+			tmpl: `{{ coalesce "" nil "" }}`,
+			want: "",
+		},
+		{
 			name:    "missingkey",
 			data:    map[string]any{},
 			tmpl:    `{{ .missing }}`,
@@ -231,5 +306,84 @@ func TestTemplateEngine_LowercaseDotMetaAndAttributes(t *testing.T) {
 	want := "My Title / My Group = val"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestTemplateEngine_RenderBufferPool(t *testing.T) {
+	ctx := context.Background()
+	te := engine.NewTemplateEngine(nil)
+
+	// Verify sequential calls with differing output sizes do not bleed state.
+	for i := range 50 {
+		data := map[string]any{"val": i}
+		got, err := te.Render(ctx, `value={{ .val }}`, data, 0, "")
+		if err != nil {
+			t.Fatalf("unexpected error at iteration %d: %v", i, err)
+		}
+		want := "value=" + string(rune('0'+i%10))
+		if i >= 10 {
+			want = "value=" + string([]byte{byte('0' + i/10), byte('0' + i%10)})
+		}
+		if got != want {
+			t.Errorf("iteration %d: got %q, want %q", i, got, want)
+		}
+	}
+
+	// Verify concurrent calls do not race or corrupt data.
+	t.Run("concurrent renders", func(t *testing.T) {
+		t.Parallel()
+		const goroutines = 20
+		const iters = 50
+		errCh := make(chan error, goroutines)
+
+		for g := range goroutines {
+			go func(gid int) {
+				var workerErr error
+				for iterIndex := range iters {
+					data := map[string]any{"id": gid, "iter": iterIndex}
+					res, err := te.Render(ctx, `id={{ .id }}-iter={{ .iter }}`, data, 0, "")
+					if err != nil {
+						workerErr = err
+						break
+					}
+					want := fmt.Sprintf("id=%d-iter=%d", gid, iterIndex)
+					if res != want {
+						workerErr = fmt.Errorf("unexpected output format: %q", res)
+						break
+					}
+				}
+				errCh <- workerErr
+			}(g)
+		}
+
+		for range goroutines {
+			if err := <-errCh; err != nil {
+				t.Fatalf("concurrent render failed: %v", err)
+			}
+		}
+	})
+}
+
+func BenchmarkTemplateEngine_Render(b *testing.B) {
+	ctx := context.Background()
+	te := engine.NewTemplateEngine(nil)
+	data := engine.TemplateContext{
+		Meta: map[string]any{
+			"Title": "Benchmark Title",
+		},
+		Attributes: map[string]any{
+			"Username": "admin",
+			"Password": "supersecretpassword",
+		},
+	}
+	tmpl := `user={{ index .Attributes "Username" }} pass={{ index .Attributes "Password" }} title={{ .Meta.Title }}`
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for range b.N {
+		_, err := te.Render(ctx, tmpl, data, 0, "")
+		if err != nil {
+			b.Fatalf("render failed: %v", err)
+		}
 	}
 }

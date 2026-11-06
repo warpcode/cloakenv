@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/zalando/go-keyring"
+	goyaml "gopkg.in/yaml.v3"
 
 	"github.com/warpcode/cloakenv/internal/config"
 )
@@ -365,6 +367,12 @@ func TestAuth_Status(t *testing.T) {
 			expectedOutput: "mykp_noauth: ERROR:",
 			expectedCode:   1, // Overall command should fail if any vault fails
 		},
+		{
+			name:           "status specific vault text format explicit",
+			args:           []string{"status", "dummy", "-o", "text"},
+			expectedOutput: "dummy: ACTIVE\n",
+			expectedCode:   0,
+		},
 	}
 
 	for _, tc := range tests {
@@ -383,4 +391,167 @@ func TestAuth_Status(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAuth_Status_StructuredOutput(t *testing.T) {
+	keyring.MockInit()
+	_ = keyring.Set("cloakenv", "provider/mykp_auth", "secret123")
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"dummy": {
+				Provider:  "json",
+				VaultPath: "/fake/path3.json",
+			},
+			"mykp_noauth": {
+				Provider:  "keepass",
+				VaultPath: "/fake/path1.kdbx",
+			},
+		},
+	}
+
+	t.Run("status json specific active vault", func(t *testing.T) {
+		var exitCode int
+		stdout, stderr := captureOutput(t, func() {
+			exitCode = Auth([]string{"status", "dummy", "-o", "json"}, cfg)
+		})
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d (stderr: %s)", exitCode, stderr)
+		}
+
+		var records []AuthStatusRecord
+		if err := json.Unmarshal([]byte(stdout), &records); err != nil {
+			t.Fatalf("failed to parse JSON output: %v\nOutput: %s", err, stdout)
+		}
+
+		if len(records) != 1 {
+			t.Fatalf("expected 1 record, got %d", len(records))
+		}
+
+		rec := records[0]
+		if rec.Vault != "dummy" {
+			t.Errorf("expected vault 'dummy', got %q", rec.Vault)
+		}
+		if rec.Status != "ACTIVE" {
+			t.Errorf("expected status 'ACTIVE', got %q", rec.Status)
+		}
+		if rec.VaultPath != "/fake/path3.json" {
+			t.Errorf("expected vault_path '/fake/path3.json', got %q", rec.VaultPath)
+		}
+		if rec.Latency == "" {
+			t.Errorf("expected non-empty latency")
+		}
+		if rec.Error != "" {
+			t.Errorf("expected empty error for active vault, got %q", rec.Error)
+		}
+	})
+
+	t.Run("status json all vaults with failure", func(t *testing.T) {
+		var exitCode int
+		stdout, stderr := captureOutput(t, func() {
+			exitCode = Auth([]string{"status", "--output", "json"}, cfg)
+		})
+
+		if exitCode != 1 {
+			t.Fatalf("expected exit code 1 for failure, got %d (stderr: %s)", exitCode, stderr)
+		}
+
+		var records []AuthStatusRecord
+		if err := json.Unmarshal([]byte(stdout), &records); err != nil {
+			t.Fatalf("failed to parse JSON output: %v\nOutput: %s", err, stdout)
+		}
+
+		if len(records) != 2 {
+			t.Fatalf("expected 2 records, got %d", len(records))
+		}
+
+		// Because vaults are sorted alphabetically: dummy, mykp_noauth
+		if records[0].Vault != "dummy" || records[0].Status != "ACTIVE" {
+			t.Errorf("unexpected record 0: %+v", records[0])
+		}
+		if records[1].Vault != "mykp_noauth" || records[1].Status != "ERROR" {
+			t.Errorf("unexpected record 1: %+v", records[1])
+		}
+		if records[1].Error == "" {
+			t.Errorf("expected non-empty error for mykp_noauth")
+		}
+	})
+
+	t.Run("status yaml output", func(t *testing.T) {
+		var exitCode int
+		stdout, stderr := captureOutput(t, func() {
+			exitCode = Auth([]string{"status", "dummy", "-o", "yaml"}, cfg)
+		})
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d (stderr: %s)", exitCode, stderr)
+		}
+
+		var records []AuthStatusRecord
+		if err := goyaml.Unmarshal([]byte(stdout), &records); err != nil {
+			t.Fatalf("failed to parse YAML output: %v\nOutput: %s", err, stdout)
+		}
+
+		if len(records) != 1 {
+			t.Fatalf("expected 1 record, got %d", len(records))
+		}
+		if records[0].Vault != "dummy" || records[0].Status != "ACTIVE" {
+			t.Errorf("unexpected record: %+v", records[0])
+		}
+	})
+
+	t.Run("status no vaults json and yaml", func(t *testing.T) {
+		emptyCfg := &config.Config{
+			Vaults: make(map[string]config.VaultConfig),
+		}
+
+		for _, format := range []string{"json", "yaml"} {
+			var exitCode int
+			stdout, _ := captureOutput(t, func() {
+				exitCode = Auth([]string{"status", "-o", format}, emptyCfg)
+			})
+
+			if exitCode != 0 {
+				t.Fatalf("expected exit code 0, got %d", exitCode)
+			}
+
+			var records []AuthStatusRecord
+			if err := goyaml.Unmarshal([]byte(stdout), &records); err != nil {
+				t.Fatalf("failed to parse %s output: %v\nOutput: %s", format, err, stdout)
+			}
+
+			if len(records) != 0 {
+				t.Errorf("expected 0 records for empty vaults, got %d", len(records))
+			}
+		}
+	})
+
+	t.Run("status invalid output format", func(t *testing.T) {
+		var exitCode int
+		_, stderr := captureOutput(t, func() {
+			exitCode = Auth([]string{"status", "-o", "xml"}, cfg)
+		})
+
+		if exitCode != 1 {
+			t.Fatalf("expected exit code 1, got %d", exitCode)
+		}
+		if !strings.Contains(stderr, "invalid output format \"xml\" (expected text, json, or yaml)") {
+			t.Errorf("unexpected stderr: %s", stderr)
+		}
+	})
+
+	t.Run("status missing flag argument", func(t *testing.T) {
+		var exitCode int
+		_, stderr := captureOutput(t, func() {
+			exitCode = Auth([]string{"status", "-o"}, cfg)
+		})
+
+		if exitCode != 1 {
+			t.Fatalf("expected exit code 1, got %d", exitCode)
+		}
+		if !strings.Contains(stderr, "flag -o/--output requires an argument") {
+			t.Errorf("unexpected stderr: %s", stderr)
+		}
+	})
 }

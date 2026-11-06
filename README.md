@@ -207,7 +207,7 @@ cloakenv run -e DATABASE_URL='postgres://{{ get "env://DB_USER" }}:{{ get "keyri
    - **`.entries` / `.Entries`**: Slice of upstream source entry contexts when resolving composed `custom_vault` entities.
 4. **Child Command Argument Pass-Through Safety (`resolveCmdArgs`)**:
    When `cloakenv run` executes child processes, command-line arguments are safely inspected:
-   - Arguments that are bare known `scheme://...` URIs or templates invoking `cloakenv` functions (`get`, `entry`, `search`, `include`, `includeFile`) are resolved before process execution.
+   - Arguments that are bare known `scheme://...` URIs or templates invoking `cloakenv` functions (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`) are resolved before process execution.
    - Foreign templates (such as Docker format strings `'{{.State.Status}}'`, Helm templates, or Kubernetes format strings) pass through to the child command untouched without evaluation errors.
 5. **Recursion Limit**: Dynamic resolution and template inclusion are capped at depth 5 (`maxDepth = 5`) to prevent circular evaluation or infinite recursion.
 6. **Legacy `${...}` Removed**: The legacy `${scheme://...}` syntax has been completely removed in favor of `{{ get "scheme://..." }}`. Bare `scheme://...` URIs remain supported in explicit CLI contexts (`get`, `show`, `-e`, `-m`), `merge:`, and `autoload.env`.
@@ -476,7 +476,10 @@ cloakenv auth <login|forget|status> [vault_name]
 
 - **`login <vault>`**: Prompts for the vault master password and securely stores it in your OS Keyring under the `cloakenv` service prefix.
 - **`forget <vault>`**: Clears the saved master password from the OS Keyring.
-- **`status [vault]`**: Tests if configured vaults are currently unlocked and accessible.
+- **`status [vault] [-o text|json|yaml]`**: Tests if configured vaults are currently unlocked and accessible. Supports structured output via `-o, --output` (`text`, `json`, `yaml`).
+
+#### Flags:
+- `-o, --output`: Output format: `text` (default), `json`, or `yaml` (`auth status` only).
 
 #### Examples:
 
@@ -484,13 +487,31 @@ cloakenv auth <login|forget|status> [vault_name]
 # 1. Unlock your work KeePass database once
 cloakenv auth login work
 
-# 2. Verify all vaults are active
+# 2. Verify all vaults are active (default text format)
 cloakenv auth status
 # Output:
 # work: ACTIVE
 # home: ACTIVE
 
-# 3. Clear credentials when locking down
+# 3. Check vault status with structured JSON output for monitoring
+cloakenv auth status -o json
+# Output:
+# [
+#   {
+#     "vault": "home",
+#     "status": "ACTIVE",
+#     "vault_path": "/path/to/home.kdbx",
+#     "latency": "1.234ms"
+#   },
+#   {
+#     "vault": "work",
+#     "status": "ACTIVE",
+#     "vault_path": "/path/to/work.kdbx",
+#     "latency": "2.345ms"
+#   }
+# ]
+
+# 4. Clear credentials when locking down
 cloakenv auth forget work
 ```
 
@@ -915,6 +936,9 @@ Evaluate configured templates using `{{ include "name" . }}` or evaluate externa
 | Function | Signature | Description | Example |
 |---|---|---|---|
 | `get` | `(uri string) (string, error)` | Resolves a single secret value from any vault or provider | `{{ get "keyring://pg/pass" }}` |
+| `tryGet` | `(uris ...string) string` | Resolves the first available secret across candidate URIs without failing on missing entries | `{{ tryGet "env://GH_TOKEN" "keyring://github/pat" }}` |
+| `default` | `(fallback any, given ...any) any` | Returns the first non-empty value in `given`, or `fallback` if all are empty | `{{ tryGet "env://TOKEN" \| default "fallback" }}` |
+| `coalesce` | `(vals ...any) string` | Returns the first non-empty string argument | `{{ coalesce (tryGet "env://A") (tryGet "env://B") "default" }}` |
 | `entry` | `(uri string) (map[string]any, error)` | Resolves a complete entry into a structured context map (`.meta`, `.attributes`) | `{{ (entry "work://db").attributes.Password }}` |
 | `search` | `(query string) ([]map[string]any, error)` | Executes a search query across vaults and returns a slice of entry context maps | `{{ range search "\"db\" in tags" }}{{ .meta.Title }}: {{ .attributes.HOST }}{{ end }}` |
 | `toEnv` | `(attrs any) (string, error)` | Serializes an attributes map into dotenv key-value format (sorted, excluding metadata) | `{{ .attributes \| toEnv }}` |
@@ -1085,6 +1109,14 @@ cache:
 keyring:
   # Service prefix used in the OS keyring
   prefix: "cloakenv"
+  # Isolate credentials by configuration file path (defaults to false).
+  # When set to true and a custom configuration file is loaded (via -c <config_path>),
+  # a 10-character SHA-256 hash of the configuration file's absolute path is appended
+  # to the keyring prefix (<prefix>_<hash>). This prevents credential and master password
+  # collisions across different projects, repositories, or environments.
+  # When using the default configuration path (~/.config/cloakenv/config.yaml), the prefix
+  # remains unhashed.
+  isolate: true
 
 # ==========================================
 # Configured Vaults

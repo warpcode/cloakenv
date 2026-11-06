@@ -103,6 +103,140 @@ func TestOrchestratorBuildEnvMerges(t *testing.T) {
 	})
 }
 
+func TestEnvBuilder_BareURICommandArgResolution(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("BARE_TEST_VAR", "resolved_bare_value")
+
+	singleEntity := true
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"app_vault": {
+				Provider:     "custom_vault",
+				SingleEntity: &singleEntity,
+				Attributes: map[string]any{
+					"API_KEY": "app-secret-xyz",
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	t.Run("resolves bare known URI arguments", func(t *testing.T) {
+		cmdArgs := []string{
+			"curl",
+			"env://BARE_TEST_VAR",
+			"app_vault://API_KEY",
+			"http://example.com/api",
+			"nonexistent_scheme://test",
+			"plain-argument",
+		}
+
+		expectedArgs := []string{
+			"curl",
+			"resolved_bare_value",
+			"app-secret-xyz",
+			"http://example.com/api",
+			"nonexistent_scheme://test",
+			"plain-argument",
+		}
+
+		newCmdArgs, _, err := orch.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
+		if err != nil {
+			t.Fatalf("failed to build env for command: %v", err)
+		}
+
+		if !slices.Equal(newCmdArgs, expectedArgs) {
+			t.Fatalf("expected args to match resolved arguments")
+		}
+	})
+}
+
+func TestEnvBuilder_IsKnownScheme(t *testing.T) {
+	tests := []struct {
+		name   string
+		config *config.Config
+		scheme string
+		want   bool
+	}{
+		{
+			name:   "builtin env scheme",
+			config: nil,
+			scheme: "env",
+			want:   true,
+		},
+		{
+			name:   "builtin cache scheme",
+			config: nil,
+			scheme: "cache",
+			want:   true,
+		},
+		{
+			name:   "builtin keyring scheme",
+			config: nil,
+			scheme: "keyring",
+			want:   true,
+		},
+		{
+			name:   "builtin search scheme",
+			config: nil,
+			scheme: "search",
+			want:   true,
+		},
+		{
+			name:   "unknown scheme with nil config",
+			config: nil,
+			scheme: "http",
+			want:   false,
+		},
+		{
+			name:   "unknown scheme with nil vaults",
+			config: &config.Config{Vaults: nil},
+			scheme: "myvault",
+			want:   false,
+		},
+		{
+			name: "custom configured vault exists",
+			config: &config.Config{
+				Vaults: map[string]config.VaultConfig{
+					"myvault": {Provider: "custom_vault"},
+				},
+			},
+			scheme: "myvault",
+			want:   true,
+		},
+		{
+			name: "custom configured vault does not exist",
+			config: &config.Config{
+				Vaults: map[string]config.VaultConfig{
+					"myvault": {Provider: "custom_vault"},
+				},
+			},
+			scheme: "othervault",
+			want:   false,
+		},
+		{
+			name:   "empty string scheme with nil config",
+			config: nil,
+			scheme: "",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eb := NewEnvBuilder(tt.config, nil)
+			got := eb.isKnownScheme(tt.scheme)
+			if got != tt.want {
+				t.Errorf("eb.isKnownScheme(%q) = %v, want %v", tt.scheme, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildEnvForCommand_Autoload(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("TEST_REGION", "us-east-1")
@@ -337,6 +471,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		cmdArgs := []string{
 			"mycli",
 			"--token={{ get \"env://CLI_TOKEN\" }}",
+			"--fallback={{ tryGet \"env://NONEXISTENT\" \"env://CLI_TOKEN\" }}",
 			`{"id":"{{.Id}}"}`,
 			"'{{.State.Status}}'",
 			"plain-arg",
@@ -349,6 +484,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		expectedArgs := []string{
 			"mycli",
 			"--token=secret-token-123",
+			"--fallback=secret-token-123",
 			`{"id":"{{.Id}}"}`,
 			"'{{.State.Status}}'",
 			"plain-arg",

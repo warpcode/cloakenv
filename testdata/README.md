@@ -79,4 +79,3 @@ cloakenv -c testdata/test_config.yaml auth forget testdb
 | `test_env.txt` | Environment variable template fixture. |
 | `test_env_override.txt` | Environment override test fixture. |
 | `test_template.env` | Template `.env` file testing variable interpolation. |
-| `test_tags_check.go` | Inspection script verifying KeePass entry hierarchy and tags in `testDB.kdbx`. |

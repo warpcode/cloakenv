@@ -113,6 +113,23 @@ const ContextKeyTTL ContextKey = "ttl"
 // ContextKeyDepth is the context key for specifying recursion depth.
 const ContextKeyDepth ContextKey = "depth"
 
+// ContextKeyRawKeys indicates that internal provider lookups should preserve unformatted raw keys.
+const ContextKeyRawKeys ContextKey = "raw_keys"
+
+// WithRawKeys returns a context signaling that providers should preserve raw attribute keys.
+func WithRawKeys(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ContextKeyRawKeys, true)
+}
+
+// IsRawKeys checks whether the context requests unformatted raw attribute keys.
+func IsRawKeys(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	raw, ok := ctx.Value(ContextKeyRawKeys).(bool)
+	return ok && raw
+}
+
 type contextKeyFieldPolicy struct{}
 
 // FieldPolicy holds include layers, exclude glob patterns, and mapping rules for attribute filtering.
