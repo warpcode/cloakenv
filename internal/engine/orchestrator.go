@@ -134,6 +134,11 @@ func (o *Orchestrator) BuildEnvForCommand(ctx context.Context, cfg EnvConfig) ([
 	return o.envBuilder.BuildEnvForCommand(ctx, cfg)
 }
 
+// BuildEnvForCommandDetails constructs the full environment block and returns execution details.
+func (o *Orchestrator) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConfig) (*CommandEnvDetails, error) {
+	return o.envBuilder.BuildEnvForCommandDetails(ctx, cfg)
+}
+
 // Keyring returns the built-in keyring provider for direct access
 // (used by the config subcommands).
 func (o *Orchestrator) Keyring() *provider.OSKeyringProvider {
