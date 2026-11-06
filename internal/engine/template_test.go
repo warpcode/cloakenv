@@ -175,6 +175,81 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 			want: "file content: v",
 		},
 		{
+			name: "tryGet_existing",
+			tmpl: `{{ tryGet "vault_a://myentity:Password" }}`,
+			want: "secret_pass",
+		},
+		{
+			name: "tryGet_missing",
+			tmpl: `{{ tryGet "vault_a://missing:Password" }}`,
+			want: "",
+		},
+		{
+			name: "tryGet_invalid_scheme",
+			tmpl: `{{ tryGet "nonexistent_scheme://foo" }}`,
+			want: "",
+		},
+		{
+			name: "tryGet_variadic_fallback_first_match",
+			tmpl: `{{ tryGet "vault_a://missing:val" "vault_a://myentity:Password" "vault_a://myentity:k" }}`,
+			want: "secret_pass",
+		},
+		{
+			name: "tryGet_variadic_all_missing",
+			tmpl: `{{ tryGet "vault_a://missing:a" "vault_a://missing:b" }}`,
+			want: "",
+		},
+		{
+			name: "tryGet_empty_args",
+			tmpl: `{{ tryGet }}`,
+			want: "",
+		},
+		{
+			name: "tryGet_depth_limit",
+			tmpl: `{{ tryGet "vault_a://deep:val" }}`,
+			want: "",
+		},
+		{
+			name: "default_pipeline_with_tryGet_fallback",
+			tmpl: `{{ tryGet "vault_a://missing:Password" | default "default_secret" }}`,
+			want: "default_secret",
+		},
+		{
+			name: "default_pipeline_with_tryGet_found",
+			tmpl: `{{ tryGet "vault_a://myentity:Password" | default "default_secret" }}`,
+			want: "secret_pass",
+		},
+		{
+			name: "default_direct_invocation_empty",
+			tmpl: `{{ default "my_default" "" }}`,
+			want: "my_default",
+		},
+		{
+			name: "default_direct_invocation_nonempty",
+			tmpl: `{{ default "my_default" "given_val" }}`,
+			want: "given_val",
+		},
+		{
+			name: "default_types_empty_int_and_nil",
+			tmpl: `{{ default "def" 0 }} / {{ default "def" nil }}`,
+			want: "def / def",
+		},
+		{
+			name: "coalesce_first_nonempty",
+			tmpl: `{{ coalesce "" (tryGet "vault_a://missing:k") "first_valid" "second" }}`,
+			want: "first_valid",
+		},
+		{
+			name: "coalesce_pipeline",
+			tmpl: `{{ "pipeline_val" | coalesce }}`,
+			want: "pipeline_val",
+		},
+		{
+			name: "coalesce_all_empty",
+			tmpl: `{{ coalesce "" nil "" }}`,
+			want: "",
+		},
+		{
 			name:    "missingkey",
 			data:    map[string]any{},
 			tmpl:    `{{ .missing }}`,
