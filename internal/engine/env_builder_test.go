@@ -849,3 +849,84 @@ func TestEnvBuilder_VaultKeyFormat(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildEnvForCommandDetails(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"test_vault": {
+				Provider:     "custom_vault",
+				SingleEntity: boolPtr(true),
+				Attributes: map[string]any{
+					"VAR_Z": "val_z",
+					"VAR_A": "val_a",
+					"VAR_M": "val_m",
+				},
+			},
+		},
+		Autoload: []config.AutoloadRule{
+			{
+				Match:   `^test-alias\s+(.*)$`,
+				Command: "real-binary $1",
+				Env: map[string]string{
+					"AUTO_KEY": `{{ get "env://SRC_AUTO" }}`,
+				},
+			},
+		},
+	}
+	cfg.CompileAutoloadRules()
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("NewOrchestrator failed: %v", err)
+	}
+
+	t.Setenv("SRC_AUTO", "resolved_auto_val")
+
+	details, err := orch.BuildEnvForCommandDetails(ctx, EnvConfig{
+		CmdArgs: []string{"test-alias", "arg1", "arg2"},
+		Explicit: map[string]string{
+			"EXPLICIT_KEY": "explicit_val",
+		},
+		Merges:    []string{"test_vault://"},
+		Whitelist: []string{"VAR_Z", "VAR_A"},
+		EmptyEnv:  true,
+	})
+	if err != nil {
+		t.Fatalf("BuildEnvForCommandDetails failed: %v", err)
+	}
+
+	// Transformed command args
+	expectedCmd := []string{"real-binary", "arg1", "arg2"}
+	if !slices.Equal(details.Command, expectedCmd) {
+		t.Errorf("expected Command = %v, got %v", expectedCmd, details.Command)
+	}
+	if !slices.Equal(details.RawCommand, expectedCmd) {
+		t.Errorf("expected RawCommand = %v, got %v", expectedCmd, details.RawCommand)
+	}
+
+	// Sorted unique injected keys: AUTO_KEY, EXPLICIT_KEY, VAR_A, VAR_Z (VAR_M is filtered out)
+	expectedInjected := []string{"AUTO_KEY", "EXPLICIT_KEY", "VAR_A", "VAR_Z"}
+	if !slices.Equal(details.InjectedKeys, expectedInjected) {
+		t.Errorf("expected InjectedKeys = %v, got %v", expectedInjected, details.InjectedKeys)
+	}
+
+	// Check environment content
+	envMap := make(map[string]string)
+	for _, kv := range details.Env {
+		k, v, _ := strings.Cut(kv, "=")
+		envMap[k] = v
+	}
+	if envMap["AUTO_KEY"] != "resolved_auto_val" {
+		t.Errorf("expected AUTO_KEY = resolved_auto_val, got %q", envMap["AUTO_KEY"])
+	}
+	if envMap["EXPLICIT_KEY"] != "explicit_val" {
+		t.Errorf("expected EXPLICIT_KEY = explicit_val, got %q", envMap["EXPLICIT_KEY"])
+	}
+	if envMap["VAR_A"] != "val_a" || envMap["VAR_Z"] != "val_z" {
+		t.Errorf("expected VAR_A and VAR_Z to exist, got %v", envMap)
+	}
+	if _, exists := envMap["VAR_M"]; exists {
+		t.Errorf("expected VAR_M to be filtered out by whitelist")
+	}
+}
