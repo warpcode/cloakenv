@@ -29,7 +29,7 @@ CI runs full static analysis using `golangci-lint`:
 ```bash
 make lint
 # or directly via go run:
-go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1 run
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run
 ```
 
 On same-repository pull requests, CI publishes lint findings and Go test
