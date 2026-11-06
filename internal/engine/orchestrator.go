@@ -187,7 +187,9 @@ func (o *Orchestrator) CheckAccess(ctx context.Context, vaultName string) error 
 
 func validateVaultConfig(vaultName string, vault config.VaultConfig, cfg *config.Config, pm *ProviderManager, builtins map[string]provider.SecretProvider) error {
 	if _, isBuiltin := builtins[vaultName]; isBuiltin {
-		return fmt.Errorf("invalid config: vault name %q conflicts with built-in scheme", vaultName)
+		if vaultName != "env" || vault.Provider != "env" {
+			return fmt.Errorf("invalid config: vault name %q conflicts with built-in scheme", vaultName)
+		}
 	}
 	if vaultName == "search" {
 		return fmt.Errorf("invalid config: vault name %q conflicts with reserved scheme", vaultName)
@@ -241,6 +243,8 @@ func validateVaultConfig(vaultName string, vault config.VaultConfig, cfg *config
 		}
 	case "custom_vault":
 		// custom_vault is statically defined in config, so it is always valid.
+	case "env":
+		// env provider reads directly from process environment; no specific required settings.
 	case "search":
 		if vault.Searchable != nil {
 			return fmt.Errorf("invalid config for vault %q: search provider does not support the searchable flag", vaultName)

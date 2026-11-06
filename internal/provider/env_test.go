@@ -176,11 +176,39 @@ func TestEnvProvider_GetEntry(t *testing.T) {
 		validate    func(t *testing.T, entry Entry)
 	}{
 		{
-			name:        "LocationEmpty",
-			setup:       func(t *testing.T) {},
-			location:    "",
-			wantErr:     true,
-			errContains: "location cannot be empty",
+			name: "LocationEmptyReturnsAll",
+			setup: func(t *testing.T) {
+				t.Setenv("CLOAKENV_TEST_GETENTRY_EMPTY", "val_empty")
+			},
+			location: "",
+			wantErr:  false,
+			validate: func(t *testing.T, entry Entry) {
+				if entry.Title != "Environment Variables" {
+					t.Errorf("expected title 'Environment Variables', got %q", entry.Title)
+				}
+				if val, exists := entry.Attributes["CLOAKENV_TEST_GETENTRY_EMPTY"]; !exists || val != "val_empty" {
+					t.Errorf("expected CLOAKENV_TEST_GETENTRY_EMPTY to be 'val_empty', got %v", val)
+				}
+				if len(entry.Attributes) == 0 {
+					t.Error("expected non-empty attributes map for full environment")
+				}
+			},
+		},
+		{
+			name: "LocationEnvReturnsAll",
+			setup: func(t *testing.T) {
+				t.Setenv("CLOAKENV_TEST_GETENTRY_ENV", "val_env")
+			},
+			location: "env",
+			wantErr:  false,
+			validate: func(t *testing.T, entry Entry) {
+				if entry.Title != "Environment Variables" {
+					t.Errorf("expected title 'Environment Variables', got %q", entry.Title)
+				}
+				if val, exists := entry.Attributes["CLOAKENV_TEST_GETENTRY_ENV"]; !exists || val != "val_env" {
+					t.Errorf("expected CLOAKENV_TEST_GETENTRY_ENV to be 'val_env', got %v", val)
+				}
+			},
 		},
 		{
 			name: "SuccessSingle",
@@ -198,6 +226,19 @@ func TestEnvProvider_GetEntry(t *testing.T) {
 				}
 				if len(entry.Attributes) != 1 {
 					t.Errorf("expected attributes length 1, got %d", len(entry.Attributes))
+				}
+			},
+		},
+		{
+			name: "SuccessSingleWithColonPrefix",
+			setup: func(t *testing.T) {
+				t.Setenv("CLOAKENV_TEST_COLON_VAR", "colon-val")
+			},
+			location: ":CLOAKENV_TEST_COLON_VAR",
+			wantErr:  false,
+			validate: func(t *testing.T, entry Entry) {
+				if val, exists := entry.Attributes["CLOAKENV_TEST_COLON_VAR"]; !exists || val != "colon-val" {
+					t.Errorf("expected CLOAKENV_TEST_COLON_VAR to be 'colon-val', got %v", val)
 				}
 			},
 		},
@@ -236,14 +277,112 @@ func TestEnvProvider_GetEntry(t *testing.T) {
 	}
 }
 
+func TestEnvProvider_GetEntryWithPath(t *testing.T) {
+	p := NewEnvProvider()
+	ctx := context.Background()
+
+	t.Setenv("CLOAKENV_PATH_TEST_VAR", "path-test-val")
+
+	t.Run("EmptyLocation", func(t *testing.T) {
+		entry, path, err := p.GetEntryWithPath(ctx, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if path != "env" {
+			t.Errorf("expected path 'env', got %q", path)
+		}
+		if entry.Attributes["CLOAKENV_PATH_TEST_VAR"] != "path-test-val" {
+			t.Errorf("expected attribute to be present in entry")
+		}
+	})
+
+	t.Run("SpecificLocation", func(t *testing.T) {
+		entry, path, err := p.GetEntryWithPath(ctx, "CLOAKENV_PATH_TEST_VAR")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if path != "CLOAKENV_PATH_TEST_VAR" {
+			t.Errorf("expected path 'CLOAKENV_PATH_TEST_VAR', got %q", path)
+		}
+		if entry.Attributes["CLOAKENV_PATH_TEST_VAR"] != "path-test-val" {
+			t.Errorf("expected attribute 'path-test-val', got %v", entry.Attributes["CLOAKENV_PATH_TEST_VAR"])
+		}
+	})
+}
+
 func TestEnvProvider_Search(t *testing.T) {
 	p := NewEnvProvider()
 	ctx := context.Background()
-	_, err := p.Search(ctx, SearchQuery{})
-	if err == nil {
-		t.Error("expected error for search, got nil")
-	}
-	if err != nil && !strings.Contains(err.Error(), "does not support searching") {
-		t.Errorf("expected error to contain 'does not support searching', got %q", err.Error())
-	}
+
+	t.Setenv("CLOAKENV_TEST_SEARCH_VAR", "search-val")
+
+	t.Run("EmptyQuery", func(t *testing.T) {
+		results, err := p.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		res := results[0]
+		if res.Path != "env" {
+			t.Errorf("expected result Path 'env', got %q", res.Path)
+		}
+		if res.Entry.Title != "Environment Variables" {
+			t.Errorf("expected Title 'Environment Variables', got %q", res.Entry.Title)
+		}
+		if res.Entry.Attributes["CLOAKENV_TEST_SEARCH_VAR"] != "search-val" {
+			t.Errorf("expected CLOAKENV_TEST_SEARCH_VAR in attributes, got %v", res.Entry.Attributes["CLOAKENV_TEST_SEARCH_VAR"])
+		}
+	})
+
+	t.Run("MatchingTitle", func(t *testing.T) {
+		results, err := p.Search(ctx, SearchQuery{Title: "Environment"})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 match, got %d", len(results))
+		}
+	})
+
+	t.Run("NonMatchingTitle", func(t *testing.T) {
+		results, err := p.Search(ctx, SearchQuery{Title: "NonExistentTitle"})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("expected 0 matches, got %d", len(results))
+		}
+	})
+
+	t.Run("MatchingPath", func(t *testing.T) {
+		results, err := p.Search(ctx, SearchQuery{Path: "env"})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("expected 1 match, got %d", len(results))
+		}
+	})
+
+	t.Run("NonMatchingPath", func(t *testing.T) {
+		results, err := p.Search(ctx, SearchQuery{Path: "other"})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("expected 0 matches, got %d", len(results))
+		}
+	})
+
+	t.Run("TagsNeverMatchEmptyTags", func(t *testing.T) {
+		results, err := p.Search(ctx, SearchQuery{Tags: []string{"any:tag"}})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 0 {
+			t.Errorf("expected 0 matches for tags, got %d", len(results))
+		}
+	})
 }
