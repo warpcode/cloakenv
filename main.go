@@ -2,27 +2,20 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/warpcode/cloakenv/internal/cmd"
 	"github.com/warpcode/cloakenv/internal/config"
 )
 
+var customConfigPath string
+
 func main() {
-	os.Exit(run(os.Args, os.Stderr))
-}
+	// Parse global flags first (e.g. -c <config_path>)
+	args := os.Args
+	var parsedArgs []string
+	parsedArgs = append(parsedArgs, args[0])
 
-// run parses arguments and configuration, executes the requested
-// subcommand, and returns its exit code.
-func run(args []string, stderr io.Writer) int {
-	if len(args) == 0 {
-		cmd.PrintUsage()
-		return 1
-	}
-
-	var customConfigPath string
-	parsedArgs := []string{args[0]}
 	i := 1
 	for i < len(args) {
 		if args[i] == "--" {
@@ -31,8 +24,8 @@ func run(args []string, stderr io.Writer) int {
 		}
 		if args[i] == "-c" {
 			if i+1 >= len(args) {
-				fmt.Fprintln(stderr, "Error: -c flag requires a config path argument")
-				return 1
+				fmt.Fprintln(os.Stderr, "Error: -c flag requires a config path argument")
+				os.Exit(1)
 			}
 			customConfigPath = args[i+1]
 			i += 2
@@ -41,52 +34,53 @@ func run(args []string, stderr io.Writer) int {
 		parsedArgs = append(parsedArgs, args[i])
 		i++
 	}
+	os.Args = parsedArgs
 
-	if len(parsedArgs) < 2 {
+	if len(os.Args) < 2 {
 		cmd.PrintUsage()
-		return 1
+		os.Exit(1)
 	}
 
-	if parsedArgs[1] == "--help" || parsedArgs[1] == "-h" {
+	if os.Args[1] == "--help" || os.Args[1] == "-h" {
 		cmd.PrintUsageStdout()
-		return 0
+		os.Exit(0)
 	}
 
-	cfg, err := loadConfig(customConfigPath)
+	cfg, err := loadConfig()
 	if err != nil {
-		fmt.Fprintf(stderr, "Config error: %v\n", err)
-		return 1
+		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Router logic dispatches to internal/cmd subcommands
-	switch parsedArgs[1] {
+	switch os.Args[1] {
 	case "run":
-		return cmd.Run(parsedArgs[2:], cfg)
+		os.Exit(cmd.Run(os.Args[2:], cfg))
 	case "get":
-		return cmd.Get(parsedArgs[2:], cfg)
+		os.Exit(cmd.Get(os.Args[2:], cfg))
 	case "set":
-		return cmd.Set(parsedArgs[2:], cfg)
+		os.Exit(cmd.Set(os.Args[2:], cfg))
 	case "delete":
-		return cmd.Delete(parsedArgs[2:], cfg)
+		os.Exit(cmd.Delete(os.Args[2:], cfg))
 	case "cache":
-		return cmd.Cache(parsedArgs[2:], cfg)
+		os.Exit(cmd.Cache(os.Args[2:], cfg))
 	case "show":
-		return cmd.Show(parsedArgs[2:], cfg)
+		os.Exit(cmd.Show(os.Args[2:], cfg))
 	case "search":
-		return cmd.Search(parsedArgs[2:], cfg)
+		os.Exit(cmd.Search(os.Args[2:], cfg))
 	case "auth":
-		return cmd.Auth(parsedArgs[2:], cfg)
+		os.Exit(cmd.Auth(os.Args[2:], cfg))
 	case "internal":
-		return cmd.Internal(parsedArgs[2:], cfg)
+		os.Exit(cmd.Internal(os.Args[2:], cfg))
 	default:
-		fmt.Fprintf(stderr, "Unknown command: %s\n", parsedArgs[1])
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", os.Args[1])
 		cmd.PrintUsage()
-		return 1
+		os.Exit(1)
 	}
 }
 
-func loadConfig(configPath string) (*config.Config, error) {
-	path := configPath
+func loadConfig() (*config.Config, error) {
+	path := customConfigPath
 	if path == "" {
 		var err error
 		path, err = config.DefaultConfigPath()
