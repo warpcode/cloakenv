@@ -190,16 +190,15 @@ func (c *CustomVaultProvider) Search(ctx context.Context, query SearchQuery) ([]
 		var entry Entry
 		if !entity.IsComposed {
 			// Optimization: Check title on the entity directly before allocating full entry.
-			// In toEntry, Title defaults to name, overridden by entity.Title or attributes["title"].
+			// In toEntry, Title defaults to name, overridden by string value of any case-insensitive title attribute,
+			// or entity.Title. Non-string title attributes fall back to name.
 			titleCandidate := entity.Title
 			if titleCandidate == "" {
-				if tAttr, ok := entity.Attributes["title"]; ok {
+				if tAttr, ok := findRawAttr(entity.Attributes, "title"); ok {
 					if s, ok := tAttr.(string); ok {
 						titleCandidate = s
-					}
-				} else if tAttr, ok := entity.Attributes["Title"]; ok {
-					if s, ok := tAttr.(string); ok {
-						titleCandidate = s
+					} else {
+						titleCandidate = name
 					}
 				} else {
 					titleCandidate = name
@@ -211,40 +210,18 @@ func (c *CustomVaultProvider) Search(ctx context.Context, query SearchQuery) ([]
 
 			// Optimization: Check tags on the entity directly before allocating attributes map in toEntry.
 			if len(query.Tags) > 0 {
-				tags := entity.Tags
-				if len(tags) == 0 {
-					if v, ok := entity.Attributes["tags"]; ok {
-						if tagSlice, ok := v.([]string); ok {
-							tags = tagSlice
-						} else {
-							tags = utils.ParseTags(v)
-						}
-					} else if v, ok := entity.Attributes["Tags"]; ok {
-						if tagSlice, ok := v.([]string); ok {
-							tags = tagSlice
-						} else {
-							tags = utils.ParseTags(v)
-						}
+				var attrTags []string
+				if v, ok := findRawAttr(entity.Attributes, "tags"); ok {
+					if tagSliceStr, ok := v.([]string); ok {
+						attrTags = tagSliceStr
+					} else {
+						attrTags = utils.ParseTags(v)
 					}
-				} else {
-					// Check if attributes also contain additional tags to append
-					var extraTags []string
-					if v, ok := entity.Attributes["tags"]; ok {
-						if tagSlice, ok := v.([]string); ok {
-							extraTags = tagSlice
-						} else {
-							extraTags = utils.ParseTags(v)
-						}
-					} else if v, ok := entity.Attributes["Tags"]; ok {
-						if tagSlice, ok := v.([]string); ok {
-							extraTags = tagSlice
-						} else {
-							extraTags = utils.ParseTags(v)
-						}
-					}
-					if len(extraTags) > 0 {
-						tags = uniqueStrings(append(extraTags, tags...))
-					}
+				}
+
+				tags := attrTags
+				if len(entity.Tags) > 0 {
+					tags = uniqueStrings(append(tags, entity.Tags...))
 				}
 
 				match := true
@@ -336,6 +313,22 @@ func parseCustomVaultLocation(location string) (string, string, error) {
 		return parts[0], parts[1], nil
 	}
 	return location, "Password", nil
+}
+
+// findRawAttr performs a case-insensitive lookup in a raw attributes map.
+func findRawAttr(attrs map[string]any, name string) (any, bool) {
+	if len(attrs) == 0 {
+		return nil, false
+	}
+	if v, ok := attrs[name]; ok {
+		return v, true
+	}
+	for k, v := range attrs {
+		if strings.EqualFold(k, name) {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 // toEntry maps a raw attributes map to an Entry.
