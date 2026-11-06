@@ -26,6 +26,7 @@ func TestHelpOutputs(t *testing.T) {
 		{"PrintAuthLoginHelp", PrintAuthLoginHelp, false, "cloakenv auth login"},
 		{"PrintAuthForgetHelp", PrintAuthForgetHelp, false, "cloakenv auth forget"},
 		{"PrintAuthStatusHelp", PrintAuthStatusHelp, false, "cloakenv auth status"},
+		{"PrintInternalHelp", PrintInternalHelp, false, "cloakenv internal"},
 	}
 
 	for _, tt := range tests {
