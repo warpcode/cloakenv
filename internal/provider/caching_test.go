@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -220,12 +221,14 @@ func TestCachingProvider_EncryptedDiskMode(t *testing.T) {
 	}
 
 	// Verify file permissions (0600)
-	fi, err := os.Stat(cacheFilePath)
-	if err != nil {
-		t.Fatalf("stat failed: %v", err)
-	}
-	if fi.Mode().Perm() != 0600 {
-		t.Errorf("expected 0600 file permissions, got %v", fi.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		fi, err := os.Stat(cacheFilePath)
+		if err != nil {
+			t.Fatalf("stat failed: %v", err)
+		}
+		if fi.Mode().Perm() != 0600 {
+			t.Errorf("expected 0600 file permissions, got %v", fi.Mode().Perm())
+		}
 	}
 
 	// 2. Cache hit
