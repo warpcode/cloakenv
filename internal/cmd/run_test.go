@@ -83,6 +83,18 @@ func TestRun_Errors(t *testing.T) {
 			wantErr:  "unknown flag: --whitelst",
 		},
 		{
+			name:     "Unknown Flag --dryrun",
+			args:     []string{"--dryrun", "--", "echo", "1"},
+			wantExit: 1,
+			wantErr:  "unknown flag: --dryrun",
+		},
+		{
+			name:     "Dry Run No Command",
+			args:     []string{"--dry-run"},
+			wantExit: 1,
+			wantErr:  "No command specified",
+		},
+		{
 			name:     "Unexpected Positional Argument Before DashDash",
 			args:     []string{"unexpected_arg", "--", "echo", "1"},
 			wantExit: 1,
@@ -402,6 +414,192 @@ func TestRun_Autoload(t *testing.T) {
 		expected := "CLOAKENV_TEST_REGEX_SECRET=transformed_secret_val"
 		if !strings.Contains(output, expected) {
 			t.Errorf("Expected output to contain %q, but got:\n%s", expected, output)
+		}
+	})
+}
+
+func TestRun_DryRun(t *testing.T) {
+	// Helper subprocess handler for dry-run tests
+	if os.Getenv("GO_WANT_RUN_DRYRUN_SUBPROCESS") == "1" {
+		var args []string
+		if err := json.Unmarshal([]byte(os.Getenv("RUN_ARGS")), &args); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to unmarshal RUN_ARGS: %v\n", err)
+			os.Exit(1)
+		}
+
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"mock_vault": {
+					Provider:     "custom_vault",
+					SingleEntity: boolPtr(true),
+					Attributes: map[string]any{
+						"CLOAKENV_TEST_USER":   "secret_admin_user",
+						"CLOAKENV_TEST_PASS":   "super_secret_password_12345",
+						"CLOAKENV_TEST_FILTER": "unwanted_secret_value",
+					},
+				},
+			},
+			Autoload: []config.AutoloadRule{
+				{
+					Match:   `^my-alias\s+(.*)$`,
+					Command: "expanded-tool $1",
+					Vaults:  []string{"mock_vault"},
+				},
+			},
+		}
+		cfg.CompileAutoloadRules()
+
+		exitCode := Run(args, cfg)
+		os.Exit(exitCode)
+	}
+
+	t.Run("Previews explicit mappings and command without executing", func(t *testing.T) {
+		t.Setenv("CLOAKENV_SRC_VAR", "super_secret_value_xyz")
+
+		runArgs := []string{
+			"--dry-run",
+			"-e", `CLOAKENV_TARGET={{ get "env://CLOAKENV_SRC_VAR" }}`,
+			"--",
+			os.Args[0], "-test.run=TestHelperProcess",
+		}
+
+		cmd := exec.Command(os.Args[0], "-test.run=TestRun_DryRun")
+		argsData, _ := json.Marshal(runArgs)
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_RUN_DRYRUN_SUBPROCESS=1",
+			"RUN_ARGS="+string(argsData),
+			"GO_WANT_HELPER_PROCESS=1",
+		)
+
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
+		}
+
+		output := string(out)
+
+		// 1. Must display dry-run preview header and command line
+		if !strings.Contains(output, "[DRY RUN] Command execution preview:") {
+			t.Errorf("Expected preview header, got:\n%s", output)
+		}
+		expectedCmd := "Command: " + os.Args[0] + " -test.run=TestHelperProcess"
+		if !strings.Contains(output, expectedCmd) {
+			t.Errorf("Expected command line %q, got:\n%s", expectedCmd, output)
+		}
+
+		// 2. Must display injected variable names
+		if !strings.Contains(output, "Injected variables:") {
+			t.Errorf("Expected 'Injected variables:' section, got:\n%s", output)
+		}
+		if !strings.Contains(output, "CLOAKENV_TARGET") {
+			t.Errorf("Expected injected variable name CLOAKENV_TARGET, got:\n%s", output)
+		}
+
+		// 3. Must NEVER execute the target process or leak secret values
+		if strings.Contains(output, "super_secret_value_xyz") {
+			t.Errorf("SECURITY LEAK: secret value was displayed in dry-run output:\n%s", output)
+		}
+		if strings.Contains(output, "CLOAKENV_TARGET=super_secret_value_xyz") {
+			t.Errorf("Target process was executed despite --dry-run:\n%s", output)
+		}
+	})
+
+	t.Run("Previews autoloaded transformations and merges with whitelist", func(t *testing.T) {
+		runArgs := []string{
+			"--dry-run",
+			"-i", "CLOAKENV_TEST_USER",
+			"--",
+			"my-alias", "subcommand", "--verbose",
+		}
+
+		cmd := exec.Command(os.Args[0], "-test.run=TestRun_DryRun")
+		argsData, _ := json.Marshal(runArgs)
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_RUN_DRYRUN_SUBPROCESS=1",
+			"RUN_ARGS="+string(argsData),
+			"GO_WANT_HELPER_PROCESS=1",
+		)
+
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
+		}
+
+		output := string(out)
+
+		// Transformed command line from autoload rule
+		if !strings.Contains(output, "Command: expanded-tool subcommand --verbose") {
+			t.Errorf("Expected transformed command line, got:\n%s", output)
+		}
+
+		// Whitelisted key must be shown
+		if !strings.Contains(output, "CLOAKENV_TEST_USER") {
+			t.Errorf("Expected whitelisted key CLOAKENV_TEST_USER, got:\n%s", output)
+		}
+
+		// Filtered keys must NOT be shown
+		if strings.Contains(output, "CLOAKENV_TEST_PASS") {
+			t.Errorf("Expected CLOAKENV_TEST_PASS to be filtered out by -i, but found in:\n%s", output)
+		}
+		if strings.Contains(output, "CLOAKENV_TEST_FILTER") {
+			t.Errorf("Expected CLOAKENV_TEST_FILTER to be filtered out by -i, but found in:\n%s", output)
+		}
+
+		// Secret values must NEVER be displayed
+		if strings.Contains(output, "secret_admin_user") || strings.Contains(output, "super_secret_password_12345") {
+			t.Errorf("SECURITY LEAK: secret values displayed in dry-run output:\n%s", output)
+		}
+	})
+
+	t.Run("Handles no injected variables", func(t *testing.T) {
+		runArgs := []string{
+			"--dry-run",
+			"--",
+			"echo", "hello", "world",
+		}
+
+		cmd := exec.Command(os.Args[0], "-test.run=TestRun_DryRun")
+		argsData, _ := json.Marshal(runArgs)
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_RUN_DRYRUN_SUBPROCESS=1",
+			"RUN_ARGS="+string(argsData),
+		)
+
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
+		}
+
+		output := string(out)
+		if !strings.Contains(output, "Command: echo hello world") {
+			t.Errorf("Expected 'Command: echo hello world', got:\n%s", output)
+		}
+		if !strings.Contains(output, "Injected variables: (none)") {
+			t.Errorf("Expected 'Injected variables: (none)', got:\n%s", output)
+		}
+	})
+
+	t.Run("Handles positional command without dash-dash separator", func(t *testing.T) {
+		runArgs := []string{
+			"--dry-run",
+			"echo", "plain_arg",
+		}
+
+		cmd := exec.Command(os.Args[0], "-test.run=TestRun_DryRun")
+		argsData, _ := json.Marshal(runArgs)
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_RUN_DRYRUN_SUBPROCESS=1",
+			"RUN_ARGS="+string(argsData),
+		)
+
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
+		}
+
+		output := string(out)
+		if !strings.Contains(output, "Command: echo plain_arg") {
+			t.Errorf("Expected 'Command: echo plain_arg', got:\n%s", output)
 		}
 	})
 }
