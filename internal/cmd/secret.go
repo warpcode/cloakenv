@@ -19,15 +19,18 @@ import (
 
 // Cache handles routing for the "cloakenv cache" subcommands.
 func Cache(args []string, cfg *config.Config) int {
-	if utils.HasHelpFlag(args) && (len(args) < 1 || args[0] != "clear") {
+	if len(args) > 0 && args[0] == "prune" {
+		return cachePrune(args[1:], cfg)
+	}
+	if len(args) > 0 && args[0] == "clear" {
+		return cacheClear(args[1:], cfg)
+	}
+	if utils.HasHelpFlag(args) {
 		PrintCacheHelp()
 		return 0
 	}
-	if len(args) < 1 || args[0] != "clear" {
-		fmt.Fprintln(os.Stderr, "Usage: cloakenv cache clear")
-		return 1
-	}
-	return cacheClear(args[1:], cfg)
+	fmt.Fprintln(os.Stderr, "Usage: cloakenv cache <clear|prune>")
+	return 1
 }
 
 // Get handles single value secret retrieval (raw to stdout, pipeable).
@@ -242,5 +245,32 @@ func cacheClear(args []string, cfg *config.Config) int {
 	}
 
 	fmt.Println("Cache cleared successfully.")
+	return 0
+}
+
+// cachePrune handles "cloakenv cache prune".
+func cachePrune(args []string, cfg *config.Config) int {
+	if utils.HasHelpFlag(args) {
+		PrintCachePruneHelp()
+		return 0
+	}
+	if len(args) != 0 {
+		fmt.Fprintln(os.Stderr, "Usage: cloakenv cache prune")
+		return 1
+	}
+
+	orch, err := engine.NewOrchestrator(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
+		return 1
+	}
+	ctx := context.Background()
+
+	if err := orch.PruneCache(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to prune cache: %v\n", err)
+		return 1
+	}
+
+	fmt.Println("Cache pruned successfully.")
 	return 0
 }

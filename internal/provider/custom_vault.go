@@ -180,8 +180,69 @@ func (c *CustomVaultProvider) Search(ctx context.Context, query SearchQuery) ([]
 			return nil, err
 		}
 
+		// Optimization: Filter by path early before resolving or allocating entry data.
+		if lowerQueryPath != "" {
+			if !strings.Contains(strings.ToLower(name), lowerQueryPath) {
+				continue
+			}
+		}
+
 		var entry Entry
 		if !entity.IsComposed {
+			// Optimization: Check title on the entity directly before allocating full entry.
+			// In toEntry, Title defaults to name, overridden by string value of any case-insensitive title attribute,
+			// or entity.Title. Non-string title attributes fall back to name.
+			titleCandidate := entity.Title
+			if titleCandidate == "" {
+				if tAttr, ok := findRawAttr(entity.Attributes, "title"); ok {
+					if s, ok := tAttr.(string); ok {
+						titleCandidate = s
+					} else {
+						titleCandidate = name
+					}
+				} else {
+					titleCandidate = name
+				}
+			}
+			if lowerQueryTitle != "" && !strings.Contains(strings.ToLower(titleCandidate), lowerQueryTitle) {
+				continue
+			}
+
+			// Optimization: Check tags on the entity directly before allocating attributes map in toEntry.
+			if len(query.Tags) > 0 {
+				var attrTags []string
+				if v, ok := findRawAttr(entity.Attributes, "tags"); ok {
+					if tagSliceStr, ok := v.([]string); ok {
+						attrTags = tagSliceStr
+					} else {
+						attrTags = utils.ParseTags(v)
+					}
+				}
+
+				tags := attrTags
+				if len(entity.Tags) > 0 {
+					tags = uniqueStrings(append(tags, entity.Tags...))
+				}
+
+				match := true
+				for _, qt := range query.Tags {
+					found := false
+					for _, t := range tags {
+						if strings.EqualFold(t, qt) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						match = false
+						break
+					}
+				}
+				if !match {
+					continue
+				}
+			}
+
 			entry = toEntry(name, entity.Attributes)
 			if entity.Title != "" {
 				entry.Title = entity.Title
@@ -198,37 +259,31 @@ func (c *CustomVaultProvider) Search(ctx context.Context, query SearchQuery) ([]
 				continue
 			}
 			entry = e
-		}
 
-		if lowerQueryTitle != "" {
-			if !strings.Contains(strings.ToLower(entry.Title), lowerQueryTitle) {
-				continue
+			if lowerQueryTitle != "" {
+				if !strings.Contains(strings.ToLower(entry.Title), lowerQueryTitle) {
+					continue
+				}
 			}
-		}
 
-		if lowerQueryPath != "" {
-			if !strings.Contains(strings.ToLower(name), lowerQueryPath) {
-				continue
-			}
-		}
-
-		if len(query.Tags) > 0 {
-			match := true
-			for _, qt := range query.Tags {
-				found := false
-				for _, t := range entry.Tags {
-					if strings.EqualFold(t, qt) {
-						found = true
+			if len(query.Tags) > 0 {
+				match := true
+				for _, qt := range query.Tags {
+					found := false
+					for _, t := range entry.Tags {
+						if strings.EqualFold(t, qt) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						match = false
 						break
 					}
 				}
-				if !found {
-					match = false
-					break
+				if !match {
+					continue
 				}
-			}
-			if !match {
-				continue
 			}
 		}
 
@@ -258,6 +313,22 @@ func parseCustomVaultLocation(location string) (string, string, error) {
 		return parts[0], parts[1], nil
 	}
 	return location, "Password", nil
+}
+
+// findRawAttr performs a case-insensitive lookup in a raw attributes map.
+func findRawAttr(attrs map[string]any, name string) (any, bool) {
+	if len(attrs) == 0 {
+		return nil, false
+	}
+	if v, ok := attrs[name]; ok {
+		return v, true
+	}
+	for k, v := range attrs {
+		if strings.EqualFold(k, name) {
+			return v, true
+		}
+	}
+	return nil, false
 }
 
 // toEntry maps a raw attributes map to an Entry.

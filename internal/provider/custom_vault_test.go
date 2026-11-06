@@ -135,6 +135,16 @@ func TestCustomVaultProvider_Search(t *testing.T) {
 				"Title":    "Database Staging",
 				"tags":     []string{"env:staging", "type:db"},
 			},
+			"projectC/api": {
+				"Password": "pass4",
+				"TITLE":    "API Server Prod",
+				"TAGS":     []string{"env:prod", "type:api"},
+			},
+			"projectD/num": {
+				"Password": "pass5",
+				"title":    12345, // non-string title falls back to name "projectD/num"
+				"Tags":     "env:dev",
+			},
 		}),
 	}
 
@@ -150,7 +160,7 @@ func TestCustomVaultProvider_Search(t *testing.T) {
 		{
 			name:        "Empty query returns all",
 			query:       SearchQuery{},
-			wantResults: 3,
+			wantResults: 5,
 		},
 		{
 			name:        "Title exact match",
@@ -168,6 +178,16 @@ func TestCustomVaultProvider_Search(t *testing.T) {
 			wantResults: 0,
 		},
 		{
+			name:        "Title case-variant TITLE match",
+			query:       SearchQuery{Title: "API Server"},
+			wantResults: 1,
+		},
+		{
+			name:        "Title non-string fallback to name match",
+			query:       SearchQuery{Title: "projectD/num"},
+			wantResults: 1,
+		},
+		{
 			name:        "Path exact match",
 			query:       SearchQuery{Path: "projectA/db"},
 			wantResults: 1,
@@ -179,17 +199,22 @@ func TestCustomVaultProvider_Search(t *testing.T) {
 		},
 		{
 			name:        "Path mismatch",
-			query:       SearchQuery{Path: "projectC"},
+			query:       SearchQuery{Path: "projectZ"},
 			wantResults: 0,
 		},
 		{
 			name:        "Tags single match",
 			query:       SearchQuery{Tags: []string{"env:prod"}},
-			wantResults: 2,
+			wantResults: 3,
 		},
 		{
 			name:        "Tags multiple match",
 			query:       SearchQuery{Tags: []string{"env:prod", "type:db"}},
+			wantResults: 1,
+		},
+		{
+			name:        "Tags case-variant TAGS multiple match",
+			query:       SearchQuery{Tags: []string{"env:prod", "type:api"}},
 			wantResults: 1,
 		},
 		{
@@ -200,7 +225,7 @@ func TestCustomVaultProvider_Search(t *testing.T) {
 		{
 			name:        "Tags case-insensitive match",
 			query:       SearchQuery{Tags: []string{"ENV:PROD"}},
-			wantResults: 2,
+			wantResults: 3,
 		},
 		{
 			name:        "Combination match",
