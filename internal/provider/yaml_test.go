@@ -105,7 +105,7 @@ entries:
 	}
 }
 
-func TestYamlProviderCustomEntriesKey(t *testing.T) {
+func TestYamlProviderCustomEntitiesRootKey(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// 1. Custom key: "hosts"
@@ -125,8 +125,8 @@ hosts:
 	ctx := context.Background()
 	cfg1 := ProviderConfig{
 		Settings: map[string]string{
-			"vault_path":  hostsPath,
-			"entries_key": "hosts",
+			"vault_path":        hostsPath,
+			"entities_root_key": "hosts",
 		},
 	}
 	if err := yp1.Initialize(ctx, cfg1); err != nil {
@@ -156,8 +156,8 @@ ssh_root:
 	yp2 := NewYamlProvider()
 	cfg2 := ProviderConfig{
 		Settings: map[string]string{
-			"vault_path":  rootPath,
-			"entries_key": ".",
+			"vault_path":        rootPath,
+			"entities_root_key": ".",
 		},
 	}
 	if err := yp2.Initialize(ctx, cfg2); err != nil {
@@ -176,8 +176,8 @@ ssh_root:
 	yp3 := NewYamlProvider()
 	cfg3 := ProviderConfig{
 		Settings: map[string]string{
-			"vault_path":  rootPath,
-			"entries_key": "hosts",
+			"vault_path":        rootPath,
+			"entities_root_key": "hosts",
 		},
 	}
 	if err := yp3.Initialize(ctx, cfg3); err != nil {

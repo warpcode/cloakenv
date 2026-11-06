@@ -276,6 +276,7 @@ cloakenv run [-E] [flags] -- <command> [args...]
 - `-i KEY`: Whitelist key filter (repeatable). When `-i` is specified, only the whitelisted keys from `-m` merges are injected. (`-e` mappings always bypass whitelist filtering).
 - `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
 - `--no-autoload`: Bypass configuration `autoload:` rules for this execution.
+- `--dry-run`: Preview injected environment variable keys and transformed command without executing.
 
 #### Examples:
 
@@ -298,6 +299,12 @@ cloakenv run -t ./deploy.env -- terraform apply
 # 6. Combine template, merge, and explicit overrides
 cloakenv run \
   -t .env.template \
+  -m "work://Cloud/AWS_Production" \
+  -e REGION="us-east-1" \
+  -- aws s3 ls
+
+# 7. Preview injected variables and transformed command without executing
+cloakenv run --dry-run \
   -m "work://Cloud/AWS_Production" \
   -e REGION="us-east-1" \
   -- aws s3 ls
@@ -943,8 +950,10 @@ Evaluate configured templates using `{{ include "name" . }}` or evaluate externa
 | `search` | `(query string) ([]map[string]any, error)` | Executes a search query across vaults and returns a slice of entry context maps | `{{ range search "\"db\" in tags" }}{{ .meta.Title }}: {{ .attributes.HOST }}{{ end }}` |
 | `toEnv` | `(attrs any) (string, error)` | Serializes an attributes map into dotenv key-value format (sorted, excluding metadata) | `{{ .attributes \| toEnv }}` |
 | `toKv` | `(attrs any) (string, error)` | Alias for `toEnv` | `{{ .attributes \| toKv }}` |
-| `toJson` | `(v any) (string, error)` | Serializes a value or map to a JSON string | `{{ .attributes \| toJson }}` |
-| `toYaml` | `(v any) (string, error)` | Serializes a value or map to a YAML string | `{{ .attributes \| toYaml }}` |
+| `toJson` / `toJSON` | `(v any) (string, error)` | Serializes a value or map to a compact JSON string | `{{ .attributes \| toJson }}` |
+| `toYaml` / `toYAML` | `(v any) (string, error)` | Serializes a value or map to a YAML string | `{{ .attributes \| toYaml }}` |
+| `fromJSON` | `(str string) (any, error)` | Unmarshals a JSON string into an object (`map[string]any`) or slice (`[]any`) | `{{ (fromJSON .attributes.json_data).field }}` |
+| `fromYAML` | `(str string) (any, error)` | Unmarshals a YAML string into an object (`map[string]any`) or slice (`[]any`) | `{{ (fromYAML .attributes.yaml_data).field }}` |
 | `upper` | `(s string) string` | Converts a string to UPPERCASE | `{{ .meta.Title \| upper }}` |
 | `lower` | `(s string) string` | Converts a string to lowercase | `{{ .meta.Title \| lower }}` |
 | `env` | `(s string) string` | Formats a string to `UPPERCASE_WITH_UNDERSCORES` | `{{ .meta.Title \| env }}_API_KEY` |
