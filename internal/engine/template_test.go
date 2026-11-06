@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -385,6 +386,9 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.name == "exec_piped_with_fromJSON" && runtime.GOOS == "windows" {
+				t.Skip("skipping shell JSON escaping test on Windows cmd.exe")
+			}
 			got, err := te.Render(ctx, tt.tmpl, tt.data, 0, "")
 			if tt.wantErr {
 				if err == nil {
@@ -561,8 +565,13 @@ func TestTemplateEngine_ExecComprehensive(t *testing.T) {
 	t.Run("exec.ErrDot relative path execution blocked", func(t *testing.T) {
 		dir := t.TempDir()
 		cmdName := "relative-binary-test"
+		scriptContent := "#!/bin/sh\necho relative_ran\n"
+		if runtime.GOOS == "windows" {
+			cmdName += ".bat"
+			scriptContent = "@echo relative_ran\r\n"
+		}
 		binPath := filepath.Join(dir, cmdName)
-		if err := os.WriteFile(binPath, []byte("#!/bin/sh\necho relative_ran\n"), 0755); err != nil {
+		if err := os.WriteFile(binPath, []byte(scriptContent), 0755); err != nil {
 			t.Fatalf("failed to create relative executable: %v", err)
 		}
 
