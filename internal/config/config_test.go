@@ -96,6 +96,66 @@ autoload:
 		t.Errorf("expected provider 'keepass', got %q", vault.Provider)
 	}
 
+	// Test vault cache parsing
+	cacheYaml := `
+vaults:
+  v_bool:
+    provider: keepass
+    vault_path: ~/secrets.kdbx
+    cache: true
+  v_string:
+    provider: keepass
+    vault_path: ~/secrets.kdbx
+    cache: "15m"
+  v_map:
+    provider: keepass
+    vault_path: ~/secrets.kdbx
+    cache:
+      ttl: "30m"
+      mode: "encrypted_disk"
+  v_disabled:
+    provider: keepass
+    vault_path: ~/secrets.kdbx
+    cache:
+      enabled: false
+      ttl: "10m"
+`
+	cacheConfigPath := filepath.Join(tempDir, "cache_config.yaml")
+	if err := os.WriteFile(cacheConfigPath, []byte(cacheYaml), 0644); err != nil {
+		t.Fatalf("failed to write cache config file: %v", err)
+	}
+	cfgCache, err := Load(cacheConfigPath)
+	if err != nil {
+		t.Fatalf("Load failed for cache config: %v", err)
+	}
+	if !cfgCache.Vaults["v_bool"].Cache.Enabled {
+		t.Error("expected v_bool cache to be enabled")
+	}
+	if !cfgCache.Vaults["v_string"].Cache.Enabled || cfgCache.Vaults["v_string"].Cache.TTL != "15m" {
+		t.Errorf("unexpected v_string cache: %+v", cfgCache.Vaults["v_string"].Cache)
+	}
+	if !cfgCache.Vaults["v_map"].Cache.Enabled || cfgCache.Vaults["v_map"].Cache.TTL != "30m" || cfgCache.Vaults["v_map"].Cache.Mode != "encrypted_disk" {
+		t.Errorf("unexpected v_map cache: %+v", cfgCache.Vaults["v_map"].Cache)
+	}
+	if cfgCache.Vaults["v_disabled"].Cache.Enabled {
+		t.Error("expected v_disabled cache to be disabled")
+	}
+
+	// Verify invalid cache mode fails validation
+	invalidModeYaml := `
+vaults:
+  v_bad:
+    provider: keepass
+    vault_path: ~/secrets.kdbx
+    cache:
+      mode: "redis"
+`
+	badCachePath := filepath.Join(tempDir, "bad_cache.yaml")
+	_ = os.WriteFile(badCachePath, []byte(invalidModeYaml), 0644)
+	if _, err := Load(badCachePath); err == nil {
+		t.Error("expected error for invalid cache mode 'redis', got nil")
+	}
+
 	// Verify expandHome was called on vault_path
 	expectedPath := filepath.Join(mockHome, "secrets.kdbx")
 	if vault.VaultPath != expectedPath {

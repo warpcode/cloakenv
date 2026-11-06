@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -257,6 +258,20 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 		"get": func(uri string) (string, error) {
 			return te.resolver.resolveSingleURI(ctx, uri, depth+1, configKey)
 		},
+		"tryGet": func(uris ...string) string {
+			for _, uri := range uris {
+				if uri == "" {
+					continue
+				}
+				val, err := te.resolver.resolveSingleURI(ctx, uri, depth+1, configKey)
+				if err == nil && val != "" {
+					return val
+				}
+			}
+			return ""
+		},
+		"default":  templateDefault,
+		"coalesce": templateCoalesce,
 		"entry": func(uri string) (map[string]any, error) {
 			e, err := te.resolver.GetEntryRecursive(ctx, uri, depth+1)
 			if err != nil {
@@ -279,18 +294,20 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 			}
 			return tcs, nil
 		},
-		"toEnv": toEnv,
-		"toKv":  toEnv,
-		"toJson": func(v any) (string, error) {
-			b, err := json.Marshal(v)
-			return string(b), err
-		},
-		"toYaml": func(v any) (string, error) {
-			b, err := yaml.Marshal(v)
-			return strings.TrimSpace(string(b)), err
-		},
-		"upper": strings.ToUpper,
-		"lower": strings.ToLower,
+		"toEnv":    toEnv,
+		"toKv":     toEnv,
+		"toJSON":   toJSON,
+		"toJson":   toJSON,
+		"json":     toJSON,
+		"fromJSON": fromJSON,
+		"fromJson": fromJSON,
+		"toYAML":   toYAML,
+		"toYaml":   toYAML,
+		"yaml":     toYAML,
+		"fromYAML": fromYAML,
+		"fromYaml": fromYAML,
+		"upper":    strings.ToUpper,
+		"lower":    strings.ToLower,
 		"env": func(s string) string {
 			return utils.FormatKeyWithFormat(s, utils.KeyFormatEnv)
 		},
@@ -404,6 +421,93 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 		return "", fmt.Errorf("template execution failed%s: %w", keyPart, err)
 	}
 	return buf.String(), nil
+}
+
+func toJSON(v any) (string, error) {
+	b, err := json.Marshal(v)
+	return string(b), err
+}
+
+func fromJSON(str string) (any, error) {
+	var out any
+	if err := json.Unmarshal([]byte(str), &out); err != nil {
+		return nil, fmt.Errorf("fromJSON failed: %w", err)
+	}
+	return out, nil
+}
+
+func toYAML(v any) (string, error) {
+	b, err := yaml.Marshal(v)
+	return strings.TrimSpace(string(b)), err
+}
+
+func fromYAML(str string) (any, error) {
+	var out any
+	if err := yaml.Unmarshal([]byte(str), &out); err != nil {
+		return nil, fmt.Errorf("fromYAML failed: %w", err)
+	}
+	return out, nil
+}
+
+// isEmpty determines if a value is consider empty for template helpers like default.
+func isEmpty(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.String:
+		return rv.Len() == 0
+	case reflect.Bool:
+		return !rv.Bool()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return rv.Int() == 0
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return rv.Uint() == 0
+	case reflect.Float32, reflect.Float64:
+		return rv.Float() == 0
+	case reflect.Slice, reflect.Map, reflect.Array:
+		return rv.Len() == 0
+	case reflect.Chan, reflect.Pointer, reflect.UnsafePointer, reflect.Func, reflect.Interface:
+		return rv.IsNil()
+	default:
+		return false
+	}
+}
+
+// templateDefault returns the first non-empty value in given, or fallback if all are empty.
+// In pipelines like {{ given | default fallback }}, Go's text/template passes pipeline as the last argument,
+// so given will contain [pipelineVal].
+func templateDefault(fallback any, given ...any) any {
+	if len(given) == 0 {
+		return fallback
+	}
+	for _, val := range given {
+		if !isEmpty(val) {
+			return val
+		}
+	}
+	return fallback
+}
+
+// templateCoalesce returns the first non-empty string argument.
+func templateCoalesce(vals ...any) string {
+	for _, val := range vals {
+		if val == nil {
+			continue
+		}
+		if s, ok := val.(string); ok {
+			if s != "" {
+				return s
+			}
+			continue
+		}
+		strVal := fmt.Sprintf("%v", val)
+		if strVal != "" {
+			return strVal
+		}
+	}
+	return ""
 }
 
 func toEnv(m map[string]any) (string, error) {

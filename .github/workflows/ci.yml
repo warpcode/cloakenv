@@ -53,6 +53,12 @@ jobs:
         if: always() && steps.lint.outcome == 'failure'
         run: exit 1
 
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+      - name: Verify Documentation & Agent Consistency
+        run: make agents-check
+
   test:
     name: Run Tests
     runs-on: ${{ matrix.os }}

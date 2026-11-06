@@ -12,7 +12,7 @@ import (
 	"github.com/warpcode/cloakenv/internal/utils"
 )
 
-// Run handles "cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] -- <cmd> [args]".
+// Run handles "cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] [--dry-run] -- <cmd> [args]".
 func Run(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
 		PrintRunHelp()
@@ -25,6 +25,7 @@ func Run(args []string, cfg *config.Config) int {
 		cmdArgs     []string
 		noAutoload  bool
 		emptyEnv    bool
+		dryRun      bool
 		keyFormat   string
 	)
 
@@ -39,6 +40,7 @@ func Run(args []string, cfg *config.Config) int {
 	parser.StopAtNonFlag = true
 	parser.Bool([]string{"-E"}, &emptyEnv)
 	parser.Bool([]string{"--no-autoload", "--skip-autoload"}, &noAutoload)
+	parser.Bool([]string{"--dry-run"}, &dryRun)
 	parser.Var([]string{"-e"}, true, "", func(name, val string) error {
 		key, uri, ok := strings.Cut(val, "=")
 		if !ok || key == "" || uri == "" {
@@ -115,7 +117,7 @@ func Run(args []string, cfg *config.Config) int {
 	}
 
 	// Build the environment block and evaluate command transformations
-	finalCmdArgs, env, err := orch.BuildEnvForCommand(ctx, engine.EnvConfig{
+	envDetails, err := orch.BuildEnvForCommandDetails(ctx, engine.EnvConfig{
 		CmdArgs:   activeCmdArgs,
 		Explicit:  explicitEnv,
 		Merges:    merges,
@@ -127,10 +129,33 @@ func Run(args []string, cfg *config.Config) int {
 		return 1
 	}
 
+	finalCmdArgs := envDetails.Command
 	if len(finalCmdArgs) == 0 {
 		finalCmdArgs = cmdArgs
 	}
 
+	if dryRun {
+		cmdToDisplay := envDetails.RawCommand
+		if len(cmdToDisplay) == 0 {
+			cmdToDisplay = cmdArgs
+		}
+		printDryRunPreview(cmdToDisplay, envDetails.InjectedKeys)
+		return 0
+	}
+
 	// Execute the wrapped command
-	return runner.RunCommand(finalCmdArgs, env)
+	return runner.RunCommand(finalCmdArgs, envDetails.Env)
+}
+
+func printDryRunPreview(cmdArgs []string, injectedKeys []string) {
+	fmt.Println("[DRY RUN] Command execution preview:")
+	fmt.Printf("Command: %s\n", strings.Join(cmdArgs, " "))
+	if len(injectedKeys) == 0 {
+		fmt.Println("Injected variables: (none)")
+	} else {
+		fmt.Println("Injected variables:")
+		for _, k := range injectedKeys {
+			fmt.Printf("  %s\n", k)
+		}
+	}
 }
