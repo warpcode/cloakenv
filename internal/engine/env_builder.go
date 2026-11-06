@@ -274,6 +274,9 @@ func hasCloakenvInvocation(arg string) bool {
 			"search ", "search\t", "search\"", "search`",
 			"include ", "include\t", "include\"", "include`",
 			"includeFile ", "includeFile\t", "includeFile\"", "includeFile`",
+			"exec ", "exec\t", "exec\"", "exec`",
+			"shquote ", "shquote\t", "shquote\"", "shquote`",
+			"shellQuote ", "shellQuote\t", "shellQuote\"", "shellQuote`",
 		} {
 			if strings.HasPrefix(trimmed, fn) || strings.Contains(trimmed, " "+fn) || strings.Contains(trimmed, "("+fn) || strings.Contains(trimmed, "| "+fn) || strings.Contains(trimmed, "|"+fn) {
 				return true

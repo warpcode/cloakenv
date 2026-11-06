@@ -207,7 +207,7 @@ cloakenv run -e DATABASE_URL='postgres://{{ get "env://DB_USER" }}:{{ get "keyri
    - **`.entries` / `.Entries`**: Slice of upstream source entry contexts when resolving composed `custom_vault` entities.
 4. **Child Command Argument Pass-Through Safety (`resolveCmdArgs`)**:
    When `cloakenv run` executes child processes, command-line arguments are safely inspected:
-   - Arguments that are bare known `scheme://...` URIs or templates invoking `cloakenv` functions (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`) are resolved before process execution.
+   - Arguments that are bare known `scheme://...` URIs or templates invoking `cloakenv` functions (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`, `exec`, `shquote`, `shellQuote`) are resolved before process execution.
    - Foreign templates (such as Docker format strings `'{{.State.Status}}'`, Helm templates, or Kubernetes format strings) pass through to the child command untouched without evaluation errors.
 5. **Recursion Limit**: Dynamic resolution and template inclusion are capped at depth 5 (`maxDepth = 5`) to prevent circular evaluation or infinite recursion.
 6. **Legacy `${...}` Removed**: The legacy `${scheme://...}` syntax has been completely removed in favor of `{{ get "scheme://..." }}`. Bare `scheme://...` URIs remain supported in explicit CLI contexts (`get`, `show`, `-e`, `-m`), `merge:`, and `autoload.env`.
@@ -964,6 +964,9 @@ Evaluate configured templates using `{{ include "name" . }}` or evaluate externa
 | `join` | `(sep string, slice any) (string, error)` | Joins slice elements with a separator string | `{{ join "," .meta.Tags }}` |
 | `include` | `(name string, ctx any) (string, error)` | Renders a named top-level template defined under `templates:` | `{{ include "dotenv" . }}` |
 | `includeFile` | `(path string, ctx any) (string, error)` | Renders an external template file relative to `config.yaml` or `~/` | `{{ includeFile "templates/dotenv.tmpl" . }}` |
+| `exec` | `(name string, args ...any) (string, error)` | Executes an external CLI command with direct argv isolation, zero shell interpolation, and trailing newline trimming | `{{ exec "gh" "auth" "token" }}` |
+| `shquote` | `(s string) string` | Safely quotes a string in POSIX single quotes (`'...'`, escaping `'` as `'\''`) | `{{ shquote .attributes.Password }}` |
+| `shellQuote` | `(s string) string` | Alias for `shquote` | `{{ shellQuote .attributes.Password }}` |
 
 ### Template Context (`.`)
 

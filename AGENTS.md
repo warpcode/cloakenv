@@ -65,7 +65,7 @@ Equivalently, run `make verify` to execute this pipeline. Run `make agents-check
 - **Unified Templating**:
   Templates evaluate Go `text/template` with `.Option("missingkey=error")` and recursion depth <= 5; legacy `${...}` interpolation is permanently removed (`docs/adr/0001-unify-templating-on-go-text-template-and-composed-custom-vaults.md`).
 - **Child Command Pass-Through**:
-  `resolveCmdArgs` evaluates only bare URIs or cloakenv template functions (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`), preserving foreign format flags (e.g. Docker format).
+  `resolveCmdArgs` evaluates only bare URIs or cloakenv template functions (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`, `exec`, `shquote`, `shellQuote`), preserving foreign format flags (e.g. Docker format).
 
 ## 🧭 Skills & Documentation Pointers
 
