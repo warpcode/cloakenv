@@ -36,9 +36,11 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 				Provider: "custom_vault",
 				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"myentity": {
-						"Password": "secret_pass",
-						"k":        "v",
-						"tags":     []any{"test"},
+						"Password":     "secret_pass",
+						"k":            "v",
+						"tags":         []any{"test"},
+						"json_payload": `{"token":"tok_secret_123"}`,
+						"yaml_payload": "api_key: key_xyz_789\nenv: prod",
 					},
 					"deep": {
 						"val": `{{ get "vault_a://deep2:val" }}`,
@@ -115,10 +117,102 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 			want: `{"a":"1"}`,
 		},
 		{
+			name: "toJSON",
+			data: map[string]any{"a": "1"},
+			tmpl: `{{ toJSON . }}`,
+			want: `{"a":"1"}`,
+		},
+		{
+			name: "json",
+			data: map[string]any{"a": "1"},
+			tmpl: `{{ json . }}`,
+			want: `{"a":"1"}`,
+		},
+		{
 			name: "toYaml",
 			data: map[string]any{"a": "1"},
 			tmpl: `{{ toYaml . }}`,
 			want: "a: \"1\"",
+		},
+		{
+			name: "toYAML",
+			data: map[string]any{"a": "1"},
+			tmpl: `{{ toYAML . }}`,
+			want: "a: \"1\"",
+		},
+		{
+			name: "yaml",
+			data: map[string]any{"a": "1"},
+			tmpl: `{{ yaml . }}`,
+			want: "a: \"1\"",
+		},
+		{
+			name: "fromJSON object field extraction",
+			tmpl: `{{ (fromJSON "{\"login\":\"octocat\"}").login }}`,
+			want: "octocat",
+		},
+		{
+			name: "fromJson alias object field extraction",
+			tmpl: `{{ (fromJson "{\"login\":\"octocat\"}").login }}`,
+			want: "octocat",
+		},
+		{
+			name: "fromJSON array indexing",
+			tmpl: `{{ index (fromJSON "[\"first\",\"second\"]") 1 }}`,
+			want: "second",
+		},
+		{
+			name: "fromJSON nested map and slice navigation",
+			tmpl: `{{ (index (fromJSON "{\"users\":[{\"id\":42}]}").users 0).id }}`,
+			want: "42",
+		},
+		{
+			name: "fromYAML object field extraction",
+			tmpl: `{{ (fromYAML "access_key_id: AKIA123").access_key_id }}`,
+			want: "AKIA123",
+		},
+		{
+			name: "fromYaml alias object field extraction",
+			tmpl: `{{ (fromYaml "access_key_id: AKIA123").access_key_id }}`,
+			want: "AKIA123",
+		},
+		{
+			name: "fromYAML array indexing",
+			tmpl: `{{ index (fromYAML "- apple\n- banana") 0 }}`,
+			want: "apple",
+		},
+		{
+			name: "fromYAML nested map and slice navigation",
+			tmpl: `{{ (index (fromYAML "services:\n  - name: api\n    port: 8080").services 0).port }}`,
+			want: "8080",
+		},
+		{
+			name: "pipeline get fromJSON",
+			tmpl: `{{ (get "vault_a://myentity:json_payload" | fromJSON).token }}`,
+			want: "tok_secret_123",
+		},
+		{
+			name: "pipeline get fromYAML",
+			tmpl: `{{ (get "vault_a://myentity:yaml_payload" | fromYAML).api_key }}`,
+			want: "key_xyz_789",
+		},
+		{
+			name: "pipeline simulated cli output fromJSON",
+			data: map[string]any{
+				"cli_output": `{"session":{"token":"sess_abc","expires_in":3600}}`,
+			},
+			tmpl: `{{ (.cli_output | fromJSON).session.token }}`,
+			want: "sess_abc",
+		},
+		{
+			name:    "fromJSON malformed",
+			tmpl:    `{{ fromJSON "{invalid-json" }}`,
+			wantErr: true,
+		},
+		{
+			name:    "fromYAML malformed",
+			tmpl:    `{{ fromYAML "invalid: yaml: :" }}`,
+			wantErr: true,
 		},
 		{
 			name: "upper",
@@ -194,6 +288,81 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 			name: "exec_with_nested_get",
 			tmpl: `{{ exec "echo" "-n" (get "vault_a://myentity:Password") }}`,
 			want: "secret_pass",
+		},
+		{
+			name: "tryGet_existing",
+			tmpl: `{{ tryGet "vault_a://myentity:Password" }}`,
+			want: "secret_pass",
+		},
+		{
+			name: "tryGet_missing",
+			tmpl: `{{ tryGet "vault_a://missing:Password" }}`,
+			want: "",
+		},
+		{
+			name: "tryGet_invalid_scheme",
+			tmpl: `{{ tryGet "nonexistent_scheme://foo" }}`,
+			want: "",
+		},
+		{
+			name: "tryGet_variadic_fallback_first_match",
+			tmpl: `{{ tryGet "vault_a://missing:val" "vault_a://myentity:Password" "vault_a://myentity:k" }}`,
+			want: "secret_pass",
+		},
+		{
+			name: "tryGet_variadic_all_missing",
+			tmpl: `{{ tryGet "vault_a://missing:a" "vault_a://missing:b" }}`,
+			want: "",
+		},
+		{
+			name: "tryGet_empty_args",
+			tmpl: `{{ tryGet }}`,
+			want: "",
+		},
+		{
+			name: "tryGet_depth_limit",
+			tmpl: `{{ tryGet "vault_a://deep:val" }}`,
+			want: "",
+		},
+		{
+			name: "default_pipeline_with_tryGet_fallback",
+			tmpl: `{{ tryGet "vault_a://missing:Password" | default "default_secret" }}`,
+			want: "default_secret",
+		},
+		{
+			name: "default_pipeline_with_tryGet_found",
+			tmpl: `{{ tryGet "vault_a://myentity:Password" | default "default_secret" }}`,
+			want: "secret_pass",
+		},
+		{
+			name: "default_direct_invocation_empty",
+			tmpl: `{{ default "my_default" "" }}`,
+			want: "my_default",
+		},
+		{
+			name: "default_direct_invocation_nonempty",
+			tmpl: `{{ default "my_default" "given_val" }}`,
+			want: "given_val",
+		},
+		{
+			name: "default_types_empty_int_and_nil",
+			tmpl: `{{ default "def" 0 }} / {{ default "def" nil }}`,
+			want: "def / def",
+		},
+		{
+			name: "coalesce_first_nonempty",
+			tmpl: `{{ coalesce "" (tryGet "vault_a://missing:k") "first_valid" "second" }}`,
+			want: "first_valid",
+		},
+		{
+			name: "coalesce_pipeline",
+			tmpl: `{{ "pipeline_val" | coalesce }}`,
+			want: "pipeline_val",
+		},
+		{
+			name: "coalesce_all_empty",
+			tmpl: `{{ coalesce "" nil "" }}`,
+			want: "",
 		},
 		{
 			name:    "missingkey",
@@ -315,10 +484,6 @@ func TestTemplateEngine_ExecComprehensive(t *testing.T) {
 	te := engine.NewTemplateEngine(nil)
 
 	t.Run("preserves adversarial metacharacters without shell splitting or injection", func(t *testing.T) {
-		// Pass characters like ;, |, &, $(), `, quotes, spaces into args
-		// We execute 'sh' with -c 'printf "%s\n" "$@"' _ <args...> or print args directly.
-		// Since exec directly invokes the command, let's use a small test script or python/sh that echoes each argv.
-		// Using sh with `-c 'for a in "$@"; do echo "ARG:$a"; done' _` proves argv boundaries!
 		adversarialArg := `hello; rm -rf / | cat && $(whoami) ` + "`id`" + ` 'single' "double"`
 		tmpl := `{{ exec "sh" "-c" "for a in \"$@\"; do echo \"ARG:$a\"; done" "_" .arg }}`
 		data := map[string]any{"arg": adversarialArg}
@@ -361,7 +526,6 @@ func TestTemplateEngine_ExecComprehensive(t *testing.T) {
 
 	t.Run("command exit failure without leaking secret arguments in error", func(t *testing.T) {
 		secretVal := "super_secret_token_12345"
-		// Run sh -c 'exit 2' with the secret as argument
 		tmpl := fmt.Sprintf(`{{ exec "sh" "-c" "echo standard_err_msg >&2; exit 2" "%s" }}`, secretVal)
 		_, err := te.Render(ctx, tmpl, nil, 0, "")
 		if err == nil {
@@ -378,7 +542,7 @@ func TestTemplateEngine_ExecComprehensive(t *testing.T) {
 
 	t.Run("context cancellation terminates command", func(t *testing.T) {
 		cancelledCtx, cancel := context.WithCancel(ctx)
-		cancel() // immediately cancelled
+		cancel()
 
 		tmpl := `{{ exec "sleep" "5" }}`
 		_, err := te.Render(cancelledCtx, tmpl, nil, 0, "")
