@@ -224,15 +224,14 @@ func TestMockKeyringStore_Concurrency(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(workers)
 
-	for i := range workers {
-		workerID := i
+	for workerID := range workers {
 		go func() {
 			defer wg.Done()
 			service := fmt.Sprintf("service-%d", workerID%5)
 			account := fmt.Sprintf("account-%d", workerID)
 			location := fmt.Sprintf("%s/%s", service, account)
 
-			for j := 0; j < iterations; j++ {
+			for j := range iterations {
 				val := fmt.Sprintf("val-%d-%d", workerID, j)
 				if err := kp.SetSecret(ctx, location, val); err != nil {
 					t.Errorf("worker %d set failed: %v", workerID, err)

@@ -35,11 +35,9 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 				Provider: "custom_vault",
 				Entities: config.ToCustomEntityMap(map[string]map[string]any{
 					"myentity": {
-						"Password":     "secret_pass",
-						"k":            "v",
-						"tags":         []any{"test"},
-						"json_payload": `{"token":"tok_secret_123"}`,
-						"yaml_payload": "api_key: key_xyz_789\nenv: prod",
+						"Password": "secret_pass",
+						"k":        "v",
+						"tags":     []any{"test"},
 					},
 					"deep": {
 						"val": `{{ get "vault_a://deep2:val" }}`,
@@ -116,102 +114,10 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 			want: `{"a":"1"}`,
 		},
 		{
-			name: "toJSON",
-			data: map[string]any{"a": "1"},
-			tmpl: `{{ toJSON . }}`,
-			want: `{"a":"1"}`,
-		},
-		{
-			name: "json",
-			data: map[string]any{"a": "1"},
-			tmpl: `{{ json . }}`,
-			want: `{"a":"1"}`,
-		},
-		{
 			name: "toYaml",
 			data: map[string]any{"a": "1"},
 			tmpl: `{{ toYaml . }}`,
 			want: "a: \"1\"",
-		},
-		{
-			name: "toYAML",
-			data: map[string]any{"a": "1"},
-			tmpl: `{{ toYAML . }}`,
-			want: "a: \"1\"",
-		},
-		{
-			name: "yaml",
-			data: map[string]any{"a": "1"},
-			tmpl: `{{ yaml . }}`,
-			want: "a: \"1\"",
-		},
-		{
-			name: "fromJSON object field extraction",
-			tmpl: `{{ (fromJSON "{\"login\":\"octocat\"}").login }}`,
-			want: "octocat",
-		},
-		{
-			name: "fromJson alias object field extraction",
-			tmpl: `{{ (fromJson "{\"login\":\"octocat\"}").login }}`,
-			want: "octocat",
-		},
-		{
-			name: "fromJSON array indexing",
-			tmpl: `{{ index (fromJSON "[\"first\",\"second\"]") 1 }}`,
-			want: "second",
-		},
-		{
-			name: "fromJSON nested map and slice navigation",
-			tmpl: `{{ (index (fromJSON "{\"users\":[{\"id\":42}]}").users 0).id }}`,
-			want: "42",
-		},
-		{
-			name: "fromYAML object field extraction",
-			tmpl: `{{ (fromYAML "access_key_id: AKIA123").access_key_id }}`,
-			want: "AKIA123",
-		},
-		{
-			name: "fromYaml alias object field extraction",
-			tmpl: `{{ (fromYaml "access_key_id: AKIA123").access_key_id }}`,
-			want: "AKIA123",
-		},
-		{
-			name: "fromYAML array indexing",
-			tmpl: `{{ index (fromYAML "- apple\n- banana") 0 }}`,
-			want: "apple",
-		},
-		{
-			name: "fromYAML nested map and slice navigation",
-			tmpl: `{{ (index (fromYAML "services:\n  - name: api\n    port: 8080").services 0).port }}`,
-			want: "8080",
-		},
-		{
-			name: "pipeline get fromJSON",
-			tmpl: `{{ (get "vault_a://myentity:json_payload" | fromJSON).token }}`,
-			want: "tok_secret_123",
-		},
-		{
-			name: "pipeline get fromYAML",
-			tmpl: `{{ (get "vault_a://myentity:yaml_payload" | fromYAML).api_key }}`,
-			want: "key_xyz_789",
-		},
-		{
-			name: "pipeline simulated cli output fromJSON",
-			data: map[string]any{
-				"cli_output": `{"session":{"token":"sess_abc","expires_in":3600}}`,
-			},
-			tmpl: `{{ (.cli_output | fromJSON).session.token }}`,
-			want: "sess_abc",
-		},
-		{
-			name:    "fromJSON malformed",
-			tmpl:    `{{ fromJSON "{invalid-json" }}`,
-			wantErr: true,
-		},
-		{
-			name:    "fromYAML malformed",
-			tmpl:    `{{ fromYAML "invalid: yaml: :" }}`,
-			wantErr: true,
 		},
 		{
 			name: "upper",

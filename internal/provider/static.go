@@ -66,13 +66,6 @@ func (p *staticProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 }
 
 func (p *staticProvider) determineEntityConfig(cfg ProviderConfig, raw map[string]any) (string, bool) {
-	// Deprecated: "entries_key" is an obsolete alias for "entities_root_key".
-	// It is retained for backward compatibility and is scheduled for removal in a future major release.
-	// Users should migrate to "entities_root_key".
-	if cfg.Settings["entries_key"] != "" {
-		fmt.Fprintf(os.Stderr, "Warning: %s vault setting 'entries_key' is deprecated and will be removed in a future release; use 'entities_root_key' instead\n", p.scheme)
-	}
-
 	var singleEntity bool
 	if cfg.SingleEntity != nil {
 		singleEntity = *cfg.SingleEntity

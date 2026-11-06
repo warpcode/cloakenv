@@ -96,7 +96,7 @@ func TestJsonProvider(t *testing.T) {
 	}
 }
 
-func TestJsonProviderCustomEntitiesRootKey(t *testing.T) {
+func TestJsonProviderCustomEntriesKey(t *testing.T) {
 	tempDir := t.TempDir()
 
 	// 1. Custom key: "hosts"
@@ -118,8 +118,8 @@ func TestJsonProviderCustomEntitiesRootKey(t *testing.T) {
 	ctx := context.Background()
 	cfg1 := ProviderConfig{
 		Settings: map[string]string{
-			"vault_path":        hostsPath,
-			"entities_root_key": "hosts",
+			"vault_path":  hostsPath,
+			"entries_key": "hosts",
 		},
 	}
 	if err := jp1.Initialize(ctx, cfg1); err != nil {
@@ -150,8 +150,8 @@ func TestJsonProviderCustomEntitiesRootKey(t *testing.T) {
 	jp2 := NewJsonProvider()
 	cfg2 := ProviderConfig{
 		Settings: map[string]string{
-			"vault_path":        rootPath,
-			"entities_root_key": ".",
+			"vault_path":  rootPath,
+			"entries_key": ".",
 		},
 	}
 	if err := jp2.Initialize(ctx, cfg2); err != nil {
@@ -170,8 +170,8 @@ func TestJsonProviderCustomEntitiesRootKey(t *testing.T) {
 	jp3 := NewJsonProvider()
 	cfg3 := ProviderConfig{
 		Settings: map[string]string{
-			"vault_path":        rootPath,
-			"entities_root_key": "hosts",
+			"vault_path":  rootPath,
+			"entries_key": "hosts",
 		},
 	}
 	if err := jp3.Initialize(ctx, cfg3); err != nil {

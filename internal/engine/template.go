@@ -259,20 +259,18 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 			}
 			return tcs, nil
 		},
-		"toEnv":    toEnv,
-		"toKv":     toEnv,
-		"toJSON":   toJSON,
-		"toJson":   toJSON,
-		"json":     toJSON,
-		"fromJSON": fromJSON,
-		"fromJson": fromJSON,
-		"toYAML":   toYAML,
-		"toYaml":   toYAML,
-		"yaml":     toYAML,
-		"fromYAML": fromYAML,
-		"fromYaml": fromYAML,
-		"upper":    strings.ToUpper,
-		"lower":    strings.ToLower,
+		"toEnv": toEnv,
+		"toKv":  toEnv,
+		"toJson": func(v any) (string, error) {
+			b, err := json.Marshal(v)
+			return string(b), err
+		},
+		"toYaml": func(v any) (string, error) {
+			b, err := yaml.Marshal(v)
+			return strings.TrimSpace(string(b)), err
+		},
+		"upper": strings.ToUpper,
+		"lower": strings.ToLower,
 		"env": func(s string) string {
 			return utils.FormatKeyWithFormat(s, utils.KeyFormatEnv)
 		},
@@ -386,32 +384,6 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 		return "", fmt.Errorf("template execution failed%s: %w", keyPart, err)
 	}
 	return buf.String(), nil
-}
-
-func toJSON(v any) (string, error) {
-	b, err := json.Marshal(v)
-	return string(b), err
-}
-
-func fromJSON(str string) (any, error) {
-	var out any
-	if err := json.Unmarshal([]byte(str), &out); err != nil {
-		return nil, fmt.Errorf("fromJSON failed: %w", err)
-	}
-	return out, nil
-}
-
-func toYAML(v any) (string, error) {
-	b, err := yaml.Marshal(v)
-	return strings.TrimSpace(string(b)), err
-}
-
-func fromYAML(str string) (any, error) {
-	var out any
-	if err := yaml.Unmarshal([]byte(str), &out); err != nil {
-		return nil, fmt.Errorf("fromYAML failed: %w", err)
-	}
-	return out, nil
 }
 
 // isEmpty determines if a value is consider empty for template helpers like default.

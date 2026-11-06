@@ -1,10 +1,8 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -964,18 +962,6 @@ func TestStaticProvider_Initialize(t *testing.T) {
 	})
 
 	t.Run("valid json multi entities (explicit entries_key)", func(t *testing.T) {
-		oldStderr := os.Stderr
-		r, w, err := os.Pipe()
-		if err != nil {
-			t.Fatalf("failed to create pipe: %v", err)
-		}
-		defer func() { _ = r.Close() }()
-		defer func() { _ = w.Close() }()
-		os.Stderr = w
-		t.Cleanup(func() {
-			os.Stderr = oldStderr
-		})
-
 		p := NewJsonProvider()
 		f := filepath.Join(t.TempDir(), "multi_root_entries")
 
@@ -989,16 +975,7 @@ func TestStaticProvider_Initialize(t *testing.T) {
 				"entries_key": "my_root",
 			},
 		}
-		err = p.Initialize(context.Background(), cfg)
-
-		_ = w.Close()
-		os.Stderr = oldStderr
-
-		var buf bytes.Buffer
-		if _, readErr := io.Copy(&buf, r); readErr != nil {
-			t.Fatalf("failed to read from pipe: %v", readErr)
-		}
-
+		err := p.Initialize(context.Background(), cfg)
 		if err != nil {
 			t.Fatalf("expected no error, got: %v", err)
 		}
@@ -1010,11 +987,6 @@ func TestStaticProvider_Initialize(t *testing.T) {
 		}
 		if _, ok := p.entries["e1"]; !ok {
 			t.Error("expected entry 'e1' to be present")
-		}
-
-		expectedWarning := "Warning: json vault setting 'entries_key' is deprecated and will be removed in a future release; use 'entities_root_key' instead\n"
-		if !strings.Contains(buf.String(), expectedWarning) {
-			t.Errorf("expected deprecation warning %q, got %q", expectedWarning, buf.String())
 		}
 	})
 

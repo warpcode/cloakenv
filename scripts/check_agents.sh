@@ -107,7 +107,7 @@ MISSING_SKILLS=()
 SKILL_COUNT=0
 for skill in ${ALL_REFERENCED_SKILLS}; do
     # Filter out obvious non-skill identifiers if any caught by regex
-    if [[ "${skill}" == "cloakenv" || "${skill}" == "main" || "${skill}" == "Password" || "${skill}" == "go" || "${skill}" == "google-jules-triage" || "${skill}" == "github-pr" ]]; then
+    if [[ "${skill}" == "cloakenv" || "${skill}" == "main" || "${skill}" == "Password" || "${skill}" == "go" ]]; then
         continue
     fi
     SKILL_COUNT=$((SKILL_COUNT + 1))
