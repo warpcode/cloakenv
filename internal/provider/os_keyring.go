@@ -5,9 +5,96 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/zalando/go-keyring"
 )
+
+// KeyringStore abstracts the low-level keyring storage operations.
+type KeyringStore interface {
+	Get(service, account string) (string, error)
+	Set(service, account, password string) error
+	Delete(service, account string) error
+}
+
+type defaultKeyringStore struct{}
+
+func (defaultKeyringStore) Get(service, account string) (string, error) {
+	return keyring.Get(service, account)
+}
+
+func (defaultKeyringStore) Set(service, account, password string) error {
+	return keyring.Set(service, account, password)
+}
+
+func (defaultKeyringStore) Delete(service, account string) error {
+	return keyring.Delete(service, account)
+}
+
+// MockKeyringStore is an in-memory, thread-safe implementation of KeyringStore for testing.
+type MockKeyringStore struct {
+	mu      sync.RWMutex
+	secrets map[string]map[string]string
+}
+
+// NewMockKeyringStore returns an initialized in-memory MockKeyringStore.
+func NewMockKeyringStore() *MockKeyringStore {
+	return &MockKeyringStore{
+		secrets: make(map[string]map[string]string),
+	}
+}
+
+// Get retrieves a stored password for the given service and account.
+func (m *MockKeyringStore) Get(service, account string) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	accounts, ok := m.secrets[service]
+	if !ok {
+		return "", keyring.ErrNotFound
+	}
+
+	val, ok := accounts[account]
+	if !ok {
+		return "", keyring.ErrNotFound
+	}
+
+	return val, nil
+}
+
+// Set stores a password for the given service and account.
+func (m *MockKeyringStore) Set(service, account, password string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.secrets[service]; !ok {
+		m.secrets[service] = make(map[string]string)
+	}
+	m.secrets[service][account] = password
+	return nil
+}
+
+// Delete removes a stored password for the given service and account.
+func (m *MockKeyringStore) Delete(service, account string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	accounts, ok := m.secrets[service]
+	if !ok {
+		return keyring.ErrNotFound
+	}
+
+	if _, ok := accounts[account]; !ok {
+		return keyring.ErrNotFound
+	}
+
+	delete(accounts, account)
+	if len(accounts) == 0 {
+		delete(m.secrets, service)
+	}
+
+	return nil
+}
 
 // OSKeyringProvider implements SecretProvider for the built-in keyring:// scheme.
 // It delegates to the native OS credential store:
@@ -18,11 +105,25 @@ import (
 // OSKeyringProvider is intentionally non-searchable: the OS keyring has no
 // enumeration API and exposing all stored credentials in search results would
 // be a security risk. It does not implement SearchableProvider.
-type OSKeyringProvider struct{}
+type OSKeyringProvider struct {
+	store KeyringStore
+}
 
-// NewOSKeyringProvider returns a new keyring provider instance.
+// NewOSKeyringProvider returns a new keyring provider instance using the default OS keyring store.
 func NewOSKeyringProvider() *OSKeyringProvider {
-	return &OSKeyringProvider{}
+	return &OSKeyringProvider{
+		store: defaultKeyringStore{},
+	}
+}
+
+// NewOSKeyringProviderWithStore returns a new keyring provider instance with a custom KeyringStore.
+func NewOSKeyringProviderWithStore(store KeyringStore) *OSKeyringProvider {
+	if store == nil {
+		store = defaultKeyringStore{}
+	}
+	return &OSKeyringProvider{
+		store: store,
+	}
 }
 
 // Scheme returns "keyring".
@@ -43,7 +144,7 @@ func (o *OSKeyringProvider) GetSecret(_ context.Context, location string) (strin
 		return "", err
 	}
 
-	secret, err := keyring.Get(service, account)
+	secret, err := o.store.Get(service, account)
 	if err != nil {
 		return "", fmt.Errorf("keyring lookup failed for %s/%s: %w", service, account, err)
 	}
@@ -58,19 +159,19 @@ func (o *OSKeyringProvider) SetSecret(_ context.Context, location string, value 
 	if err != nil {
 		return err
 	}
-	return keyring.Set(service, account, value)
+	return o.store.Set(service, account, value)
 }
 
 // SetRawSecret stores a secret in the OS keyring using raw service and account strings.
 // Used by the "auth login" subcommand.
 func (o *OSKeyringProvider) SetRawSecret(service, account, password string) error {
-	return keyring.Set(service, account, password)
+	return o.store.Set(service, account, password)
 }
 
 // DeleteRawSecret removes a secret from the OS keyring using raw service and account strings.
 // Used by the "auth forget" subcommand.
 func (o *OSKeyringProvider) DeleteRawSecret(service, account string) error {
-	return keyring.Delete(service, account)
+	return o.store.Delete(service, account)
 }
 
 // DeleteSecret removes a secret from the OS keyring.
@@ -80,7 +181,7 @@ func (o *OSKeyringProvider) DeleteSecret(_ context.Context, location string) err
 	if err != nil {
 		return err
 	}
-	return keyring.Delete(service, account)
+	return o.store.Delete(service, account)
 }
 
 // parseKeyringLocation splits a "service/account" string.
