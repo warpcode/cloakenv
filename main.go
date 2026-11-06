@@ -76,6 +76,8 @@ func run(args []string, stderr io.Writer) int {
 		return cmd.Search(parsedArgs[2:], cfg)
 	case "auth":
 		return cmd.Auth(parsedArgs[2:], cfg)
+	case "sync":
+		return cmd.Sync(parsedArgs[2:], cfg)
 	case "internal":
 		return cmd.Internal(parsedArgs[2:], cfg)
 	default:

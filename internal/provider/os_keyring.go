@@ -20,6 +20,8 @@ import (
 // be a security risk. It does not implement SearchableProvider.
 type OSKeyringProvider struct{}
 
+var _ WritableProvider = (*OSKeyringProvider)(nil)
+
 // NewOSKeyringProvider returns a new keyring provider instance.
 func NewOSKeyringProvider() *OSKeyringProvider {
 	return &OSKeyringProvider{}
