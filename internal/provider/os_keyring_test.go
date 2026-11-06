@@ -232,7 +232,7 @@ func TestMockKeyringStore_Concurrency(t *testing.T) {
 			account := fmt.Sprintf("account-%d", workerID)
 			location := fmt.Sprintf("%s/%s", service, account)
 
-			for j := 0; j < iterations; j++ {
+			for j := range iterations {
 				val := fmt.Sprintf("val-%d-%d", workerID, j)
 				if err := kp.SetSecret(ctx, location, val); err != nil {
 					t.Errorf("worker %d set failed: %v", workerID, err)
