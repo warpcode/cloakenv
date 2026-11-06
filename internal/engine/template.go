@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"text/template"
+	"time"
 
 	"github.com/warpcode/cloakenv/internal/provider"
 	"github.com/warpcode/cloakenv/internal/utils"
@@ -202,6 +205,20 @@ func entryToTemplateContext(e provider.Entry, providerName, vault, path string) 
 	}
 }
 
+// execInvocationError wraps an error originating inside the exec template function
+// to sanitize the error message and avoid leaking raw secret arguments from template execution.
+type execInvocationError struct {
+	err error
+}
+
+func (e *execInvocationError) Error() string {
+	return e.err.Error()
+}
+
+func (e *execInvocationError) Unwrap() error {
+	return e.err
+}
+
 // TemplateEngine wraps Go's text/template to evaluate strings with context.
 type TemplateEngine struct {
 	resolver *Resolver
@@ -337,6 +354,50 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 			}
 			return te.Render(ctx, string(data), tmplCtx, depth+1, configKey)
 		},
+		"shquote":    shquote,
+		"shellQuote": shquote,
+		"exec": func(name string, args ...any) (string, error) {
+			if strings.TrimSpace(name) == "" {
+				return "", fmt.Errorf("exec: executable name cannot be empty")
+			}
+
+			binPath, err := exec.LookPath(name)
+			if err != nil {
+				if errors.Is(err, exec.ErrDot) {
+					return "", fmt.Errorf("exec: execution of relative command %q from PATH is blocked due to security risks", name)
+				}
+				return "", fmt.Errorf("exec: command %q not found: %w", name, err)
+			}
+
+			strArgs := make([]string, len(args))
+			for i, arg := range args {
+				strArgs[i] = fmt.Sprintf("%v", arg)
+			}
+
+			const defaultExecTimeout = 30 * time.Second
+			execCtx := ctx
+			var cancel context.CancelFunc
+			if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+				execCtx, cancel = context.WithTimeout(ctx, defaultExecTimeout)
+				defer cancel()
+			}
+
+			cmd := exec.CommandContext(execCtx, binPath, strArgs...)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+
+			if err := cmd.Run(); err != nil {
+				errMsg := strings.TrimSpace(stderr.String())
+				if errMsg != "" {
+					return "", &execInvocationError{err: fmt.Errorf("exec: command %q failed: %s", name, errMsg)}
+				}
+				return "", &execInvocationError{err: fmt.Errorf("exec: command %q failed: %w", name, err)}
+			}
+
+			out := strings.TrimRight(stdout.String(), "\r\n")
+			return out, nil
+		},
 	}
 
 	tmpl, err := template.New("tmpl").Option("missingkey=error").Funcs(funcs).Parse(tmplStr)
@@ -366,6 +427,10 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 		if configKey != "" {
 			keyPart = fmt.Sprintf(" in configuration key %q", configKey)
 		}
+		var execErr *execInvocationError
+		if errors.As(err, &execErr) {
+			return "", fmt.Errorf("template execution failed%s: %w", keyPart, execErr.err)
+		}
 		return "", fmt.Errorf("template execution failed%s: %w", keyPart, err)
 	}
 	return buf.String(), nil
@@ -390,6 +455,12 @@ func toEnv(m map[string]any) (string, error) {
 		fmt.Fprintf(&sb, "%s=%s\n", k, valStr)
 	}
 	return strings.TrimSpace(sb.String()), nil
+}
+
+func shquote(s string) string {
+	// Safely quote a string in POSIX single-quotes.
+	// Single quotes inside the string are closed, escaped as \', and reopened: '\''
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func expandPath(path, configPath string) string {

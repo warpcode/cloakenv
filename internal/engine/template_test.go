@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
@@ -175,6 +176,26 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 			want: "file content: v",
 		},
 		{
+			name: "shquote",
+			tmpl: `{{ shquote "foo bar" }}`,
+			want: "'foo bar'",
+		},
+		{
+			name: "shellQuote_alias",
+			tmpl: `{{ shellQuote "foo'bar" }}`,
+			want: `'foo'\''bar'`,
+		},
+		{
+			name: "exec_echo",
+			tmpl: `{{ exec "echo" "hello" "world" }}`,
+			want: "hello world",
+		},
+		{
+			name: "exec_with_nested_get",
+			tmpl: `{{ exec "echo" "-n" (get "vault_a://myentity:Password") }}`,
+			want: "secret_pass",
+		},
+		{
 			name:    "missingkey",
 			data:    map[string]any{},
 			tmpl:    `{{ .missing }}`,
@@ -287,6 +308,154 @@ func TestTemplateEngine_RenderBufferPool(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestTemplateEngine_ExecComprehensive(t *testing.T) {
+	ctx := context.Background()
+	te := engine.NewTemplateEngine(nil)
+
+	t.Run("preserves adversarial metacharacters without shell splitting or injection", func(t *testing.T) {
+		// Pass characters like ;, |, &, $(), `, quotes, spaces into args
+		// We execute 'sh' with -c 'printf "%s\n" "$@"' _ <args...> or print args directly.
+		// Since exec directly invokes the command, let's use a small test script or python/sh that echoes each argv.
+		// Using sh with `-c 'for a in "$@"; do echo "ARG:$a"; done' _` proves argv boundaries!
+		adversarialArg := `hello; rm -rf / | cat && $(whoami) ` + "`id`" + ` 'single' "double"`
+		tmpl := `{{ exec "sh" "-c" "for a in \"$@\"; do echo \"ARG:$a\"; done" "_" .arg }}`
+		data := map[string]any{"arg": adversarialArg}
+		got, err := te.Render(ctx, tmpl, data, 0, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := "ARG:" + adversarialArg
+		if got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("trims trailing CRLF and LF newlines", func(t *testing.T) {
+		tmpl := `{{ exec "printf" "foo\r\n\r\n" }}`
+		got, err := te.Render(ctx, tmpl, nil, 0, "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "foo" {
+			t.Errorf("got %q, want %q", got, "foo")
+		}
+	})
+
+	t.Run("empty executable name error", func(t *testing.T) {
+		tmpl := `{{ exec "" }}`
+		_, err := te.Render(ctx, tmpl, nil, 0, "")
+		if err == nil {
+			t.Fatalf("expected error for empty exec name, got nil")
+		}
+	})
+
+	t.Run("command not found error", func(t *testing.T) {
+		tmpl := `{{ exec "non_existent_binary_xyz_123" }}`
+		_, err := te.Render(ctx, tmpl, nil, 0, "")
+		if err == nil {
+			t.Fatalf("expected error for missing command, got nil")
+		}
+	})
+
+	t.Run("command exit failure without leaking secret arguments in error", func(t *testing.T) {
+		secretVal := "super_secret_token_12345"
+		// Run sh -c 'exit 2' with the secret as argument
+		tmpl := fmt.Sprintf(`{{ exec "sh" "-c" "echo standard_err_msg >&2; exit 2" "%s" }}`, secretVal)
+		_, err := te.Render(ctx, tmpl, nil, 0, "")
+		if err == nil {
+			t.Fatalf("expected error on non-zero exit, got nil")
+		}
+		errMsg := err.Error()
+		if strings.Contains(errMsg, secretVal) {
+			t.Errorf("error message leaked secret argument: %s", errMsg)
+		}
+		if !strings.Contains(errMsg, "standard_err_msg") {
+			t.Errorf("expected stderr message in error, got: %s", errMsg)
+		}
+	})
+
+	t.Run("context cancellation terminates command", func(t *testing.T) {
+		cancelledCtx, cancel := context.WithCancel(ctx)
+		cancel() // immediately cancelled
+
+		tmpl := `{{ exec "sleep" "5" }}`
+		_, err := te.Render(cancelledCtx, tmpl, nil, 0, "")
+		if err == nil {
+			t.Fatalf("expected error on cancelled context, got nil")
+		}
+	})
+
+	t.Run("exec.ErrDot relative path execution blocked", func(t *testing.T) {
+		dir := t.TempDir()
+		cmdName := "relative-binary-test"
+		binPath := filepath.Join(dir, cmdName)
+		if err := os.WriteFile(binPath, []byte("#!/bin/sh\necho relative_ran\n"), 0755); err != nil {
+			t.Fatalf("failed to create relative executable: %v", err)
+		}
+
+		t.Chdir(dir)
+		t.Setenv("PATH", "."+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+		tmpl := fmt.Sprintf(`{{ exec %q }}`, cmdName)
+		_, err := te.Render(ctx, tmpl, nil, 0, "")
+		if err == nil {
+			t.Fatalf("expected error for relative PATH execution, got nil")
+		}
+		if !strings.Contains(err.Error(), "blocked due to security risks") {
+			t.Errorf("expected security risk error message, got: %v", err)
+		}
+	})
+}
+
+func TestTemplateEngine_Shquote(t *testing.T) {
+	ctx := context.Background()
+	te := engine.NewTemplateEngine(nil)
+
+	tests := []struct {
+		name string
+		tmpl string
+		want string
+	}{
+		{
+			name: "empty string",
+			tmpl: `{{ shquote "" }}`,
+			want: "''",
+		},
+		{
+			name: "simple string",
+			tmpl: `{{ shquote "hello" }}`,
+			want: "'hello'",
+		},
+		{
+			name: "string with spaces and metacharacters",
+			tmpl: `{{ shquote "hello world; rm -rf /" }}`,
+			want: "'hello world; rm -rf /'",
+		},
+		{
+			name: "string with single quotes",
+			tmpl: `{{ shquote "don't do that" }}`,
+			want: `'don'\''t do that'`,
+		},
+		{
+			name: "shellQuote alias",
+			tmpl: `{{ shellQuote "it's 'quoted'" }}`,
+			want: `'it'\''s '\''quoted'\'''`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := te.Render(ctx, tt.tmpl, nil, 0, "")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 func BenchmarkTemplateEngine_Render(b *testing.B) {

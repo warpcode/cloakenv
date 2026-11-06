@@ -133,6 +133,9 @@ func TestEnvBuilder_BareURICommandArgResolution(t *testing.T) {
 			"http://example.com/api",
 			"nonexistent_scheme://test",
 			"plain-argument",
+			`{{ exec "echo" "-n" "resolved-by-exec" }}`,
+			`{{ shquote "unquoted value" }}`,
+			`{{.State.Status}}`, // Foreign docker format string must pass through untouched
 		}
 
 		expectedArgs := []string{
@@ -142,6 +145,9 @@ func TestEnvBuilder_BareURICommandArgResolution(t *testing.T) {
 			"http://example.com/api",
 			"nonexistent_scheme://test",
 			"plain-argument",
+			"resolved-by-exec",
+			"'unquoted value'",
+			`{{.State.Status}}`,
 		}
 
 		newCmdArgs, _, err := orch.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
