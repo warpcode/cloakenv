@@ -472,6 +472,7 @@ func FilterEntry(entry Entry, includeFields, excludeFields []string) Entry {
 // FilterEntryWithPath applies path-aware recursive field filtering to an Entry's Attributes map,
 // taking entry path and root prefixes into account.
 func FilterEntryWithPath(entry Entry, entryPath string, rootPrefixes []string, includeFields, excludeFields []string) Entry {
+	entry = entry.EnsureOriginal()
 	if len(includeFields) == 0 && len(excludeFields) == 0 {
 		return entry
 	}
@@ -687,6 +688,7 @@ func (s *SearchableFilteringProvider) GetEntry(ctx context.Context, location str
 
 // FilterSearchResult applies field filtering to a SearchResult and its Entry.
 func FilterSearchResult(r SearchResult, rootPrefixes []string, includeFields, excludeFields []string) SearchResult {
+	r.Entry = r.Entry.EnsureOriginal()
 	if len(includeFields) == 0 && len(excludeFields) == 0 {
 		return r
 	}

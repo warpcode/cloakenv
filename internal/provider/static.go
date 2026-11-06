@@ -157,7 +157,7 @@ func (p *staticProvider) parseSingleEntity(cfg ProviderConfig, raw map[string]an
 		tags = cfg.Tags
 	}
 	entry.Tags = tags
-	p.entries[""] = entry
+	p.entries[""] = entry.EnsureOriginal()
 }
 
 func (p *staticProvider) parseMultiEntities(raw map[string]any, entitiesRootKey string) error {
@@ -200,7 +200,7 @@ func (p *staticProvider) parseMultiEntities(raw map[string]any, entitiesRootKey 
 			}
 		}
 
-		p.entries[name] = entry
+		p.entries[name] = entry.EnsureOriginal()
 	}
 
 	return nil
@@ -432,10 +432,14 @@ func resolveDotPath(val any, path string) (any, error) {
 	if path == "" {
 		return val, nil
 	}
-	parts := strings.Split(path, ".")
 	curr := val
+	remaining := path
 
-	for _, part := range parts {
+	// Optimization: strings.Cut avoids allocating a slice of strings via strings.Split
+	// for dot-path traversal across static provider attributes, filters, and mapping rules.
+	for len(remaining) > 0 {
+		var part string
+		part, remaining, _ = strings.Cut(remaining, ".")
 		if part == "" {
 			continue
 		}
@@ -463,8 +467,8 @@ func resolveDotPath(val any, path string) (any, error) {
 			}
 			curr = next
 		case []any:
-			var idx int
-			_, err := fmt.Sscan(part, &idx)
+			// Optimization: strconv.Atoi avoids fmt.Sscan reflection and scanner allocation overhead.
+			idx, err := strconv.Atoi(part)
 			if err != nil {
 				return nil, fmt.Errorf("cannot index array with non-integer %q", part)
 			}
