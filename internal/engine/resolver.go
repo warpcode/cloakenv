@@ -27,6 +27,7 @@ type Resolver struct {
 	providers      *ProviderManager
 	concurrencySem chan struct{}
 	searchFunc     SearchFunc
+	execMemo       *execMemo
 }
 
 // NewResolver creates a new Resolver.
@@ -34,6 +35,7 @@ func NewResolver(pm *ProviderManager, concurrencySem chan struct{}) *Resolver {
 	return &Resolver{
 		providers:      pm,
 		concurrencySem: concurrencySem,
+		execMemo:       newExecMemo(),
 	}
 }
 
