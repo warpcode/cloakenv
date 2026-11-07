@@ -193,6 +193,31 @@ func TestCachePruneExecution(t *testing.T) {
 	}
 }
 
+func TestFormatBytes(t *testing.T) {
+	tests := []struct {
+		bytes    int64
+		expected string
+	}{
+		{0, "0 B"},
+		{500, "500 B"},
+		{1023, "1023 B"},
+		{1024, "1.00 KB"},
+		{1536, "1.50 KB"},
+		{1024 * 1024, "1.00 MB"},
+		{1024 * 1024 * 1024, "1.00 GB"},
+		{1024 * 1024 * 1024 * 1024, "1.00 TB"},
+		{1024 * 1024 * 1024 * 1024 * 1024, "1024.00 TB"},
+		{5 * 1024 * 1024 * 1024 * 1024 * 1024, "5120.00 TB"},
+	}
+
+	for _, tt := range tests {
+		got := formatBytes(tt.bytes)
+		if got != tt.expected {
+			t.Errorf("formatBytes(%d) = %q, want %q", tt.bytes, got, tt.expected)
+		}
+	}
+}
+
 func TestGet_Help(t *testing.T) {
 	args := []string{"--help"}
 	cfg := &config.Config{}

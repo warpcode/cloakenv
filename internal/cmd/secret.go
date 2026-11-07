@@ -255,11 +255,11 @@ func formatBytes(b int64) string {
 		return fmt.Sprintf("%d B", b)
 	}
 	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
+	units := []string{"KB", "MB", "GB", "TB"}
+	for n := b / unit; n >= unit && exp < len(units)-1; n /= unit {
 		div *= unit
 		exp++
 	}
-	units := []string{"KB", "MB", "GB", "TB"}
 	return fmt.Sprintf("%.2f %s", float64(b)/float64(div), units[exp])
 }
 

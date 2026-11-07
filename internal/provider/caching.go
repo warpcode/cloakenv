@@ -498,6 +498,7 @@ func (c *CachingProvider) Prune() (int, int64, error) {
 
 		var prunedCount int
 		var reclaimedBytes int64
+		var errs []error
 
 		for _, f := range files {
 			if !f.IsDir() {
@@ -510,9 +511,12 @@ func (c *CachingProvider) Prune() (int, int64, error) {
 				nonceSize := aesgcm.NonceSize()
 				if len(data) < nonceSize {
 					fileSize := int64(len(data))
-					_ = os.Remove(filePath)
-					prunedCount++
-					reclaimedBytes += fileSize
+					if rmErr := os.Remove(filePath); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+						errs = append(errs, fmt.Errorf("caching provider: failed to remove %s: %w", f.Name(), rmErr))
+					} else {
+						prunedCount++
+						reclaimedBytes += fileSize
+					}
 					continue
 				}
 
@@ -520,9 +524,12 @@ func (c *CachingProvider) Prune() (int, int64, error) {
 				plaintext, err := aesgcm.Open(nil, nonce, ciphertext, nil)
 				if err != nil {
 					fileSize := int64(len(data))
-					_ = os.Remove(filePath)
-					prunedCount++
-					reclaimedBytes += fileSize
+					if rmErr := os.Remove(filePath); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+						errs = append(errs, fmt.Errorf("caching provider: failed to remove %s: %w", f.Name(), rmErr))
+					} else {
+						prunedCount++
+						reclaimedBytes += fileSize
+					}
 					continue
 				}
 
@@ -534,15 +541,18 @@ func (c *CachingProvider) Prune() (int, int64, error) {
 						// Overwrite with zeros and remove
 						zeros := make([]byte, len(data))
 						_ = os.WriteFile(filePath, zeros, 0600)
-						_ = os.Remove(filePath)
-						prunedCount++
-						reclaimedBytes += fileSize
+						if rmErr := os.Remove(filePath); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+							errs = append(errs, fmt.Errorf("caching provider: failed to remove %s: %w", f.Name(), rmErr))
+						} else {
+							prunedCount++
+							reclaimedBytes += fileSize
+						}
 					}
 				}
 				utils.ZeroBytes(plaintext)
 			}
 		}
-		return prunedCount, reclaimedBytes, nil
+		return prunedCount, reclaimedBytes, errors.Join(errs...)
 
 	default:
 		return 0, 0, nil
