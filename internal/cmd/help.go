@@ -16,6 +16,7 @@ Usage:
   cloakenv [-c config_path] show <entry-uri> [args]
   cloakenv [-c config_path] search [query] [args]
   cloakenv [-c config_path] auth <login|forget|status> [vault]
+  cloakenv [-c config_path] internal <subcommand> [args]
 
 Commands:
   run     Wrap a binary with injected environment variables
@@ -27,6 +28,7 @@ Commands:
   show    Retrieve and display a structured entry
   search  Search for structured entries
   auth    Manage vault credentials and status (subcommands: login, forget, status)
+  internal  Developer & hook helpers (subcommands: match-alias)
 
 Flags:
   -c config_path  Custom configuration file path (global flag)
