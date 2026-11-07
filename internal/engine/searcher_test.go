@@ -364,13 +364,97 @@ func TestSearchURIEncoding(t *testing.T) {
 		}
 	})
 
-	t.Run("UnsupportedParam", func(t *testing.T) {
-		_, _, err := parseSearchURI("unknown=value/Password")
-		if err == nil {
-			t.Fatal("expected error for unsupported parameter")
+	t.Run("DynamicAttributes", func(t *testing.T) {
+		exprQuery, attr, err := parseSearchURI("username=admin&url=https://example.com/api_key")
+		if err != nil {
+			t.Fatalf("failed to parse: %v", err)
 		}
-		if !strings.Contains(err.Error(), "unsupported search parameter") {
-			t.Errorf("unexpected error message: %v", err)
+		expectedExpr := `username == "admin" and url == "https://example.com"`
+		if exprQuery != expectedExpr {
+			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
+		}
+		if attr != "api_key" {
+			t.Errorf("expected attribute 'api_key', got %q", attr)
+		}
+	})
+
+	t.Run("GroupParameter", func(t *testing.T) {
+		exprQuery, attr, err := parseSearchURI("group=Production&username=admin/Password")
+		if err != nil {
+			t.Fatalf("failed to parse: %v", err)
+		}
+		expectedExpr := `(group.name == "Production" or group.path == "Production") and username == "admin"`
+		if exprQuery != expectedExpr {
+			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
+		}
+		if attr != "Password" {
+			t.Errorf("expected attribute 'Password', got %q", attr)
+		}
+	})
+
+	t.Run("MemberAttributes", func(t *testing.T) {
+		exprQuery, attr, err := parseSearchURI("_meta_.vault=testdb&group.name=website/token")
+		if err != nil {
+			t.Fatalf("failed to parse: %v", err)
+		}
+		expectedExpr := `_meta_.vault == "testdb" and group.name == "website"`
+		if exprQuery != expectedExpr {
+			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
+		}
+		if attr != "token" {
+			t.Errorf("expected attribute 'token', got %q", attr)
+		}
+	})
+
+	t.Run("DefaultPasswordAttribute", func(t *testing.T) {
+		exprQuery, attr, err := parseSearchURI("group=Production&username=admin")
+		if err != nil {
+			t.Fatalf("failed to parse: %v", err)
+		}
+		expectedExpr := `(group.name == "Production" or group.path == "Production") and username == "admin"`
+		if exprQuery != expectedExpr {
+			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
+		}
+		if attr != "Password" {
+			t.Errorf("expected attribute 'Password', got %q", attr)
+		}
+	})
+
+	t.Run("InvalidParamKeys", func(t *testing.T) {
+		invalidCases := []string{
+			"invalid key=value/Password",
+			"bad(key)=value/Password",
+			"123key=value/Password",
+			"key..dot=value/Password",
+			"a-b=value/Password",
+			".leading=value/Password",
+			"trailing.=value/Password",
+		}
+		for _, uri := range invalidCases {
+			_, _, err := parseSearchURI(uri)
+			if err == nil {
+				t.Errorf("expected error for invalid key in %q, got nil", uri)
+			}
+			if !strings.Contains(err.Error(), "invalid search parameter") {
+				t.Errorf("unexpected error message for %q: %v", uri, err)
+			}
+		}
+	})
+
+	t.Run("EmptyConditions", func(t *testing.T) {
+		emptyCases := []string{
+			"/Password",
+			"title=&username=/Password",
+			"=&tags=/Password",
+		}
+		for _, uri := range emptyCases {
+			_, _, err := parseSearchURI(uri)
+			if err == nil {
+				t.Errorf("expected error for empty conditions in %q, got nil", uri)
+			}
+			if !strings.Contains(err.Error(), "no query conditions specified") {
+				t.Errorf("unexpected error message for %q: %v", uri, err)
+			}
 		}
 	})
 }
@@ -551,6 +635,34 @@ servers:
 		_, err = orch.Search(ctx, `Password == "hidden_pass"`, []string{"non_searchable"})
 		if err == nil || !strings.Contains(err.Error(), "is not searchable") {
 			t.Errorf("expected searchable error, got: %v", err)
+		}
+	})
+
+	// 5. Verify dynamic search:// resolution with arbitrary entry attributes
+	t.Run("SearchURISchemeWithArbitraryAttributes", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, `{{ get "search://username=custom_user/Password" }}`)
+		if err != nil || val != "custom_password" {
+			t.Errorf("expected 'custom_password', got: %v (err: %v)", val, err)
+		}
+
+		val, err = orch.Resolve(ctx, `{{ get "search://db_user=postgres/db_port" }}`)
+		if err != nil || val != "5432" {
+			t.Errorf("expected '5432', got: %v (err: %v)", val, err)
+		}
+
+		val, err = orch.Resolve(ctx, `{{ get "search://port=8080/api_key" }}`)
+		if err != nil || val != "super_secret_api_token" {
+			t.Errorf("expected 'super_secret_api_token', got: %v (err: %v)", val, err)
+		}
+
+		val, err = orch.Resolve(ctx, `{{ get "search://tags=local&db_user=postgres/db_port" }}`)
+		if err != nil || val != "5432" {
+			t.Errorf("expected '5432', got: %v (err: %v)", val, err)
+		}
+
+		_, err = orch.Resolve(ctx, `{{ get "search://username=nonexistent/Password" }}`)
+		if err == nil || !strings.Contains(err.Error(), "no secrets found matching search query") {
+			t.Errorf("expected no secrets found error, got: %v", err)
 		}
 	})
 }
@@ -986,6 +1098,46 @@ func TestSearcher_UUIDAndGroupExpression(t *testing.T) {
 		}
 		if len(results) == 0 {
 			t.Errorf("expected results matching group.name == \"website\", got 0")
+		}
+	})
+
+	t.Run("SearchURIByGroup", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, `{{ get "search://group=website/Password" }}`)
+		if err != nil {
+			t.Fatalf("failed to resolve by group: %v", err)
+		}
+		if val != "testPassword123!" {
+			t.Errorf("expected 'testPassword123!', got %q", val)
+		}
+	})
+
+	t.Run("SearchURIByGroupAndUsername", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, `{{ get "search://group=website&username=user@email.com/Password" }}`)
+		if err != nil {
+			t.Fatalf("failed to resolve by group and username: %v", err)
+		}
+		if val != "testPassword123!" {
+			t.Errorf("expected 'testPassword123!', got %q", val)
+		}
+	})
+
+	t.Run("SearchURIByUsernameAttachment", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, `{{ get "search://username=user@email.com/hello.txt" }}`)
+		if err != nil {
+			t.Fatalf("failed to resolve attachment by username: %v", err)
+		}
+		if val != "Hello, World! Extraction Test Successful." {
+			t.Errorf("expected attachment content, got %q", val)
+		}
+	})
+
+	t.Run("SearchURIByGroupPath", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, `{{ get "search://group.path=website/Password" }}`)
+		if err != nil {
+			t.Fatalf("failed to resolve by group.path: %v", err)
+		}
+		if val != "testPassword123!" {
+			t.Errorf("expected 'testPassword123!', got %q", val)
 		}
 	})
 }

@@ -119,6 +119,15 @@ func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, 
 		matchedEntry := results[0].Entry
 		val, ok := matchedEntry.Attributes[attr]
 		if !ok {
+			for k, v := range matchedEntry.Attributes {
+				if strings.EqualFold(k, attr) {
+					val = v
+					ok = true
+					break
+				}
+			}
+		}
+		if !ok {
 			return "", fmt.Errorf("attribute %q not found in matched entry %q", attr, matchedEntry.Title)
 		}
 

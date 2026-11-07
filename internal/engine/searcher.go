@@ -196,6 +196,10 @@ func (s *Searcher) filterResultsByExpression(ctx context.Context, expressionStr 
 			groupMap["name"] = r.Entry.Group.Name
 			groupMap["uuid"] = r.Entry.Group.UUID
 			groupMap["path"] = r.Entry.Group.Path
+		} else if gVal, ok := r.Entry.Attributes["group"]; ok && gVal != nil {
+			groupMap["name"] = fmt.Sprint(gVal)
+			groupMap["uuid"] = ""
+			groupMap["path"] = fmt.Sprint(gVal)
 		} else {
 			groupMap["name"] = ""
 			groupMap["uuid"] = ""
@@ -210,8 +214,12 @@ func (s *Searcher) filterResultsByExpression(ctx context.Context, expressionStr 
 		env["_meta_"] = metaMap
 
 		for k, v := range r.Entry.Attributes {
-			if k != "title" && k != "tags" && k != "path" && k != "_meta_" && (k != "uuid" || r.Entry.UUID == "") && (k != "group" || r.Entry.Group == nil) {
+			if k != "title" && k != "tags" && k != "path" && k != "_meta_" && (k != "uuid" || r.Entry.UUID == "") && k != "group" {
 				env[k] = v
+				lowerK := strings.ToLower(k)
+				if lowerK != k && env[lowerK] == nil {
+					env[lowerK] = v
+				}
 			}
 		}
 
@@ -500,6 +508,9 @@ func parseSearchURI(location string) (string, string, error) {
 		}
 		k = strings.TrimSpace(k)
 		v = strings.TrimSpace(v)
+		if k == "" {
+			continue
+		}
 		switch k {
 		case "tags", "_meta_.tags":
 			tagRemaining := v
@@ -537,8 +548,57 @@ func parseSearchURI(location string) (string, string, error) {
 				b.Write(quoteBuf)
 				hasConditions = true
 			}
+		case "group":
+			if v != "" {
+				if hasConditions {
+					b.WriteString(" and ")
+				}
+				b.WriteString("(group.name == ")
+				quoteBuf = strconv.AppendQuote(quoteBuf[:0], v)
+				b.Write(quoteBuf)
+				b.WriteString(" or group.path == ")
+				b.Write(quoteBuf)
+				b.WriteString(")")
+				hasConditions = true
+			}
 		default:
-			return "", "", fmt.Errorf("unsupported search parameter: %q", k)
+			if !isValidSearchKey(k) {
+				return "", "", fmt.Errorf("invalid search parameter: %q", k)
+			}
+			if v != "" {
+				if hasConditions {
+					b.WriteString(" and ")
+				}
+				if n, err := strconv.ParseInt(v, 10, 64); err == nil && strconv.FormatInt(n, 10) == v {
+					b.WriteString("(")
+					b.WriteString(k)
+					b.WriteString(" == ")
+					quoteBuf = strconv.AppendQuote(quoteBuf[:0], v)
+					b.Write(quoteBuf)
+					b.WriteString(" or ")
+					b.WriteString(k)
+					b.WriteString(" == ")
+					b.WriteString(v)
+					b.WriteString(")")
+				} else if v == "true" || v == "false" {
+					b.WriteString("(")
+					b.WriteString(k)
+					b.WriteString(" == ")
+					quoteBuf = strconv.AppendQuote(quoteBuf[:0], v)
+					b.Write(quoteBuf)
+					b.WriteString(" or ")
+					b.WriteString(k)
+					b.WriteString(" == ")
+					b.WriteString(v)
+					b.WriteString(")")
+				} else {
+					b.WriteString(k)
+					b.WriteString(" == ")
+					quoteBuf = strconv.AppendQuote(quoteBuf[:0], v)
+					b.Write(quoteBuf)
+				}
+				hasConditions = true
+			}
 		}
 	}
 
@@ -547,4 +607,32 @@ func parseSearchURI(location string) (string, string, error) {
 	}
 
 	return b.String(), attr, nil
+}
+
+func isValidSearchKey(k string) bool {
+	if k == "" {
+		return false
+	}
+	startOfPart := true
+	for i := 0; i < len(k); i++ {
+		c := k[i]
+		if c == '.' {
+			if startOfPart || i == len(k)-1 {
+				return false
+			}
+			startOfPart = true
+			continue
+		}
+		if startOfPart {
+			if c != '_' && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+				return false
+			}
+			startOfPart = false
+		} else {
+			if c != '_' && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
+				return false
+			}
+		}
+	}
+	return !startOfPart
 }

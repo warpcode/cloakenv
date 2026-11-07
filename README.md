@@ -609,6 +609,9 @@ These providers are always available and do not require registration in `config.
 ```bash
 # Dynamically finds the entry with tags "env:prod" and "service:redis" and extracts its Password
 cloakenv get "search://tags=env:prod,service:redis&title=Cluster/Password"
+
+# Match entries dynamically by arbitrary entry attributes (e.g. group, username, url, custom fields)
+cloakenv get "search://group=Production&username=admin/Password"
 ```
 
 ---
