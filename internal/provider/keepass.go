@@ -50,6 +50,7 @@ func (k *KeePassProvider) Scheme() string {
 // Initialize opens, decrypts, and unlocks a KeePass database.
 // Settings in ProviderConfig:
 //   - "vault_path": filesystem path to the .kdbx file
+//   - "key_file": filesystem path to the .key / .keyx / raw key file (optional)
 //   - "remote_name": name of the remote configuration (e.g. "work")
 //   - "keyring_prefix": service name prefix for keyring
 //   - "force_prompt": "true" to force prompting for password
@@ -64,6 +65,8 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 	if vaultPath == "" {
 		return errors.New("keepass provider: vault_path is required")
 	}
+
+	keyFile := cfg.Settings["key_file"]
 
 	remoteName := cfg.Settings["remote_name"]
 	if remoteName == "" {
@@ -97,7 +100,16 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 		}
 	}
 
-	// 2. If not found and not forcing prompt, return an error instructing to login
+	// 2. If password is not found in keyring and not forcing prompt:
+	// If a key file is provided, first test if the database is protected by the key file alone.
+	if len(password) == 0 && !forcePrompt && keyFile != "" {
+		if unlockErr := k.unlock(vaultPath, nil, keyFile); unlockErr == nil {
+			// Key-file only unlock succeeded!
+			return nil
+		}
+	}
+
+	// If still no password and not forcing prompt, return an error instructing to login
 	if len(password) == 0 && !forcePrompt {
 		return fmt.Errorf("no credentials found for remote %q; please log in first using 'cloakenv auth login %s'", remoteName, remoteName)
 	}
@@ -129,7 +141,7 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 	}
 
 	// 4. Try to open and decrypt the database
-	unlockErr := k.unlock(vaultPath, password)
+	unlockErr := k.unlock(vaultPath, password, keyFile)
 	if unlockErr != nil {
 		if fromKeyring {
 			// Delete invalid credentials
@@ -149,19 +161,28 @@ func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) erro
 	return nil
 }
 
-func (k *KeePassProvider) unlock(vaultPath string, password []byte) error {
+func (k *KeePassProvider) unlock(vaultPath string, password []byte, keyFile string) error {
 	k.cacheMu.Lock()
 	k.entryCache = make(map[*gokeepasslib.Entry]map[string]string)
 	k.binaryCache = nil
 	k.cacheMu.Unlock()
 
-	// Expand ~ to home directory
+	// Expand ~ to home directory for vaultPath
 	if strings.HasPrefix(vaultPath, "~/") {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return fmt.Errorf("keepass provider: failed to resolve home directory: %w", err)
 		}
 		vaultPath = home + vaultPath[1:]
+	}
+
+	// Expand ~ to home directory for keyFile if present
+	if strings.HasPrefix(keyFile, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("keepass provider: failed to resolve home directory for key_file: %w", err)
+		}
+		keyFile = home + keyFile[1:]
 	}
 
 	file, err := os.Open(vaultPath) //nolint:gosec // operator-configured vault path; validated by internal/config
@@ -173,7 +194,30 @@ func (k *KeePassProvider) unlock(vaultPath string, password []byte) error {
 	}()
 
 	k.db = gokeepasslib.NewDatabase()
-	k.db.Credentials = gokeepasslib.NewPasswordCredentials(string(password))
+
+	if keyFile != "" {
+		keyBytes, readErr := os.ReadFile(keyFile) //nolint:gosec // operator-configured key_file path; validated by internal/config
+		if readErr != nil {
+			return fmt.Errorf("keepass provider: failed to load key file %s: %w", keyFile, readErr)
+		}
+		defer utils.ZeroBytes(keyBytes)
+
+		if len(password) > 0 {
+			creds, credErr := gokeepasslib.NewPasswordAndKeyDataCredentials(string(password), keyBytes)
+			if credErr != nil {
+				return fmt.Errorf("keepass provider: failed to load key file %s: %w", keyFile, credErr)
+			}
+			k.db.Credentials = creds
+		} else {
+			creds, credErr := gokeepasslib.NewKeyDataCredentials(keyBytes)
+			if credErr != nil {
+				return fmt.Errorf("keepass provider: failed to load key file %s: %w", keyFile, credErr)
+			}
+			k.db.Credentials = creds
+		}
+	} else {
+		k.db.Credentials = gokeepasslib.NewPasswordCredentials(string(password))
+	}
 
 	if err := gokeepasslib.NewDecoder(file).Decode(k.db); err != nil {
 		k.db.Credentials = nil

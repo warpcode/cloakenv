@@ -302,6 +302,12 @@ type VaultConfig struct {
 	// (e.g., the .kdbx file for keepass providers).
 	VaultPath string `yaml:"vault_path"`
 
+	// KeyFile specifies the path to a KeePass key file (.key / .keyx / raw key).
+	KeyFile string `yaml:"key_file"`
+
+	// KeyFileEnv specifies an environment variable name containing the path to a KeePass key file.
+	KeyFileEnv string `yaml:"key_file_env"`
+
 	// EntitiesRootKey defines the dictionary key under which entries are listed in the YAML/JSON database.
 	// Optional. Defaults to "entities" or "entries". Use "." to map directly to the root of the database file.
 	EntitiesRootKey string `yaml:"entities_root_key"`
@@ -430,6 +436,27 @@ func Load(path string) (*Config, error) {
 				vaultPath = filepath.Join(baseDir, vaultPath)
 			}
 			vault.VaultPath = filepath.Clean(vaultPath)
+		}
+		if vault.KeyFileEnv != "" {
+			if envVal := os.Getenv(vault.KeyFileEnv); envVal != "" {
+				vault.KeyFile = envVal
+			}
+		}
+		if vault.KeyFile != "" {
+			keyPath := expandHome(vault.KeyFile)
+			if !filepath.IsAbs(keyPath) && cfg.ConfigPath != "" {
+				baseDir := filepath.Dir(cfg.ConfigPath)
+				keyPath = filepath.Join(baseDir, keyPath)
+			}
+			vault.KeyFile = filepath.Clean(keyPath)
+
+			info, statErr := os.Stat(vault.KeyFile) //nolint:gosec // operator-configured key_file path
+			if statErr != nil {
+				return nil, fmt.Errorf("vault %q: key_file %q not found or inaccessible: %w", name, vault.KeyFile, statErr)
+			}
+			if info.IsDir() {
+				return nil, fmt.Errorf("vault %q: key_file %q is a directory, expected regular file", name, vault.KeyFile)
+			}
 		}
 		cfg.Vaults[name] = vault
 	}

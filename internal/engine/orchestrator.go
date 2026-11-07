@@ -230,6 +230,9 @@ func validateVaultConfig(vaultName string, vault config.VaultConfig, cfg *config
 		settings := map[string]string{
 			"vault_path": vault.VaultPath,
 		}
+		if vault.KeyFile != "" {
+			settings["key_file"] = vault.KeyFile
+		}
 		if err := kp.Validate(settings); err != nil {
 			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
 		}
