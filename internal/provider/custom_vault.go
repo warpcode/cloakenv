@@ -536,7 +536,7 @@ func ApplyKeyFormat(entry Entry, format string) Entry {
 	}
 	formatted := make(map[string]any, len(entry.Attributes))
 	for k, v := range entry.Attributes {
-		formatted[utils.FormatKeyWithFormat(k, format)] = formatValue(v, format)
+		formatted[utils.FormatKeyWithFormat(k, format)] = FormatValue(v, format)
 	}
 	entry.Attributes = formatted
 	return entry

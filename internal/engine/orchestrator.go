@@ -117,6 +117,18 @@ func (o *Orchestrator) GetEntry(ctx context.Context, uri string) (provider.Entry
 	return o.resolver.GetEntry(ctx, uri)
 }
 
+// GetRawEntry retrieves the unmodified Stage 1 raw entry before filtering,
+// mapping, key formatting, and computed attributes.
+func (o *Orchestrator) GetRawEntry(ctx context.Context, uri string) (provider.Entry, error) {
+	return o.resolver.GetRawEntry(ctx, uri)
+}
+
+// GetRawEntrySnapshot retrieves the pristine Stage 1 entry snapshot exactly as
+// stored by the underlying provider, without resolving attribute values.
+func (o *Orchestrator) GetRawEntrySnapshot(ctx context.Context, uri string) (provider.Entry, error) {
+	return o.resolver.GetRawEntrySnapshot(ctx, uri)
+}
+
 func (o *Orchestrator) GetEntries(ctx context.Context, uri string) ([]provider.Entry, error) {
 	return o.resolver.GetEntries(ctx, uri)
 }

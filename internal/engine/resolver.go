@@ -246,7 +246,11 @@ func (r *Resolver) GetEntriesRecursive(ctx context.Context, uri string, depth in
 		}
 		entries := make([]provider.Entry, len(results))
 		for i, res := range results {
-			entries[i] = res.Entry
+			entry := res.Entry
+			if provider.IsRawKeys(ctx) && entry.Original != nil {
+				entry = *entry.Original
+			}
+			entries[i] = entry
 		}
 		return entries, nil
 	}
@@ -261,9 +265,21 @@ func (r *Resolver) GetEntriesRecursive(ctx context.Context, uri string, depth in
 		}
 		entries := make([]provider.Entry, len(results))
 		for i, res := range results {
-			entries[i] = res.Entry
+			entry := res.Entry
+			if provider.IsRawKeys(ctx) && entry.Original != nil {
+				entry = *entry.Original
+			}
+			entries[i] = entry
 		}
 		return entries, nil
+	}
+
+	if provider.IsRawKeys(ctx) {
+		entry, err := r.GetRawEntryRecursive(ctx, uri, depth)
+		if err != nil {
+			return nil, err
+		}
+		return []provider.Entry{entry}, nil
 	}
 
 	entry, err := r.GetEntryRecursive(ctx, uri, depth)
@@ -298,6 +314,132 @@ func (r *Resolver) GetEntryRecursive(ctx context.Context, uri string, depth int)
 	}
 
 	return r.resolveEntryAttributes(ctx, entry, shouldResolveAttrs, depth)
+}
+
+// GetRawEntry retrieves the unmodified Stage 1 raw entry before filtering,
+// mapping, key formatting, and computed attributes.
+func (r *Resolver) GetRawEntry(ctx context.Context, uri string) (provider.Entry, error) {
+	depth := 0
+	if d, ok := ctx.Value(provider.ContextKeyDepth).(int); ok {
+		depth = d
+	}
+	return r.getRawEntryRecursive(ctx, uri, depth, true)
+}
+
+// GetRawEntrySnapshot retrieves the pristine Stage 1 entry snapshot exactly as
+// stored by the underlying provider, without resolving attribute values.
+// Nested entry references and templates are preserved verbatim, making it
+// suitable for pipeline inspection where structure matters more than values.
+func (r *Resolver) GetRawEntrySnapshot(ctx context.Context, uri string) (provider.Entry, error) {
+	depth := 0
+	if d, ok := ctx.Value(provider.ContextKeyDepth).(int); ok {
+		depth = d
+	}
+	return r.getRawEntryRecursive(ctx, uri, depth, false)
+}
+
+// GetRawEntryRecursive retrieves the raw entry at the specified recursion depth.
+func (r *Resolver) GetRawEntryRecursive(ctx context.Context, uri string, depth int) (provider.Entry, error) {
+	return r.getRawEntryRecursive(ctx, uri, depth, true)
+}
+
+func (r *Resolver) getRawEntryRecursive(ctx context.Context, uri string, depth int, resolveValues bool) (provider.Entry, error) {
+	if depth > 5 {
+		return provider.Entry{}, fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5 resolving entry %q", uri)
+	}
+	ctx = context.WithValue(ctx, provider.ContextKeyDepth, depth)
+
+	scheme, location, err := utils.ParseURI(uri)
+	if err != nil {
+		return provider.Entry{}, err
+	}
+
+	if attrIdx := strings.LastIndex(location, ":"); attrIdx >= 0 {
+		attrName := location[attrIdx+1:]
+		if attrName != "" {
+			parentURI := scheme + "://" + location[:attrIdx]
+			parentEntry, err := r.getRawEntryRecursive(ctx, parentURI, depth, resolveValues)
+			if err != nil {
+				return provider.Entry{}, err
+			}
+			val, ok := parentEntry.Attributes[attrName]
+			if !ok {
+				for k, v := range parentEntry.Attributes {
+					if strings.EqualFold(k, attrName) {
+						val = v
+						attrName = k
+						ok = true
+						break
+					}
+				}
+			}
+			if !ok {
+				return provider.Entry{}, fmt.Errorf("attribute %q not found in raw entry %q", attrName, location[:attrIdx])
+			}
+			return provider.Entry{
+				Title:      parentEntry.Title,
+				Tags:       parentEntry.Tags,
+				UUID:       parentEntry.UUID,
+				Group:      parentEntry.Group,
+				Attributes: map[string]any{attrName: val},
+			}.EnsureOriginal(), nil
+		}
+	}
+
+	p, isBuiltin, err := r.providers.GetProvider(ctx, scheme)
+	if err != nil {
+		return provider.Entry{}, err
+	}
+
+	shouldResolveAttrs := true
+	if !isBuiltin {
+		if _, ok := p.(provider.ValueResolvableProvider); ok {
+			shouldResolveAttrs = r.providers.Config().Vaults[scheme].ResolveValues
+		}
+	}
+
+	rawP := unwrapToRawProvider(p)
+	if searchable, ok := rawP.(provider.SearchableProvider); ok {
+		entry, err := searchable.GetEntry(ctx, location)
+		if err == nil {
+			if entry.Original != nil {
+				entry = *entry.Original
+			}
+			entry = entry.EnsureOriginal()
+			if !resolveValues {
+				return entry, nil
+			}
+			return r.resolveEntryAttributes(ctx, entry, shouldResolveAttrs, depth)
+		}
+	}
+
+	rawCtx := provider.WithRawKeys(ctx)
+	entry, shouldResolveAttrs, err := r.fetchProviderEntry(rawCtx, scheme, location)
+	if err != nil {
+		return provider.Entry{}, err
+	}
+	if entry.Original != nil {
+		entry = *entry.Original
+	}
+	entry = entry.EnsureOriginal()
+	if !resolveValues {
+		return entry, nil
+	}
+	return r.resolveEntryAttributes(ctx, entry, shouldResolveAttrs, depth)
+}
+
+func unwrapToRawProvider(p provider.SecretProvider) provider.SecretProvider {
+	curr := p
+	for {
+		if inner, ok := curr.(interface {
+			Underlying() provider.SecretProvider
+		}); ok {
+			curr = inner.Underlying()
+		} else {
+			break
+		}
+	}
+	return curr
 }
 
 func resolveSliceRecursive[T any](ctx context.Context, r *Resolver, typedVal []T, depth int, configKey string, formatFn func(any) T) ([]T, error) {
