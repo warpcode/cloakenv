@@ -1,10 +1,11 @@
 package provider
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/warpcode/cloakenv/internal/config"
@@ -295,8 +296,8 @@ func (c *CustomVaultProvider) Search(ctx context.Context, query SearchQuery) ([]
 
 	// Sort deterministically by path so results are stable across runs
 	// despite Go's randomized map iteration order.
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Path < results[j].Path
+	slices.SortFunc(results, func(a, b SearchResult) int {
+		return cmp.Compare(a.Path, b.Path)
 	})
 
 	return results, nil

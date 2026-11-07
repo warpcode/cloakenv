@@ -241,4 +241,26 @@ func TestCacheProvider(t *testing.T) {
 			t.Errorf("expected empty cache directory after ClearCache, got %d files", len(files))
 		}
 	})
+
+	t.Run("GetCacheFilePath", func(t *testing.T) {
+		cp := NewCacheProvider()
+		cp.cacheDir = "/tmp/cache"
+		path := cp.getCacheFilePath("test_location")
+		expected := filepath.Join("/tmp/cache", "ced718b23002817631bd4add6547c4e9a587c699cf0755db57d2b967fc490590")
+		if path != expected {
+			t.Errorf("getCacheFilePath(%q) = %q, want %q", "test_location", path, expected)
+		}
+	})
+}
+
+func BenchmarkGetCacheFilePath(b *testing.B) {
+	cp := NewCacheProvider()
+	cp.cacheDir = "/tmp/cache"
+	location := "production_db_password_key"
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = cp.getCacheFilePath(location)
+	}
 }
