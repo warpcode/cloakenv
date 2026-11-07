@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/warpcode/cloakenv/internal/audit"
 	"github.com/warpcode/cloakenv/internal/provider"
 	"github.com/warpcode/cloakenv/internal/utils"
 )
@@ -27,6 +28,7 @@ type Resolver struct {
 	providers      *ProviderManager
 	concurrencySem chan struct{}
 	searchFunc     SearchFunc
+	auditLogger    *audit.Logger
 }
 
 // NewResolver creates a new Resolver.
@@ -40,6 +42,32 @@ func NewResolver(pm *ProviderManager, concurrencySem chan struct{}) *Resolver {
 // SetSearchFunc sets the callback used for evaluating search:// URIs.
 func (r *Resolver) SetSearchFunc(sf SearchFunc) {
 	r.searchFunc = sf
+}
+
+// SetAuditLogger configures the audit logger used for secret access events.
+func (r *Resolver) SetAuditLogger(logger *audit.Logger) {
+	r.auditLogger = logger
+}
+
+func (r *Resolver) logAuditEvent(uri, outcome string) {
+	if r == nil || r.auditLogger == nil {
+		return
+	}
+	if err := r.auditLogger.Log(uri, outcome); err != nil {
+		// Audit logging must never block a caller or leak secret data on failure.
+		return
+	}
+}
+
+func classifyAuditOutcome(err error) string {
+	if err == nil {
+		return "SUCCESS"
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "denied") || strings.Contains(msg, "permission") || strings.Contains(msg, "forbidden") || strings.Contains(msg, "access denied") {
+		return "DENIED"
+	}
+	return "ERROR"
 }
 
 // Resolve takes a full value, evaluates any {{ get "scheme://..." }} template
@@ -109,10 +137,12 @@ func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, 
 
 		results, err := r.searchFunc(ctx, exprQuery, nil, depth+1)
 		if err != nil {
+			r.logAuditEvent(uri, classifyAuditOutcome(err))
 			return "", fmt.Errorf("search URI evaluation failed: %w", err)
 		}
 
 		if len(results) == 0 {
+			r.logAuditEvent(uri, "ERROR")
 			return "", fmt.Errorf("no secrets found matching search query %q", exprQuery)
 		}
 
@@ -128,6 +158,7 @@ func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, 
 			}
 		}
 		if !ok {
+			r.logAuditEvent(uri, "ERROR")
 			return "", fmt.Errorf("attribute %q not found in matched entry %q", attr, matchedEntry.Title)
 		}
 
@@ -137,11 +168,18 @@ func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, 
 		} else {
 			valStr = fmt.Sprintf("%v", val)
 		}
-		return r.expandString(ctx, valStr, depth+1, configKey)
+		result, err := r.expandString(ctx, valStr, depth+1, configKey)
+		if err != nil {
+			r.logAuditEvent(uri, classifyAuditOutcome(err))
+			return "", err
+		}
+		r.logAuditEvent(uri, "SUCCESS")
+		return result, nil
 	}
 
 	val, err := p.GetSecret(ctx, location)
 	if err != nil {
+		r.logAuditEvent(uri, classifyAuditOutcome(err))
 		return "", fmt.Errorf("failed to get secret from %q: %w", scheme, err)
 	}
 
@@ -153,8 +191,15 @@ func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, 
 	}
 
 	if shouldResolve {
-		return r.expandString(ctx, val, depth+1, configKey)
+		result, err := r.expandString(ctx, val, depth+1, configKey)
+		if err != nil {
+			r.logAuditEvent(uri, classifyAuditOutcome(err))
+			return "", err
+		}
+		r.logAuditEvent(uri, "SUCCESS")
+		return result, nil
 	}
+	r.logAuditEvent(uri, "SUCCESS")
 	return val, nil
 }
 
