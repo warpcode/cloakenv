@@ -89,7 +89,7 @@ func TestExecMemo_DeduplicationAndConcurrency(t *testing.T) {
 		}
 
 		ctx := context.Background()
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			out, err := memo.execute(ctx, "/bin/token-gen", []string{"--user", "alice"}, nil, 0, runFn)
 			if err != nil {
 				t.Fatalf("execute failed: %v", err)
@@ -109,7 +109,12 @@ func TestExecMemo_DeduplicationAndConcurrency(t *testing.T) {
 		var callCount atomic.Int64
 		gate := make(chan struct{})
 
-		runFn := func(ctx context.Context) (string, error) {
+		runFn := func(runCtx context.Context) (string, error) {
+			select {
+			case <-runCtx.Done():
+				return "", runCtx.Err()
+			default:
+			}
 			callCount.Add(1)
 			<-gate
 			return "tok_concurrent", nil
@@ -123,7 +128,7 @@ func TestExecMemo_DeduplicationAndConcurrency(t *testing.T) {
 		results := make([]string, goroutines)
 		errs := make([]error, goroutines)
 
-		for i := 0; i < goroutines; i++ {
+		for i := range goroutines {
 			go func(idx int) {
 				defer wg.Done()
 				res, err := memo.execute(ctx, "/bin/token-gen", []string{"--user", "bob"}, nil, 0, runFn)
@@ -141,7 +146,7 @@ func TestExecMemo_DeduplicationAndConcurrency(t *testing.T) {
 			t.Fatalf("concurrent runFn call count = %d, want 1", got)
 		}
 
-		for i := 0; i < goroutines; i++ {
+		for i := range goroutines {
 			if errs[i] != nil {
 				t.Fatalf("goroutine %d failed: %v", i, errs[i])
 			}
@@ -155,7 +160,12 @@ func TestExecMemo_DeduplicationAndConcurrency(t *testing.T) {
 		memo := newExecMemo()
 		gate := make(chan struct{})
 
-		runFn := func(ctx context.Context) (string, error) {
+		runFn := func(runCtx context.Context) (string, error) {
+			select {
+			case <-runCtx.Done():
+				return "", runCtx.Err()
+			default:
+			}
 			<-gate
 			return "tok_slow", nil
 		}
