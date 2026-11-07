@@ -3,8 +3,6 @@ package utils
 import (
 	"bytes"
 	"errors"
-	"io"
-	"os"
 	"strings"
 	"testing"
 )
@@ -70,23 +68,9 @@ func TestRenderOutput(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			oldStdout := os.Stdout
-			r, w, err := os.Pipe()
-			if err != nil {
-				t.Fatalf("failed to create pipe: %v", err)
-			}
-			os.Stdout = w
-
-			renderErr := RenderOutput(tt.data, tt.asJSON, tt.errorLabel)
-
-			_ = w.Close()
-			os.Stdout = oldStdout
-
+			t.Parallel()
 			var buf bytes.Buffer
-			if _, err := io.Copy(&buf, r); err != nil {
-				t.Fatalf("failed to read captured stdout: %v", err)
-			}
-			_ = r.Close()
+			renderErr := RenderOutputTo(&buf, tt.data, tt.asJSON, tt.errorLabel)
 
 			if (renderErr != nil) != tt.wantErr {
 				t.Fatalf("RenderOutput() error = %v, wantErr %v", renderErr, tt.wantErr)
