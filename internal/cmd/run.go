@@ -126,7 +126,7 @@ func Run(args []string, cfg *config.Config) int {
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Secret resolution failed: %v\n", err)
-		return 1
+		return exitCodeForContext(ctx, 1)
 	}
 
 	finalCmdArgs := envDetails.Command
@@ -142,6 +142,10 @@ func Run(args []string, cfg *config.Config) int {
 		printDryRunPreview(cmdToDisplay, envDetails.InjectedKeys)
 		return 0
 	}
+
+	// Stop signalContext notification before transferring control to runner.RunCommand,
+	// so child process signal handling is not intercepted by the parent context.
+	stop()
 
 	// Execute the wrapped command
 	return runner.RunCommand(finalCmdArgs, envDetails.Env)

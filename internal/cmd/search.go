@@ -42,7 +42,7 @@ func Search(args []string, cfg *config.Config) int {
 	results, err := orch.Search(ctx, query, repoScopes)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Search failed: %v\n", err)
-		return 1
+		return exitCodeForContext(ctx, 1)
 	}
 
 	flatResults := flattenSearchResults(results, selectedKeys, showMeta)

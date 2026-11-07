@@ -127,7 +127,7 @@ func Show(args []string, cfg *config.Config) int {
 		entry, err = orch.GetEntry(ctx, opts.positionalURI)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to retrieve entry: %v\n", err)
-			return 1
+			return exitCodeForContext(ctx, 1)
 		}
 	} else {
 		entry, err = orch.BuildMergedEntry(ctx, engine.MergedEntryConfig{
@@ -137,7 +137,7 @@ func Show(args []string, cfg *config.Config) int {
 		})
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			return 1
+			return exitCodeForContext(ctx, 1)
 		}
 	}
 

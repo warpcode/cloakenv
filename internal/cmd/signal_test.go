@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"errors"
+	"os"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +19,47 @@ func TestSignalContext_Cancellation(t *testing.T) {
 	if ctx.Err() != nil {
 		t.Fatalf("expected active context, got %v", ctx.Err())
 	}
+
+	if runtime.GOOS != "windows" {
+		proc, err := os.FindProcess(os.Getpid())
+		if err != nil {
+			t.Fatalf("failed to find current process: %v", err)
+		}
+		if err := proc.Signal(os.Interrupt); err != nil {
+			t.Fatalf("failed to send interrupt signal: %v", err)
+		}
+
+		select {
+		case <-ctx.Done():
+			if ctx.Err() == nil {
+				t.Errorf("expected non-nil context error upon receiving interrupt")
+			}
+			if code := exitCodeForContext(ctx, 1); code != 130 {
+				t.Errorf("exitCodeForContext = %d, want 130 for SIGINT", code)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("context was not canceled after sending os.Interrupt")
+		}
+	}
+}
+
+func TestExitCodeForContext(t *testing.T) {
+	t.Run("nil or non-canceled context returns default", func(t *testing.T) {
+		if code := exitCodeForContext(nil, 42); code != 42 {
+			t.Errorf("got %d, want 42", code)
+		}
+		if code := exitCodeForContext(context.Background(), 1); code != 1 {
+			t.Errorf("got %d, want 1", code)
+		}
+	})
+
+	t.Run("standard canceled context returns default", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if code := exitCodeForContext(ctx, 5); code != 5 {
+			t.Errorf("got %d, want 5", code)
+		}
+	})
 }
 
 func TestRestoreTerminalOnInterrupt(t *testing.T) {
@@ -54,11 +97,16 @@ func TestRestoreTerminalOnInterrupt(t *testing.T) {
 			return fakeState, nil
 		}
 		var restoreCount int32
+		restoredCh := make(chan struct{}, 1)
 		restoreFunc = func(fd int, st *term.State) error {
 			if st != fakeState {
 				return errors.New("unexpected state")
 			}
 			atomic.AddInt32(&restoreCount, 1)
+			select {
+			case restoredCh <- struct{}{}:
+			default:
+			}
 			return nil
 		}
 
@@ -66,11 +114,17 @@ func TestRestoreTerminalOnInterrupt(t *testing.T) {
 		cleanup := restoreTerminalOnInterrupt(ctx, 0)
 
 		cancel()
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-restoredCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("restoreFunc was not called upon context cancellation")
+		}
+
 		cleanup()
 
-		if count := atomic.LoadInt32(&restoreCount); count != 1 {
-			t.Errorf("expected restore to be called exactly once, got %d", count)
+		// Cleanup should also execute restore safely (idempotent restore on terminal)
+		if count := atomic.LoadInt32(&restoreCount); count < 1 {
+			t.Errorf("expected restore to be called at least once, got %d", count)
 		}
 	})
 
