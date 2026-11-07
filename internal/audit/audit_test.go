@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -51,9 +52,11 @@ func TestLoggerWritesJSONL(t *testing.T) {
 	if event.Subcommand == "" {
 		t.Fatal("expected subcommand to be present")
 	}
-	if info, statErr := os.Stat(logPath); statErr != nil {
-		t.Fatalf("Stat failed: %v", statErr)
-	} else if info.Mode().Perm() != 0o600 {
-		t.Fatalf("expected file mode 0600, got %v", info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		if info, statErr := os.Stat(logPath); statErr != nil {
+			t.Fatalf("Stat failed: %v", statErr)
+		} else if info.Mode().Perm() != 0o600 {
+			t.Fatalf("expected file mode 0600, got %v", info.Mode().Perm())
+		}
 	}
 }
