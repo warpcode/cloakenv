@@ -196,8 +196,9 @@ func (o *Orchestrator) ClearCache(ctx context.Context) error {
 	return o.providerManager.ClearCache(ctx)
 }
 
-// PruneCache removes expired cache entries across all configured vaults.
-func (o *Orchestrator) PruneCache(ctx context.Context) error {
+// PruneCache removes expired cache entries from the standalone cache provider
+// and across all configured vaults with caching enabled.
+func (o *Orchestrator) PruneCache(ctx context.Context) (PruneStats, error) {
 	return o.providerManager.PruneCache(ctx)
 }
 
