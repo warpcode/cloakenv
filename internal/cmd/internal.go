@@ -39,14 +39,14 @@ func Internal(args []string, cfg *config.Config) int {
 	case "match-alias":
 		return runMatchAlias(subArgs, cfg)
 	case "list-vaults":
-		return runListVaults(subArgs, cfg)
+		return runListVaults(cfg)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown internal subcommand: %s\n", subcmd)
 		return 1
 	}
 }
 
-func runListVaults(args []string, cfg *config.Config) int {
+func runListVaults(cfg *config.Config) int {
 	if cfg == nil || len(cfg.Vaults) == 0 {
 		return 0
 	}
