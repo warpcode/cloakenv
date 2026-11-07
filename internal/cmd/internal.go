@@ -38,10 +38,34 @@ func Internal(args []string, cfg *config.Config) int {
 	switch subcmd {
 	case "match-alias":
 		return runMatchAlias(subArgs, cfg)
+	case "list-vaults":
+		return runListVaults(subArgs, cfg)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown internal subcommand: %s\n", subcmd)
 		return 1
 	}
+}
+
+func runListVaults(args []string, cfg *config.Config) int {
+	if cfg == nil || len(cfg.Vaults) == 0 {
+		return 0
+	}
+	var vaults []string
+	for name := range cfg.Vaults {
+		vaults = append(vaults, name)
+	}
+	// Sort for deterministic output
+	for i := 0; i < len(vaults); i++ {
+		for j := i + 1; j < len(vaults); j++ {
+			if vaults[i] > vaults[j] {
+				vaults[i], vaults[j] = vaults[j], vaults[i]
+			}
+		}
+	}
+	for _, v := range vaults {
+		fmt.Println(v)
+	}
+	return 0
 }
 
 func runMatchAlias(args []string, cfg *config.Config) int {

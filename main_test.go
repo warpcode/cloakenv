@@ -62,6 +62,27 @@ func TestMainArgsParsing(t *testing.T) {
 			wantErr:  "",
 		},
 		{
+			name:     "version flag",
+			args:     []string{"--version"},
+			wantExit: 0,
+			wantOut:  "cloakenv version",
+			wantErr:  "",
+		},
+		{
+			name:     "short version flag",
+			args:     []string{"-v"},
+			wantExit: 0,
+			wantOut:  "cloakenv version",
+			wantErr:  "",
+		},
+		{
+			name:     "version subcommand",
+			args:     []string{"version"},
+			wantExit: 0,
+			wantOut:  "cloakenv version",
+			wantErr:  "",
+		},
+		{
 			name:     "unknown command",
 			args:     []string{"unknown"},
 			wantExit: 1,
