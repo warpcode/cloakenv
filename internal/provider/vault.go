@@ -188,7 +188,9 @@ func (v *VaultProvider) loginAppRole(ctx context.Context, roleID, secretID strin
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -346,7 +348,9 @@ func (v *VaultProvider) executeRequest(ctx context.Context, method, reqURL strin
 	if err != nil {
 		return nil, nil, fmt.Errorf("vault provider: request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
