@@ -300,6 +300,81 @@ func (r *Resolver) GetEntryRecursive(ctx context.Context, uri string, depth int)
 	return r.resolveEntryAttributes(ctx, entry, shouldResolveAttrs, depth)
 }
 
+// GetRawEntry retrieves the unmodified Stage 1 raw entry before filtering,
+// mapping, key formatting, and computed attributes.
+func (r *Resolver) GetRawEntry(ctx context.Context, uri string) (provider.Entry, error) {
+	depth := 0
+	if d, ok := ctx.Value(provider.ContextKeyDepth).(int); ok {
+		depth = d
+	}
+	return r.GetRawEntryRecursive(ctx, uri, depth)
+}
+
+// GetRawEntryRecursive retrieves the raw entry at the specified recursion depth.
+func (r *Resolver) GetRawEntryRecursive(ctx context.Context, uri string, depth int) (provider.Entry, error) {
+	if depth > 5 {
+		return provider.Entry{}, fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5 resolving entry %q", uri)
+	}
+	ctx = context.WithValue(ctx, provider.ContextKeyDepth, depth)
+
+	scheme, location, err := utils.ParseURI(uri)
+	if err != nil {
+		return provider.Entry{}, err
+	}
+
+	entry, handled, err := r.resolveAttributeSelector(ctx, location, uri, depth)
+	if err != nil {
+		return provider.Entry{}, err
+	}
+	if handled {
+		return entry, nil
+	}
+
+	p, isBuiltin, err := r.providers.GetProvider(ctx, scheme)
+	if err != nil {
+		return provider.Entry{}, err
+	}
+
+	shouldResolveAttrs := true
+	if !isBuiltin {
+		if _, ok := p.(provider.ValueResolvableProvider); ok {
+			shouldResolveAttrs = r.providers.Config().Vaults[scheme].ResolveValues
+		}
+	}
+
+	rawP := unwrapToRawProvider(p)
+	if searchable, ok := rawP.(provider.SearchableProvider); ok {
+		entry, err := searchable.GetEntry(ctx, location)
+		if err == nil {
+			return r.resolveEntryAttributes(ctx, entry.EnsureOriginal(), shouldResolveAttrs, depth)
+		}
+	}
+
+	rawCtx := provider.WithRawKeys(ctx)
+	entry, shouldResolveAttrs, err = r.fetchProviderEntry(rawCtx, scheme, location)
+	if err != nil {
+		return provider.Entry{}, err
+	}
+	if entry.Original != nil {
+		entry = *entry.Original
+	}
+	return r.resolveEntryAttributes(ctx, entry, shouldResolveAttrs, depth)
+}
+
+func unwrapToRawProvider(p provider.SecretProvider) provider.SecretProvider {
+	curr := p
+	for {
+		if inner, ok := curr.(interface {
+			Underlying() provider.SecretProvider
+		}); ok {
+			curr = inner.Underlying()
+		} else {
+			break
+		}
+	}
+	return curr
+}
+
 func resolveSliceRecursive[T any](ctx context.Context, r *Resolver, typedVal []T, depth int, configKey string, formatFn func(any) T) ([]T, error) {
 	resolvedSlice := make([]T, len(typedVal))
 	var wg sync.WaitGroup

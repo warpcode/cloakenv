@@ -21,6 +21,8 @@ type showOptions struct {
 	keyFormat     string
 	positionalURI string
 	showMeta      bool
+	raw           bool
+	explain       bool
 }
 
 func parseShowFlags(args []string) (*showOptions, error) {
@@ -29,7 +31,7 @@ func parseShowFlags(args []string) (*showOptions, error) {
 		outputFormat: "yaml",
 	}
 
-	usageMsg := "Usage: cloakenv show <entry-uri> [-f format] [-o yaml | json | env | keys] [--show-meta]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-f format] [-o yaml | json | env | keys] [--show-meta]"
+	usageMsg := "Usage: cloakenv show <entry-uri> [-f format] [-o yaml | json | env | keys] [--raw] [--explain] [--show-meta]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-f format] [-o yaml | json | env | keys] [--raw] [--show-meta]"
 
 	parser := NewFlagParser()
 	parser.Var([]string{"-f", "--key-format"}, true, "flag -f/--key-format requires an argument", func(name, val string) error {
@@ -37,6 +39,14 @@ func parseShowFlags(args []string) (*showOptions, error) {
 			return fmt.Errorf("invalid key format %q (expected none, env, snake, or kebab)", val)
 		}
 		opts.keyFormat = val
+		return nil
+	})
+	parser.Var([]string{"--raw"}, false, "", func(name, val string) error {
+		opts.raw = true
+		return nil
+	})
+	parser.Var([]string{"--explain"}, false, "", func(name, val string) error {
+		opts.explain = true
 		return nil
 	})
 	parser.Var([]string{"--show-meta"}, false, "", func(name, val string) error {
@@ -82,6 +92,20 @@ func parseShowFlags(args []string) (*showOptions, error) {
 		return nil, err
 	}
 
+	if opts.raw && opts.explain {
+		return nil, fmt.Errorf("cannot use --raw and --explain together")
+	}
+	if opts.explain && (opts.outputFormat == "env" || opts.outputFormat == "keys") {
+		return nil, fmt.Errorf("invalid output format %q for --explain (expected yaml or json)", opts.outputFormat)
+	}
+	if opts.explain && (len(opts.explicit) > 0 || len(opts.whitelist) > 0 || len(opts.merges) > 1) {
+		return nil, fmt.Errorf("--explain can only be used with a single entry URI")
+	}
+	if opts.explain && opts.positionalURI == "" && len(opts.merges) == 1 {
+		opts.positionalURI = opts.merges[0]
+		opts.merges = nil
+	}
+
 	hasFlags := len(opts.merges) > 0 || len(opts.explicit) > 0 || len(opts.whitelist) > 0
 	if hasFlags && opts.positionalURI != "" {
 		opts.merges = append([]string{opts.positionalURI}, opts.merges...)
@@ -94,7 +118,7 @@ func parseShowFlags(args []string) (*showOptions, error) {
 	return opts, nil
 }
 
-// Show handles "cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]"
+// Show handles "cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--raw] [--explain]"
 func Show(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
 		PrintShowHelp()
@@ -107,7 +131,37 @@ func Show(args []string, cfg *config.Config) int {
 		return 1
 	}
 
-	if opts.keyFormat != "" {
+	if opts.explain {
+		if opts.positionalURI == "" {
+			fmt.Fprintln(os.Stderr, "--explain requires a single entry URI")
+			return 1
+		}
+		if opts.keyFormat != "" {
+			if cfg == nil {
+				cfg = &config.Config{}
+			}
+			cfg.KeyFormatOverride = opts.keyFormat
+		}
+		orch, err := engine.NewOrchestrator(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
+			return 1
+		}
+		ctx := context.Background()
+		explanation, err := orch.ExplainEntry(ctx, opts.positionalURI)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to retrieve entry: %v\n", err)
+			return 1
+		}
+		asJSON := (opts.outputFormat == "json")
+		if err := utils.RenderOutput(explanation, asJSON, "pipeline"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	}
+
+	if opts.keyFormat != "" && !opts.raw {
 		if cfg == nil {
 			cfg = &config.Config{}
 		}
@@ -124,13 +178,21 @@ func Show(args []string, cfg *config.Config) int {
 	var entry provider.Entry
 
 	if opts.positionalURI != "" {
-		entry, err = orch.GetEntry(ctx, opts.positionalURI)
+		if opts.raw {
+			entry, err = orch.GetRawEntry(ctx, opts.positionalURI)
+		} else {
+			entry, err = orch.GetEntry(ctx, opts.positionalURI)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to retrieve entry: %v\n", err)
 			return 1
 		}
 	} else {
-		entry, err = orch.BuildMergedEntry(ctx, engine.MergedEntryConfig{
+		mergedCtx := ctx
+		if opts.raw {
+			mergedCtx = provider.WithRawKeys(ctx)
+		}
+		entry, err = orch.BuildMergedEntry(mergedCtx, engine.MergedEntryConfig{
 			Merges:    opts.merges,
 			Whitelist: opts.whitelist,
 			Explicit:  opts.explicit,
@@ -141,15 +203,17 @@ func Show(args []string, cfg *config.Config) int {
 		}
 	}
 
-	// Strip internal metadata keys from entry.Attributes
-	formattedAttributes := make(map[string]any)
-	for k, v := range entry.Attributes {
-		if strings.EqualFold(k, "title") {
-			continue
+	if !opts.raw {
+		// Strip internal metadata keys from entry.Attributes
+		formattedAttributes := make(map[string]any)
+		for k, v := range entry.Attributes {
+			if strings.EqualFold(k, "title") {
+				continue
+			}
+			formattedAttributes[k] = v
 		}
-		formattedAttributes[k] = v
+		entry.Attributes = formattedAttributes
 	}
-	entry.Attributes = formattedAttributes
 
 	if opts.outputFormat == "keys" {
 		printKeysFormat(entry.Attributes)

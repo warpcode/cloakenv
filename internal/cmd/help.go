@@ -155,8 +155,8 @@ Description:
 // PrintShowHelp prints usage help for the show subcommand.
 func PrintShowHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]
-  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]
+  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--raw] [--explain]
+  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--raw]
 
 Description:
   Retrieve and display a structured entry, or merge multiple entries/explicit mapping values.
@@ -171,6 +171,8 @@ Flags:
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
   -f, --key-format format  Override attribute key formatting (none, env, snake, kebab)
+  --raw           Display unmodified raw entry attributes before filtering, mapping, formatting, and computed attributes
+  --explain       Display structured transformation trace across all 5 entry processing pipeline stages (yaml or json only)
   --show-meta     Include vault, provider, and tags metadata in a _meta_ object (yaml and json output only)
   -o, --output    Output format: yaml, json, env, or keys (default: yaml)`)
 }

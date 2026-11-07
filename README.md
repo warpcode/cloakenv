@@ -416,6 +416,8 @@ cloakenv show -m <entry-uri> [-m <entry-uri> ...] [flags]
 - `-t template_path`: Load template `.env` file (repeatable).
 - `-i KEY`: Whitelist filter keys (repeatable).
 - `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
+- `--raw`: Display unmodified raw entry attributes (`Original` state) before filtering, mapping, key formatting, and computed attributes.
+- `--explain`: Display structured transformation trace across all 5 entry processing pipeline stages (`original`, `filtered`, `mapped`, `key_formatted`, `final_output`) in `yaml` or `json`.
 - `--show-meta`: Include vault, provider, and tags metadata in a `_meta_` object (`yaml` and `json` output only).
 
 #### Output Formats:
@@ -429,6 +431,15 @@ cloakenv show -m <entry-uri> [-m <entry-uri> ...] [flags]
 ```bash
 # Inspect KeePass record as YAML
 cloakenv show "work://Production/Database"
+
+# Inspect raw entry before filters, mapping, key formatting, and computed attributes
+cloakenv show "work://Production/Database" --raw
+
+# Trace all 5 entry processing pipeline stages as YAML
+cloakenv show "work://Production/Database" --explain
+
+# Trace pipeline stages as JSON
+cloakenv show "work://Production/Database" --explain -o json
 
 # Export record as a .env file
 cloakenv show "work://Production/Database" -o env > .env.local
