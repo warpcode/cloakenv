@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 
@@ -68,7 +69,7 @@ func TestCacheRouting(t *testing.T) {
 			name:           "prune subcommand valid empty config",
 			args:           []string{"prune"},
 			expectedCode:   0,
-			expectedStdout: "Cache pruned successfully.",
+			expectedStdout: "Cache pruned successfully:",
 			expectedStderr: "",
 		},
 		{
@@ -114,6 +115,81 @@ func TestCacheRouting(t *testing.T) {
 				t.Errorf("Cache() stderr = %q, want substring %q", stderr, tt.expectedStderr)
 			}
 		})
+	}
+}
+
+func TestCachePruneExecution(t *testing.T) {
+	keyring.MockInit()
+	tempDir := t.TempDir()
+	t.Setenv("HOME", tempDir)
+	t.Setenv("XDG_CACHE_HOME", tempDir)
+	t.Setenv("LocalAppData", tempDir)
+
+	cfg := &config.Config{
+		Vaults: make(map[string]config.VaultConfig),
+	}
+
+	// 1. Set an active secret with long TTL
+	mockStdin(t, "active_secret_val\n")
+	exitCode, _, stderr := captureOutputWithExitCode(t, func() int {
+		return Set([]string{"cache://active_key", "--ttl", "1h"}, cfg)
+	})
+	if exitCode != 0 {
+		t.Fatalf("Set active_key failed: %s", stderr)
+	}
+
+	// 2. Set an expired secret with 1ns TTL
+	mockStdin(t, "expired_secret_val\n")
+	exitCode, _, stderr = captureOutputWithExitCode(t, func() int {
+		return Set([]string{"cache://expired_key", "--ttl", "1ns"}, cfg)
+	})
+	if exitCode != 0 {
+		t.Fatalf("Set expired_key failed: %s", stderr)
+	}
+
+	// Wait briefly to guarantee expiration
+	time.Sleep(10 * time.Millisecond)
+
+	// 3. Run cache prune
+	exitCode, stdout, stderr := captureOutputWithExitCode(t, func() int {
+		return Cache([]string{"prune"}, cfg)
+	})
+	if exitCode != 0 {
+		t.Fatalf("Cache prune failed with code %d, stderr: %s", exitCode, stderr)
+	}
+
+	if !strings.Contains(stdout, "1 expired entry removed") {
+		t.Errorf("expected '1 expired entry removed' in stdout, got %q", stdout)
+	}
+	if !strings.Contains(stdout, "reclaimed") {
+		t.Errorf("expected 'reclaimed' in stdout, got %q", stdout)
+	}
+
+	// 4. Verify active key is preserved and retrievable
+	exitCode, stdout, stderr = captureOutputWithExitCode(t, func() int {
+		return Get([]string{"cache://active_key"}, cfg)
+	})
+	if exitCode != 0 || stdout != "active_secret_val" {
+		t.Errorf("Get active_key failed: code=%d, stdout=%q, stderr=%s", exitCode, stdout, stderr)
+	}
+
+	// 5. Verify expired key is gone
+	exitCode, _, _ = captureOutputWithExitCode(t, func() int {
+		return Get([]string{"cache://expired_key"}, cfg)
+	})
+	if exitCode == 0 {
+		t.Errorf("expected expired_key to not be found after prune")
+	}
+
+	// 6. Running prune again reports 0 expired entries
+	exitCode, stdout, stderr = captureOutputWithExitCode(t, func() int {
+		return Cache([]string{"prune"}, cfg)
+	})
+	if exitCode != 0 {
+		t.Fatalf("Second cache prune failed: %s", stderr)
+	}
+	if !strings.Contains(stdout, "0 expired entries removed (0 B reclaimed)") {
+		t.Errorf("expected '0 expired entries removed (0 B reclaimed)' in stdout, got %q", stdout)
 	}
 }
 

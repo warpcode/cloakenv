@@ -459,8 +459,9 @@ func (c *CachingProvider) Clear() error {
 	}
 }
 
-// Prune removes only expired cache entries associated with this provider.
-func (c *CachingProvider) Prune() error {
+// Prune removes only expired cache entries associated with this provider,
+// returning the count of deleted files and total bytes of disk space reclaimed.
+func (c *CachingProvider) Prune() (int, int64, error) {
 	c.mu.RLock()
 	mode := c.mode
 	c.mu.RUnlock()
@@ -468,19 +469,36 @@ func (c *CachingProvider) Prune() error {
 	switch mode {
 	case CacheModeKeyring:
 		// OS Keyring does not support enumeration; expired entries are shredded on read.
-		return nil
+		return 0, 0, nil
 
 	case CacheModeEncryptedDisk:
 		if c.cacheDir == "" {
-			return nil
+			return 0, 0, nil
 		}
 		files, err := os.ReadDir(c.cacheDir)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				return nil
+				return 0, 0, nil
 			}
-			return err
+			return 0, 0, err
 		}
+
+		c.mu.RLock()
+		aesKey := c.aesKey
+		c.mu.RUnlock()
+
+		block, err := aes.NewCipher(aesKey)
+		if err != nil {
+			return 0, 0, err
+		}
+		aesgcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return 0, 0, err
+		}
+
+		var prunedCount int
+		var reclaimedBytes int64
+
 		for _, f := range files {
 			if !f.IsDir() {
 				filePath := filepath.Join(c.cacheDir, f.Name())
@@ -489,29 +507,22 @@ func (c *CachingProvider) Prune() error {
 					continue
 				}
 
-				c.mu.RLock()
-				aesKey := c.aesKey
-				c.mu.RUnlock()
-
-				block, err := aes.NewCipher(aesKey)
-				if err != nil {
-					continue
-				}
-				aesgcm, err := cipher.NewGCM(block)
-				if err != nil {
-					continue
-				}
-
 				nonceSize := aesgcm.NonceSize()
 				if len(data) < nonceSize {
+					fileSize := int64(len(data))
 					_ = os.Remove(filePath)
+					prunedCount++
+					reclaimedBytes += fileSize
 					continue
 				}
 
 				nonce, ciphertext := data[:nonceSize], data[nonceSize:]
 				plaintext, err := aesgcm.Open(nil, nonce, ciphertext, nil)
 				if err != nil {
+					fileSize := int64(len(data))
 					_ = os.Remove(filePath)
+					prunedCount++
+					reclaimedBytes += fileSize
 					continue
 				}
 
@@ -519,19 +530,22 @@ func (c *CachingProvider) Prune() error {
 					writeTime := int64(binary.BigEndian.Uint64(plaintext[0:8])) //nolint:gosec
 					ttl := int64(binary.BigEndian.Uint64(plaintext[8:16]))      //nolint:gosec
 					if ttl > 0 && time.Now().UnixNano() > writeTime+ttl {
+						fileSize := int64(len(data))
 						// Overwrite with zeros and remove
 						zeros := make([]byte, len(data))
 						_ = os.WriteFile(filePath, zeros, 0600)
 						_ = os.Remove(filePath)
+						prunedCount++
+						reclaimedBytes += fileSize
 					}
 				}
 				utils.ZeroBytes(plaintext)
 			}
 		}
-		return nil
+		return prunedCount, reclaimedBytes, nil
 
 	default:
-		return nil
+		return 0, 0, nil
 	}
 }
 
