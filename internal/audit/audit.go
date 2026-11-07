@@ -75,10 +75,6 @@ func currentSubcommand() string {
 	return "unknown"
 }
 
-func currentUID() int {
-	return os.Getuid()
-}
-
 // NewLogger creates a new audit logger for the provided config.
 func NewLogger(cfg Config) (*Logger, error) {
 	if !cfg.Enabled {
@@ -98,6 +94,7 @@ func NewLogger(cfg Config) (*Logger, error) {
 			return nil, fmt.Errorf("failed to create audit log directory %q: %w", logDir, err)
 		}
 	}
+	//nolint:gosec // operator-configured log path must be writable for compliance logging
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audit log %q: %w", logPath, err)
