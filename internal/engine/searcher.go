@@ -288,6 +288,12 @@ func (s *Searcher) Search(ctx context.Context, expressionStr string, repoScopes 
 
 // SearchRecursive executes the search tracking depth to prevent infinite recursion.
 func (s *Searcher) SearchRecursive(ctx context.Context, expressionStr string, repoScopes []string, depth int) ([]provider.SearchResult, error) {
+	exprQuery, err := convertToExpr(expressionStr)
+	if err != nil {
+		return nil, err
+	}
+	expressionStr = exprQuery
+
 	providersToSearch, err := s.getSearchableProviders(ctx, repoScopes)
 	if err != nil {
 		return nil, err
@@ -498,17 +504,123 @@ func (v *visitor) Visit(node *ast.Node) {
 	}
 }
 
-func parseSearchURI(location string) (string, string, error) {
-	lastSlash := strings.LastIndex(location, "/")
-	var queryPart, attr string
-	if lastSlash == -1 {
-		queryPart = location
-		attr = "Password"
-	} else {
-		queryPart = location[:lastSlash]
-		attr = location[lastSlash+1:]
+func hasExprWordOperator(query, op string) bool {
+	qLen := len(query)
+	opLen := len(op)
+	idx := 0
+	for {
+		i := strings.Index(query[idx:], op)
+		if i == -1 {
+			return false
+		}
+		pos := idx + i
+		idx = pos + opLen
+
+		// Check before pos: must not be a word char (a-z, A-Z, 0-9, _)
+		if pos > 0 {
+			prev := query[pos-1]
+			if (prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z') || (prev >= '0' && prev <= '9') || prev == '_' {
+				continue
+			}
+			// Must not be preceded by '=' (skipping spaces), which indicates a URL parameter value like key=in
+			trimPrev := strings.TrimRight(query[:pos], " \t")
+			if strings.HasSuffix(trimPrev, "=") {
+				continue
+			}
+		}
+
+		// Check after pos+opLen: must not be a word char
+		if pos+opLen < qLen {
+			next := query[pos+opLen]
+			if (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') || (next >= '0' && next <= '9') || next == '_' {
+				continue
+			}
+			// Must not be followed by '=' (skipping spaces), which indicates a URL parameter key like in=val
+			trimNext := strings.TrimLeft(query[pos+opLen:], " \t")
+			if strings.HasPrefix(trimNext, "=") {
+				continue
+			}
+		}
+
+		return true
+	}
+}
+
+// isExprQuery checks if the query string contains Expr operators or syntax.
+func isExprQuery(query string) bool {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return false
 	}
 
+	if strings.Contains(trimmed, "==") ||
+		strings.Contains(trimmed, "!=") ||
+		strings.Contains(trimmed, "<=") ||
+		strings.Contains(trimmed, ">=") ||
+		strings.Contains(trimmed, "&&") ||
+		strings.Contains(trimmed, "||") ||
+		strings.Contains(trimmed, "<") ||
+		strings.Contains(trimmed, ">") {
+		return true
+	}
+
+	if hasExprWordOperator(trimmed, "in") ||
+		hasExprWordOperator(trimmed, "IN") ||
+		hasExprWordOperator(trimmed, "contains") ||
+		hasExprWordOperator(trimmed, "matches") ||
+		hasExprWordOperator(trimmed, "startsWith") ||
+		hasExprWordOperator(trimmed, "endsWith") ||
+		hasExprWordOperator(trimmed, "and") ||
+		hasExprWordOperator(trimmed, "or") ||
+		hasExprWordOperator(trimmed, "not") {
+		return true
+	}
+
+	// If the string contains a single '=' (not part of ==, !=, <=, >=) outside any Expr operators,
+	// it is a URL query parameter string, avoiding unnecessary parser.Parse invocations.
+	if hasSingleEqual(trimmed) {
+		return false
+	}
+
+	// If parser.Parse succeeds on the trimmed expression, it is valid Expr syntax.
+	if _, err := parser.Parse(trimmed); err == nil {
+		return true
+	}
+
+	return false
+}
+
+func hasSingleEqual(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '=' {
+			if (i == 0 || (s[i-1] != '=' && s[i-1] != '!' && s[i-1] != '<' && s[i-1] != '>')) &&
+				(i+1 == len(s) || s[i+1] != '=') {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// convertToExpr automatically detects whether query is an Expr expression or URL query parameters
+// and normalizes it to a valid Expr expression string.
+func convertToExpr(query string) (string, error) {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return "", nil
+	}
+
+	if isExprQuery(trimmed) {
+		if err := validateExpression(trimmed); err != nil {
+			return "", err
+		}
+		return trimmed, nil
+	}
+
+	return parseQueryParamsToExpr(trimmed)
+}
+
+func parseQueryParamsToExpr(queryPart string) (string, error) {
 	// Optimization: construct the expression query directly with a strings.Builder
 	// and iterate via strings.Cut rather than allocating intermediate slices with
 	// strings.Split, strings.Join, and strconv.Quote.
@@ -534,7 +646,7 @@ func parseSearchURI(location string) (string, string, error) {
 			if v != "" {
 				// "=value" carries no parameter key; reject it like main did
 				// instead of silently dropping user input.
-				return "", "", fmt.Errorf("invalid search parameter: %q", part)
+				return "", fmt.Errorf("invalid search parameter: %q", part)
 			}
 			continue
 		}
@@ -596,7 +708,7 @@ func parseSearchURI(location string) (string, string, error) {
 			}
 		default:
 			if !isValidSearchKey(k) {
-				return "", "", fmt.Errorf("invalid search parameter: %q", k)
+				return "", fmt.Errorf("invalid search parameter: %q", k)
 			}
 			if hasConditions {
 				b.WriteString(" and ")
@@ -639,10 +751,47 @@ func parseSearchURI(location string) (string, string, error) {
 	}
 
 	if !hasConditions {
+		return "", fmt.Errorf("invalid search URI: no query conditions specified")
+	}
+
+	return b.String(), nil
+}
+
+func parseSearchURI(location string) (string, string, error) {
+	lastSlash := strings.LastIndex(location, "/")
+	var queryPart, attr string
+	if lastSlash == -1 {
+		queryPart = location
+		attr = "Password"
+	} else {
+		candQuery := location[:lastSlash]
+		candAttr := location[lastSlash+1:]
+
+		// If the entire location is a valid Expr query (which might contain "/" inside a string literal),
+		// and candQuery is not a valid Expr query, treat the entire location as the query.
+		if isExprQuery(location) && validateExpression(location) == nil && (!isExprQuery(candQuery) || validateExpression(candQuery) != nil) {
+			queryPart = location
+			attr = "Password"
+		} else {
+			queryPart = candQuery
+			attr = candAttr
+		}
+	}
+
+	if strings.TrimSpace(queryPart) == "" {
 		return "", "", fmt.Errorf("invalid search URI: no query conditions specified")
 	}
 
-	return b.String(), attr, nil
+	if attr == "" {
+		attr = "Password"
+	}
+
+	exprQuery, err := convertToExpr(queryPart)
+	if err != nil {
+		return "", "", err
+	}
+
+	return exprQuery, attr, nil
 }
 
 // findAttrCaseFold performs a deterministic case-insensitive attribute lookup.

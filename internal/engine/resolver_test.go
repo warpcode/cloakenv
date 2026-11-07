@@ -593,6 +593,59 @@ func TestResolve_BareURIQuoteEscaping(t *testing.T) {
 	if !strings.Contains(receivedQuery, `title contains "api"`) {
 		t.Errorf("expected received query to contain %q, got %q", `title contains "api"`, receivedQuery)
 	}
+
+	// Test Expr "in" operator syntax
+	exprInVal, err := res.Resolve(ctx, `search://"api" in tags/Password`)
+	if err != nil {
+		t.Fatalf("Resolve failed with Expr 'in' query: %v", err)
+	}
+	if exprInVal != "super_secret_password" {
+		t.Errorf("got %q, want %q", exprInVal, "super_secret_password")
+	}
+	if receivedQuery != `"api" in tags` {
+		t.Errorf("expected received query %q, got %q", `"api" in tags`, receivedQuery)
+	}
+
+	// Test Expr "==" operator syntax
+	exprEqVal, err := res.Resolve(ctx, `search://title == "api"/Password`)
+	if err != nil {
+		t.Fatalf("Resolve failed with Expr '==' query: %v", err)
+	}
+	if exprEqVal != "super_secret_password" {
+		t.Errorf("got %q, want %q", exprEqVal, "super_secret_password")
+	}
+	if receivedQuery != `title == "api"` {
+		t.Errorf("expected received query %q, got %q", `title == "api"`, receivedQuery)
+	}
+
+	// Test Expr syntax without attribute, defaulting to Password
+	exprDefaultVal, err := res.Resolve(ctx, `search://"api" in tags`)
+	if err != nil {
+		t.Fatalf("Resolve failed with Expr query without attribute: %v", err)
+	}
+	if exprDefaultVal != "super_secret_password" {
+		t.Errorf("got %q, want %q", exprDefaultVal, "super_secret_password")
+	}
+	if receivedQuery != `"api" in tags` {
+		t.Errorf("expected received query %q, got %q", `"api" in tags`, receivedQuery)
+	}
+
+	// Test GetEntries with search:// in both URL parameter and Expr syntax
+	entriesURL, err := res.GetEntries(ctx, `search://tags=api`)
+	if err != nil {
+		t.Fatalf("GetEntries failed with search URL params: %v", err)
+	}
+	if len(entriesURL) != 1 || entriesURL[0].Title != "Matched Entry" {
+		t.Errorf("unexpected entries from search URL params: %v", entriesURL)
+	}
+
+	entriesExpr, err := res.GetEntries(ctx, `search://"api" in tags`)
+	if err != nil {
+		t.Fatalf("GetEntries failed with search Expr: %v", err)
+	}
+	if len(entriesExpr) != 1 || entriesExpr[0].Title != "Matched Entry" {
+		t.Errorf("unexpected entries from search Expr: %v", entriesExpr)
+	}
 }
 
 func TestResolver_GetEntries_And_GetEntriesRecursive(t *testing.T) {

@@ -702,6 +702,30 @@ func TestOrchestrator_GetEntries(t *testing.T) {
 							"EXTRA": "extra_val",
 						},
 					},
+					"composed_url_search": {
+						Title:      "Composed URL Search",
+						IsComposed: true,
+						Merge:      []string{"search://tags=tag1"},
+						Attributes: map[string]any{
+							"SOURCE": "url_search",
+						},
+					},
+					"composed_expr_search": {
+						Title:      "Composed Expr Search",
+						IsComposed: true,
+						Merge:      []string{`search://"tag1" in tags`},
+						Attributes: map[string]any{
+							"SOURCE": "expr_search",
+						},
+					},
+					"composed_expr_equality": {
+						Title:      "Composed Expr Equality Search",
+						IsComposed: true,
+						Merge:      []string{`search://title == "Flat Entry"`},
+						Attributes: map[string]any{
+							"SOURCE": "expr_equality",
+						},
+					},
 				},
 			},
 		},
@@ -747,6 +771,70 @@ func TestOrchestrator_GetEntries(t *testing.T) {
 				}
 				if entries[0].Attributes["EXTRA"] != "extra_val" {
 					t.Errorf("EXTRA = %v, want 'extra_val'", entries[0].Attributes["EXTRA"])
+				}
+			},
+		},
+		{
+			name:      "custom_vault merge with search URL parameters",
+			uri:       "test_vault://composed_url_search",
+			wantCount: 1,
+			wantErr:   false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Attributes["KEY1"] != "val1" {
+					t.Errorf("KEY1 = %v, want 'val1'", entries[0].Attributes["KEY1"])
+				}
+				if entries[0].Attributes["SOURCE"] != "url_search" {
+					t.Errorf("SOURCE = %v, want 'url_search'", entries[0].Attributes["SOURCE"])
+				}
+			},
+		},
+		{
+			name:      "custom_vault merge with search Expr 'in' expression",
+			uri:       "test_vault://composed_expr_search",
+			wantCount: 1,
+			wantErr:   false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Attributes["KEY1"] != "val1" {
+					t.Errorf("KEY1 = %v, want 'val1'", entries[0].Attributes["KEY1"])
+				}
+				if entries[0].Attributes["SOURCE"] != "expr_search" {
+					t.Errorf("SOURCE = %v, want 'expr_search'", entries[0].Attributes["SOURCE"])
+				}
+			},
+		},
+		{
+			name:      "custom_vault merge with search Expr '==' equality expression",
+			uri:       "test_vault://composed_expr_equality",
+			wantCount: 1,
+			wantErr:   false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Attributes["KEY1"] != "val1" {
+					t.Errorf("KEY1 = %v, want 'val1'", entries[0].Attributes["KEY1"])
+				}
+				if entries[0].Attributes["SOURCE"] != "expr_equality" {
+					t.Errorf("SOURCE = %v, want 'expr_equality'", entries[0].Attributes["SOURCE"])
+				}
+			},
+		},
+		{
+			name:      "direct GetEntries with search URL parameters",
+			uri:       "search://title=Flat Entry",
+			wantCount: 1,
+			wantErr:   false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Title != "Flat Entry" {
+					t.Errorf("Title = %q, want 'Flat Entry'", entries[0].Title)
+				}
+			},
+		},
+		{
+			name:      "direct GetEntries with search Expr '==' equality expression",
+			uri:       `search://title == "Flat Entry"`,
+			wantCount: 1,
+			wantErr:   false,
+			checkFn: func(t *testing.T, entries []provider.Entry) {
+				if entries[0].Title != "Flat Entry" {
+					t.Errorf("Title = %q, want 'Flat Entry'", entries[0].Title)
 				}
 			},
 		},

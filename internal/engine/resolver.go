@@ -249,7 +249,11 @@ func (r *Resolver) GetEntriesRecursive(ctx context.Context, uri string, depth in
 		if r.searchFunc == nil {
 			return nil, fmt.Errorf("search not supported")
 		}
-		results, err := r.searchFunc(ctx, location, nil, depth)
+		exprQuery, _, err := parseSearchURI(location)
+		if err != nil {
+			return nil, err
+		}
+		results, err := r.searchFunc(ctx, exprQuery, nil, depth)
 		if err != nil {
 			return nil, err
 		}
