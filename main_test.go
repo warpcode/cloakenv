@@ -196,26 +196,23 @@ func TestVersionVariablesLinkage(t *testing.T) {
 	origVersion := cmd.Version
 	origCommit := cmd.Commit
 	origDate := cmd.BuildDate
+	origMainVersion := version
+	origMainCommit := commit
+	origMainDate := date
 	defer func() {
 		cmd.Version = origVersion
 		cmd.Commit = origCommit
 		cmd.BuildDate = origDate
+		version = origMainVersion
+		commit = origMainCommit
+		date = origMainDate
 	}()
 
 	version = "v1.2.3-test"
 	commit = "testcommit12345"
 	date = "2026-03-30T12:00:00Z"
 
-	// Re-run init logic manually to test sync
-	if version != "" {
-		cmd.Version = version
-	}
-	if commit != "" {
-		cmd.Commit = commit
-	}
-	if date != "" {
-		cmd.BuildDate = date
-	}
+	syncVersionToCmd()
 
 	info := cmd.GetVersionInfo()
 	if info.Version != "v1.2.3-test" {

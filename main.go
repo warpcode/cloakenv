@@ -20,7 +20,7 @@ var (
 	date string
 )
 
-func init() {
+func syncVersionToCmd() {
 	if version != "" {
 		cmd.Version = version
 	}
@@ -30,6 +30,10 @@ func init() {
 	if date != "" {
 		cmd.BuildDate = date
 	}
+}
+
+func init() {
+	syncVersionToCmd()
 }
 
 func main() {

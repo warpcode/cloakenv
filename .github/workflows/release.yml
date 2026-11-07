@@ -115,6 +115,7 @@ jobs:
               COMPARE_HEADER="**Full Changelog**: [\`${CURRENT_TAG}\`](https://github.com/${GITHUB_REPOSITORY}/commits/${CURRENT_TAG})"
             fi
           fi
+          echo "CURRENT_TAG=${CURRENT_TAG}" >> $GITHUB_ENV
 
           COMMITS_LIST=$(git log --first-parent --pretty=format:"- [\`%h\`](https://github.com/${GITHUB_REPOSITORY}/commit/%H) %s (%an)" ${RANGE})
           if [ -z "${COMMITS_LIST}" ]; then
