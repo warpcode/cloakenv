@@ -353,6 +353,119 @@ func TestKeyringPrefix(t *testing.T) {
 	}
 }
 
+func TestVaultConfig_HashiCorpVault(t *testing.T) {
+	tempDir := t.TempDir()
+
+	t.Run("valid token auth config", func(t *testing.T) {
+		content := `
+vaults:
+  my_vault:
+    provider: "vault"
+    address: "https://vault.example.com:8200"
+    token: "s.mytoken123"
+    engine_version: 2
+    mount_path: "secret"
+    namespace: "admin"
+`
+		configPath := filepath.Join(tempDir, "vault_token.yaml")
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+		cfg, err := Load(configPath)
+		if err != nil {
+			t.Fatalf("unexpected load error: %v", err)
+		}
+		v := cfg.Vaults["my_vault"]
+		if v.Provider != "vault" {
+			t.Errorf("expected Provider 'vault', got %q", v.Provider)
+		}
+		if v.Address != "https://vault.example.com:8200" {
+			t.Errorf("expected Address 'https://vault.example.com:8200', got %q", v.Address)
+		}
+		if v.Token != "s.mytoken123" {
+			t.Errorf("expected Token 's.mytoken123', got %q", v.Token)
+		}
+		if v.EngineVersion != 2 {
+			t.Errorf("expected EngineVersion 2, got %d", v.EngineVersion)
+		}
+		if v.MountPath != "secret" {
+			t.Errorf("expected MountPath 'secret', got %q", v.MountPath)
+		}
+		if v.Namespace != "admin" {
+			t.Errorf("expected Namespace 'admin', got %q", v.Namespace)
+		}
+	})
+
+	t.Run("valid approle auth config", func(t *testing.T) {
+		content := `
+vaults:
+  my_vault:
+    provider: "vault"
+    address: "http://127.0.0.1:8200"
+    role_id: "test-role-id"
+    secret_id: "test-secret-id"
+    engine_version: 1
+`
+		configPath := filepath.Join(tempDir, "vault_approle.yaml")
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+		cfg, err := Load(configPath)
+		if err != nil {
+			t.Fatalf("unexpected load error: %v", err)
+		}
+		v := cfg.Vaults["my_vault"]
+		if v.RoleID != "test-role-id" || v.SecretID != "test-secret-id" {
+			t.Errorf("expected RoleID and SecretID set, got %q, %q", v.RoleID, v.SecretID)
+		}
+		if v.EngineVersion != 1 {
+			t.Errorf("expected EngineVersion 1, got %d", v.EngineVersion)
+		}
+	})
+
+	t.Run("invalid engine version", func(t *testing.T) {
+		content := `
+vaults:
+  my_vault:
+    provider: "vault"
+    address: "http://127.0.0.1:8200"
+    engine_version: 3
+`
+		configPath := filepath.Join(tempDir, "vault_invalid_engine.yaml")
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+		_, err := Load(configPath)
+		if err == nil {
+			t.Fatal("expected error for invalid engine_version, got nil")
+		}
+		if !strings.Contains(err.Error(), "invalid engine_version") {
+			t.Errorf("expected error to mention engine_version, got: %v", err)
+		}
+	})
+
+	t.Run("invalid partial approle", func(t *testing.T) {
+		content := `
+vaults:
+  my_vault:
+    provider: "vault"
+    address: "http://127.0.0.1:8200"
+    role_id: "test-role-id"
+`
+		configPath := filepath.Join(tempDir, "vault_partial_approle.yaml")
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+		_, err := Load(configPath)
+		if err == nil {
+			t.Fatal("expected error for partial approle, got nil")
+		}
+		if !strings.Contains(err.Error(), "both role_id and secret_id must be provided") {
+			t.Errorf("expected error to mention both role_id and secret_id, got: %v", err)
+		}
+	})
+}
+
 func TestLoad_Templates(t *testing.T) {
 	tempDir := t.TempDir()
 

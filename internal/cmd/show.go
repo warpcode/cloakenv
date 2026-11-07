@@ -161,7 +161,7 @@ func Show(args []string, cfg *config.Config) int {
 		return 0
 	}
 
-	out := make(map[string]any, len(entry.Attributes)+2)
+	out := make(map[string]any)
 	for k, v := range entry.Attributes {
 		out[k] = v
 	}
