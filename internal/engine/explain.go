@@ -51,13 +51,15 @@ type PipelineExplanation struct {
 
 // ExplainEntry evaluates and traces an entry across each of the 5 entry processing pipeline stages:
 // Stage 1 (original) -> Stage 2 (filtered) -> Stage 3 (mapped) -> Stage 4 (key_formatted) -> Stage 5 (final_output).
+// Stage 1 is the pristine provider snapshot (attribute values are not resolved); only Stage 5 (final_output)
+// reports the fully resolved live pipeline output.
 func (o *Orchestrator) ExplainEntry(ctx context.Context, uri string) (*PipelineExplanation, error) {
 	scheme, location, err := utils.ParseURI(uri)
 	if err != nil {
 		return nil, err
 	}
 
-	rawEntry, err := o.resolver.GetRawEntry(ctx, uri)
+	rawEntry, err := o.resolver.GetRawEntrySnapshot(ctx, uri)
 	if err != nil {
 		return nil, err
 	}

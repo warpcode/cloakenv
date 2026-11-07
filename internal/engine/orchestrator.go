@@ -123,6 +123,12 @@ func (o *Orchestrator) GetRawEntry(ctx context.Context, uri string) (provider.En
 	return o.resolver.GetRawEntry(ctx, uri)
 }
 
+// GetRawEntrySnapshot retrieves the pristine Stage 1 entry snapshot exactly as
+// stored by the underlying provider, without resolving attribute values.
+func (o *Orchestrator) GetRawEntrySnapshot(ctx context.Context, uri string) (provider.Entry, error) {
+	return o.resolver.GetRawEntrySnapshot(ctx, uri)
+}
+
 func (o *Orchestrator) GetEntries(ctx context.Context, uri string) ([]provider.Entry, error) {
 	return o.resolver.GetEntries(ctx, uri)
 }

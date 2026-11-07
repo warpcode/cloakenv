@@ -156,7 +156,7 @@ Description:
 func PrintShowHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
   cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--raw] [--explain]
-  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--raw]
+  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--raw] [--explain]
 
 Description:
   Retrieve and display a structured entry, or merge multiple entries/explicit mapping values.

@@ -1904,3 +1904,267 @@ func TestShow_ExplainFlag_ComposedCustomVault_EntityLevelConfig(t *testing.T) {
 		t.Errorf("Stage 5 added_attributes should contain ENTITY_ATTR: %v", explanation.FinalOutput.AddedAttributes)
 	}
 }
+
+func TestShow_RawEnvKeysFormat_KeepsTitleAndTags(t *testing.T) {
+	// Providers fold title/tags into Entry.Title/Entry.Tags rather than
+	// Attributes, so the raw elision behavior is exercised at the formatter
+	// level with an attribute map that literally contains those keys.
+	attrs := map[string]any{
+		"title":     "App Entry",
+		"tags":      []any{"api", "prod"},
+		"user_name": "Alice",
+	}
+
+	t.Run("RawEnvFormat_KeepsTitleAndTags", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		printEnvFormat(attrs, true)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		out := buf.String()
+		if !strings.Contains(out, "title=") {
+			t.Errorf("expected raw env output to contain title, got %s", out)
+		}
+		if !strings.Contains(out, "tags=") {
+			t.Errorf("expected raw env output to contain tags, got %s", out)
+		}
+	})
+
+	t.Run("RawKeysFormat_KeepsTitleAndTags", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		printKeysFormat(attrs, true)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		out := buf.String()
+		if !strings.Contains(out, "title") || !strings.Contains(out, "tags") {
+			t.Errorf("expected raw keys output to contain title and tags, got %s", out)
+		}
+	})
+
+	t.Run("NonRawEnvFormat_ElidesTitleAndTags", func(t *testing.T) {
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		printEnvFormat(attrs, false)
+		_ = w.Close()
+		os.Stdout = oldStdout
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		out := buf.String()
+		if strings.Contains(out, "title=") || strings.Contains(out, "tags=") {
+			t.Errorf("expected non-raw env output to elide title and tags, got %s", out)
+		}
+		if !strings.Contains(out, "user_name=Alice") {
+			t.Errorf("expected non-raw env output to contain user_name, got %s", out)
+		}
+	})
+}
+
+func TestShow_ExplainFlag_Stage1PristineSnapshot(t *testing.T) {
+	tempDir := t.TempDir()
+	yamlFile := filepath.Join(tempDir, "vault.yaml")
+	yamlContent := `entries:
+  app:
+    user_name: Alice
+    secret_key: s3cr3t
+    nested_ref: '{{ get "env://SHOW_TEST_PRISTINE_VAR" }}'
+`
+	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write test yaml: %v", err)
+	}
+
+	t.Setenv("SHOW_TEST_PRISTINE_VAR", "resolved_val")
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"test_vault": {
+				Provider:  "yaml",
+				VaultPath: yamlFile,
+			},
+		},
+	}
+
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	exitCode := Show([]string{"test_vault://app", "--explain", "-o", "json"}, cfg)
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d, output: %s", exitCode, buf.String())
+	}
+
+	var explanation struct {
+		Original struct {
+			Attributes map[string]any `json:"attributes"`
+		} `json:"original"`
+		FinalOutput struct {
+			Attributes map[string]any `json:"attributes"`
+		} `json:"final_output"`
+	}
+
+	if err := json.Unmarshal(buf.Bytes(), &explanation); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v, output: %s", err, buf.String())
+	}
+
+	// Stage 1 must show the pristine provider snapshot: the nested reference
+	// stays an unresolved template, not the resolved secret value.
+	const templateText = `{{ get "env://SHOW_TEST_PRISTINE_VAR" }}`
+	if explanation.Original.Attributes["nested_ref"] != templateText {
+		t.Errorf("expected Stage 1 original to preserve unresolved template text %q, got %v", templateText, explanation.Original.Attributes["nested_ref"])
+	}
+
+	// Stage 5 must show the resolved live pipeline output.
+	if explanation.FinalOutput.Attributes["nested_ref"] != "resolved_val" {
+		t.Errorf("expected Stage 5 final_output to resolve nested_ref, got %v", explanation.FinalOutput.Attributes["nested_ref"])
+	}
+}
+
+func TestShow_ExplainFlag_ParityWithShowOutput(t *testing.T) {
+	tempDir := t.TempDir()
+	yamlFile := filepath.Join(tempDir, "vault.yaml")
+	yamlContent := `entries:
+  app:
+    user_name: Alice
+    secret_key: s3cr3t
+    notes: Some notes
+`
+	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write test yaml: %v", err)
+	}
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"test_vault": {
+				Provider:      "yaml",
+				VaultPath:     yamlFile,
+				IncludeFields: []string{"user*", "secret*"},
+				ExcludeFields: []string{"user_name"},
+				Mapping: []config.MappingRule{
+					{Match: "^user_(.*)$", Key: "account_$1"},
+				},
+			},
+		},
+	}
+
+	// Capture plain show output.
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	showCode := Show([]string{"test_vault://app"}, cfg)
+	_ = w.Close()
+	os.Stdout = oldStdout
+
+	var showBuf bytes.Buffer
+	_, _ = io.Copy(&showBuf, r)
+
+	if showCode != 0 {
+		t.Fatalf("expected show exit code 0, got %d, output: %s", showCode, showBuf.String())
+	}
+
+	var showResult map[string]any
+	if err := yaml.Unmarshal(showBuf.Bytes(), &showResult); err != nil {
+		t.Fatalf("failed to unmarshal show output: %v, output: %s", err, showBuf.String())
+	}
+
+	// Capture explain output.
+	r, w, err = os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	explainCode := Show([]string{"test_vault://app", "--explain", "-o", "json"}, cfg)
+	_ = w.Close()
+	os.Stdout = oldStdout
+
+	var explainBuf bytes.Buffer
+	_, _ = io.Copy(&explainBuf, r)
+
+	if explainCode != 0 {
+		t.Fatalf("expected explain exit code 0, got %d, output: %s", explainCode, explainBuf.String())
+	}
+
+	var explanation struct {
+		Filtered struct {
+			Attributes   map[string]any `json:"attributes"`
+			ExcludedKeys []string       `json:"excluded_keys"`
+		} `json:"filtered"`
+		Mapped struct {
+			Attributes map[string]any `json:"attributes"`
+		} `json:"mapped"`
+		FinalOutput struct {
+			Attributes map[string]any `json:"attributes"`
+		} `json:"final_output"`
+	}
+
+	if err := json.Unmarshal(explainBuf.Bytes(), &explanation); err != nil {
+		t.Fatalf("failed to unmarshal explain output: %v, output: %s", err, explainBuf.String())
+	}
+
+	// A key matching both exclude_fields and a mapping rule: mapped fields
+	// always show regardless of filters (mapped key survives exclusion).
+	if explanation.Mapped.Attributes["account_name"] != "Alice" {
+		t.Errorf("expected mapped account_name=Alice to bypass exclude_fields, got %+v", explanation.Mapped.Attributes)
+	}
+	found := false
+	for _, k := range explanation.Filtered.ExcludedKeys {
+		if k == "user_name" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected excluded_keys to contain user_name, got %v", explanation.Filtered.ExcludedKeys)
+	}
+
+	// Parity: the explain final_output stage must match observable `show` output.
+	showJSON, err := json.Marshal(showResult)
+	if err != nil {
+		t.Fatalf("failed to marshal show result: %v", err)
+	}
+	finalJSON, err := json.Marshal(explanation.FinalOutput.Attributes)
+	if err != nil {
+		t.Fatalf("failed to marshal final_output: %v", err)
+	}
+	if string(showJSON) != string(finalJSON) {
+		t.Errorf("explain final_output does not match show output:\nshow:    %s\nexplain: %s", showJSON, finalJSON)
+	}
+}

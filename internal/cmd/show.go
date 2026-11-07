@@ -31,7 +31,7 @@ func parseShowFlags(args []string) (*showOptions, error) {
 		outputFormat: "yaml",
 	}
 
-	usageMsg := "Usage: cloakenv show <entry-uri> [-f format] [-o yaml | json | env | keys] [--raw] [--explain] [--show-meta]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-f format] [-o yaml | json | env | keys] [--raw] [--show-meta]"
+	usageMsg := "Usage: cloakenv show <entry-uri> [-f format] [-o yaml | json | env | keys] [--raw] [--explain] [--show-meta]\n   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-f format] [-o yaml | json | env | keys] [--raw] [--explain] [--show-meta]"
 
 	parser := NewFlagParser()
 	parser.Var([]string{"-f", "--key-format"}, true, "flag -f/--key-format requires an argument", func(name, val string) error {
@@ -216,12 +216,12 @@ func Show(args []string, cfg *config.Config) int {
 	}
 
 	if opts.outputFormat == "keys" {
-		printKeysFormat(entry.Attributes)
+		printKeysFormat(entry.Attributes, opts.raw)
 		return 0
 	}
 
 	if opts.outputFormat == "env" {
-		printEnvFormat(entry.Attributes)
+		printEnvFormat(entry.Attributes, opts.raw)
 		return 0
 	}
 
@@ -296,10 +296,12 @@ func Show(args []string, cfg *config.Config) int {
 	return 0
 }
 
-func printEnvFormat(attributes map[string]any) {
+func printEnvFormat(attributes map[string]any, raw bool) {
 	keys := make([]string, 0, len(attributes))
 	for k := range attributes {
-		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
+		// Under --raw the entry is displayed unmodified, so title/tags are
+		// not elided (matching the yaml/json raw behavior).
+		if !raw && (strings.EqualFold(k, "title") || strings.EqualFold(k, "tags")) {
 			continue
 		}
 		keys = append(keys, k)
@@ -322,10 +324,12 @@ func shouldQuoteDotenvValue(s string) bool {
 	return strings.ContainsAny(s, " \n\r#\"")
 }
 
-func printKeysFormat(attributes map[string]any) {
+func printKeysFormat(attributes map[string]any, raw bool) {
 	keys := make([]string, 0, len(attributes))
 	for k := range attributes {
-		if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
+		// Under --raw the entry is displayed unmodified, so title/tags are
+		// not elided (matching the yaml/json raw behavior).
+		if !raw && (strings.EqualFold(k, "title") || strings.EqualFold(k, "tags")) {
 			continue
 		}
 		keys = append(keys, k)

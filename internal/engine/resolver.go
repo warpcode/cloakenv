@@ -323,11 +323,27 @@ func (r *Resolver) GetRawEntry(ctx context.Context, uri string) (provider.Entry,
 	if d, ok := ctx.Value(provider.ContextKeyDepth).(int); ok {
 		depth = d
 	}
-	return r.GetRawEntryRecursive(ctx, uri, depth)
+	return r.getRawEntryRecursive(ctx, uri, depth, true)
+}
+
+// GetRawEntrySnapshot retrieves the pristine Stage 1 entry snapshot exactly as
+// stored by the underlying provider, without resolving attribute values.
+// Nested entry references and templates are preserved verbatim, making it
+// suitable for pipeline inspection where structure matters more than values.
+func (r *Resolver) GetRawEntrySnapshot(ctx context.Context, uri string) (provider.Entry, error) {
+	depth := 0
+	if d, ok := ctx.Value(provider.ContextKeyDepth).(int); ok {
+		depth = d
+	}
+	return r.getRawEntryRecursive(ctx, uri, depth, false)
 }
 
 // GetRawEntryRecursive retrieves the raw entry at the specified recursion depth.
 func (r *Resolver) GetRawEntryRecursive(ctx context.Context, uri string, depth int) (provider.Entry, error) {
+	return r.getRawEntryRecursive(ctx, uri, depth, true)
+}
+
+func (r *Resolver) getRawEntryRecursive(ctx context.Context, uri string, depth int, resolveValues bool) (provider.Entry, error) {
 	if depth > 5 {
 		return provider.Entry{}, fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5 resolving entry %q", uri)
 	}
@@ -342,7 +358,7 @@ func (r *Resolver) GetRawEntryRecursive(ctx context.Context, uri string, depth i
 		attrName := location[attrIdx+1:]
 		if attrName != "" {
 			parentURI := scheme + "://" + location[:attrIdx]
-			parentEntry, err := r.GetRawEntryRecursive(ctx, parentURI, depth)
+			parentEntry, err := r.getRawEntryRecursive(ctx, parentURI, depth, resolveValues)
 			if err != nil {
 				return provider.Entry{}, err
 			}
@@ -389,7 +405,11 @@ func (r *Resolver) GetRawEntryRecursive(ctx context.Context, uri string, depth i
 			if entry.Original != nil {
 				entry = *entry.Original
 			}
-			return r.resolveEntryAttributes(ctx, entry.EnsureOriginal(), shouldResolveAttrs, depth)
+			entry = entry.EnsureOriginal()
+			if !resolveValues {
+				return entry, nil
+			}
+			return r.resolveEntryAttributes(ctx, entry, shouldResolveAttrs, depth)
 		}
 	}
 
@@ -401,7 +421,11 @@ func (r *Resolver) GetRawEntryRecursive(ctx context.Context, uri string, depth i
 	if entry.Original != nil {
 		entry = *entry.Original
 	}
-	return r.resolveEntryAttributes(ctx, entry.EnsureOriginal(), shouldResolveAttrs, depth)
+	entry = entry.EnsureOriginal()
+	if !resolveValues {
+		return entry, nil
+	}
+	return r.resolveEntryAttributes(ctx, entry, shouldResolveAttrs, depth)
 }
 
 func unwrapToRawProvider(p provider.SecretProvider) provider.SecretProvider {
