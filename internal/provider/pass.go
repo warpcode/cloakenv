@@ -429,7 +429,7 @@ func defaultGPGDecrypt(ctx context.Context, filePath string) ([]byte, error) {
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, "gpg", "--batch", "--use-agent", "--quiet", "--decrypt", filePath)
+	cmd := exec.CommandContext(ctx, "gpg", "--batch", "--use-agent", "--quiet", "--decrypt", filePath) //nolint:gosec // filePath is validated inside password store directory
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
