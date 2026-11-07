@@ -353,6 +353,234 @@ func TestKeyringPrefix(t *testing.T) {
 	}
 }
 
+func TestLoad_KeyFile(t *testing.T) {
+	tempDir := t.TempDir()
+	configDir := filepath.Join(tempDir, "config_dir")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create configDir: %v", err)
+	}
+
+	mockHome := filepath.Join(tempDir, "home")
+	if err := os.MkdirAll(mockHome, 0755); err != nil {
+		t.Fatalf("failed to create mockHome: %v", err)
+	}
+
+	oldUserHomeDir := userHomeDir
+	userHomeDir = func() (string, error) {
+		return mockHome, nil
+	}
+	defer func() { userHomeDir = oldUserHomeDir }()
+
+	// Create test key files
+	relKeyFile := filepath.Join(configDir, "keys", "rel.key")
+	if err := os.MkdirAll(filepath.Dir(relKeyFile), 0755); err != nil {
+		t.Fatalf("failed to create relKeyFile dir: %v", err)
+	}
+	if err := os.WriteFile(relKeyFile, []byte("relkeycontent"), 0600); err != nil {
+		t.Fatalf("failed to write relKeyFile: %v", err)
+	}
+
+	homeKeyFile := filepath.Join(mockHome, "home.keyx")
+	if err := os.WriteFile(homeKeyFile, []byte("homekeycontent"), 0600); err != nil {
+		t.Fatalf("failed to write homeKeyFile: %v", err)
+	}
+
+	envKeyFile := filepath.Join(tempDir, "env.key")
+	if err := os.WriteFile(envKeyFile, []byte("envkeycontent"), 0600); err != nil {
+		t.Fatalf("failed to write envKeyFile: %v", err)
+	}
+	t.Setenv("TEST_KEY_FILE_ENV_VAR", envKeyFile)
+
+	yamlContent := `
+vaults:
+  rel_key_vault:
+    provider: "keepass"
+    vault_path: "~/db1.kdbx"
+    key_file: "keys/rel.key"
+  home_key_vault:
+    provider: "keepass"
+    vault_path: "~/db2.kdbx"
+    key_file: "~/home.keyx"
+  env_key_vault:
+    provider: "keepass"
+    vault_path: "~/db3.kdbx"
+    key_file_env: "TEST_KEY_FILE_ENV_VAR"
+`
+
+	configFilePath := filepath.Join(configDir, "config.yaml")
+	if err := os.WriteFile(configFilePath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := Load(configFilePath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Verify relative key_file anchored to config directory
+	vRel := cfg.Vaults["rel_key_vault"]
+	if vRel.KeyFile != relKeyFile {
+		t.Errorf("rel_key_vault: KeyFile = %q, want %q", vRel.KeyFile, relKeyFile)
+	}
+
+	// Verify home key_file expanded
+	vHome := cfg.Vaults["home_key_vault"]
+	if vHome.KeyFile != homeKeyFile {
+		t.Errorf("home_key_vault: KeyFile = %q, want %q", vHome.KeyFile, homeKeyFile)
+	}
+
+	// Verify key_file_env resolved
+	vEnv := cfg.Vaults["env_key_vault"]
+	if vEnv.KeyFile != envKeyFile {
+		t.Errorf("env_key_vault: KeyFile = %q, want %q", vEnv.KeyFile, envKeyFile)
+	}
+
+	// Test non-existent key_file error
+	badYaml := `
+vaults:
+  bad_key_vault:
+    provider: "keepass"
+    vault_path: "~/db.kdbx"
+    key_file: "nonexistent.key"
+`
+	badConfigPath := filepath.Join(configDir, "bad_key.yaml")
+	_ = os.WriteFile(badConfigPath, []byte(badYaml), 0644)
+	if _, err := Load(badConfigPath); err == nil {
+		t.Error("expected error for non-existent key_file, got nil")
+	} else if !strings.Contains(err.Error(), "key_file") || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected error to mention key_file not found, got %v", err)
+	}
+
+	// Test directory key_file error
+	dirYaml := `
+vaults:
+  dir_key_vault:
+    provider: "keepass"
+    vault_path: "~/db.kdbx"
+    key_file: "keys"
+`
+	dirConfigPath := filepath.Join(configDir, "dir_key.yaml")
+	_ = os.WriteFile(dirConfigPath, []byte(dirYaml), 0644)
+	if _, err := Load(dirConfigPath); err == nil {
+		t.Error("expected error for directory key_file, got nil")
+	} else if !strings.Contains(err.Error(), "is a directory") {
+		t.Errorf("expected error to mention is a directory, got %v", err)
+	}
+}
+
+func TestVaultConfig_HashiCorpVault(t *testing.T) {
+	tempDir := t.TempDir()
+
+	t.Run("valid token auth config", func(t *testing.T) {
+		content := `
+vaults:
+  my_vault:
+    provider: "vault"
+    address: "https://vault.example.com:8200"
+    token: "s.mytoken123"
+    engine_version: 2
+    mount_path: "secret"
+    namespace: "admin"
+`
+		configPath := filepath.Join(tempDir, "vault_token.yaml")
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+		cfg, err := Load(configPath)
+		if err != nil {
+			t.Fatalf("unexpected load error: %v", err)
+		}
+		v := cfg.Vaults["my_vault"]
+		if v.Provider != "vault" {
+			t.Errorf("expected Provider 'vault', got %q", v.Provider)
+		}
+		if v.Address != "https://vault.example.com:8200" {
+			t.Errorf("expected Address 'https://vault.example.com:8200', got %q", v.Address)
+		}
+		if v.Token != "s.mytoken123" {
+			t.Errorf("expected Token 's.mytoken123', got %q", v.Token)
+		}
+		if v.EngineVersion != 2 {
+			t.Errorf("expected EngineVersion 2, got %d", v.EngineVersion)
+		}
+		if v.MountPath != "secret" {
+			t.Errorf("expected MountPath 'secret', got %q", v.MountPath)
+		}
+		if v.Namespace != "admin" {
+			t.Errorf("expected Namespace 'admin', got %q", v.Namespace)
+		}
+	})
+
+	t.Run("valid approle auth config", func(t *testing.T) {
+		content := `
+vaults:
+  my_vault:
+    provider: "vault"
+    address: "http://127.0.0.1:8200"
+    role_id: "test-role-id"
+    secret_id: "test-secret-id"
+    engine_version: 1
+`
+		configPath := filepath.Join(tempDir, "vault_approle.yaml")
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+		cfg, err := Load(configPath)
+		if err != nil {
+			t.Fatalf("unexpected load error: %v", err)
+		}
+		v := cfg.Vaults["my_vault"]
+		if v.RoleID != "test-role-id" || v.SecretID != "test-secret-id" {
+			t.Errorf("expected RoleID and SecretID set, got %q, %q", v.RoleID, v.SecretID)
+		}
+		if v.EngineVersion != 1 {
+			t.Errorf("expected EngineVersion 1, got %d", v.EngineVersion)
+		}
+	})
+
+	t.Run("invalid engine version", func(t *testing.T) {
+		content := `
+vaults:
+  my_vault:
+    provider: "vault"
+    address: "http://127.0.0.1:8200"
+    engine_version: 3
+`
+		configPath := filepath.Join(tempDir, "vault_invalid_engine.yaml")
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+		_, err := Load(configPath)
+		if err == nil {
+			t.Fatal("expected error for invalid engine_version, got nil")
+		}
+		if !strings.Contains(err.Error(), "invalid engine_version") {
+			t.Errorf("expected error to mention engine_version, got: %v", err)
+		}
+	})
+
+	t.Run("invalid partial approle", func(t *testing.T) {
+		content := `
+vaults:
+  my_vault:
+    provider: "vault"
+    address: "http://127.0.0.1:8200"
+    role_id: "test-role-id"
+`
+		configPath := filepath.Join(tempDir, "vault_partial_approle.yaml")
+		if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write config: %v", err)
+		}
+		_, err := Load(configPath)
+		if err == nil {
+			t.Fatal("expected error for partial approle, got nil")
+		}
+		if !strings.Contains(err.Error(), "both role_id and secret_id must be provided") {
+			t.Errorf("expected error to mention both role_id and secret_id, got: %v", err)
+		}
+	})
+}
+
 func TestLoad_Templates(t *testing.T) {
 	tempDir := t.TempDir()
 

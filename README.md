@@ -29,6 +29,7 @@
   - [`show` — Inspect & Export Structured Records](#show--inspect--export-structured-records)
   - [`search` — Dynamic Querying Across Vaults](#search--dynamic-querying-across-vaults)
   - [`auth` — Manage Vault Authentication](#auth--manage-vault-authentication)
+  - [`sync` — Cross-Vault Secret Synchronization](#sync--cross-vault-secret-synchronization)
   - [`internal` — Developer & Hook Helpers](#internal--developer--hook-helpers)
 - [Secret Providers & Schemes](#secret-providers--schemes)
   - [Built-In Providers (Zero Setup)](#built-in-providers-zero-setup)
@@ -248,7 +249,8 @@ Commands:
   get     Retrieve and print a single secret value raw to stdout
   set     Store a secret value at a writable URI (keyring://, cache://)
   delete  Remove a secret from a writable URI (keyring://, cache://)
-  cache   Manage local encrypted cache (subcommand: clear)
+  cache   Manage local encrypted cache (subcommands: clear, prune)
+  sync    Unidirectional cross-vault secret synchronization
   show    Retrieve and display a structured entry
   search  Search for structured entries across vaults
   auth    Manage vault credentials and status (login, forget, status)
@@ -389,6 +391,9 @@ cloakenv delete cache://session_token
 ```bash
 # Clear all cached items immediately
 cloakenv cache clear
+
+# Remove expired entries from cache
+cloakenv cache prune
 ```
 
 ---
@@ -411,6 +416,8 @@ cloakenv show -m <entry-uri> [-m <entry-uri> ...] [flags]
 - `-t template_path`: Load template `.env` file (repeatable).
 - `-i KEY`: Whitelist filter keys (repeatable).
 - `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
+- `--raw`: Display unmodified raw entry attributes (`Original` state) before filtering, mapping, key formatting, and computed attributes.
+- `--explain`: Display structured transformation trace across all 5 entry processing pipeline stages (`original`, `filtered`, `mapped`, `key_formatted`, `final_output`) in `yaml` or `json`.
 - `--show-meta`: Include vault, provider, and tags metadata in a `_meta_` object (`yaml` and `json` output only).
 
 #### Output Formats:
@@ -424,6 +431,15 @@ cloakenv show -m <entry-uri> [-m <entry-uri> ...] [flags]
 ```bash
 # Inspect KeePass record as YAML
 cloakenv show "work://Production/Database"
+
+# Inspect raw entry before filters, mapping, key formatting, and computed attributes
+cloakenv show "work://Production/Database" --raw
+
+# Trace all 5 entry processing pipeline stages as YAML
+cloakenv show "work://Production/Database" --explain
+
+# Trace pipeline stages as JSON
+cloakenv show "work://Production/Database" --explain -o json
 
 # Export record as a .env file
 cloakenv show "work://Production/Database" -o env > .env.local
@@ -524,6 +540,35 @@ cloakenv auth forget work
 
 ---
 
+### `sync` — Cross-Vault Secret Synchronization
+
+Unidirectionally copies secrets from a source vault or URI to a target writable vault (`keyring://`). Zero plaintext persistence to disk; all operations occur in memory.
+
+```bash
+cloakenv sync <source> <target> [flags]
+```
+
+#### Flags:
+- `--dry-run`: Preview additions, updates, and skips without writing to target.
+- `--tags <tags>`: Filter source entries by tag (comma-separated, e.g. `sync:keyring`).
+- `--prefix <prefix>`: Filter secret keys by prefix.
+- `-r, --regex <pattern>`: Filter secret keys using regular expressions.
+
+#### Examples:
+
+```bash
+# 1. Preview synchronizing KeePass entries with tag "sync:keyring" to local keyring
+cloakenv sync --dry-run --tags sync:keyring "work://" "keyring://local"
+
+# 2. Synchronize secrets matching a prefix to OS keyring
+cloakenv sync --prefix "api/" "work://" "keyring://services"
+
+# 3. Synchronize a single entry directly
+cloakenv sync "work://production/db" "keyring://prod_db"
+```
+
+---
+
 ### `internal` — Developer & Hook Helpers
 
 Internal helper commands for scripting and automation. These are not intended for direct end-user usage.
@@ -567,6 +612,7 @@ These providers are always available and do not require registration in `config.
 | `keyring://service/account` | Read / Write | OS native secure credential store (macOS Keychain, Linux D-Bus, Windows Credential Manager). |
 | `env://VAR_NAME` | Read-Only | Values from the parent process environment. Great for CI/CD pipelines. |
 | `cache://KEY` | Read / Write | Local AES-256-GCM encrypted filesystem cache with optional TTL. Encryption key is in OS Keyring. |
+| `pass://path/to/entry[:attribute]` | Read-Only | Standard Unix password store (`pass`). Resolves password on first line and multi-line `Key: Value` attributes. |
 | `search://query/attribute` | Read-Only | Dynamic URI resolution! Executes a search query on the fly and retrieves the matching attribute. |
 
 #### Dynamic `search://` URI Scheme Example:
@@ -574,7 +620,23 @@ These providers are always available and do not require registration in `config.
 ```bash
 # Dynamically finds the entry with tags "env:prod" and "service:redis" and extracts its Password
 cloakenv get "search://tags=env:prod,service:redis&title=Cluster/Password"
+
+# Match entries dynamically by arbitrary entry attributes (e.g. group, username, url, custom fields)
+cloakenv get "search://group=Production&username=admin/Password"
+
+# Query values containing reserved characters by percent-encoding them (%2F = "/", %26 = "&", %25 = "%")
+cloakenv get "search://url=https://example.com%2Fpath%2Fapi/Password"
+
+# Query empty attribute values explicitly ("key=" is an empty-string condition)
+cloakenv get "search://notes=/Password"
 ```
+
+> [!NOTE]
+> The query section ends at the **last** `/` of the URI, which starts the requested
+> attribute. Literal `/` and `&` inside a query value must be percent-encoded as
+> `%2F` and `%26` (and a literal `%` as `%25`). `title` and `path` parameters use
+> substring matching; all other parameters (including `group`) match exactly, with
+> numeric and boolean values compared type-coerced.
 
 ---
 
@@ -919,7 +981,7 @@ References field values from another entry in the database.
 
 ## Template Engine & FuncMap Reference
 
-`cloakenv` embeds Go's standard library `text/template` engine with `.Option("missingkey=error")` and recursion depth tracking. When `resolve_values: true` is enabled on a `custom_vault` or `custom_vault` entity, string attribute values containing `{{ ... }}` are dynamically rendered with access to entry metadata, attributes, and 17 built-in functions.
+`cloakenv` embeds Go's standard library `text/template` engine with `.Option("missingkey=error")` and recursion depth tracking. When `resolve_values: true` is enabled on a `custom_vault` or `custom_vault` entity, string attribute values containing `{{ ... }}` are dynamically rendered with access to entry metadata, attributes, and 25 built-in functions.
 
 ### Top-Level Templates (`templates:`)
 

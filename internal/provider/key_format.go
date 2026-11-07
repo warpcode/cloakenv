@@ -94,36 +94,37 @@ func (k *KeyFormatProvider) GetSecret(ctx context.Context, location string) (str
 	return "", err
 }
 
-func (k *KeyFormatProvider) formatAttributes(attrs map[string]any) map[string]any {
-	if attrs == nil || k.format == "" || k.format == utils.KeyFormatNone {
-		return attrs
-	}
-	formatted := make(map[string]any, len(attrs))
-	for attrKey, val := range attrs {
-		formatted[utils.FormatKeyWithFormat(attrKey, k.format)] = formatValue(val, k.format)
-	}
-	return formatted
-}
-
-func formatValue(val any, format string) any {
+// FormatValue recursively formats keys within map and slice values.
+func FormatValue(val any, format string) any {
 	if val == nil || format == "" || format == utils.KeyFormatNone {
 		return val
 	}
 	if m, ok := val.(map[string]any); ok {
 		newMap := make(map[string]any, len(m))
 		for k, v := range m {
-			newMap[utils.FormatKeyWithFormat(k, format)] = formatValue(v, format)
+			newMap[utils.FormatKeyWithFormat(k, format)] = FormatValue(v, format)
 		}
 		return newMap
 	}
 	if slice, ok := val.([]any); ok {
 		newSlice := make([]any, len(slice))
 		for i, elem := range slice {
-			newSlice[i] = formatValue(elem, format)
+			newSlice[i] = FormatValue(elem, format)
 		}
 		return newSlice
 	}
 	return val
+}
+
+func (k *KeyFormatProvider) formatAttributes(attrs map[string]any) map[string]any {
+	if attrs == nil || k.format == "" || k.format == utils.KeyFormatNone {
+		return attrs
+	}
+	formatted := make(map[string]any, len(attrs))
+	for attrKey, val := range attrs {
+		formatted[utils.FormatKeyWithFormat(attrKey, k.format)] = FormatValue(val, k.format)
+	}
+	return formatted
 }
 
 // SearchableKeyFormatProvider implements SearchableProvider when the underlying provider is searchable.

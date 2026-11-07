@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -73,6 +75,75 @@ func TestCheckAccess(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestProviderManager_PassProvider(t *testing.T) {
+	tmpDir := t.TempDir()
+	gpgFile := filepath.Join(tmpDir, "development", "db.gpg")
+	if err := os.MkdirAll(filepath.Dir(gpgFile), 0o700); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+	content := []byte("secretpass123\nusername: myuser\n")
+	if err := os.WriteFile(gpgFile, content, 0o600); err != nil {
+		t.Fatalf("failed to write dummy gpg file: %v", err)
+	}
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"pass_vault": {
+				Provider:  "pass",
+				VaultPath: tmpDir,
+			},
+		},
+	}
+
+	pm := NewProviderManager(cfg, nil, nil)
+	ctx := context.Background()
+
+	p, isBuiltin, err := pm.GetProvider(ctx, "pass_vault")
+	if err != nil {
+		t.Fatalf("GetProvider(pass_vault) error = %v", err)
+	}
+	if isBuiltin {
+		t.Errorf("pass_vault reported as builtin, expected false")
+	}
+
+	// Unwrap filtering or decorator if needed to set decrypt function
+	curr := p
+	for {
+		if inner, ok := curr.(interface {
+			Underlying() provider.SecretProvider
+		}); ok {
+			curr = inner.Underlying()
+		} else {
+			break
+		}
+	}
+
+	if passProv, ok := curr.(*provider.PassProvider); ok {
+		passProv.SetDecryptFunc(func(_ context.Context, filePath string) ([]byte, error) {
+			return content, nil
+		})
+	} else {
+		t.Fatalf("expected *provider.PassProvider, got %T", curr)
+	}
+
+	// Test GetSecret with password and username
+	pw, err := p.GetSecret(ctx, "development/db")
+	if err != nil {
+		t.Fatalf("GetSecret(development/db) error = %v", err)
+	}
+	if got, want := pw, "secretpass123"; got != want {
+		t.Errorf("GetSecret(development/db) = %q, want %q", got, want)
+	}
+
+	user, err := p.GetSecret(ctx, "development/db:username")
+	if err != nil {
+		t.Fatalf("GetSecret(development/db:username) error = %v", err)
+	}
+	if got, want := user, "myuser"; got != want {
+		t.Errorf("GetSecret(development/db:username) = %q, want %q", got, want)
 	}
 }
 

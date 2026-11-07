@@ -302,6 +302,12 @@ type VaultConfig struct {
 	// (e.g., the .kdbx file for keepass providers).
 	VaultPath string `yaml:"vault_path"`
 
+	// KeyFile specifies the path to a KeePass key file (.key / .keyx / raw key).
+	KeyFile string `yaml:"key_file"`
+
+	// KeyFileEnv specifies an environment variable name containing the path to a KeePass key file.
+	KeyFileEnv string `yaml:"key_file_env"`
+
 	// EntitiesRootKey defines the dictionary key under which entries are listed in the YAML/JSON database.
 	// Optional. Defaults to "entities" or "entries". Use "." to map directly to the root of the database file.
 	EntitiesRootKey string `yaml:"entities_root_key"`
@@ -357,6 +363,27 @@ type VaultConfig struct {
 
 	// Query specifies the search expression for search provider vaults.
 	Query string `yaml:"query"`
+
+	// Address specifies the HashiCorp Vault server URL (e.g., "https://vault.example.com:8200").
+	Address string `yaml:"address,omitempty"`
+
+	// Token specifies the HashiCorp Vault access token.
+	Token string `yaml:"token,omitempty"`
+
+	// RoleID specifies the AppRole role_id for HashiCorp Vault AppRole authentication.
+	RoleID string `yaml:"role_id,omitempty"`
+
+	// SecretID specifies the AppRole secret_id for HashiCorp Vault AppRole authentication.
+	SecretID string `yaml:"secret_id,omitempty"`
+
+	// EngineVersion specifies the KV secret engine version (1 or 2). Defaults to 2.
+	EngineVersion int `yaml:"engine_version,omitempty"`
+
+	// Namespace specifies the Vault namespace (for Vault Enterprise).
+	Namespace string `yaml:"namespace,omitempty"`
+
+	// MountPath specifies the KV secrets engine mount path (e.g., "secret").
+	MountPath string `yaml:"mount_path,omitempty"`
 }
 
 // DefaultConfigPath returns the default configuration file path:
@@ -410,6 +437,27 @@ func Load(path string) (*Config, error) {
 			}
 			vault.VaultPath = filepath.Clean(vaultPath)
 		}
+		if vault.KeyFileEnv != "" {
+			if envVal := os.Getenv(vault.KeyFileEnv); envVal != "" {
+				vault.KeyFile = envVal
+			}
+		}
+		if vault.KeyFile != "" {
+			keyPath := expandHome(vault.KeyFile)
+			if !filepath.IsAbs(keyPath) && cfg.ConfigPath != "" {
+				baseDir := filepath.Dir(cfg.ConfigPath)
+				keyPath = filepath.Join(baseDir, keyPath)
+			}
+			vault.KeyFile = filepath.Clean(keyPath)
+
+			info, statErr := os.Stat(vault.KeyFile) //nolint:gosec // operator-configured key_file path
+			if statErr != nil {
+				return nil, fmt.Errorf("vault %q: key_file %q not found or inaccessible: %w", name, vault.KeyFile, statErr)
+			}
+			if info.IsDir() {
+				return nil, fmt.Errorf("vault %q: key_file %q is a directory, expected regular file", name, vault.KeyFile)
+			}
+		}
 		cfg.Vaults[name] = vault
 	}
 
@@ -461,6 +509,16 @@ func Load(path string) (*Config, error) {
 			// valid key format
 		default:
 			return nil, fmt.Errorf("vault %q: invalid key_format %q (must be one of: none, env, snake, kebab)", vaultName, vault.KeyFormat)
+		}
+
+		if vault.Provider == "vault" {
+			if vault.EngineVersion != 0 && vault.EngineVersion != 1 && vault.EngineVersion != 2 {
+				return nil, fmt.Errorf("vault %q: invalid engine_version %d (must be 1 or 2)", vaultName, vault.EngineVersion)
+			}
+			// If AppRole is partially configured, require both role_id and secret_id
+			if (vault.RoleID != "" && vault.SecretID == "") || (vault.RoleID == "" && vault.SecretID != "") {
+				return nil, fmt.Errorf("vault %q: both role_id and secret_id must be provided for approle auth", vaultName)
+			}
 		}
 
 		if vault.Cache.Enabled {

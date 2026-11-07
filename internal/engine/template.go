@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -258,11 +259,18 @@ func (e *execInvocationError) Unwrap() error {
 // TemplateEngine wraps Go's text/template to evaluate strings with context.
 type TemplateEngine struct {
 	resolver *Resolver
+	execMemo *execMemo
 }
 
 // NewTemplateEngine creates a new TemplateEngine.
 func NewTemplateEngine(r *Resolver) *TemplateEngine {
-	return &TemplateEngine{resolver: r}
+	var memo *execMemo
+	if r != nil && r.execMemo != nil {
+		memo = r.execMemo
+	} else {
+		memo = newExecMemo()
+	}
+	return &TemplateEngine{resolver: r, execMemo: memo}
 }
 
 // Render evaluates a template string.
@@ -412,6 +420,9 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 			if strings.TrimSpace(name) == "" {
 				return "", fmt.Errorf("exec: executable name cannot be empty")
 			}
+			if strings.IndexByte(name, 0) != -1 {
+				return "", fmt.Errorf("exec: executable name contains null byte")
+			}
 			binPath, err := exec.LookPath(name)
 			if err != nil {
 				if errors.Is(err, exec.ErrDot) {
@@ -419,30 +430,60 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 				}
 				return "", fmt.Errorf("exec: command %q not found: %w", name, err)
 			}
+			if isWindowsBatchFile(binPath) {
+				return "", fmt.Errorf("exec: execution of batch file %q is blocked due to security risks", binPath)
+			}
 			strArgs := make([]string, len(args))
 			for i, arg := range args {
-				strArgs[i] = fmt.Sprintf("%v", arg)
-			}
-			const defaultExecTimeout = 30 * time.Second
-			execCtx := ctx
-			var cancel context.CancelFunc
-			if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-				execCtx, cancel = context.WithTimeout(ctx, defaultExecTimeout)
-				defer cancel()
-			}
-			cmd := exec.CommandContext(execCtx, binPath, strArgs...) //nolint:gosec // operator-configured executable name and discrete argv parameters
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stderr
-			if err := cmd.Run(); err != nil {
-				errMsg := strings.TrimSpace(stderr.String())
-				if errMsg != "" {
-					return "", &execInvocationError{err: fmt.Errorf("exec: command %q failed: %s", name, errMsg)}
+				strArg := fmt.Sprintf("%v", arg)
+				if strings.IndexByte(strArg, 0) != -1 {
+					return "", fmt.Errorf("exec: argument at index %d contains null byte", i)
 				}
-				return "", &execInvocationError{err: fmt.Errorf("exec: command %q failed: %w", name, err)}
+				strArgs[i] = strArg
 			}
-			out := strings.TrimRight(stdout.String(), "\r\n")
-			return out, nil
+
+			// Resolve cache provider and TTL if available
+			var cacheProv provider.SecretProvider
+			var cacheTTL time.Duration
+			if te.resolver != nil && te.resolver.providers != nil {
+				if p, isBuiltin, pErr := te.resolver.providers.GetProvider(ctx, "cache"); pErr == nil && isBuiltin {
+					cacheProv = p
+					cfg := te.resolver.providers.Config()
+					if cfg != nil && cfg.Cache.DefaultTTL != "" {
+						if d, parseErr := time.ParseDuration(cfg.Cache.DefaultTTL); parseErr == nil && d > 0 {
+							cacheTTL = d
+						}
+					}
+				}
+			}
+
+			memo := te.execMemo
+			if memo == nil {
+				memo = newExecMemo()
+			}
+
+			return memo.execute(ctx, binPath, strArgs, cacheProv, cacheTTL, func(runCtx context.Context) (string, error) {
+				const defaultExecTimeout = 30 * time.Second
+				execCtx := runCtx
+				var cancel context.CancelFunc
+				if _, hasDeadline := runCtx.Deadline(); !hasDeadline {
+					execCtx, cancel = context.WithTimeout(runCtx, defaultExecTimeout)
+					defer cancel()
+				}
+				cmd := exec.CommandContext(execCtx, binPath, strArgs...) //nolint:gosec // operator-configured executable name and discrete argv parameters
+				var stdout, stderr bytes.Buffer
+				cmd.Stdout = &stdout
+				cmd.Stderr = &stderr
+				if err := cmd.Run(); err != nil {
+					errMsg := strings.TrimSpace(stderr.String())
+					if errMsg != "" {
+						return "", &execInvocationError{err: fmt.Errorf("exec: command %q failed: %s", name, errMsg)}
+					}
+					return "", &execInvocationError{err: fmt.Errorf("exec: command %q failed: %w", name, err)}
+				}
+				out := strings.TrimRight(stdout.String(), "\r\n")
+				return out, nil
+			})
 		},
 	}
 
@@ -609,4 +650,13 @@ func expandPath(path, configPath string) string {
 		path = filepath.Join(baseDir, path)
 	}
 	return path
+}
+
+func isWindowsBatchFile(binPath string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	cleanBinary := strings.TrimRight(binPath, ". ")
+	ext := strings.ToLower(filepath.Ext(cleanBinary))
+	return ext == ".bat" || ext == ".cmd"
 }

@@ -891,6 +891,71 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		}
 		return f.underlying.GetSecret(ctx, location)
 
+	case "pass":
+		// Format: "entry[:attribute]". Omitted or empty selector defaults to "Password".
+		entryPath := location
+		effectiveAttr := "Password"
+		if strings.Contains(location, ":") {
+			parts := strings.SplitN(location, ":", 2)
+			entryPath = parts[0]
+			if parts[1] != "" {
+				effectiveAttr = parts[1]
+			}
+		}
+		leafAttr := effectiveAttr
+		if lastDot := strings.LastIndex(effectiveAttr, "."); lastDot >= 0 {
+			leafAttr = effectiveAttr[lastDot+1:]
+		}
+
+		var entryTitle string
+		if entryPath != "" {
+			t, err := f.getCachedEntryTitle(ctx, entryPath)
+			if err != nil {
+				return "", fmt.Errorf("pass provider: failed to resolve entry title for %q: %w", entryPath, err)
+			}
+			entryTitle = t
+		}
+
+		var candidates []string
+		candidates = append(candidates, effectiveAttr, location)
+		if entryPath != "" {
+			candidates = append(candidates, entryPath, entryPath+"."+effectiveAttr, entryPath+":"+effectiveAttr)
+			cleanEntryPath := normalizeDotPath(entryPath)
+			if cleanEntryPath != "" && cleanEntryPath != entryPath {
+				candidates = append(candidates, cleanEntryPath, cleanEntryPath+"."+effectiveAttr)
+			}
+			slashParts := strings.Split(entryPath, "/")
+			for i := 1; i < len(slashParts); i++ {
+				candidates = append(candidates, strings.Join(slashParts[:i], "/"))
+			}
+			fullField := entryPath + "." + effectiveAttr
+			segments := strings.Split(fullField, ".")
+			for i := 1; i < len(segments); i++ {
+				candidates = append(candidates, strings.Join(segments[:i], "."))
+			}
+		}
+		if entryTitle != "" && entryTitle != entryPath {
+			candidates = append(candidates, entryTitle, entryTitle+"."+effectiveAttr, entryTitle+":"+effectiveAttr)
+			cleanTitle := normalizeDotPath(entryTitle)
+			if cleanTitle != "" && cleanTitle != entryTitle {
+				candidates = append(candidates, cleanTitle, cleanTitle+"."+effectiveAttr)
+			}
+			slashParts := strings.Split(entryTitle, "/")
+			for i := 1; i < len(slashParts); i++ {
+				candidates = append(candidates, strings.Join(slashParts[:i], "/"))
+			}
+			fullTitleField := entryTitle + "." + effectiveAttr
+			segments := strings.Split(fullTitleField, ".")
+			for i := 1; i < len(segments); i++ {
+				candidates = append(candidates, strings.Join(segments[:i], "."))
+			}
+		}
+
+		if !isFieldAuthorized(leafAttr, candidates, f.includeFields, f.excludeFields) {
+			return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
+		}
+		return f.underlying.GetSecret(ctx, location)
+
 	case "custom_vault":
 		// Format: "entity[:attribute]". Bare location defaults to "Password".
 		effectiveAttr := "Password"

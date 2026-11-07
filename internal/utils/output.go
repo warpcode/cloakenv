@@ -3,6 +3,7 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/warpcode/cloakenv/internal/yaml"
@@ -10,14 +11,19 @@ import (
 
 // RenderOutput serializes the data to YAML or JSON and writes it to stdout.
 func RenderOutput(data any, asJSON bool, errorLabel string) error {
+	return RenderOutputTo(os.Stdout, data, asJSON, errorLabel)
+}
+
+// RenderOutputTo serializes the data to YAML or JSON and writes it to the provided writer.
+func RenderOutputTo(w io.Writer, data any, asJSON bool, errorLabel string) error {
 	if asJSON {
-		enc := json.NewEncoder(os.Stdout)
+		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(data); err != nil {
 			return fmt.Errorf("failed to serialize %s to JSON: %w", errorLabel, err)
 		}
 	} else {
-		enc := yaml.NewEncoder(os.Stdout)
+		enc := yaml.NewEncoder(w)
 		enc.SetIndent(2)
 		if err := enc.Encode(data); err != nil {
 			if closeErr := enc.Close(); closeErr != nil {

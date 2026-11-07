@@ -13,7 +13,11 @@ func TestHelpOutputs(t *testing.T) {
 		contains string
 	}{
 		{"PrintUsage", PrintUsage, true, "cloakenv — pluggable secret orchestrator"},
+		{"PrintUsage_KeyFormat", PrintUsage, true, "-f, --key-format format  Override attribute key formatting"},
+		{"PrintUsage_Internal", PrintUsage, true, "internal  Developer & hook helpers (subcommands: match-alias)"},
 		{"PrintUsageStdout", PrintUsageStdout, false, "cloakenv — pluggable secret orchestrator"},
+		{"PrintUsageStdout_KeyFormat", PrintUsageStdout, false, "-f, --key-format format  Override attribute key formatting"},
+		{"PrintUsageStdout_Internal", PrintUsageStdout, false, "internal  Developer & hook helpers (subcommands: match-alias)"},
 		{"PrintRunHelp", PrintRunHelp, false, "cloakenv run"},
 		{"PrintGetHelp", PrintGetHelp, false, "cloakenv get"},
 		{"PrintSetHelp", PrintSetHelp, false, "cloakenv set"},
