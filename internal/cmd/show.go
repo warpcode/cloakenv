@@ -6,7 +6,6 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/engine"
@@ -95,133 +94,6 @@ func parseShowFlags(args []string) (*showOptions, error) {
 	return opts, nil
 }
 
-func buildMergedEntry(ctx context.Context, orch *engine.Orchestrator, merges []string, whitelist []string, explicit map[string]string) (provider.Entry, error) {
-	entries, err := resolveMergedEntries(ctx, orch, merges)
-	if err != nil {
-		return provider.Entry{}, err
-	}
-
-	tags, attributes := mergeTagsAndAttributes(entries, whitelist)
-
-	explicitResolved, err := resolveExplicitMappings(ctx, orch, explicit)
-	if err != nil {
-		return provider.Entry{}, err
-	}
-
-	for k, v := range explicitResolved {
-		attributes[k] = v
-	}
-
-	if tags == nil {
-		tags = []string{}
-	}
-
-	return provider.Entry{
-		Tags:       tags,
-		Attributes: attributes,
-	}, nil
-}
-
-func resolveMergedEntries(ctx context.Context, orch *engine.Orchestrator, merges []string) ([]provider.Entry, error) {
-	if len(merges) == 0 {
-		return nil, nil
-	}
-
-	type loadedEntry struct {
-		entries []provider.Entry
-		err     error
-	}
-	loadedMerges := make([]loadedEntry, len(merges))
-	var mWg sync.WaitGroup
-	for idx, mURI := range merges {
-		mWg.Add(1)
-		go func(i int, uri string) {
-			defer mWg.Done()
-			entries, err := orch.GetEntries(ctx, uri)
-			loadedMerges[i] = loadedEntry{entries: entries, err: err}
-		}(idx, mURI)
-	}
-	mWg.Wait()
-
-	var entries []provider.Entry
-	for _, lm := range loadedMerges {
-		if lm.err != nil {
-			return nil, fmt.Errorf("failed to retrieve entry: %w", lm.err)
-		}
-		entries = append(entries, lm.entries...)
-	}
-	return entries, nil
-}
-
-func mergeTagsAndAttributes(entries []provider.Entry, whitelist []string) ([]string, map[string]any) {
-	whitelistSet := make(map[string]bool)
-	for _, k := range whitelist {
-		whitelistSet[k] = true
-		whitelistSet[utils.FormatKey(k)] = true
-		whitelistSet[strings.ToLower(k)] = true
-	}
-	hasWhitelist := len(whitelist) > 0
-
-	tagSet := make(map[string]bool)
-	attributes := make(map[string]any)
-
-	for _, e := range entries {
-		for _, tag := range e.Tags {
-			tagSet[tag] = true
-		}
-		for k, v := range e.Attributes {
-			if strings.EqualFold(k, "title") {
-				continue
-			}
-			if hasWhitelist && !whitelistSet[k] && !whitelistSet[utils.FormatKey(k)] && !whitelistSet[strings.ToLower(k)] {
-				continue
-			}
-			attributes[k] = v
-		}
-	}
-
-	var uniqueTags []string
-	for tag := range tagSet {
-		uniqueTags = append(uniqueTags, tag)
-	}
-
-	return uniqueTags, attributes
-}
-
-func resolveExplicitMappings(ctx context.Context, orch *engine.Orchestrator, explicit map[string]string) (map[string]string, error) {
-	if len(explicit) == 0 {
-		return nil, nil
-	}
-
-	type resolvedMapping struct {
-		key string
-		val string
-		err error
-	}
-	resolvedList := make([]resolvedMapping, len(explicit))
-	var eWg sync.WaitGroup
-	idx := 0
-	for k, uri := range explicit {
-		eWg.Add(1)
-		go func(i int, key, u string) {
-			defer eWg.Done()
-			val, err := orch.Resolve(ctx, u)
-			resolvedList[i] = resolvedMapping{key: key, val: val, err: err}
-		}(idx, k, uri)
-		idx++
-	}
-	eWg.Wait()
-
-	results := make(map[string]string, len(explicit))
-	for _, rm := range resolvedList {
-		if rm.err != nil {
-			return nil, fmt.Errorf("failed to resolve mapping %s=%s: %w", rm.key, explicit[rm.key], rm.err)
-		}
-		results[rm.key] = rm.val
-	}
-	return results, nil
-}
-
 // Show handles "cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]"
 func Show(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
@@ -258,7 +130,11 @@ func Show(args []string, cfg *config.Config) int {
 			return 1
 		}
 	} else {
-		entry, err = buildMergedEntry(ctx, orch, opts.merges, opts.whitelist, opts.explicit)
+		entry, err = orch.BuildMergedEntry(ctx, engine.MergedEntryConfig{
+			Merges:    opts.merges,
+			Whitelist: opts.whitelist,
+			Explicit:  opts.explicit,
+		})
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -285,7 +161,7 @@ func Show(args []string, cfg *config.Config) int {
 		return 0
 	}
 
-	out := make(map[string]any, len(entry.Attributes)+2)
+	out := make(map[string]any)
 	for k, v := range entry.Attributes {
 		out[k] = v
 	}

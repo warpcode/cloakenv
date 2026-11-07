@@ -567,8 +567,8 @@ func TestTemplateEngine_ExecComprehensive(t *testing.T) {
 		cmdName := "relative-binary-test"
 		scriptContent := "#!/bin/sh\necho relative_ran\n"
 		if runtime.GOOS == "windows" {
-			cmdName += ".bat"
-			scriptContent = "@echo relative_ran\r\n"
+			cmdName += ".exe"
+			scriptContent = ""
 		}
 		binPath := filepath.Join(dir, cmdName)
 		if err := os.WriteFile(binPath, []byte(scriptContent), 0755); err != nil {
@@ -585,6 +585,47 @@ func TestTemplateEngine_ExecComprehensive(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "blocked due to security risks") {
 			t.Errorf("expected security risk error message, got: %v", err)
+		}
+	})
+
+	t.Run("null byte rejected in executable name", func(t *testing.T) {
+		tmpl := `{{ exec "echo\x00malicious" }}`
+		_, err := te.Render(ctx, tmpl, nil, 0, "")
+		if err == nil {
+			t.Fatalf("expected error for null byte in executable name, got nil")
+		}
+		if !strings.Contains(err.Error(), "executable name contains null byte") {
+			t.Errorf("expected null byte error, got: %v", err)
+		}
+	})
+
+	t.Run("null byte rejected in argument", func(t *testing.T) {
+		tmpl := `{{ exec "echo" "hello\x00world" }}`
+		_, err := te.Render(ctx, tmpl, nil, 0, "")
+		if err == nil {
+			t.Fatalf("expected error for null byte in argument, got nil")
+		}
+		if !strings.Contains(err.Error(), "contains null byte") {
+			t.Errorf("expected null byte error, got: %v", err)
+		}
+	})
+
+	t.Run("batch file execution blocked on Windows", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			t.Skip("Windows-specific batch file restriction test")
+		}
+		dir := t.TempDir()
+		batFile := filepath.Join(dir, "danger.bat")
+		if err := os.WriteFile(batFile, []byte("@echo pwned\r\n"), 0755); err != nil {
+			t.Fatalf("failed to create dummy bat file: %v", err)
+		}
+		tmpl := fmt.Sprintf(`{{ exec %q }}`, batFile)
+		_, err := te.Render(ctx, tmpl, nil, 0, "")
+		if err == nil {
+			t.Fatalf("expected error for batch file execution, got nil")
+		}
+		if !strings.Contains(err.Error(), "is blocked due to security risks") {
+			t.Errorf("expected batch file security risk error, got: %v", err)
 		}
 	})
 }

@@ -52,6 +52,11 @@ func run(args []string, stderr io.Writer) int {
 		return 0
 	}
 
+	if parsedArgs[1] == "--version" || parsedArgs[1] == "-v" || parsedArgs[1] == "version" {
+		cmd.PrintVersion(os.Stdout)
+		return 0
+	}
+
 	cfg, err := loadConfig(customConfigPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "Config error: %v\n", err)
@@ -60,6 +65,8 @@ func run(args []string, stderr io.Writer) int {
 
 	// Router logic dispatches to internal/cmd subcommands
 	switch parsedArgs[1] {
+	case "completion":
+		return cmd.Completion(parsedArgs[2:], os.Stdout, stderr)
 	case "run":
 		return cmd.Run(parsedArgs[2:], cfg)
 	case "get":
@@ -78,6 +85,8 @@ func run(args []string, stderr io.Writer) int {
 		return cmd.Auth(parsedArgs[2:], cfg)
 	case "sync":
 		return cmd.Sync(parsedArgs[2:], cfg)
+	case "config":
+		return cmd.ConfigCmd(parsedArgs[2:], customConfigPath, os.Stdout, stderr)
 	case "internal":
 		return cmd.Internal(parsedArgs[2:], cfg)
 	default:
