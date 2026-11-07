@@ -45,6 +45,35 @@ func TestFlagParser_Bool(t *testing.T) {
 	}
 }
 
+func TestFlagParser_HiddenBool(t *testing.T) {
+	fp := NewFlagParser()
+	var visible bool
+	var hidden bool
+	fp.Bool([]string{"--visible"}, &visible)
+	fp.HiddenBool([]string{"--hidden-alias"}, &hidden)
+
+	if fp.IsHidden("--visible") {
+		t.Errorf("IsHidden(--visible) = true, want false")
+	}
+	if !fp.IsHidden("--hidden-alias") {
+		t.Errorf("IsHidden(--hidden-alias) = false, want true")
+	}
+	if fp.IsHidden("--unknown") {
+		t.Errorf("IsHidden(--unknown) = true, want false")
+	}
+
+	remaining, err := fp.Parse([]string{"--hidden-alias"})
+	if err != nil {
+		t.Fatalf("unexpected error parsing hidden flag: %v", err)
+	}
+	if !hidden {
+		t.Errorf("expected hidden to be true after --hidden-alias, got false")
+	}
+	if len(remaining) != 0 {
+		t.Errorf("expected remaining to be empty, got %v", remaining)
+	}
+}
+
 func TestFlagParser_StringSlice(t *testing.T) {
 	t.Run("short flag appends value", func(t *testing.T) {
 		fp := NewFlagParser()

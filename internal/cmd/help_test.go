@@ -50,4 +50,14 @@ func TestHelpOutputs(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("PrintRunHelp_OmitDeprecatedSkipAutoload", func(t *testing.T) {
+		stdout, _ := captureOutput(t, PrintRunHelp)
+		if strings.Contains(stdout, "--skip-autoload") {
+			t.Errorf("PrintRunHelp() output should not contain deprecated hidden flag --skip-autoload, got:\n%s", stdout)
+		}
+		if !strings.Contains(stdout, "--no-autoload") {
+			t.Errorf("PrintRunHelp() output should contain primary flag --no-autoload, got:\n%s", stdout)
+		}
+	})
 }

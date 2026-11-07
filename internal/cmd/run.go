@@ -39,7 +39,8 @@ func Run(args []string, cfg *config.Config) int {
 	})
 	parser.StopAtNonFlag = true
 	parser.Bool([]string{"-E"}, &emptyEnv)
-	parser.Bool([]string{"--no-autoload", "--skip-autoload"}, &noAutoload)
+	parser.Bool([]string{"--no-autoload"}, &noAutoload)
+	parser.HiddenBool([]string{"--skip-autoload"}, &noAutoload)
 	parser.Bool([]string{"--dry-run"}, &dryRun)
 	parser.Var([]string{"-e"}, true, "", func(name, val string) error {
 		key, uri, ok := strings.Cut(val, "=")
