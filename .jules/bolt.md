@@ -1,0 +1,3 @@
+## 2026-11-07 - Pre-classified Key Dispatch in Search Result Flattening
+**Learning:** In CLI result formatting (such as `flattenSearchResults`), repeated string lowercasing and 14-branch string switch statements inside loops over search results impose noticeable CPU overhead per entry. Classifying the selected key list once prior to the result loop into a small numeric enum allows the inner loop to use direct jump tables / integer comparisons without redundant string inspections.
+**Action:** When transforming large sets of search or query results by a user-supplied field/key filter, pre-parse and classify the key filter upfront rather than evaluating strings inside the entry iteration.
