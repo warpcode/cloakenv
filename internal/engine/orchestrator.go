@@ -28,11 +28,13 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	kr := provider.NewOSKeyringProvider()
 	env := provider.NewEnvProvider()
 	cache := provider.NewCacheProvider()
+	pass := provider.NewPassProvider()
 
 	builtins := map[string]provider.SecretProvider{
 		kr.Scheme():    kr,
 		env.Scheme():   env,
 		cache.Scheme(): cache,
+		pass.Scheme():  pass,
 	}
 
 	pm := NewProviderManager(cfg, builtins, kr)
@@ -187,7 +189,7 @@ func (o *Orchestrator) CheckAccess(ctx context.Context, vaultName string) error 
 
 func validateVaultConfig(vaultName string, vault config.VaultConfig, cfg *config.Config, pm *ProviderManager, builtins map[string]provider.SecretProvider) error {
 	if _, isBuiltin := builtins[vaultName]; isBuiltin {
-		if vaultName != "env" || vault.Provider != "env" {
+		if (vaultName != "env" || vault.Provider != "env") && (vaultName != "pass" || vault.Provider != "pass") {
 			return fmt.Errorf("invalid config: vault name %q conflicts with built-in scheme", vaultName)
 		}
 	}
@@ -245,6 +247,15 @@ func validateVaultConfig(vaultName string, vault config.VaultConfig, cfg *config
 		// custom_vault is statically defined in config, so it is always valid.
 	case "env":
 		// env provider reads directly from process environment; no specific required settings.
+	case "pass":
+		pp := provider.NewPassProvider()
+		settings := map[string]string{
+			"store_dir":  vault.VaultPath,
+			"vault_path": vault.VaultPath,
+		}
+		if err := pp.Validate(settings); err != nil {
+			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
+		}
 	case "search":
 		if vault.Searchable != nil {
 			return fmt.Errorf("invalid config for vault %q: search provider does not support the searchable flag", vaultName)

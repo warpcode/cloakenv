@@ -92,10 +92,10 @@ func (pm *ProviderManager) GetProvider(ctx context.Context, scheme string) (prov
 	pm.mu.Unlock()
 
 	if isBuiltin {
-		// If "env" is configured in vaults, route it through the vault provider pipeline
-		if scheme == "env" && cfg != nil {
-			if _, ok := cfg.Vaults["env"]; ok {
-				vaultP, err := pm.getVaultProvider(ctx, "env")
+		// If "env" or "pass" is configured in vaults, route it through the vault provider pipeline
+		if (scheme == "env" || scheme == "pass") && cfg != nil {
+			if _, ok := cfg.Vaults[scheme]; ok {
+				vaultP, err := pm.getVaultProvider(ctx, scheme)
 				if err != nil {
 					return nil, false, err
 				}
@@ -195,6 +195,8 @@ func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName stri
 		p, err = pm.initCustomVault(ctx, vaultName, vault)
 	case "env":
 		p, err = pm.initEnv(ctx, vaultName, vault)
+	case "pass":
+		p, err = pm.initPass(ctx, vaultName, vault)
 	case "search":
 		p, err = pm.initSearch(ctx, vaultName, vault)
 	default:
@@ -349,6 +351,24 @@ func (pm *ProviderManager) initEnv(ctx context.Context, _ string, _ config.Vault
 		return nil, err
 	}
 	return ep, nil
+}
+
+// initPass bootstraps a Pass provider using settings.
+func (pm *ProviderManager) initPass(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
+	pp := provider.NewPassProvider()
+	err := pp.Initialize(ctx, provider.ProviderConfig{
+		Settings: map[string]string{
+			"store_dir":  vault.VaultPath,
+			"vault_path": vault.VaultPath,
+			"vault_name": vaultName,
+		},
+		Searchable: vault.Searchable == nil || *vault.Searchable,
+		Tags:       vault.Tags,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return pp, nil
 }
 
 // initCustomVault bootstraps a CustomVault provider using config settings.
@@ -636,6 +656,8 @@ func newBareProvider(providerType string) (provider.SecretProvider, error) {
 		return provider.NewCustomVaultProvider(), nil
 	case "env":
 		return provider.NewEnvProvider(), nil
+	case "pass":
+		return provider.NewPassProvider(), nil
 	case "search":
 		return provider.NewSearchProvider(), nil
 	default:

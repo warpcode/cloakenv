@@ -567,6 +567,7 @@ These providers are always available and do not require registration in `config.
 | `keyring://service/account` | Read / Write | OS native secure credential store (macOS Keychain, Linux D-Bus, Windows Credential Manager). |
 | `env://VAR_NAME` | Read-Only | Values from the parent process environment. Great for CI/CD pipelines. |
 | `cache://KEY` | Read / Write | Local AES-256-GCM encrypted filesystem cache with optional TTL. Encryption key is in OS Keyring. |
+| `pass://path/to/entry[:attribute]` | Read-Only | Standard Unix password store (`pass`). Resolves password on first line and multi-line `Key: Value` attributes. |
 | `search://query/attribute` | Read-Only | Dynamic URI resolution! Executes a search query on the fly and retrieves the matching attribute. |
 
 #### Dynamic `search://` URI Scheme Example:
