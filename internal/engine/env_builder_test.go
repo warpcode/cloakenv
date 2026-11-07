@@ -9,6 +9,102 @@ import (
 	"github.com/warpcode/cloakenv/internal/config"
 )
 
+func TestBuildMergedEntry(t *testing.T) {
+	t.Setenv("TEST_ENGINE_ENV_VAL", "resolved_env_val")
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"vaultA": {
+				Provider: "custom_vault",
+				Entities: map[string]config.CustomEntityConfig{
+					"entry1": {
+						Attributes: map[string]any{
+							"user": "userA",
+							"pass": "passA",
+							"tags": []any{"tagA", "commonTag"},
+						},
+					},
+				},
+			},
+			"vaultB": {
+				Provider: "custom_vault",
+				Entities: map[string]config.CustomEntityConfig{
+					"entry2": {
+						Attributes: map[string]any{
+							"host": "hostB",
+							"user": "userB_overridden",
+							"tags": []any{"tagB", "commonTag"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	ctx := t.Context()
+
+	t.Run("MergeMultipleEntriesWithWhitelistAndExplicit", func(t *testing.T) {
+		merges := []string{"vaultA://entry1", "vaultB://entry2"}
+		whitelist := []string{"user", "host"}
+		explicit := map[string]string{
+			"EXTRA_KEY": `{{ get "env://TEST_ENGINE_ENV_VAL" }}`,
+		}
+
+		entry, err := orch.BuildMergedEntry(ctx, MergedEntryConfig{
+			Merges:    merges,
+			Whitelist: whitelist,
+			Explicit:  explicit,
+		})
+		if err != nil {
+			t.Fatalf("BuildMergedEntry failed: %v", err)
+		}
+
+		if got, want := entry.Attributes["user"], "userB_overridden"; got != want {
+			t.Errorf("entry.Attributes[\"user\"] = %v; want %v", got, want)
+		}
+		if got, want := entry.Attributes["host"], "hostB"; got != want {
+			t.Errorf("entry.Attributes[\"host\"] = %v; want %v", got, want)
+		}
+		if _, exists := entry.Attributes["pass"]; exists {
+			t.Errorf("entry.Attributes[\"pass\"] should have been filtered out by whitelist")
+		}
+		if got, want := entry.Attributes["EXTRA_KEY"], "resolved_env_val"; got != want {
+			t.Errorf("entry.Attributes[\"EXTRA_KEY\"] = %v; want %v", got, want)
+		}
+
+		tagSet := make(map[string]bool)
+		for _, tag := range entry.Tags {
+			tagSet[tag] = true
+		}
+		if !tagSet["tagA"] || !tagSet["tagB"] || !tagSet["commonTag"] {
+			t.Errorf("unexpected tags in merged entry: %v", entry.Tags)
+		}
+	})
+
+	t.Run("MergeInvalidEntryError", func(t *testing.T) {
+		merges := []string{"vaultA://nonexistent"}
+		_, err := orch.BuildMergedEntry(ctx, MergedEntryConfig{Merges: merges})
+		if err == nil {
+			t.Errorf("expected error when retrieving nonexistent entry, got nil")
+		}
+	})
+
+	t.Run("ExplicitMappingError", func(t *testing.T) {
+		explicit := map[string]string{
+			"BAD_KEY": `{{ get "invalid_scheme://foo" }}`,
+		}
+		_, err := orch.BuildMergedEntry(ctx, MergedEntryConfig{Explicit: explicit})
+		if err == nil {
+			t.Errorf("expected error when resolving invalid explicit mapping, got nil")
+		}
+	})
+}
+
 func TestOrchestratorBuildEnvMerges(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{

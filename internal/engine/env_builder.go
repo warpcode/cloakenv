@@ -166,6 +166,110 @@ func (eb *EnvBuilder) resolveExplicitMappings(ctx context.Context, explicit map[
 	return resolved, nil
 }
 
+// MergedEntryConfig holds configuration parameters for building a merged entry.
+type MergedEntryConfig struct {
+	Merges    []string
+	Whitelist []string
+	Explicit  map[string]string
+}
+
+// BuildMergedEntry constructs a single merged entry by merging multiple entries
+// and resolving explicit mappings.
+func (eb *EnvBuilder) BuildMergedEntry(ctx context.Context, cfg MergedEntryConfig) (provider.Entry, error) {
+	entries, err := eb.resolveMergedEntries(ctx, cfg.Merges)
+	if err != nil {
+		return provider.Entry{}, err
+	}
+
+	tags, attributes := mergeTagsAndAttributes(entries, cfg.Whitelist)
+
+	explicitResolved, err := eb.resolveExplicitMappings(ctx, cfg.Explicit)
+	if err != nil {
+		return provider.Entry{}, err
+	}
+
+	for k, v := range explicitResolved {
+		attributes[k] = v
+	}
+
+	if tags == nil {
+		tags = []string{}
+	}
+
+	return provider.Entry{
+		Tags:       tags,
+		Attributes: attributes,
+	}, nil
+}
+
+func (eb *EnvBuilder) resolveMergedEntries(ctx context.Context, merges []string) ([]provider.Entry, error) {
+	if len(merges) == 0 {
+		return nil, nil
+	}
+
+	type loadedEntry struct {
+		entries []provider.Entry
+		err     error
+	}
+	loadedMerges := make([]loadedEntry, len(merges))
+	var mWg sync.WaitGroup
+	for idx, mURI := range merges {
+		release := eb.acquireSem()
+		mWg.Add(1)
+		go func(i int, uri string) {
+			defer mWg.Done()
+			defer release()
+			entries, err := eb.resolver.GetEntries(ctx, uri)
+			loadedMerges[i] = loadedEntry{entries: entries, err: err}
+		}(idx, mURI)
+	}
+	mWg.Wait()
+
+	var entries []provider.Entry
+	for _, lm := range loadedMerges {
+		if lm.err != nil {
+			return nil, fmt.Errorf("failed to retrieve entry: %w", lm.err)
+		}
+		entries = append(entries, lm.entries...)
+	}
+	return entries, nil
+}
+
+func mergeTagsAndAttributes(entries []provider.Entry, whitelist []string) ([]string, map[string]any) {
+	whitelistSet := make(map[string]bool)
+	for _, k := range whitelist {
+		whitelistSet[k] = true
+		whitelistSet[utils.FormatKey(k)] = true
+		whitelistSet[strings.ToLower(k)] = true
+	}
+	hasWhitelist := len(whitelist) > 0
+
+	tagSet := make(map[string]bool)
+	attributes := make(map[string]any)
+
+	for _, e := range entries {
+		for _, tag := range e.Tags {
+			tagSet[tag] = true
+		}
+		for k, v := range e.Attributes {
+			if strings.EqualFold(k, "title") {
+				continue
+			}
+			if hasWhitelist && !whitelistSet[k] && !whitelistSet[utils.FormatKey(k)] && !whitelistSet[strings.ToLower(k)] {
+				continue
+			}
+			attributes[k] = v
+		}
+	}
+
+	var uniqueTags []string
+	for tag := range tagSet {
+		uniqueTags = append(uniqueTags, tag)
+	}
+
+	return uniqueTags, attributes
+}
+
 // EnvConfig holds configuration parameters for building the environment block.
 type EnvConfig struct {
 	CmdArgs   []string
