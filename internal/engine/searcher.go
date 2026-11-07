@@ -553,6 +553,12 @@ func isExprQuery(query string) bool {
 		return false
 	}
 
+	// If the string contains a single '=' (not part of ==, !=, <=, >=) outside string literals,
+	// it is a URL query parameter string.
+	if hasSingleEqual(trimmed) {
+		return false
+	}
+
 	if strings.Contains(trimmed, "==") ||
 		strings.Contains(trimmed, "!=") ||
 		strings.Contains(trimmed, "<=") ||
@@ -576,12 +582,6 @@ func isExprQuery(query string) bool {
 		return true
 	}
 
-	// If the string contains a single '=' (not part of ==, !=, <=, >=) outside any Expr operators,
-	// it is a URL query parameter string, avoiding unnecessary parser.Parse invocations.
-	if hasSingleEqual(trimmed) {
-		return false
-	}
-
 	// If parser.Parse succeeds on the trimmed expression, it is valid Expr syntax.
 	if _, err := parser.Parse(trimmed); err == nil {
 		return true
@@ -591,8 +591,22 @@ func isExprQuery(query string) bool {
 }
 
 func hasSingleEqual(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] == '=' {
+	inQuotes := false
+	var quoteChar byte
+	for i := range len(s) {
+		ch := s[i]
+		if inQuotes {
+			if ch == quoteChar && (i == 0 || s[i-1] != '\\') {
+				inQuotes = false
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			inQuotes = true
+			quoteChar = ch
+			continue
+		}
+		if ch == '=' {
 			if (i == 0 || (s[i-1] != '=' && s[i-1] != '!' && s[i-1] != '<' && s[i-1] != '>')) &&
 				(i+1 == len(s) || s[i+1] != '=') {
 				return true

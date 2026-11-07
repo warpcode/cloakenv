@@ -601,6 +601,18 @@ func TestSearchURIEncoding(t *testing.T) {
 				wantQuery: `path == "servers/ssh"`,
 				wantAttr:  "Password",
 			},
+			{
+				name:      "URLParamsWithAndKeyword",
+				input:     `title=Production and Staging/Password`,
+				wantQuery: `title contains "Production and Staging"`,
+				wantAttr:  "Password",
+			},
+			{
+				name:      "URLParamsWithInequalityCharacter",
+				input:     `notes=version<2.0/Password`,
+				wantQuery: `notes == "version<2.0"`,
+				wantAttr:  "Password",
+			},
 		}
 
 		for _, tc := range tests {
