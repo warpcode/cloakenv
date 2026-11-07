@@ -45,6 +45,7 @@ func TestSignalContext_Cancellation(t *testing.T) {
 
 func TestExitCodeForContext(t *testing.T) {
 	t.Run("nil or non-canceled context returns default", func(t *testing.T) {
+		//nolint:staticcheck // testing defensive nil context handling
 		if code := exitCodeForContext(nil, 42); code != 42 {
 			t.Errorf("got %d, want 42", code)
 		}
