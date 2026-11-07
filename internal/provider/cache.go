@@ -383,9 +383,8 @@ func (c *CacheProvider) PruneCache() (int, int64, error) {
 
 // getCacheFilePath maps a location query to a SHA-256 hashed filename under c.cacheDir.
 func (c *CacheProvider) getCacheFilePath(location string) string {
-	hasher := sha256.New()
-	hasher.Write([]byte(location))
-	fileName := hex.EncodeToString(hasher.Sum(nil))
+	hash := sha256.Sum256([]byte(location))
+	fileName := hex.EncodeToString(hash[:])
 	return filepath.Join(c.cacheDir, fileName)
 }
 

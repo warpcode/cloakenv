@@ -328,4 +328,26 @@ func TestCacheProvider(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("GetCacheFilePath", func(t *testing.T) {
+		cp := NewCacheProvider()
+		cp.cacheDir = "/tmp/cache"
+		path := cp.getCacheFilePath("test_location")
+		expected := filepath.Join("/tmp/cache", "ced718b23002817631bd4add6547c4e9a587c699cf0755db57d2b967fc490590")
+		if path != expected {
+			t.Errorf("getCacheFilePath(%q) = %q, want %q", "test_location", path, expected)
+		}
+	})
+}
+
+func BenchmarkGetCacheFilePath(b *testing.B) {
+	cp := NewCacheProvider()
+	cp.cacheDir = "/tmp/cache"
+	location := "production_db_password_key"
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		_ = cp.getCacheFilePath(location)
+	}
 }
