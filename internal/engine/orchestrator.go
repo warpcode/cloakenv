@@ -117,6 +117,18 @@ func (o *Orchestrator) GetEntry(ctx context.Context, uri string) (provider.Entry
 	return o.resolver.GetEntry(ctx, uri)
 }
 
+// GetRawEntry retrieves the unmodified Stage 1 raw entry before filtering,
+// mapping, key formatting, and computed attributes.
+func (o *Orchestrator) GetRawEntry(ctx context.Context, uri string) (provider.Entry, error) {
+	return o.resolver.GetRawEntry(ctx, uri)
+}
+
+// GetRawEntrySnapshot retrieves the pristine Stage 1 entry snapshot exactly as
+// stored by the underlying provider, without resolving attribute values.
+func (o *Orchestrator) GetRawEntrySnapshot(ctx context.Context, uri string) (provider.Entry, error) {
+	return o.resolver.GetRawEntrySnapshot(ctx, uri)
+}
+
 func (o *Orchestrator) GetEntries(ctx context.Context, uri string) ([]provider.Entry, error) {
 	return o.resolver.GetEntries(ctx, uri)
 }
@@ -168,8 +180,9 @@ func (o *Orchestrator) ClearCache(ctx context.Context) error {
 	return o.providerManager.ClearCache(ctx)
 }
 
-// PruneCache removes expired cache entries across all configured vaults.
-func (o *Orchestrator) PruneCache(ctx context.Context) error {
+// PruneCache removes expired cache entries from the standalone cache provider
+// and across all configured vaults with caching enabled.
+func (o *Orchestrator) PruneCache(ctx context.Context) (PruneStats, error) {
 	return o.providerManager.PruneCache(ctx)
 }
 

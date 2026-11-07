@@ -138,7 +138,7 @@ func TestCachingIntegration_Orchestrator(t *testing.T) {
 	}
 
 	// 4. PruneCache
-	if err := orch.PruneCache(ctx); err != nil {
+	if _, err := orch.PruneCache(ctx); err != nil {
 		t.Fatalf("PruneCache failed: %v", err)
 	}
 }
