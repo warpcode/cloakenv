@@ -37,6 +37,12 @@ vaults:
     vault_path: "./examples/providers/keepass/database.kdbx"
     # resolve_references: true  # Enables KeePass entry placeholder and cross-entry reference resolution ({TITLE}, {REF:...}, {T-CONV:...}, {URL:...})
 
+  # Defines the pass_store:// URI scheme (Standard Unix Password Store / pass)
+  pass_store:
+    provider: "pass"
+    vault_path: "~/.password-store"
+    searchable: true
+
   # Defines the work:// URI scheme (KeePass provider, multiple-entity by default)
   work:
     provider: "keepass"
@@ -207,6 +213,7 @@ autoload:
 # - env://      (Resolves secret values from local environment variables, e.g. env://USER)
 # - keyring://  (Resolves secret values from the OS keyring/keychain, e.g. keyring://ssh/prod_pass)
 # - cache://    (Resolves secret values from the secure local file cache)
+# - pass://     (Resolves secret values from standard Unix password store, e.g. pass://development/db:password)
 #
 # Note on KeePass Authentication:
 # Master passwords are NOT stored in the configuration file.
