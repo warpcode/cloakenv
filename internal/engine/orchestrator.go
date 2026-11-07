@@ -126,6 +126,12 @@ func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoSco
 	return o.searcher.Search(ctx, expressionStr, repoScopes)
 }
 
+// BuildMergedEntry constructs a single merged entry by merging multiple entries
+// and resolving explicit mappings.
+func (o *Orchestrator) BuildMergedEntry(ctx context.Context, cfg MergedEntryConfig) (provider.Entry, error) {
+	return o.envBuilder.BuildMergedEntry(ctx, cfg)
+}
+
 // BuildEnv constructs the full environment block without command autoloading.
 func (o *Orchestrator) BuildEnv(ctx context.Context, cfg EnvConfig) ([]string, error) {
 	return o.envBuilder.BuildEnv(ctx, cfg)
