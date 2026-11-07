@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -412,6 +413,9 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 			if strings.TrimSpace(name) == "" {
 				return "", fmt.Errorf("exec: executable name cannot be empty")
 			}
+			if strings.IndexByte(name, 0) != -1 {
+				return "", fmt.Errorf("exec: executable name contains null byte")
+			}
 			binPath, err := exec.LookPath(name)
 			if err != nil {
 				if errors.Is(err, exec.ErrDot) {
@@ -419,9 +423,16 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 				}
 				return "", fmt.Errorf("exec: command %q not found: %w", name, err)
 			}
+			if isWindowsBatchFile(binPath) {
+				return "", fmt.Errorf("exec: execution of batch file %q is blocked due to security risks", binPath)
+			}
 			strArgs := make([]string, len(args))
 			for i, arg := range args {
-				strArgs[i] = fmt.Sprintf("%v", arg)
+				strArg := fmt.Sprintf("%v", arg)
+				if strings.IndexByte(strArg, 0) != -1 {
+					return "", fmt.Errorf("exec: argument at index %d contains null byte", i)
+				}
+				strArgs[i] = strArg
 			}
 			const defaultExecTimeout = 30 * time.Second
 			execCtx := ctx
@@ -609,4 +620,13 @@ func expandPath(path, configPath string) string {
 		path = filepath.Join(baseDir, path)
 	}
 	return path
+}
+
+func isWindowsBatchFile(binPath string) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
+	cleanBinary := strings.TrimRight(binPath, ". ")
+	ext := strings.ToLower(filepath.Ext(cleanBinary))
+	return ext == ".bat" || ext == ".cmd"
 }

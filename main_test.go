@@ -55,10 +55,38 @@ func TestMainArgsParsing(t *testing.T) {
 			wantErr:  "",
 		},
 		{
+			name:     "help flag lists internal subcommand",
+			args:     []string{"--help"},
+			wantExit: 0,
+			wantOut:  "internal",
+			wantErr:  "",
+		},
+		{
 			name:     "short help flag",
 			args:     []string{"-h"},
 			wantExit: 0,
 			wantOut:  "cloakenv \u2014 pluggable secret orchestrator",
+			wantErr:  "",
+		},
+		{
+			name:     "version flag",
+			args:     []string{"--version"},
+			wantExit: 0,
+			wantOut:  "cloakenv version",
+			wantErr:  "",
+		},
+		{
+			name:     "short version flag",
+			args:     []string{"-v"},
+			wantExit: 0,
+			wantOut:  "cloakenv version",
+			wantErr:  "",
+		},
+		{
+			name:     "version subcommand",
+			args:     []string{"version"},
+			wantExit: 0,
+			wantOut:  "cloakenv version",
 			wantErr:  "",
 		},
 		{

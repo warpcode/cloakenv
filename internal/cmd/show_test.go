@@ -391,9 +391,13 @@ func TestBuildMergedEntry(t *testing.T) {
 			"EXTRA_KEY": `{{ get "env://TEST_SHOW_ENV_VAL" }}`,
 		}
 
-		entry, err := buildMergedEntry(ctx, orch, merges, whitelist, explicit)
+		entry, err := orch.BuildMergedEntry(ctx, engine.MergedEntryConfig{
+			Merges:    merges,
+			Whitelist: whitelist,
+			Explicit:  explicit,
+		})
 		if err != nil {
-			t.Fatalf("buildMergedEntry failed: %v", err)
+			t.Fatalf("BuildMergedEntry failed: %v", err)
 		}
 
 		// Check attributes
@@ -424,7 +428,7 @@ func TestBuildMergedEntry(t *testing.T) {
 
 	t.Run("Merge invalid entry error", func(t *testing.T) {
 		merges := []string{"vaultA://nonexistent"}
-		_, err := buildMergedEntry(ctx, orch, merges, nil, nil)
+		_, err := orch.BuildMergedEntry(ctx, engine.MergedEntryConfig{Merges: merges})
 		if err == nil {
 			t.Errorf("expected error when retrieving nonexistent entry, got nil")
 		}
@@ -434,7 +438,7 @@ func TestBuildMergedEntry(t *testing.T) {
 		explicit := map[string]string{
 			"BAD_KEY": `{{ get "invalid_scheme://foo" }}`,
 		}
-		_, err := buildMergedEntry(ctx, orch, nil, nil, explicit)
+		_, err := orch.BuildMergedEntry(ctx, engine.MergedEntryConfig{Explicit: explicit})
 		if err == nil {
 			t.Errorf("expected error when resolving invalid explicit mapping, got nil")
 		}

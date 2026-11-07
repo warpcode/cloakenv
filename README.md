@@ -29,6 +29,7 @@
   - [`show` — Inspect & Export Structured Records](#show--inspect--export-structured-records)
   - [`search` — Dynamic Querying Across Vaults](#search--dynamic-querying-across-vaults)
   - [`auth` — Manage Vault Authentication](#auth--manage-vault-authentication)
+  - [`sync` — Cross-Vault Secret Synchronization](#sync--cross-vault-secret-synchronization)
   - [`internal` — Developer & Hook Helpers](#internal--developer--hook-helpers)
 - [Secret Providers & Schemes](#secret-providers--schemes)
   - [Built-In Providers (Zero Setup)](#built-in-providers-zero-setup)
@@ -248,7 +249,8 @@ Commands:
   get     Retrieve and print a single secret value raw to stdout
   set     Store a secret value at a writable URI (keyring://, cache://)
   delete  Remove a secret from a writable URI (keyring://, cache://)
-  cache   Manage local encrypted cache (subcommand: clear)
+  cache   Manage local encrypted cache (subcommands: clear, prune)
+  sync    Unidirectional cross-vault secret synchronization
   show    Retrieve and display a structured entry
   search  Search for structured entries across vaults
   auth    Manage vault credentials and status (login, forget, status)
@@ -389,6 +391,9 @@ cloakenv delete cache://session_token
 ```bash
 # Clear all cached items immediately
 cloakenv cache clear
+
+# Remove expired entries from cache
+cloakenv cache prune
 ```
 
 ---
@@ -524,6 +529,35 @@ cloakenv auth forget work
 
 ---
 
+### `sync` — Cross-Vault Secret Synchronization
+
+Unidirectionally copies secrets from a source vault or URI to a target writable vault (`keyring://`). Zero plaintext persistence to disk; all operations occur in memory.
+
+```bash
+cloakenv sync <source> <target> [flags]
+```
+
+#### Flags:
+- `--dry-run`: Preview additions, updates, and skips without writing to target.
+- `--tags <tags>`: Filter source entries by tag (comma-separated, e.g. `sync:keyring`).
+- `--prefix <prefix>`: Filter secret keys by prefix.
+- `-r, --regex <pattern>`: Filter secret keys using regular expressions.
+
+#### Examples:
+
+```bash
+# 1. Preview synchronizing KeePass entries with tag "sync:keyring" to local keyring
+cloakenv sync --dry-run --tags sync:keyring "work://" "keyring://local"
+
+# 2. Synchronize secrets matching a prefix to OS keyring
+cloakenv sync --prefix "api/" "work://" "keyring://services"
+
+# 3. Synchronize a single entry directly
+cloakenv sync "work://production/db" "keyring://prod_db"
+```
+
+---
+
 ### `internal` — Developer & Hook Helpers
 
 Internal helper commands for scripting and automation. These are not intended for direct end-user usage.
@@ -567,6 +601,7 @@ These providers are always available and do not require registration in `config.
 | `keyring://service/account` | Read / Write | OS native secure credential store (macOS Keychain, Linux D-Bus, Windows Credential Manager). |
 | `env://VAR_NAME` | Read-Only | Values from the parent process environment. Great for CI/CD pipelines. |
 | `cache://KEY` | Read / Write | Local AES-256-GCM encrypted filesystem cache with optional TTL. Encryption key is in OS Keyring. |
+| `pass://path/to/entry[:attribute]` | Read-Only | Standard Unix password store (`pass`). Resolves password on first line and multi-line `Key: Value` attributes. |
 | `search://query/attribute` | Read-Only | Dynamic URI resolution! Executes a search query on the fly and retrieves the matching attribute. |
 
 #### Dynamic `search://` URI Scheme Example:
@@ -919,7 +954,7 @@ References field values from another entry in the database.
 
 ## Template Engine & FuncMap Reference
 
-`cloakenv` embeds Go's standard library `text/template` engine with `.Option("missingkey=error")` and recursion depth tracking. When `resolve_values: true` is enabled on a `custom_vault` or `custom_vault` entity, string attribute values containing `{{ ... }}` are dynamically rendered with access to entry metadata, attributes, and 17 built-in functions.
+`cloakenv` embeds Go's standard library `text/template` engine with `.Option("missingkey=error")` and recursion depth tracking. When `resolve_values: true` is enabled on a `custom_vault` or `custom_vault` entity, string attribute values containing `{{ ... }}` are dynamically rendered with access to entry metadata, attributes, and 25 built-in functions.
 
 ### Top-Level Templates (`templates:`)
 
