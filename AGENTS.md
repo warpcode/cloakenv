@@ -10,6 +10,7 @@ It resolves typed secret URIs from multiple backends into temporary execution me
 
 | Package | Responsibility | Invariant / Must NOT |
 |---|---|---|
+| `internal/audit` | Structured JSON-lines audit logging for secret access attempts | No plaintext secret values or resolved payloads in log output |
 | `internal/cmd` | Top-level CLI subcommand dispatch and flag parsing | No secret resolution or direct backend provider instantiation |
 | `internal/config` | Parse and validate YAML configuration | No secret resolution or I/O beyond file reads |
 | `internal/engine` | Orchestrate URI resolution, caching, and env injection | No direct imports of backend-specific libraries |

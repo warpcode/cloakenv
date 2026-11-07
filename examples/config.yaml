@@ -28,6 +28,13 @@ keyring:
   # remains unhashed. Defaults to false.
   isolate: false
 
+# Audit logging for compliant secret access tracking. Records only the URI and metadata,
+# never the resolved secret payload itself.
+audit:
+  enabled: true
+  log_path: "~/.config/cloakenv/audit.jsonl"
+  format: "jsonl"
+
 # Custom vault definitions. Each mapping key becomes a custom URI scheme (ref).
 # Supported provider types: keepass, json, yaml, custom_vault, search
 vaults:

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/warpcode/cloakenv/internal/audit"
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/provider"
 )
@@ -18,6 +19,7 @@ type Orchestrator struct {
 	resolver        *Resolver
 	searcher        *Searcher
 	envBuilder      *EnvBuilder
+	auditLogger     *audit.Logger
 }
 
 // NewOrchestrator creates a new orchestrator with the given config,
@@ -62,6 +64,19 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 
 	concurrencySem := make(chan struct{}, maxConcurrency)
 	resolver := NewResolver(pm, concurrencySem)
+	var auditLogger *audit.Logger
+	if cfg != nil && cfg.Audit.Enabled {
+		var err error
+		auditLogger, err = audit.NewLogger(audit.Config{
+			Enabled: cfg.Audit.Enabled,
+			LogPath: cfg.Audit.LogPath,
+			Format:  cfg.Audit.Format,
+		})
+		if err != nil {
+			return nil, err
+		}
+		resolver.SetAuditLogger(auditLogger)
+	}
 	searcher := NewSearcher(pm, resolver)
 
 	pm.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]provider.SearchResult, error) {
@@ -95,6 +110,7 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 		resolver:        resolver,
 		searcher:        searcher,
 		envBuilder:      envBuilder,
+		auditLogger:     auditLogger,
 	}
 
 	return o, nil
@@ -199,6 +215,14 @@ func (o *Orchestrator) Forget(ctx context.Context, vaultName string) error {
 // KeyringPrefix returns the active keyring prefix.
 func (o *Orchestrator) KeyringPrefix() string {
 	return o.config.KeyringPrefix()
+}
+
+// Close flushes and closes any enabled audit logger.
+func (o *Orchestrator) Close() error {
+	if o == nil || o.auditLogger == nil {
+		return nil
+	}
+	return o.auditLogger.Close()
 }
 
 // CheckAccess checks if a vault is active/accessible.

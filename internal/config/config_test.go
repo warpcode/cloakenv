@@ -231,6 +231,44 @@ vaults:
 	}
 }
 
+func TestLoadAuditConfig(t *testing.T) {
+	mockHome := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(mockHome, 0755); err != nil {
+		t.Fatalf("failed to create mock home: %v", err)
+	}
+
+	oldUserHomeDir := userHomeDir
+	userHomeDir = func() (string, error) {
+		return mockHome, nil
+	}
+	defer func() { userHomeDir = oldUserHomeDir }()
+
+	configPath := filepath.Join(t.TempDir(), "audit_config.yaml")
+	content := `
+audit:
+  enabled: true
+  log_path: "~/audit/cloakenv.jsonl"
+  format: "jsonl"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if !cfg.Audit.Enabled {
+		t.Fatal("expected audit to be enabled")
+	}
+	if cfg.Audit.LogPath != filepath.Join(mockHome, "audit", "cloakenv.jsonl") {
+		t.Fatalf("unexpected audit log path: %q", cfg.Audit.LogPath)
+	}
+	if cfg.Audit.Format != "jsonl" {
+		t.Fatalf("unexpected audit format: %q", cfg.Audit.Format)
+	}
+}
+
 func TestDefaultConfigPath(t *testing.T) {
 	mockHome := filepath.Join(t.TempDir(), "home")
 

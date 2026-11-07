@@ -1200,6 +1200,17 @@ keyring:
   isolate: true
 
 # ==========================================
+# Audit Logging Configuration
+# ==========================================
+audit:
+  # Opt-in compliance audit trail for secret access events.
+  enabled: true
+  # Defaults to ~/.config/cloakenv/audit.jsonl when omitted.
+  log_path: "~/.config/cloakenv/audit.jsonl"
+  # JSON-lines output format; supports "jsonl" (default) and "json".
+  format: "jsonl"
+
+# ==========================================
 # Configured Vaults
 # ==========================================
 vaults:

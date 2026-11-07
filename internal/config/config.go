@@ -48,6 +48,7 @@ type Config struct {
 	ConfigPath        string                    `yaml:"-"`
 	Cache             CacheConfig               `yaml:"cache"`
 	Keyring           KeyringConfig             `yaml:"keyring"`
+	Audit             AuditConfig               `yaml:"audit,omitempty"`
 	Templates         map[string]TemplateConfig `yaml:"templates,omitempty"`
 	Vaults            map[string]VaultConfig    `yaml:"vaults"`
 	Autoload          []AutoloadRule            `yaml:"autoload"`
@@ -184,6 +185,22 @@ func (c *VaultCacheConfig) UnmarshalYAML(value *goyaml.Node) error {
 type KeyringConfig struct {
 	Prefix  string `yaml:"prefix"`
 	Isolate bool   `yaml:"isolate"`
+}
+
+// AuditConfig configures structured JSON-lines auditing for secret reads.
+type AuditConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	LogPath string `yaml:"log_path"`
+	Format  string `yaml:"format"`
+}
+
+// DefaultAuditLogPath returns the default path for the audit log.
+func DefaultAuditLogPath() (string, error) {
+	home, err := userHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve home directory: %w", err)
+	}
+	return filepath.Join(home, ".config", "cloakenv", "audit.jsonl"), nil
 }
 
 // CustomEntityConfig defines a composed or flat entity within a custom_vault.
@@ -425,6 +442,30 @@ func Load(path string) (*Config, error) {
 
 	if cfg.Vaults == nil {
 		cfg.Vaults = make(map[string]VaultConfig)
+	}
+	if cfg.Audit.Format == "" {
+		cfg.Audit.Format = "jsonl"
+	}
+	switch cfg.Audit.Format {
+	case "jsonl", "json":
+		// valid audit format
+	default:
+		return nil, fmt.Errorf("invalid audit format %q (must be one of: json, jsonl)", cfg.Audit.Format)
+	}
+	if cfg.Audit.Enabled && cfg.Audit.LogPath == "" {
+		logPath, err := DefaultAuditLogPath()
+		if err != nil {
+			return nil, err
+		}
+		cfg.Audit.LogPath = logPath
+	}
+	if cfg.Audit.LogPath != "" {
+		logPath := expandHome(cfg.Audit.LogPath)
+		if !filepath.IsAbs(logPath) && cfg.ConfigPath != "" {
+			baseDir := filepath.Dir(cfg.ConfigPath)
+			logPath = filepath.Join(baseDir, logPath)
+		}
+		cfg.Audit.LogPath = filepath.Clean(logPath)
 	}
 
 	// Expand ~ and anchor relative paths to config directory in all vault paths
