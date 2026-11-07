@@ -357,6 +357,27 @@ type VaultConfig struct {
 
 	// Query specifies the search expression for search provider vaults.
 	Query string `yaml:"query"`
+
+	// Address specifies the HashiCorp Vault server URL (e.g., "https://vault.example.com:8200").
+	Address string `yaml:"address,omitempty"`
+
+	// Token specifies the HashiCorp Vault access token.
+	Token string `yaml:"token,omitempty"`
+
+	// RoleID specifies the AppRole role_id for HashiCorp Vault AppRole authentication.
+	RoleID string `yaml:"role_id,omitempty"`
+
+	// SecretID specifies the AppRole secret_id for HashiCorp Vault AppRole authentication.
+	SecretID string `yaml:"secret_id,omitempty"`
+
+	// EngineVersion specifies the KV secret engine version (1 or 2). Defaults to 2.
+	EngineVersion int `yaml:"engine_version,omitempty"`
+
+	// Namespace specifies the Vault namespace (for Vault Enterprise).
+	Namespace string `yaml:"namespace,omitempty"`
+
+	// MountPath specifies the KV secrets engine mount path (e.g., "secret").
+	MountPath string `yaml:"mount_path,omitempty"`
 }
 
 // DefaultConfigPath returns the default configuration file path:
@@ -461,6 +482,16 @@ func Load(path string) (*Config, error) {
 			// valid key format
 		default:
 			return nil, fmt.Errorf("vault %q: invalid key_format %q (must be one of: none, env, snake, kebab)", vaultName, vault.KeyFormat)
+		}
+
+		if vault.Provider == "vault" {
+			if vault.EngineVersion != 0 && vault.EngineVersion != 1 && vault.EngineVersion != 2 {
+				return nil, fmt.Errorf("vault %q: invalid engine_version %d (must be 1 or 2)", vaultName, vault.EngineVersion)
+			}
+			// If AppRole is partially configured, require both role_id and secret_id
+			if (vault.RoleID != "" && vault.SecretID == "") || (vault.RoleID == "" && vault.SecretID != "") {
+				return nil, fmt.Errorf("vault %q: both role_id and secret_id must be provided for approle auth", vaultName)
+			}
 		}
 
 		if vault.Cache.Enabled {
