@@ -580,7 +580,6 @@ vaults:
 		}
 	})
 }
-}
 
 func TestLoad_Templates(t *testing.T) {
 	tempDir := t.TempDir()
