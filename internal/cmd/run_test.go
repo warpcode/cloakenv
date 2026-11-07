@@ -392,6 +392,32 @@ func TestRun_Autoload(t *testing.T) {
 		}
 	})
 
+	t.Run("Disables autoload when deprecated hidden alias --skip-autoload flag is passed", func(t *testing.T) {
+		runArgs := []string{
+			"--skip-autoload",
+			"--",
+			os.Args[0], "-test.run=TestHelperProcess",
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=TestRun_Autoload")
+		argsData, _ := json.Marshal(runArgs)
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_RUN_AUTOLOAD_SUBPROCESS=1",
+			"RUN_ARGS="+string(argsData),
+			"GO_WANT_HELPER_PROCESS=1",
+		)
+
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
+		}
+
+		output := string(out)
+		expected := "CLOAKENV_TEST_AUTOLOAD_VAR=autoloaded_secret_value"
+		if strings.Contains(output, expected) {
+			t.Errorf("Expected output NOT to contain %q with --skip-autoload flag, but got:\n%s", expected, output)
+		}
+	})
+
 	t.Run("Autoloads regex match and transforms command", func(t *testing.T) {
 		runArgs := []string{
 			"--",
