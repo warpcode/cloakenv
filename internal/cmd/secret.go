@@ -49,12 +49,13 @@ func Get(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 
 	val, err := orch.Resolve(ctx, args[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Resolution failed: %v\n", err)
-		return 1
+		return exitCodeForContext(ctx, 1)
 	}
 
 	fmt.Print(val)
@@ -105,13 +106,22 @@ func Set(args []string, cfg *config.Config) int {
 	uri := posArgs[0]
 	var value string
 
+	ctx, stop := signalContext()
+	defer stop()
+
 	var b []byte
 	var readErr error
 	if isTerminal(int(os.Stdin.Fd())) {
+		cleanup := restoreTerminalOnInterrupt(ctx, int(os.Stdin.Fd()))
+		defer cleanup()
+
 		fmt.Fprint(os.Stderr, "Enter secret value: ")
 		b, readErr = readPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
-		if readErr != nil {
+		if readErr != nil || ctx.Err() != nil {
+			if ctx.Err() != nil {
+				return exitCodeForContext(ctx, 1)
+			}
 			fmt.Fprintf(os.Stderr, "Failed to read secret: %v\n", readErr)
 			return 1
 		}
@@ -120,7 +130,10 @@ func Set(args []string, cfg *config.Config) int {
 		fmt.Fprint(os.Stderr, "Confirm secret: ")
 		confirmBytes, confirmErr := readPassword(int(os.Stdin.Fd()))
 		fmt.Fprintln(os.Stderr)
-		if confirmErr != nil {
+		if confirmErr != nil || ctx.Err() != nil {
+			if ctx.Err() != nil {
+				return exitCodeForContext(ctx, 1)
+			}
 			fmt.Fprintf(os.Stderr, "Failed to read confirmation: %v\n", confirmErr)
 			return 1
 		}
@@ -179,14 +192,13 @@ func Set(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
-	ctx := context.Background()
 	if ttl > 0 {
 		ctx = context.WithValue(ctx, provider.ContextKeyTTL, ttl)
 	}
 
 	if err := orch.Write(ctx, uri, value); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write secret: %v\n", err)
-		return 1
+		return exitCodeForContext(ctx, 1)
 	}
 
 	return 0
@@ -210,11 +222,12 @@ func Delete(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 
 	if err := orch.Delete(ctx, uri); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to delete secret: %v\n", err)
-		return 1
+		return exitCodeForContext(ctx, 1)
 	}
 
 	fmt.Printf("Secret successfully deleted from %s\n", uri)
@@ -237,11 +250,12 @@ func cacheClear(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 
 	if err := orch.ClearCache(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to clear cache: %v\n", err)
-		return 1
+		return exitCodeForContext(ctx, 1)
 	}
 
 	fmt.Println("Cache cleared successfully.")
@@ -279,12 +293,13 @@ func cachePrune(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 
 	stats, err := orch.PruneCache(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to prune cache: %v\n", err)
-		return 1
+		return exitCodeForContext(ctx, 1)
 	}
 
 	if stats.Count == 1 {

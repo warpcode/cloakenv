@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -53,10 +52,11 @@ func authLogin(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 	if err := orch.Login(ctx, vault); err != nil {
 		fmt.Fprintf(os.Stderr, "Authentication failed: %v\n", err)
-		return 1
+		return exitCodeForContext(ctx, 1)
 	}
 
 	fmt.Printf("Successfully authenticated and saved credentials for vault %q\n", vault)
@@ -80,10 +80,11 @@ func authForget(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 	if err := orch.Forget(ctx, vault); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to clear credentials: %v\n", err)
-		return 1
+		return exitCodeForContext(ctx, 1)
 	}
 
 	fmt.Printf("Successfully cleared credentials for vault %q\n", vault)
@@ -153,7 +154,8 @@ func authStatus(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 
 	vaultNames := make([]string, 0)
 	if opts.vault != "" {
@@ -226,7 +228,7 @@ func authStatus(args []string, cfg *config.Config) int {
 	}
 
 	if hasError {
-		return 1
+		return exitCodeForContext(ctx, 1)
 	}
 	return 0
 }

@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"slices"
@@ -131,6 +130,9 @@ func Show(args []string, cfg *config.Config) int {
 		return 1
 	}
 
+	ctx, stop := signalContext()
+	defer stop()
+
 	if opts.explain {
 		if opts.positionalURI == "" {
 			fmt.Fprintln(os.Stderr, "--explain requires a single entry URI")
@@ -147,11 +149,10 @@ func Show(args []string, cfg *config.Config) int {
 			fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 			return 1
 		}
-		ctx := context.Background()
 		explanation, err := orch.ExplainEntry(ctx, opts.positionalURI)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to retrieve entry: %v\n", err)
-			return 1
+			return exitCodeForContext(ctx, 1)
 		}
 		asJSON := (opts.outputFormat == "json")
 		if err := utils.RenderOutput(explanation, asJSON, "pipeline"); err != nil {
@@ -173,7 +174,6 @@ func Show(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
-	ctx := context.Background()
 
 	var entry provider.Entry
 
@@ -185,7 +185,7 @@ func Show(args []string, cfg *config.Config) int {
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to retrieve entry: %v\n", err)
-			return 1
+			return exitCodeForContext(ctx, 1)
 		}
 	} else {
 		mergedCtx := ctx
@@ -199,7 +199,7 @@ func Show(args []string, cfg *config.Config) int {
 		})
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			return 1
+			return exitCodeForContext(ctx, 1)
 		}
 	}
 
