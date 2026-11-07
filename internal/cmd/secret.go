@@ -262,6 +262,21 @@ func cacheClear(args []string, cfg *config.Config) int {
 	return 0
 }
 
+// formatBytes converts a byte count into a human-readable string.
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	units := []string{"KB", "MB", "GB", "TB"}
+	for n := b / unit; n >= unit && exp < len(units)-1; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.2f %s", float64(b)/float64(div), units[exp])
+}
+
 // cachePrune handles "cloakenv cache prune".
 func cachePrune(args []string, cfg *config.Config) int {
 	if utils.HasHelpFlag(args) {
@@ -281,11 +296,16 @@ func cachePrune(args []string, cfg *config.Config) int {
 	ctx, stop := signalContext()
 	defer stop()
 
-	if err := orch.PruneCache(ctx); err != nil {
+	stats, err := orch.PruneCache(ctx)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to prune cache: %v\n", err)
 		return exitCodeForContext(ctx, 1)
 	}
 
-	fmt.Println("Cache pruned successfully.")
+	if stats.Count == 1 {
+		fmt.Printf("Cache pruned successfully: %d expired entry removed (%s reclaimed).\n", stats.Count, formatBytes(stats.ReclaimedBytes))
+	} else {
+		fmt.Printf("Cache pruned successfully: %d expired entries removed (%s reclaimed).\n", stats.Count, formatBytes(stats.ReclaimedBytes))
+	}
 	return 0
 }
