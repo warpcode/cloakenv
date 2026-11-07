@@ -18,7 +18,7 @@ type cachedTemplate struct {
 }
 
 type templateLRUEntry struct {
-	hash [32]byte
+	key  string
 	item *cachedTemplate
 }
 
@@ -26,7 +26,7 @@ type templateLRUEntry struct {
 type templateLRUCache struct {
 	mu        sync.Mutex
 	capacity  int
-	items     map[[32]byte]*list.Element
+	items     map[string]*list.Element
 	evictList *list.List
 	hits      atomic.Uint64
 	misses    atomic.Uint64
@@ -38,18 +38,18 @@ func newTemplateLRUCache(capacity int) *templateLRUCache {
 	}
 	return &templateLRUCache{
 		capacity:  capacity,
-		items:     make(map[[32]byte]*list.Element),
+		items:     make(map[string]*list.Element),
 		evictList: list.New(),
 	}
 }
 
-// Get looks up a precompiled template AST by its SHA-256 hash.
+// Get looks up a precompiled template AST by template string.
 // If found, it promotes the entry to the front of the LRU eviction list and returns (item, true).
-func (c *templateLRUCache) Get(h [32]byte) (*cachedTemplate, bool) {
+func (c *templateLRUCache) Get(tmplStr string) (*cachedTemplate, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if elem, ok := c.items[h]; ok {
+	if elem, ok := c.items[tmplStr]; ok {
 		c.evictList.MoveToFront(elem)
 		c.hits.Add(1)
 		return elem.Value.(*templateLRUEntry).item, true
@@ -61,11 +61,11 @@ func (c *templateLRUCache) Get(h [32]byte) (*cachedTemplate, bool) {
 // Put inserts a precompiled template AST into the LRU cache.
 // If the entry already exists, it is promoted to the front and its template updated.
 // If the cache is full, the least recently used entry is evicted.
-func (c *templateLRUCache) Put(h [32]byte, item *cachedTemplate) {
+func (c *templateLRUCache) Put(tmplStr string, item *cachedTemplate) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if elem, ok := c.items[h]; ok {
+	if elem, ok := c.items[tmplStr]; ok {
 		c.evictList.MoveToFront(elem)
 		elem.Value.(*templateLRUEntry).item = item
 		return
@@ -76,15 +76,15 @@ func (c *templateLRUCache) Put(h [32]byte, item *cachedTemplate) {
 		if oldest != nil {
 			c.evictList.Remove(oldest)
 			entry := oldest.Value.(*templateLRUEntry)
-			delete(c.items, entry.hash)
+			delete(c.items, entry.key)
 		}
 	}
 
 	elem := c.evictList.PushFront(&templateLRUEntry{
-		hash: h,
+		key:  tmplStr,
 		item: item,
 	})
-	c.items[h] = elem
+	c.items[tmplStr] = elem
 }
 
 // Len returns the current number of cached compiled templates.
@@ -103,7 +103,7 @@ func (c *templateLRUCache) Stats() (hits, misses uint64) {
 func (c *templateLRUCache) Purge() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.items = make(map[[32]byte]*list.Element)
+	c.items = make(map[string]*list.Element)
 	c.evictList.Init()
 	c.hits.Store(0)
 	c.misses.Store(0)

@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"sync"
 	"testing"
@@ -13,10 +12,9 @@ func TestTemplateLRUCache_GetPut(t *testing.T) {
 	cache := newTemplateLRUCache(5)
 
 	tmplStr := "hello {{ .name }}"
-	h := sha256.Sum256([]byte(tmplStr))
 
 	// Miss on empty cache
-	item, ok := cache.Get(h)
+	item, ok := cache.Get(tmplStr)
 	if ok || item != nil {
 		t.Fatalf("expected cache miss, got item: %v", item)
 	}
@@ -31,14 +29,14 @@ func TestTemplateLRUCache_GetPut(t *testing.T) {
 		t.Fatalf("parse failed: %v", err)
 	}
 	cached := &cachedTemplate{tmpl: tmpl, dynamic: false}
-	cache.Put(h, cached)
+	cache.Put(tmplStr, cached)
 
 	if cache.Len() != 1 {
 		t.Errorf("expected cache len 1, got %d", cache.Len())
 	}
 
 	// Hit on subsequent Get
-	gotItem, ok := cache.Get(h)
+	gotItem, ok := cache.Get(tmplStr)
 	if !ok || gotItem == nil {
 		t.Fatalf("expected cache hit, got nil")
 	}
@@ -51,7 +49,7 @@ func TestTemplateLRUCache_GetPut(t *testing.T) {
 	}
 
 	// Put duplicate item updates and does not increase length
-	cache.Put(h, cached)
+	cache.Put(tmplStr, cached)
 	if cache.Len() != 1 {
 		t.Errorf("expected cache len 1 after duplicate Put, got %d", cache.Len())
 	}
@@ -61,57 +59,57 @@ func TestTemplateLRUCache_Eviction(t *testing.T) {
 	// Cache with capacity of 3
 	cache := newTemplateLRUCache(3)
 
-	h1 := sha256.Sum256([]byte("tmpl1"))
-	h2 := sha256.Sum256([]byte("tmpl2"))
-	h3 := sha256.Sum256([]byte("tmpl3"))
-	h4 := sha256.Sum256([]byte("tmpl4"))
+	k1 := "tmpl1"
+	k2 := "tmpl2"
+	k3 := "tmpl3"
+	k4 := "tmpl4"
 
-	t1, _ := template.New("t1").Parse("t1")
-	t2, _ := template.New("t2").Parse("t2")
-	t3, _ := template.New("t3").Parse("t3")
-	t4, _ := template.New("t4").Parse("t4")
+	t1, _ := template.New("t1").Parse(k1)
+	t2, _ := template.New("t2").Parse(k2)
+	t3, _ := template.New("t3").Parse(k3)
+	t4, _ := template.New("t4").Parse(k4)
 
-	cache.Put(h1, &cachedTemplate{tmpl: t1})
-	cache.Put(h2, &cachedTemplate{tmpl: t2})
-	cache.Put(h3, &cachedTemplate{tmpl: t3})
+	cache.Put(k1, &cachedTemplate{tmpl: t1})
+	cache.Put(k2, &cachedTemplate{tmpl: t2})
+	cache.Put(k3, &cachedTemplate{tmpl: t3})
 
 	if cache.Len() != 3 {
 		t.Fatalf("expected len 3, got %d", cache.Len())
 	}
 
-	// Access h1 so order is h1 (newest), h3, h2 (oldest)
-	_, ok := cache.Get(h1)
+	// Access k1 so order is k1 (newest), k3, k2 (oldest)
+	_, ok := cache.Get(k1)
 	if !ok {
-		t.Fatalf("expected hit on h1")
+		t.Fatalf("expected hit on k1")
 	}
 
-	// Insert h4; should evict h2
-	cache.Put(h4, &cachedTemplate{tmpl: t4})
+	// Insert k4; should evict k2
+	cache.Put(k4, &cachedTemplate{tmpl: t4})
 
 	if cache.Len() != 3 {
 		t.Fatalf("expected len 3 after eviction, got %d", cache.Len())
 	}
 
-	// h2 must be evicted
-	if _, ok := cache.Get(h2); ok {
-		t.Errorf("expected h2 to be evicted, but it was found in cache")
+	// k2 must be evicted
+	if _, ok := cache.Get(k2); ok {
+		t.Errorf("expected k2 to be evicted, but it was found in cache")
 	}
 
-	// h1, h3, h4 must still be present
-	for _, h := range [][32]byte{h1, h3, h4} {
-		if _, ok := cache.Get(h); !ok {
-			t.Errorf("expected key to be present in cache: %x", h)
+	// k1, k3, k4 must still be present
+	for _, k := range []string{k1, k3, k4} {
+		if _, ok := cache.Get(k); !ok {
+			t.Errorf("expected key %q to be present in cache", k)
 		}
 	}
 }
 
 func TestTemplateLRUCache_Purge(t *testing.T) {
 	cache := newTemplateLRUCache(10)
-	h := sha256.Sum256([]byte("purge_test"))
+	k := "purge_test"
 	t1, _ := template.New("t1").Parse("test")
-	cache.Put(h, &cachedTemplate{tmpl: t1})
+	cache.Put(k, &cachedTemplate{tmpl: t1})
 
-	cache.Get(h) // 1 hit
+	cache.Get(k) // 1 hit
 
 	cache.Purge()
 	if cache.Len() != 0 {
@@ -122,7 +120,7 @@ func TestTemplateLRUCache_Purge(t *testing.T) {
 		t.Errorf("expected 0 hits, 0 misses after purge; got %d hits, %d misses", hits, misses)
 	}
 
-	if _, ok := cache.Get(h); ok {
+	if _, ok := cache.Get(k); ok {
 		t.Errorf("expected key to be gone after purge")
 	}
 }
@@ -243,13 +241,12 @@ func TestTemplateLRUCache_Concurrent(t *testing.T) {
 			defer wg.Done()
 			for i := range numIters {
 				keyStr := fmt.Sprintf("template_%d", (gid+i)%20)
-				h := sha256.Sum256([]byte(keyStr))
 
-				item, ok := cache.Get(h)
+				item, ok := cache.Get(keyStr)
 				if !ok || item == nil {
 					tmpl, err := template.New("tmpl").Parse(keyStr)
 					if err == nil {
-						cache.Put(h, &cachedTemplate{tmpl: tmpl, dynamic: false})
+						cache.Put(keyStr, &cachedTemplate{tmpl: tmpl, dynamic: false})
 					}
 				}
 			}

@@ -3,7 +3,6 @@ package engine
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -354,8 +353,7 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 		return "", fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5")
 	}
 
-	h := sha256.Sum256([]byte(tmplStr))
-	cached, hit := tmplCache.Get(h)
+	cached, hit := tmplCache.Get(tmplStr)
 	if !hit {
 		compiled, err := template.New("tmpl").Option("missingkey=error").Funcs(baseTemplateFuncs).Parse(tmplStr)
 		if err != nil {
@@ -370,7 +368,7 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 			tmpl:    compiled,
 			dynamic: templateUsesDynamicFuncs(compiled),
 		}
-		tmplCache.Put(h, cached)
+		tmplCache.Put(tmplStr, cached)
 	}
 
 	var tmpl *template.Template
