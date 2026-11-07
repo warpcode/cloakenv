@@ -60,7 +60,7 @@ func parseShowFlags(args []string) (*showOptions, error) {
 		return nil
 	})
 	parser.Var([]string{"-t"}, true, "", func(name, val string) error {
-		envs, err := utils.ParseTemplateFile(val)
+		envs, err := config.ParseTemplateFile(val)
 		if err != nil {
 			return fmt.Errorf("error parsing template file %s: %w", val, err)
 		}
