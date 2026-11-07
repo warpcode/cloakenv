@@ -88,21 +88,29 @@ func restoreTerminalOnInterrupt(ctx context.Context, fd int) func() {
 	}
 
 	done := make(chan struct{})
+	exited := make(chan struct{})
 
 	go func() {
+		defer close(exited)
 		select {
-		case <-ctx.Done():
-			_ = restoreFunc(fd, state)
 		case <-done:
+			return
+		case <-ctx.Done():
+			select {
+			case <-done:
+				return
+			default:
+				_ = restoreFunc(fd, state)
+			}
 		}
 	}()
 
+	var closeOnce sync.Once
 	return func() {
-		select {
-		case <-done:
-		default:
+		closeOnce.Do(func() {
 			close(done)
-		}
+		})
+		<-exited
 		_ = restoreFunc(fd, state)
 	}
 }
