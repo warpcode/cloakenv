@@ -702,3 +702,23 @@ func BenchmarkTemplateEngine_Render(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkTemplateEngine_Render_Dynamic(b *testing.B) {
+	ctx := context.Background()
+	te := engine.NewTemplateEngine(nil)
+	data := engine.TemplateContext{
+		Attributes: map[string]any{
+			"Token": "abc123xyz",
+		},
+	}
+	tmpl := `token={{ tryGet "missing:key" }} fallback={{ index .Attributes "Token" }}`
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for range b.N {
+		_, err := te.Render(ctx, tmpl, data, 0, "")
+		if err != nil {
+			b.Fatalf("render failed: %v", err)
+		}
+	}
+}

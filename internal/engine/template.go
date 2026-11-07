@@ -256,6 +256,80 @@ func (e *execInvocationError) Unwrap() error {
 	return e.err
 }
 
+// baseTemplateFuncs defines the function map used for compiling and validating template ASTs.
+// Context-dependent functions (such as get, entry, exec) have valid type-compatible signatures
+// that are rebound to execution closures when cloned for rendering.
+var baseTemplateFuncs = template.FuncMap{
+	"get":      func(string) (string, error) { return "", nil },
+	"tryGet":   func(...string) string { return "" },
+	"default":  templateDefault,
+	"coalesce": templateCoalesce,
+	"entry":    func(string) (map[string]any, error) { return nil, nil },
+	"search":   func(string) ([]map[string]any, error) { return nil, nil },
+	"toEnv":    toEnv,
+	"toKv":     toEnv,
+	"toJSON":   toJSON,
+	"toJson":   toJSON,
+	"json":     toJSON,
+	"fromJSON": fromJSON,
+	"fromJson": fromJSON,
+	"toYAML":   toYAML,
+	"toYaml":   toYAML,
+	"yaml":     toYAML,
+	"fromYAML": fromYAML,
+	"fromYaml": fromYAML,
+	"upper":    strings.ToUpper,
+	"lower":    strings.ToLower,
+	"env": func(s string) string {
+		return utils.FormatKeyWithFormat(s, utils.KeyFormatEnv)
+	},
+	"snake": func(s string) string {
+		return utils.FormatKeyWithFormat(s, utils.KeyFormatSnake)
+	},
+	"kebab": func(s string) string {
+		return utils.FormatKeyWithFormat(s, utils.KeyFormatKebab)
+	},
+	"keys": func(m map[string]any) []string {
+		var ks []string
+		for k := range m {
+			ks = append(ks, k)
+		}
+		slices.Sort(ks)
+		return ks
+	},
+	"values": func(m map[string]any) []any {
+		var ks []string
+		for k := range m {
+			ks = append(ks, k)
+		}
+		slices.Sort(ks)
+		var vs []any
+		for _, k := range ks {
+			vs = append(vs, m[k])
+		}
+		return vs
+	},
+	"join": func(sep string, v any) (string, error) {
+		switch val := v.(type) {
+		case []string:
+			return strings.Join(val, sep), nil
+		case []any:
+			var strs []string
+			for _, x := range val {
+				strs = append(strs, fmt.Sprintf("%v", x))
+			}
+			return strings.Join(strs, sep), nil
+		default:
+			return "", fmt.Errorf("join requires a slice, got %T", v)
+		}
+	},
+	"include":     func(string, any) (string, error) { return "", nil },
+	"includeFile": func(string, any) (string, error) { return "", nil },
+	"shquote":     shquote,
+	"shellQuote":  shquote,
+	"exec":        func(string, ...any) (string, error) { return "", nil },
+}
+
 // TemplateEngine wraps Go's text/template to evaluate strings with context.
 type TemplateEngine struct {
 	resolver *Resolver
@@ -279,7 +353,64 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 		return "", fmt.Errorf("infinite secret resolution recursion detected: reached max depth 5")
 	}
 
-	funcs := template.FuncMap{
+	cached, hit := tmplCache.Get(tmplStr)
+	if !hit {
+		compiled, err := template.New("tmpl").Option("missingkey=error").Funcs(baseTemplateFuncs).Parse(tmplStr)
+		if err != nil {
+			// Try to provide a good error message for template errors
+			keyPart := ""
+			if configKey != "" {
+				keyPart = fmt.Sprintf(" in configuration key %q", configKey)
+			}
+			return "", fmt.Errorf("template parsing failed%s: %w", keyPart, err)
+		}
+		cached = &cachedTemplate{
+			tmpl:    compiled,
+			dynamic: templateUsesDynamicFuncs(compiled),
+		}
+		tmplCache.Put(tmplStr, cached)
+	}
+
+	var tmpl *template.Template
+	if cached.dynamic {
+		var err error
+		tmpl, err = cached.tmpl.Clone()
+		if err != nil {
+			return "", fmt.Errorf("template clone failed: %w", err)
+		}
+		tmpl.Funcs(te.runtimeFuncs(ctx, depth, configKey))
+	} else {
+		tmpl = cached.tmpl
+	}
+
+	execData := wrapTemplateData(data)
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer func() {
+		b := buf.Bytes()
+		clear(b[:cap(b)])
+		if buf.Cap() <= 64*1024 {
+			buf.Reset()
+			bufPool.Put(buf)
+		}
+	}()
+
+	if err := tmpl.Execute(buf, execData); err != nil {
+		keyPart := ""
+		if configKey != "" {
+			keyPart = fmt.Sprintf(" in configuration key %q", configKey)
+		}
+		var execErr *execInvocationError
+		if errors.As(err, &execErr) {
+			return "", fmt.Errorf("template execution failed%s: %w", keyPart, execErr.err)
+		}
+		return "", fmt.Errorf("template execution failed%s: %w", keyPart, err)
+	}
+	return buf.String(), nil
+}
+
+func (te *TemplateEngine) runtimeFuncs(ctx context.Context, depth int, configKey string) template.FuncMap {
+	return template.FuncMap{
 		"get": func(uri string) (string, error) {
 			return te.resolver.resolveSingleURI(ctx, uri, depth+1, configKey)
 		},
@@ -295,8 +426,6 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 			}
 			return ""
 		},
-		"default":  templateDefault,
-		"coalesce": templateCoalesce,
 		"entry": func(uri string) (map[string]any, error) {
 			e, err := te.resolver.GetEntryRecursive(ctx, uri, depth+1)
 			if err != nil {
@@ -318,63 +447,6 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 				tcs = append(tcs, entryToTemplateContext(res.Entry, res.Provider, res.Vault, res.Path).ToMap())
 			}
 			return tcs, nil
-		},
-		"toEnv":    toEnv,
-		"toKv":     toEnv,
-		"toJSON":   toJSON,
-		"toJson":   toJSON,
-		"json":     toJSON,
-		"fromJSON": fromJSON,
-		"fromJson": fromJSON,
-		"toYAML":   toYAML,
-		"toYaml":   toYAML,
-		"yaml":     toYAML,
-		"fromYAML": fromYAML,
-		"fromYaml": fromYAML,
-		"upper":    strings.ToUpper,
-		"lower":    strings.ToLower,
-		"env": func(s string) string {
-			return utils.FormatKeyWithFormat(s, utils.KeyFormatEnv)
-		},
-		"snake": func(s string) string {
-			return utils.FormatKeyWithFormat(s, utils.KeyFormatSnake)
-		},
-		"kebab": func(s string) string {
-			return utils.FormatKeyWithFormat(s, utils.KeyFormatKebab)
-		},
-		"keys": func(m map[string]any) []string {
-			var ks []string
-			for k := range m {
-				ks = append(ks, k)
-			}
-			slices.Sort(ks)
-			return ks
-		},
-		"values": func(m map[string]any) []any {
-			var ks []string
-			for k := range m {
-				ks = append(ks, k)
-			}
-			slices.Sort(ks)
-			var vs []any
-			for _, k := range ks {
-				vs = append(vs, m[k])
-			}
-			return vs
-		},
-		"join": func(sep string, v any) (string, error) {
-			switch val := v.(type) {
-			case []string:
-				return strings.Join(val, sep), nil
-			case []any:
-				var strs []string
-				for _, x := range val {
-					strs = append(strs, fmt.Sprintf("%v", x))
-				}
-				return strings.Join(strs, sep), nil
-			default:
-				return "", fmt.Errorf("join requires a slice, got %T", v)
-			}
 		},
 		"include": func(name string, tmplCtx any) (string, error) {
 			cfg := te.resolver.providers.Config()
@@ -414,8 +486,6 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 			}
 			return te.Render(ctx, string(data), tmplCtx, depth+1, configKey)
 		},
-		"shquote":    shquote,
-		"shellQuote": shquote,
 		"exec": func(name string, args ...any) (string, error) {
 			if strings.TrimSpace(name) == "" {
 				return "", fmt.Errorf("exec: executable name cannot be empty")
@@ -487,41 +557,6 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 			})
 		},
 	}
-
-	tmpl, err := template.New("tmpl").Option("missingkey=error").Funcs(funcs).Parse(tmplStr)
-	if err != nil {
-		// Try to provide a good error message for template errors
-		keyPart := ""
-		if configKey != "" {
-			keyPart = fmt.Sprintf(" in configuration key %q", configKey)
-		}
-		return "", fmt.Errorf("template parsing failed%s: %w", keyPart, err)
-	}
-
-	execData := wrapTemplateData(data)
-	buf := bufPool.Get().(*bytes.Buffer)
-	buf.Reset()
-	defer func() {
-		b := buf.Bytes()
-		clear(b[:cap(b)])
-		if buf.Cap() <= 64*1024 {
-			buf.Reset()
-			bufPool.Put(buf)
-		}
-	}()
-
-	if err := tmpl.Execute(buf, execData); err != nil {
-		keyPart := ""
-		if configKey != "" {
-			keyPart = fmt.Sprintf(" in configuration key %q", configKey)
-		}
-		var execErr *execInvocationError
-		if errors.As(err, &execErr) {
-			return "", fmt.Errorf("template execution failed%s: %w", keyPart, execErr.err)
-		}
-		return "", fmt.Errorf("template execution failed%s: %w", keyPart, err)
-	}
-	return buf.String(), nil
 }
 
 func shquote(s string) string {
