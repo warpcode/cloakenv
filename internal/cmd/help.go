@@ -8,7 +8,7 @@ import (
 const generalUsage = `cloakenv — pluggable secret orchestrator & runtime injector
 
 Usage:
-  cloakenv [-c config_path] run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] -- <command> [args]
+  cloakenv [-c config_path] run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [-f format] -- <command> [args]
   cloakenv [-c config_path] get <uri>
   cloakenv [-c config_path] set <uri> [--ttl <duration>]
   cloakenv [-c config_path] delete <uri>
@@ -38,6 +38,7 @@ Flags:
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -m entry-uri    Merge attributes from an entry into the environment. Can target a single attribute using :attribute (repeatable)
   -i KEY          Filter/whitelist keys or select output fields (repeatable)
+  -f, --key-format format  Override attribute key formatting (none, env, snake, kebab)
   -o, --output    Output format: keys, json, yaml, env (depends on command)
   --vault vault   Scope search to a specific vault (repeatable)
   --ttl duration  Expiration duration for cache entries (e.g. 5m, 1h, set only)
@@ -155,8 +156,8 @@ Description:
 // PrintShowHelp prints usage help for the show subcommand.
 func PrintShowHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]
-  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys]
+  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--raw] [--explain]
+  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--raw] [--explain]
 
 Description:
   Retrieve and display a structured entry, or merge multiple entries/explicit mapping values.
@@ -171,6 +172,8 @@ Flags:
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -i KEY          Whitelist filter key (filters only merged -m keys; repeatable)
   -f, --key-format format  Override attribute key formatting (none, env, snake, kebab)
+  --raw           Display unmodified raw entry attributes before filtering, mapping, formatting, and computed attributes
+  --explain       Display structured transformation trace across all 5 entry processing pipeline stages (yaml or json only)
   --show-meta     Include vault, provider, and tags metadata in a _meta_ object (yaml and json output only)
   -o, --output    Output format: yaml, json, env, or keys (default: yaml)`)
 }

@@ -294,6 +294,93 @@ func (c *CacheProvider) ClearCache() error {
 	return nil
 }
 
+// PruneCache removes only expired cache entries from the cache directory,
+// returning the count of deleted files and total bytes of disk space reclaimed.
+func (c *CacheProvider) PruneCache() (int, int64, error) {
+	if c.cacheDir == "" {
+		return 0, 0, errors.New("cache provider: not initialized")
+	}
+	if len(c.aesKey) == 0 {
+		return 0, 0, errors.New("cache provider: not initialized")
+	}
+
+	files, err := os.ReadDir(c.cacheDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0, 0, nil
+		}
+		return 0, 0, fmt.Errorf("cache provider: failed to read cache directory: %w", err)
+	}
+
+	block, err := aes.NewCipher(c.aesKey)
+	if err != nil {
+		return 0, 0, err
+	}
+	aesgcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	var prunedCount int
+	var reclaimedBytes int64
+	var errs []error
+
+	for _, f := range files {
+		if f.IsDir() {
+			continue
+		}
+
+		filePath := filepath.Join(c.cacheDir, f.Name())
+		info, sErr := f.Info()
+		if sErr != nil {
+			continue
+		}
+		fileSize := info.Size()
+
+		data, rErr := os.ReadFile(filePath) //nolint:gosec
+		if rErr != nil {
+			continue
+		}
+
+		nonceSize := aesgcm.NonceSize()
+		if len(data) < nonceSize {
+			continue
+		}
+
+		nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+		plaintext, dErr := aesgcm.Open(nil, nonce, ciphertext, nil)
+		if dErr != nil {
+			continue
+		}
+
+		var expired bool
+		if len(plaintext) >= 16 {
+			writeTime := int64(binary.BigEndian.Uint64(plaintext[0:8])) //nolint:gosec
+			ttl := int64(binary.BigEndian.Uint64(plaintext[8:16]))      //nolint:gosec
+			if ttl > 0 && time.Now().UnixNano() > writeTime+ttl {
+				expired = true
+			}
+		}
+		utils.ZeroBytes(plaintext)
+
+		if expired {
+			// Overwrite with zeros before deletion
+			if fileSize > 0 {
+				zeros := make([]byte, fileSize)
+				_ = os.WriteFile(filePath, zeros, 0600)
+			}
+			if rmErr := os.Remove(filePath); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("cache provider: failed to remove %s: %w", f.Name(), rmErr))
+			} else {
+				prunedCount++
+				reclaimedBytes += fileSize
+			}
+		}
+	}
+
+	return prunedCount, reclaimedBytes, errors.Join(errs...)
+}
+
 // getCacheFilePath maps a location query to a SHA-256 hashed filename under c.cacheDir.
 func (c *CacheProvider) getCacheFilePath(location string) string {
 	hash := sha256.Sum256([]byte(location))

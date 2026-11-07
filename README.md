@@ -416,6 +416,8 @@ cloakenv show -m <entry-uri> [-m <entry-uri> ...] [flags]
 - `-t template_path`: Load template `.env` file (repeatable).
 - `-i KEY`: Whitelist filter keys (repeatable).
 - `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
+- `--raw`: Display unmodified raw entry attributes (`Original` state) before filtering, mapping, key formatting, and computed attributes.
+- `--explain`: Display structured transformation trace across all 5 entry processing pipeline stages (`original`, `filtered`, `mapped`, `key_formatted`, `final_output`) in `yaml` or `json`.
 - `--show-meta`: Include vault, provider, and tags metadata in a `_meta_` object (`yaml` and `json` output only).
 
 #### Output Formats:
@@ -429,6 +431,15 @@ cloakenv show -m <entry-uri> [-m <entry-uri> ...] [flags]
 ```bash
 # Inspect KeePass record as YAML
 cloakenv show "work://Production/Database"
+
+# Inspect raw entry before filters, mapping, key formatting, and computed attributes
+cloakenv show "work://Production/Database" --raw
+
+# Trace all 5 entry processing pipeline stages as YAML
+cloakenv show "work://Production/Database" --explain
+
+# Trace pipeline stages as JSON
+cloakenv show "work://Production/Database" --explain -o json
 
 # Export record as a .env file
 cloakenv show "work://Production/Database" -o env > .env.local
@@ -609,7 +620,23 @@ These providers are always available and do not require registration in `config.
 ```bash
 # Dynamically finds the entry with tags "env:prod" and "service:redis" and extracts its Password
 cloakenv get "search://tags=env:prod,service:redis&title=Cluster/Password"
+
+# Match entries dynamically by arbitrary entry attributes (e.g. group, username, url, custom fields)
+cloakenv get "search://group=Production&username=admin/Password"
+
+# Query values containing reserved characters by percent-encoding them (%2F = "/", %26 = "&", %25 = "%")
+cloakenv get "search://url=https://example.com%2Fpath%2Fapi/Password"
+
+# Query empty attribute values explicitly ("key=" is an empty-string condition)
+cloakenv get "search://notes=/Password"
 ```
+
+> [!NOTE]
+> The query section ends at the **last** `/` of the URI, which starts the requested
+> attribute. Literal `/` and `&` inside a query value must be percent-encoded as
+> `%2F` and `%26` (and a literal `%` as `%25`). `title` and `path` parameters use
+> substring matching; all other parameters (including `group`) match exactly, with
+> numeric and boolean values compared type-coerced.
 
 ---
 
@@ -1016,6 +1043,7 @@ Templates rendered within vaults, per-entry `attributes:`, and composed entities
 ### Error Handling & Safety
 - **Strict Key Checking (`missingkey=error`)**: Accessing an unmapped or misspelled attribute key (e.g. `{{ .attributes.MissingKey }}`) triggers an immediate evaluation error, preventing silent generation of broken configurations.
 - **Bounded Recursion (`maxDepth = 5`)**: Resolution through `get`, `entry`, `search`, `include`, and `includeFile` tracks execution depth and aborts if recursion exceeds 5 levels.
+- **`exec` Memoisation & Encrypted Caching**: Identical `{{ exec ... }}` invocations within a single `Orchestrator` run are deduplicated in memory via singleflight (executing at most once per run, including sticky error memoisation to prevent duplicate side effects). When `cache.default_ttl` is configured with a positive duration, successful `exec` outputs up to 1 MiB are persisted in the encrypted `cache://` layer keyed by the canonical binary path, arguments, working directory, and environment digest.
 
 ---
 
