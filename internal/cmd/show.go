@@ -285,11 +285,7 @@ func Show(args []string, cfg *config.Config) int {
 		return 0
 	}
 
-	capSize := len(entry.Attributes)
-	if capSize < 0 || capSize > 1000000 {
-		capSize = 0
-	}
-	out := make(map[string]any, capSize+2)
+	out := make(map[string]any, len(entry.Attributes)+2)
 	for k, v := range entry.Attributes {
 		out[k] = v
 	}
