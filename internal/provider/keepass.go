@@ -195,18 +195,26 @@ func (k *KeePassProvider) unlock(vaultPath string, password []byte, keyFile stri
 
 	k.db = gokeepasslib.NewDatabase()
 
-	if keyFile != "" && len(password) > 0 {
-		creds, credErr := gokeepasslib.NewPasswordAndKeyCredentials(string(password), keyFile)
-		if credErr != nil {
-			return fmt.Errorf("keepass provider: failed to load key file %s: %w", keyFile, credErr)
+	if keyFile != "" {
+		keyBytes, readErr := os.ReadFile(keyFile) //nolint:gosec // operator-configured key_file path; validated by internal/config
+		if readErr != nil {
+			return fmt.Errorf("keepass provider: failed to load key file %s: %w", keyFile, readErr)
 		}
-		k.db.Credentials = creds
-	} else if keyFile != "" {
-		creds, credErr := gokeepasslib.NewKeyCredentials(keyFile)
-		if credErr != nil {
-			return fmt.Errorf("keepass provider: failed to load key file %s: %w", keyFile, credErr)
+		defer utils.ZeroBytes(keyBytes)
+
+		if len(password) > 0 {
+			creds, credErr := gokeepasslib.NewPasswordAndKeyDataCredentials(string(password), keyBytes)
+			if credErr != nil {
+				return fmt.Errorf("keepass provider: failed to load key file %s: %w", keyFile, credErr)
+			}
+			k.db.Credentials = creds
+		} else {
+			creds, credErr := gokeepasslib.NewKeyDataCredentials(keyBytes)
+			if credErr != nil {
+				return fmt.Errorf("keepass provider: failed to load key file %s: %w", keyFile, credErr)
+			}
+			k.db.Credentials = creds
 		}
-		k.db.Credentials = creds
 	} else {
 		k.db.Credentials = gokeepasslib.NewPasswordCredentials(string(password))
 	}
