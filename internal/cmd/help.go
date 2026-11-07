@@ -8,7 +8,7 @@ import (
 const generalUsage = `cloakenv — pluggable secret orchestrator & runtime injector
 
 Usage:
-  cloakenv [-c config_path] run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] -- <command> [args]
+  cloakenv [-c config_path] run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [-f format] -- <command> [args]
   cloakenv [-c config_path] get <uri>
   cloakenv [-c config_path] set <uri> [--ttl <duration>]
   cloakenv [-c config_path] delete <uri>
@@ -38,6 +38,7 @@ Flags:
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
   -m entry-uri    Merge attributes from an entry into the environment. Can target a single attribute using :attribute (repeatable)
   -i KEY          Filter/whitelist keys or select output fields (repeatable)
+  -f, --key-format format  Override attribute key formatting (none, env, snake, kebab)
   -o, --output    Output format: keys, json, yaml, env (depends on command)
   --vault vault   Scope search to a specific vault (repeatable)
   --ttl duration  Expiration duration for cache entries (e.g. 5m, 1h, set only)
