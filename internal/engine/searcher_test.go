@@ -165,6 +165,49 @@ entries:
 			t.Errorf("expected 'my_raw_password', got %q", val)
 		}
 	})
+
+	t.Run("SearchURIExprIn", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, `{{ get "search://\"auth:ssh\" in tags and \"env:prod\" in tags/password" }}`)
+		if err != nil {
+			t.Fatalf("failed to resolve search:// with Expr 'in' query: %v", err)
+		}
+		if val != "my_raw_password" {
+			t.Errorf("expected 'my_raw_password', got %q", val)
+		}
+	})
+
+	t.Run("SearchURIExprEquality", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, `{{ get "search://path == \"ssh_prod\"/password" }}`)
+		if err != nil {
+			t.Fatalf("failed to resolve search:// with Expr '==' query: %v", err)
+		}
+		if val != "my_raw_password" {
+			t.Errorf("expected 'my_raw_password', got %q", val)
+		}
+	})
+
+	t.Run("SearchURIExprNotEquals", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, `{{ get "search://path != \"ssh_staging\" and \"env:prod\" in tags/password" }}`)
+		if err != nil {
+			t.Fatalf("failed to resolve search:// with Expr '!=' query: %v", err)
+		}
+		if val != "my_raw_password" {
+			t.Errorf("expected 'my_raw_password', got %q", val)
+		}
+	})
+
+	t.Run("SearchDirectURLQueryParams", func(t *testing.T) {
+		results, err := orch.Search(ctx, "tags=auth:ssh,env:prod", nil)
+		if err != nil {
+			t.Fatalf("Search with URL query params failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 result, got %d", len(results))
+		}
+		if results[0].Path != "ssh_prod" {
+			t.Errorf("expected path 'ssh_prod', got %q", results[0].Path)
+		}
+	})
 	t.Run("MissingFields", func(t *testing.T) {
 		// 5. Test missing fields gracefulness: ssh_minimal does not have bit_strength,
 		// so evaluating bit_strength > 3000 should fail evaluation on it but pass
@@ -500,6 +543,91 @@ func TestSearchURIEncoding(t *testing.T) {
 			if !strings.Contains(err.Error(), "no query conditions specified") {
 				t.Errorf("unexpected error message for %q: %v", uri, err)
 			}
+		}
+	})
+
+	t.Run("ExprSyntaxOperators", func(t *testing.T) {
+		tests := []struct {
+			name      string
+			input     string
+			wantQuery string
+			wantAttr  string
+		}{
+			{
+				name:      "InOperatorWithAttr",
+				input:     `"api" in tags/Password`,
+				wantQuery: `"api" in tags`,
+				wantAttr:  "Password",
+			},
+			{
+				name:      "InOperatorWithoutAttr",
+				input:     `"api" in tags`,
+				wantQuery: `"api" in tags`,
+				wantAttr:  "Password",
+			},
+			{
+				name:      "EqualityOperatorWithAttr",
+				input:     `title == "bastion"/Password`,
+				wantQuery: `title == "bastion"`,
+				wantAttr:  "Password",
+			},
+			{
+				name:      "EqualityOperatorWithoutAttr",
+				input:     `title == "bastion"`,
+				wantQuery: `title == "bastion"`,
+				wantAttr:  "Password",
+			},
+			{
+				name:      "NotEqualsOperatorWithAttr",
+				input:     `tags != "deprecated"/api_key`,
+				wantQuery: `tags != "deprecated"`,
+				wantAttr:  "api_key",
+			},
+			{
+				name:      "ContainsOperatorWithAttr",
+				input:     `title contains "Cluster"/token`,
+				wantQuery: `title contains "Cluster"`,
+				wantAttr:  "token",
+			},
+			{
+				name:      "SlashInStringLiteralWithAttr",
+				input:     `path == "servers/ssh"/Password`,
+				wantQuery: `path == "servers/ssh"`,
+				wantAttr:  "Password",
+			},
+			{
+				name:      "SlashInStringLiteralWithoutAttr",
+				input:     `path == "servers/ssh"`,
+				wantQuery: `path == "servers/ssh"`,
+				wantAttr:  "Password",
+			},
+			{
+				name:      "URLParamsWithAndKeyword",
+				input:     `title=Production and Staging/Password`,
+				wantQuery: `title contains "Production and Staging"`,
+				wantAttr:  "Password",
+			},
+			{
+				name:      "URLParamsWithInequalityCharacter",
+				input:     `notes=version<2.0/Password`,
+				wantQuery: `notes == "version<2.0"`,
+				wantAttr:  "Password",
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				gotQuery, gotAttr, err := parseSearchURI(tc.input)
+				if err != nil {
+					t.Fatalf("parseSearchURI(%q) unexpected error: %v", tc.input, err)
+				}
+				if gotQuery != tc.wantQuery {
+					t.Errorf("parseSearchURI(%q) query = %q, want %q", tc.input, gotQuery, tc.wantQuery)
+				}
+				if gotAttr != tc.wantAttr {
+					t.Errorf("parseSearchURI(%q) attr = %q, want %q", tc.input, gotAttr, tc.wantAttr)
+				}
+			})
 		}
 	})
 }
