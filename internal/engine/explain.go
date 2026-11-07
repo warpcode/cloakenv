@@ -71,6 +71,32 @@ func (o *Orchestrator) ExplainEntry(ctx context.Context, uri string) (*PipelineE
 	if o.config != nil && o.config.Vaults != nil {
 		vCfg = o.config.Vaults[scheme]
 	}
+	if vCfg.Entities != nil {
+		if entityCfg, ok := vCfg.Entities[location]; ok {
+			if len(entityCfg.IncludeFields) > 0 {
+				vCfg.IncludeFields = entityCfg.IncludeFields
+			}
+			if len(entityCfg.ExcludeFields) > 0 {
+				vCfg.ExcludeFields = entityCfg.ExcludeFields
+			}
+			if len(entityCfg.Mapping) > 0 {
+				vCfg.Mapping = entityCfg.Mapping
+			}
+			if entityCfg.KeyFormat != "" {
+				vCfg.KeyFormat = entityCfg.KeyFormat
+			}
+			if len(entityCfg.Attributes) > 0 {
+				mergedAttrs := make(map[string]any, len(vCfg.Attributes)+len(entityCfg.Attributes))
+				for ak, av := range vCfg.Attributes {
+					mergedAttrs[ak] = av
+				}
+				for ak, av := range entityCfg.Attributes {
+					mergedAttrs[ak] = av
+				}
+				vCfg.Attributes = mergedAttrs
+			}
+		}
+	}
 
 	var rootPrefixes []string
 	if p, _, err := o.providerManager.GetProvider(ctx, scheme); err == nil {
@@ -144,7 +170,7 @@ func (o *Orchestrator) ExplainEntry(ctx context.Context, uri string) (*PipelineE
 			fmtKey := utils.FormatKeyWithFormat(k, kf)
 			keyFormattedAttrs[fmtKey] = provider.FormatValue(v, kf)
 		}
-		findFormattedKeys(mappedAttrs, kf, "", formattedKeys)
+		findFormattedKeys(mappedAttrs, kf, "", "", formattedKeys)
 	}
 	explanation.KeyFormatted = StageKeyFormatted{
 		Attributes:    keyFormattedAttrs,
@@ -234,6 +260,7 @@ func findRenamedKeysInMap(
 				}
 				if newKey != "" && newKey != k {
 					renamedKeys[k] = newKey
+					break
 				}
 			}
 		}
@@ -243,20 +270,22 @@ func findRenamedKeysInMap(
 	}
 }
 
-func findFormattedKeys(m map[string]any, kf string, prefix string, formattedKeys map[string]string) {
+func findFormattedKeys(m map[string]any, kf string, origPrefix, fmtPrefix string, formattedKeys map[string]string) {
 	for k, v := range m {
 		fmtKey := utils.FormatKeyWithFormat(k, kf)
 		path := k
 		fmtPath := fmtKey
-		if prefix != "" {
-			path = prefix + "." + k
-			fmtPath = prefix + "." + fmtKey
+		if origPrefix != "" {
+			path = origPrefix + "." + k
+		}
+		if fmtPrefix != "" {
+			fmtPath = fmtPrefix + "." + fmtKey
 		}
 		if fmtKey != k {
 			formattedKeys[path] = fmtPath
 		}
 		if childMap, ok := v.(map[string]any); ok {
-			findFormattedKeys(childMap, kf, fmtPath, formattedKeys)
+			findFormattedKeys(childMap, kf, path, fmtPath, formattedKeys)
 		}
 	}
 }

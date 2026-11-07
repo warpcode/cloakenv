@@ -246,7 +246,11 @@ func (r *Resolver) GetEntriesRecursive(ctx context.Context, uri string, depth in
 		}
 		entries := make([]provider.Entry, len(results))
 		for i, res := range results {
-			entries[i] = res.Entry
+			entry := res.Entry
+			if provider.IsRawKeys(ctx) && entry.Original != nil {
+				entry = *entry.Original
+			}
+			entries[i] = entry
 		}
 		return entries, nil
 	}
@@ -261,9 +265,21 @@ func (r *Resolver) GetEntriesRecursive(ctx context.Context, uri string, depth in
 		}
 		entries := make([]provider.Entry, len(results))
 		for i, res := range results {
-			entries[i] = res.Entry
+			entry := res.Entry
+			if provider.IsRawKeys(ctx) && entry.Original != nil {
+				entry = *entry.Original
+			}
+			entries[i] = entry
 		}
 		return entries, nil
+	}
+
+	if provider.IsRawKeys(ctx) {
+		entry, err := r.GetRawEntryRecursive(ctx, uri, depth)
+		if err != nil {
+			return nil, err
+		}
+		return []provider.Entry{entry}, nil
 	}
 
 	entry, err := r.GetEntryRecursive(ctx, uri, depth)
@@ -322,12 +338,36 @@ func (r *Resolver) GetRawEntryRecursive(ctx context.Context, uri string, depth i
 		return provider.Entry{}, err
 	}
 
-	entry, handled, err := r.resolveAttributeSelector(ctx, location, uri, depth)
-	if err != nil {
-		return provider.Entry{}, err
-	}
-	if handled {
-		return entry, nil
+	if attrIdx := strings.LastIndex(location, ":"); attrIdx >= 0 {
+		attrName := location[attrIdx+1:]
+		if attrName != "" {
+			parentURI := scheme + "://" + location[:attrIdx]
+			parentEntry, err := r.GetRawEntryRecursive(ctx, parentURI, depth)
+			if err != nil {
+				return provider.Entry{}, err
+			}
+			val, ok := parentEntry.Attributes[attrName]
+			if !ok {
+				for k, v := range parentEntry.Attributes {
+					if strings.EqualFold(k, attrName) {
+						val = v
+						attrName = k
+						ok = true
+						break
+					}
+				}
+			}
+			if !ok {
+				return provider.Entry{}, fmt.Errorf("attribute %q not found in raw entry %q", attrName, location[:attrIdx])
+			}
+			return provider.Entry{
+				Title:      parentEntry.Title,
+				Tags:       parentEntry.Tags,
+				UUID:       parentEntry.UUID,
+				Group:      parentEntry.Group,
+				Attributes: map[string]any{attrName: val},
+			}.EnsureOriginal(), nil
+		}
 	}
 
 	p, isBuiltin, err := r.providers.GetProvider(ctx, scheme)
@@ -346,19 +386,22 @@ func (r *Resolver) GetRawEntryRecursive(ctx context.Context, uri string, depth i
 	if searchable, ok := rawP.(provider.SearchableProvider); ok {
 		entry, err := searchable.GetEntry(ctx, location)
 		if err == nil {
+			if entry.Original != nil {
+				entry = *entry.Original
+			}
 			return r.resolveEntryAttributes(ctx, entry.EnsureOriginal(), shouldResolveAttrs, depth)
 		}
 	}
 
 	rawCtx := provider.WithRawKeys(ctx)
-	entry, shouldResolveAttrs, err = r.fetchProviderEntry(rawCtx, scheme, location)
+	entry, shouldResolveAttrs, err := r.fetchProviderEntry(rawCtx, scheme, location)
 	if err != nil {
 		return provider.Entry{}, err
 	}
 	if entry.Original != nil {
 		entry = *entry.Original
 	}
-	return r.resolveEntryAttributes(ctx, entry, shouldResolveAttrs, depth)
+	return r.resolveEntryAttributes(ctx, entry.EnsureOriginal(), shouldResolveAttrs, depth)
 }
 
 func unwrapToRawProvider(p provider.SecretProvider) provider.SecretProvider {

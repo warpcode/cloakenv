@@ -1431,4 +1431,476 @@ func TestShow_RawAndExplainErrors(t *testing.T) {
 			t.Errorf("expected single entry URI error message, got %s", buf.String())
 		}
 	})
+
+	t.Run("ExplainWithPositionalAndMerge_ReturnsError", func(t *testing.T) {
+		oldStderr := os.Stderr
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stderr = w
+
+		exitCode := Show([]string{"test://a", "-m", "test://b", "--explain"}, cfg)
+		_ = w.Close()
+		os.Stderr = oldStderr
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode == 0 {
+			t.Errorf("expected non-zero exit code for positional and merge with --explain, got 0")
+		}
+		if !strings.Contains(buf.String(), "--explain can only be used with a single entry URI") {
+			t.Errorf("expected single entry URI error message, got %s", buf.String())
+		}
+	})
+}
+
+func TestShow_RawFlag_ColonAttributeSelector(t *testing.T) {
+	tempDir := t.TempDir()
+	yamlFile := filepath.Join(tempDir, "vault.yaml")
+	yamlContent := `entries:
+  app:
+    user_name: Alice
+    secret_key: s3cr3t
+    secret_old: deprecated
+`
+	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write test yaml: %v", err)
+	}
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"test_vault": {
+				Provider:      "yaml",
+				VaultPath:     yamlFile,
+				ExcludeFields: []string{"secret_old"},
+				KeyFormat:     "env",
+			},
+		},
+	}
+
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	t.Run("Raw_ColonSelector_BypassesExcludeFilter", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"test_vault://app:secret_old", "--raw", "-o", "json"}, cfg)
+		_ = w.Close()
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		var result map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v, output: %s", err, buf.String())
+		}
+
+		if result["secret_old"] != "deprecated" {
+			t.Errorf("expected secret_old=deprecated, got %v", result["secret_old"])
+		}
+	})
+
+	t.Run("Raw_ColonSelector_CaseInsensitiveMatch", func(t *testing.T) {
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatalf("failed to create pipe: %v", err)
+		}
+		os.Stdout = w
+
+		exitCode := Show([]string{"test_vault://app:SECRET_OLD", "--raw", "-o", "json"}, cfg)
+		_ = w.Close()
+
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+
+		if exitCode != 0 {
+			t.Fatalf("expected exit code 0, got %d", exitCode)
+		}
+
+		var result map[string]any
+		if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v, output: %s", err, buf.String())
+		}
+
+		if result["secret_old"] != "deprecated" {
+			t.Errorf("expected secret_old=deprecated, got %v", result["secret_old"])
+		}
+	})
+}
+
+func TestShow_RawFlag_WithMergeFlag(t *testing.T) {
+	tempDir := t.TempDir()
+	yamlFile := filepath.Join(tempDir, "vault.yaml")
+	yamlContent := `entries:
+  app:
+    user_name: Alice
+    secret_key: s3cr3t
+    secret_old: deprecated
+`
+	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write test yaml: %v", err)
+	}
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"test_vault": {
+				Provider:      "yaml",
+				VaultPath:     yamlFile,
+				ExcludeFields: []string{"secret_old"},
+				Mapping: []config.MappingRule{
+					{Match: "^user_(.*)$", Key: "account_$1"},
+				},
+				KeyFormat: "env",
+				Attributes: map[string]any{
+					"EXTRA": "added",
+				},
+			},
+		},
+	}
+
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	exitCode := Show([]string{"-m", "test_vault://app", "--raw", "-o", "json"}, cfg)
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v, output: %s", err, buf.String())
+	}
+
+	if result["user_name"] != "Alice" {
+		t.Errorf("expected raw user_name=Alice, got %v", result["user_name"])
+	}
+	if result["secret_old"] != "deprecated" {
+		t.Errorf("expected raw secret_old=deprecated (bypassing exclude_fields), got %v", result["secret_old"])
+	}
+	if _, exists := result["EXTRA"]; exists {
+		t.Errorf("expected EXTRA to be bypassed under --raw with -m, got %v", result["EXTRA"])
+	}
+	if _, exists := result["ACCOUNT_NAME"]; exists {
+		t.Errorf("expected mapping to be bypassed under --raw with -m, got %v", result["ACCOUNT_NAME"])
+	}
+}
+
+func TestShow_RawFlag_ComposedCustomVault_UnwrapsOriginal(t *testing.T) {
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"backend": {
+				Provider: "custom_vault",
+				Entities: map[string]config.CustomEntityConfig{
+					"db": {
+						Attributes: map[string]any{
+							"db_user":      "postgres",
+							"db_pass":      "secret123",
+							"secret_token": "raw_tok",
+						},
+					},
+				},
+			},
+			"app": {
+				Provider:      "custom_vault",
+				ExcludeFields: []string{"secret_token"},
+				Mapping: []config.MappingRule{
+					{Match: "^db_(.*)$", Key: "database_$1"},
+				},
+				KeyFormat: "env",
+				Attributes: map[string]any{
+					"INJECTED_ATTR": "val",
+				},
+				Entities: map[string]config.CustomEntityConfig{
+					"service": {
+						IsComposed: true,
+						Merge:      []string{"backend://db"},
+					},
+				},
+			},
+		},
+	}
+
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	exitCode := Show([]string{"app://service", "--raw", "-o", "json"}, cfg)
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v, output: %s", err, buf.String())
+	}
+
+	// Raw should unwrap entry.Original from composed custom vault, revealing original stage 1 attributes
+	if result["db_user"] != "postgres" || result["db_pass"] != "secret123" || result["secret_token"] != "raw_tok" {
+		t.Errorf("expected raw original attributes, got %+v", result)
+	}
+	if _, exists := result["INJECTED_ATTR"]; exists {
+		t.Errorf("expected INJECTED_ATTR to be absent under --raw, got %+v", result)
+	}
+	if _, exists := result["DATABASE_USER"]; exists {
+		t.Errorf("expected mapped DATABASE_USER to be absent under --raw, got %+v", result)
+	}
+}
+
+func TestShow_ExplainFlag_MultipleMappingRules_FirstWins(t *testing.T) {
+	tempDir := t.TempDir()
+	yamlFile := filepath.Join(tempDir, "vault.yaml")
+	yamlContent := `entries:
+  app:
+    user_name: Alice
+`
+	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write test yaml: %v", err)
+	}
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"test_vault": {
+				Provider:  "yaml",
+				VaultPath: yamlFile,
+				Mapping: []config.MappingRule{
+					{Match: "^user_(.*)$", Key: "first_$1"},
+					{Match: "^user_.*$", Key: "second_name"},
+				},
+			},
+		},
+	}
+
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	exitCode := Show([]string{"test_vault://app", "--explain", "-o", "json"}, cfg)
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+
+	var explanation struct {
+		Mapped struct {
+			Attributes  map[string]any    `json:"attributes"`
+			RenamedKeys map[string]string `json:"renamed_keys"`
+		} `json:"mapped"`
+	}
+
+	if err := json.Unmarshal(buf.Bytes(), &explanation); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	if explanation.Mapped.RenamedKeys["user_name"] != "first_name" {
+		t.Errorf("expected first matching mapping rule to win (first_name), got %q", explanation.Mapped.RenamedKeys["user_name"])
+	}
+	if explanation.Mapped.Attributes["first_name"] != "Alice" {
+		t.Errorf("expected attribute first_name=Alice, got %v", explanation.Mapped.Attributes["first_name"])
+	}
+}
+
+func TestShow_ExplainFlag_NestedKeyFormatting(t *testing.T) {
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"custom": {
+				Provider:  "custom_vault",
+				KeyFormat: "kebab",
+				Entities: map[string]config.CustomEntityConfig{
+					"item": {
+						Attributes: map[string]any{
+							"server_config": map[string]any{
+								"port_number": 8080,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	exitCode := Show([]string{"custom://item", "--explain", "-o", "json"}, cfg)
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+
+	var explanation struct {
+		KeyFormatted struct {
+			Attributes    map[string]any    `json:"attributes"`
+			FormattedKeys map[string]string `json:"formatted_keys"`
+		} `json:"key_formatted"`
+	}
+
+	if err := json.Unmarshal(buf.Bytes(), &explanation); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+
+	// Verify formatted_keys contains unformatted source dot-path "server_config.port_number"
+	if explanation.KeyFormatted.FormattedKeys["server_config"] != "server-config" {
+		t.Errorf("expected server_config -> server-config, got %q", explanation.KeyFormatted.FormattedKeys["server_config"])
+	}
+	if explanation.KeyFormatted.FormattedKeys["server_config.port_number"] != "server-config.port-number" {
+		t.Errorf("expected server_config.port_number -> server-config.port-number, got %q", explanation.KeyFormatted.FormattedKeys["server_config.port_number"])
+	}
+}
+
+func TestShow_ExplainFlag_ComposedCustomVault_EntityLevelConfig(t *testing.T) {
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"composed_vault": {
+				Provider: "custom_vault",
+				Entities: map[string]config.CustomEntityConfig{
+					"base": {
+						Attributes: map[string]any{
+							"api_key":   "secret",
+							"user_id":   "123",
+							"old_token": "discard",
+						},
+					},
+					"entity_override": {
+						IsComposed:    true,
+						Merge:         []string{"composed_vault://base"},
+						IncludeFields: []string{"api_*", "user_*"},
+						ExcludeFields: []string{"old_*"},
+						Mapping: []config.MappingRule{
+							{Match: "^api_(.*)$", Key: "auth_$1"},
+						},
+						KeyFormat: "env",
+						Attributes: map[string]any{
+							"ENTITY_ATTR": "custom",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	oldStdout := os.Stdout
+	defer func() { os.Stdout = oldStdout }()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	exitCode := Show([]string{"composed_vault://entity_override", "--explain", "-o", "json"}, cfg)
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", exitCode)
+	}
+
+	var explanation struct {
+		Original struct {
+			Attributes map[string]any `json:"attributes"`
+		} `json:"original"`
+		Filtered struct {
+			Attributes   map[string]any `json:"attributes"`
+			ExcludedKeys []string       `json:"excluded_keys"`
+		} `json:"filtered"`
+		Mapped struct {
+			Attributes  map[string]any    `json:"attributes"`
+			RenamedKeys map[string]string `json:"renamed_keys"`
+		} `json:"mapped"`
+		KeyFormatted struct {
+			Attributes    map[string]any    `json:"attributes"`
+			FormattedKeys map[string]string `json:"formatted_keys"`
+		} `json:"key_formatted"`
+		FinalOutput struct {
+			Attributes      map[string]any `json:"attributes"`
+			AddedAttributes []string       `json:"added_attributes"`
+		} `json:"final_output"`
+	}
+
+	if err := json.Unmarshal(buf.Bytes(), &explanation); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v, output: %s", err, buf.String())
+	}
+
+	// Stage 1: Original
+	if explanation.Original.Attributes["api_key"] != "secret" || explanation.Original.Attributes["old_token"] != "discard" {
+		t.Errorf("Stage 1 original mismatch: %+v", explanation.Original.Attributes)
+	}
+
+	// Stage 2: Filtered (entity-level include/exclude applied)
+	if _, exists := explanation.Filtered.Attributes["old_token"]; exists {
+		t.Errorf("Stage 2 old_token should be excluded by entity exclude_fields: %+v", explanation.Filtered.Attributes)
+	}
+	if len(explanation.Filtered.ExcludedKeys) == 0 {
+		t.Errorf("Stage 2 excluded_keys should contain old_token: %v", explanation.Filtered.ExcludedKeys)
+	}
+
+	// Stage 3: Mapped (entity-level mapping applied)
+	if explanation.Mapped.RenamedKeys["api_key"] != "auth_key" {
+		t.Errorf("Stage 3 renamed_keys should have api_key -> auth_key: %+v", explanation.Mapped.RenamedKeys)
+	}
+
+	// Stage 4: KeyFormatted (entity-level key_format applied)
+	if explanation.KeyFormatted.Attributes["AUTH_KEY"] != "secret" || explanation.KeyFormatted.Attributes["USER_ID"] != "123" {
+		t.Errorf("Stage 4 key_formatted mismatch: %+v", explanation.KeyFormatted.Attributes)
+	}
+
+	// Stage 5: FinalOutput (entity-level attributes injected)
+	if explanation.FinalOutput.Attributes["ENTITY_ATTR"] != "custom" {
+		t.Errorf("Stage 5 final_output should contain ENTITY_ATTR: %+v", explanation.FinalOutput.Attributes)
+	}
+	if len(explanation.FinalOutput.AddedAttributes) == 0 || explanation.FinalOutput.AddedAttributes[0] != "ENTITY_ATTR" {
+		t.Errorf("Stage 5 added_attributes should contain ENTITY_ATTR: %v", explanation.FinalOutput.AddedAttributes)
+	}
 }

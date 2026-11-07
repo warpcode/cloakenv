@@ -92,6 +92,15 @@ func parseShowFlags(args []string) (*showOptions, error) {
 		return nil, err
 	}
 
+	hasFlags := len(opts.merges) > 0 || len(opts.explicit) > 0 || len(opts.whitelist) > 0
+	if hasFlags && opts.positionalURI != "" {
+		opts.merges = append([]string{opts.positionalURI}, opts.merges...)
+		opts.positionalURI = ""
+	}
+	if !hasFlags && opts.positionalURI == "" {
+		return nil, fmt.Errorf("%s", usageMsg)
+	}
+
 	if opts.raw && opts.explain {
 		return nil, fmt.Errorf("cannot use --raw and --explain together")
 	}
@@ -104,15 +113,6 @@ func parseShowFlags(args []string) (*showOptions, error) {
 	if opts.explain && opts.positionalURI == "" && len(opts.merges) == 1 {
 		opts.positionalURI = opts.merges[0]
 		opts.merges = nil
-	}
-
-	hasFlags := len(opts.merges) > 0 || len(opts.explicit) > 0 || len(opts.whitelist) > 0
-	if hasFlags && opts.positionalURI != "" {
-		opts.merges = append([]string{opts.positionalURI}, opts.merges...)
-		opts.positionalURI = ""
-	}
-	if !hasFlags && opts.positionalURI == "" {
-		return nil, fmt.Errorf("%s", usageMsg)
 	}
 
 	return opts, nil
