@@ -606,12 +606,13 @@ func TestKeePassProvider_KeyFileOnly(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
+	keyData := []byte("supersecretrawkeybytes1234567890")
 	keyFilePath := filepath.Join(tempDir, "vault.key")
-	if err := os.WriteFile(keyFilePath, []byte("supersecretrawkeybytes1234567890"), 0600); err != nil {
+	if err := os.WriteFile(keyFilePath, keyData, 0600); err != nil {
 		t.Fatalf("failed to write key file: %v", err)
 	}
 
-	creds, err := gokeepasslib.NewKeyCredentials(keyFilePath)
+	creds, err := gokeepasslib.NewKeyDataCredentials(keyData)
 	if err != nil {
 		t.Fatalf("failed to build key credentials: %v", err)
 	}
@@ -694,13 +695,14 @@ func TestKeePassProvider_CompositeAuth(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
+	keyData := []byte("compositekeyfilecontent!@#$")
 	keyFilePath := filepath.Join(tempDir, "composite.key")
-	if err := os.WriteFile(keyFilePath, []byte("compositekeyfilecontent!@#$"), 0600); err != nil {
+	if err := os.WriteFile(keyFilePath, keyData, 0600); err != nil {
 		t.Fatalf("failed to write key file: %v", err)
 	}
 
 	masterPassword := "MasterSecret456!"
-	creds, err := gokeepasslib.NewPasswordAndKeyCredentials(masterPassword, keyFilePath)
+	creds, err := gokeepasslib.NewPasswordAndKeyDataCredentials(masterPassword, keyData)
 	if err != nil {
 		t.Fatalf("failed to build composite credentials: %v", err)
 	}
