@@ -620,7 +620,23 @@ These providers are always available and do not require registration in `config.
 ```bash
 # Dynamically finds the entry with tags "env:prod" and "service:redis" and extracts its Password
 cloakenv get "search://tags=env:prod,service:redis&title=Cluster/Password"
+
+# Match entries dynamically by arbitrary entry attributes (e.g. group, username, url, custom fields)
+cloakenv get "search://group=Production&username=admin/Password"
+
+# Query values containing reserved characters by percent-encoding them (%2F = "/", %26 = "&", %25 = "%")
+cloakenv get "search://url=https://example.com%2Fpath%2Fapi/Password"
+
+# Query empty attribute values explicitly ("key=" is an empty-string condition)
+cloakenv get "search://notes=/Password"
 ```
+
+> [!NOTE]
+> The query section ends at the **last** `/` of the URI, which starts the requested
+> attribute. Literal `/` and `&` inside a query value must be percent-encoded as
+> `%2F` and `%26` (and a literal `%` as `%25`). `title` and `path` parameters use
+> substring matching; all other parameters (including `group`) match exactly, with
+> numeric and boolean values compared type-coerced.
 
 ---
 
