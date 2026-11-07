@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -37,12 +36,13 @@ func Search(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 
 	results, err := orch.Search(ctx, query, repoScopes)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Search failed: %v\n", err)
-		return 1
+		return exitCodeForContext(ctx, 1)
 	}
 
 	flatResults := flattenSearchResults(results, selectedKeys, showMeta)

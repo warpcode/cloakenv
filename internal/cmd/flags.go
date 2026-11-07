@@ -9,6 +9,7 @@ type flagHandler struct {
 	names         []string
 	takesValue    bool
 	missingValErr string
+	hidden        bool
 	fn            func(name, val string) error
 }
 
@@ -38,6 +39,34 @@ func (fp *FlagParser) Bool(names []string, target *bool) {
 			return nil
 		},
 	})
+}
+
+// HiddenBool registers a boolean flag that is hidden from public documentation/help.
+func (fp *FlagParser) HiddenBool(names []string, target *bool) {
+	fp.handlers = append(fp.handlers, &flagHandler{
+		names:      names,
+		takesValue: false,
+		hidden:     true,
+		fn: func(name, val string) error {
+			*target = true
+			return nil
+		},
+	})
+}
+
+// IsHidden reports whether the given flag name is registered as hidden.
+func (fp *FlagParser) IsHidden(flag string) bool {
+	for _, h := range fp.handlers {
+		if !h.hidden {
+			continue
+		}
+		for _, name := range h.names {
+			if name == flag {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // StringSlice registers a flag that appends its value to target slice.

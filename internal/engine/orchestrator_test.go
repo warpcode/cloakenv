@@ -221,6 +221,16 @@ func TestOrchestratorFacade(t *testing.T) {
 		}
 	})
 
+	t.Run("PruneCache", func(t *testing.T) {
+		stats, err := orch.PruneCache(ctx)
+		if err != nil {
+			t.Fatalf("PruneCache failed: %v", err)
+		}
+		if stats.Count != 0 {
+			t.Errorf("expected 0 pruned entries on fresh cache, got %d", stats.Count)
+		}
+	})
+
 	t.Run("Login and Forget NonKeePass", func(t *testing.T) {
 		err := orch.Login(ctx, "test_vault")
 		if err == nil || !strings.Contains(err.Error(), "does not support authentication") {

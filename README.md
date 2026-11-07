@@ -1049,6 +1049,7 @@ Templates rendered within vaults, per-entry `attributes:`, and composed entities
 ### Error Handling & Safety
 - **Strict Key Checking (`missingkey=error`)**: Accessing an unmapped or misspelled attribute key (e.g. `{{ .attributes.MissingKey }}`) triggers an immediate evaluation error, preventing silent generation of broken configurations.
 - **Bounded Recursion (`maxDepth = 5`)**: Resolution through `get`, `entry`, `search`, `include`, and `includeFile` tracks execution depth and aborts if recursion exceeds 5 levels.
+- **`exec` Memoisation & Encrypted Caching**: Identical `{{ exec ... }}` invocations within a single `Orchestrator` run are deduplicated in memory via singleflight (executing at most once per run, including sticky error memoisation to prevent duplicate side effects). When `cache.default_ttl` is configured with a positive duration, successful `exec` outputs up to 1 MiB are persisted in the encrypted `cache://` layer keyed by the canonical binary path, arguments, working directory, and environment digest.
 
 ---
 

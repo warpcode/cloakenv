@@ -13,8 +13,28 @@ permissions:
   actions: write # Required to update workflow files when pushing tags
 
 jobs:
+  test:
+    name: Run Verification Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'main' || '' }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Run Tests
+        run: go test -v -race ./...
+
   build-and-publish:
     name: Build & Publish
+    needs: [test]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -95,6 +115,7 @@ jobs:
               COMPARE_HEADER="**Full Changelog**: [\`${CURRENT_TAG}\`](https://github.com/${GITHUB_REPOSITORY}/commits/${CURRENT_TAG})"
             fi
           fi
+          echo "CURRENT_TAG=${CURRENT_TAG}" >> $GITHUB_ENV
 
           COMMITS_LIST=$(git log --first-parent --pretty=format:"- [\`%h\`](https://github.com/${GITHUB_REPOSITORY}/commit/%H) %s (%an)" ${RANGE})
           if [ -z "${COMMITS_LIST}" ]; then
@@ -132,6 +153,14 @@ jobs:
         if: steps.check-commits.outputs.has_commits == 'true'
         run: |
           mkdir -p dist
+
+          VERSION="${CURRENT_TAG:-${{ github.ref_name }}}"
+          COMMIT="${GITHUB_SHA}"
+          BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          echo "Injecting version metadata: version=${VERSION}, commit=${COMMIT}, date=${BUILD_DATE}"
+
+          LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE} -X github.com/warpcode/cloakenv/internal/cmd.Version=${VERSION} -X github.com/warpcode/cloakenv/internal/cmd.Commit=${COMMIT} -X github.com/warpcode/cloakenv/internal/cmd.BuildDate=${BUILD_DATE}"
           
           # List of GOOS/GOARCH/BinarySuffix mappings
           targets=(
@@ -150,7 +179,7 @@ jobs:
             
             # -s -w linker flags strip debug information and symbols to minimize binary size
             CGO_ENABLED=0 GOOS=${goos} GOARCH=${goarch} go build \
-              -ldflags="-s -w" \
+              -ldflags="${LDFLAGS}" \
               -o "dist/cloakenv-${release_name}" \
               .
           done
