@@ -571,9 +571,40 @@ func (pm *ProviderManager) ClearCache(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// PruneCache removes expired cache entries across all configured vaults.
-func (pm *ProviderManager) PruneCache(ctx context.Context) error {
+// PruneStats reports summary statistics of a cache prune operation.
+type PruneStats struct {
+	Count          int
+	ReclaimedBytes int64
+}
+
+// PruneCache removes expired cache entries from the standalone cache provider
+// and across all configured vaults with caching enabled.
+func (pm *ProviderManager) PruneCache(ctx context.Context) (PruneStats, error) {
+	var stats PruneStats
 	var errs []error
+
+	// 1. Prune standalone cache:// provider
+	p, isBuiltin, err := pm.GetProvider(ctx, "cache")
+	if err != nil {
+		errs = append(errs, fmt.Errorf("cache provider not registered or failed to initialize: %w", err))
+	} else if !isBuiltin {
+		errs = append(errs, fmt.Errorf("invalid cache provider type"))
+	} else {
+		if cacheProv, ok := p.(interface {
+			PruneCache() (int, int64, error)
+		}); ok {
+			count, bytesReclaimed, pruneErr := cacheProv.PruneCache()
+			stats.Count += count
+			stats.ReclaimedBytes += bytesReclaimed
+			if pruneErr != nil {
+				errs = append(errs, fmt.Errorf("cache provider prune: %w", pruneErr))
+			}
+		} else {
+			errs = append(errs, fmt.Errorf("cache provider does not support pruning"))
+		}
+	}
+
+	// 2. Prune vault caches for all configured vaults that have caching enabled
 	if pm.config != nil {
 		for vaultName, vCfg := range pm.config.Vaults {
 			if vCfg.Cache.Enabled {
@@ -581,15 +612,21 @@ func (pm *ProviderManager) PruneCache(ctx context.Context) error {
 				if getErr != nil {
 					continue
 				}
-				if pruner, ok := prov.(interface{ Prune() error }); ok {
-					if pErr := pruner.Prune(); pErr != nil {
+				if pruner, ok := prov.(interface {
+					Prune() (int, int64, error)
+				}); ok {
+					count, bytesReclaimed, pErr := pruner.Prune()
+					stats.Count += count
+					stats.ReclaimedBytes += bytesReclaimed
+					if pErr != nil {
 						errs = append(errs, fmt.Errorf("vault %q cache prune: %w", vaultName, pErr))
 					}
 				}
 			}
 		}
 	}
-	return errors.Join(errs...)
+
+	return stats, errors.Join(errs...)
 }
 
 // Login triggers authentication setup for a vault/scheme.

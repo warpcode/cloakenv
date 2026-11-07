@@ -241,4 +241,91 @@ func TestCacheProvider(t *testing.T) {
 			t.Errorf("expected empty cache directory after ClearCache, got %d files", len(files))
 		}
 	})
+
+	t.Run("PruneCache", func(t *testing.T) {
+		t.Run("Uninitialized", func(t *testing.T) {
+			cp := NewCacheProvider()
+			_, _, err := cp.PruneCache()
+			if err == nil {
+				t.Errorf("expected error from uninitialized PruneCache")
+			}
+		})
+
+		t.Run("PrunesOnlyExpired", func(t *testing.T) {
+			cp := NewCacheProvider()
+			tempDir := t.TempDir()
+			cfg := ProviderConfig{
+				Settings: map[string]string{
+					"keyring_prefix": "cloakenv_test_prefix_prune",
+				},
+			}
+			if err := cp.Initialize(ctx, cfg); err != nil {
+				t.Fatalf("Initialize failed: %v", err)
+			}
+			cp.cacheDir = tempDir
+
+			// 1. Valid entry with long TTL (1 hour)
+			validCtx := context.WithValue(ctx, ContextKeyTTL, 1*time.Hour)
+			if err := cp.SetSecret(validCtx, "valid_key", "valid_value"); err != nil {
+				t.Fatalf("failed to set valid secret: %v", err)
+			}
+
+			// 2. Valid entry with no TTL (infinite)
+			if err := cp.SetSecret(ctx, "infinite_key", "infinite_value"); err != nil {
+				t.Fatalf("failed to set infinite secret: %v", err)
+			}
+
+			// 3. Expired entry (1 nanosecond TTL)
+			expiredCtx := context.WithValue(ctx, ContextKeyTTL, 1*time.Nanosecond)
+			if err := cp.SetSecret(expiredCtx, "expired_key_1", "expired_val_1"); err != nil {
+				t.Fatalf("failed to set expired secret 1: %v", err)
+			}
+			if err := cp.SetSecret(expiredCtx, "expired_key_2", "expired_val_2"); err != nil {
+				t.Fatalf("failed to set expired secret 2: %v", err)
+			}
+
+			time.Sleep(10 * time.Millisecond) // Ensure expiration
+
+			count, reclaimed, err := cp.PruneCache()
+			if err != nil {
+				t.Fatalf("PruneCache failed: %v", err)
+			}
+
+			if count != 2 {
+				t.Errorf("expected 2 pruned files, got %d", count)
+			}
+			if reclaimed <= 0 {
+				t.Errorf("expected >0 bytes reclaimed, got %d", reclaimed)
+			}
+
+			// Valid keys should still be readable
+			val1, err := cp.GetSecret(ctx, "valid_key")
+			if err != nil || val1 != "valid_value" {
+				t.Errorf("valid_key get failed: got %q, err %v", val1, err)
+			}
+
+			val2, err := cp.GetSecret(ctx, "infinite_key")
+			if err != nil || val2 != "infinite_value" {
+				t.Errorf("infinite_key get failed: got %q, err %v", val2, err)
+			}
+
+			// Expired keys should not exist in cache files
+			files, err := os.ReadDir(tempDir)
+			if err != nil {
+				t.Fatalf("ReadDir failed: %v", err)
+			}
+			if len(files) != 2 {
+				t.Errorf("expected exactly 2 remaining files in cache dir, got %d", len(files))
+			}
+
+			// Second prune should prune 0 files
+			count2, reclaimed2, err := cp.PruneCache()
+			if err != nil {
+				t.Fatalf("second PruneCache failed: %v", err)
+			}
+			if count2 != 0 || reclaimed2 != 0 {
+				t.Errorf("expected 0 files and 0 bytes on second prune, got count=%d, bytes=%d", count2, reclaimed2)
+			}
+		})
+	})
 }

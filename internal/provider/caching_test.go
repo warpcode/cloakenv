@@ -243,8 +243,15 @@ func TestCachingProvider_EncryptedDiskMode(t *testing.T) {
 	// 3. Expiration & Prune
 	time.Sleep(150 * time.Millisecond)
 
-	if err := cachingConcrete.Prune(); err != nil {
+	count, bytesReclaimed, err := cachingConcrete.Prune()
+	if err != nil {
 		t.Fatalf("Prune() failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("expected 1 pruned file, got %d", count)
+	}
+	if bytesReclaimed <= 0 {
+		t.Errorf("expected >0 bytes reclaimed, got %d", bytesReclaimed)
 	}
 	remainingFiles, _ := os.ReadDir(cachingConcrete.cacheDir)
 	if len(remainingFiles) != 0 {
