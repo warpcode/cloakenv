@@ -12,7 +12,8 @@ Usage:
   cloakenv [-c config_path] get <uri>
   cloakenv [-c config_path] set <uri> [--ttl <duration>]
   cloakenv [-c config_path] delete <uri>
-  cloakenv [-c config_path] cache clear
+  cloakenv [-c config_path] cache <clear|prune>
+  cloakenv [-c config_path] sync <source> <target> [flags]
   cloakenv [-c config_path] show <entry-uri> [args]
   cloakenv [-c config_path] search [query] [args]
   cloakenv [-c config_path] auth <login|forget|status> [vault]
