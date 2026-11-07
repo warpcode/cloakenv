@@ -98,35 +98,102 @@ func parseSearchArgs(args []string) (query string, repoScopes []string, selected
 	return query, repoScopes, selectedKeys, outputFormat, keyFormat, showMeta, nil
 }
 
+type selectedKeyKind uint8
+
+const (
+	keyKindDefaultAttr selectedKeyKind = iota
+	keyKindMeta
+	keyKindMetaProvider
+	keyKindMetaVault
+	keyKindMetaTags
+	keyKindProvider
+	keyKindVault
+	keyKindPath
+	keyKindTitle
+	keyKindTags
+	keyKindUUID
+	keyKindGroup
+	keyKindGroupName
+	keyKindGroupUUID
+	keyKindGroupPath
+)
+
+type selectedKeySpec struct {
+	field string
+	kind  selectedKeyKind
+}
+
+func parseSelectedKeySpecs(selectedKeys []string) []selectedKeySpec {
+	if len(selectedKeys) == 0 {
+		return nil
+	}
+	specs := make([]selectedKeySpec, len(selectedKeys))
+	for i, field := range selectedKeys {
+		spec := selectedKeySpec{field: field}
+		switch strings.ToLower(field) {
+		case "_meta_":
+			spec.kind = keyKindMeta
+		case "_meta_.provider":
+			spec.kind = keyKindMetaProvider
+		case "_meta_.vault":
+			spec.kind = keyKindMetaVault
+		case "_meta_.tags":
+			spec.kind = keyKindMetaTags
+		case "provider":
+			spec.kind = keyKindProvider
+		case "vault":
+			spec.kind = keyKindVault
+		case "path":
+			spec.kind = keyKindPath
+		case "title":
+			spec.kind = keyKindTitle
+		case "tags":
+			spec.kind = keyKindTags
+		case "uuid":
+			spec.kind = keyKindUUID
+		case "group":
+			spec.kind = keyKindGroup
+		case "group_name":
+			spec.kind = keyKindGroupName
+		case "group_uuid":
+			spec.kind = keyKindGroupUUID
+		case "group_path":
+			spec.kind = keyKindGroupPath
+		default:
+			spec.kind = keyKindDefaultAttr
+		}
+		specs[i] = spec
+	}
+	return specs
+}
+
 func flattenSearchResults(results []provider.SearchResult, selectedKeys []string, showMeta bool) []map[string]any {
 	flatResults := make([]map[string]any, len(results))
 
-	selectedKeysLower := make([]string, len(selectedKeys))
-	for i, field := range selectedKeys {
-		selectedKeysLower[i] = strings.ToLower(field)
-	}
+	// Optimization: Pre-classify selectedKeys once to avoid repeated string conversions
+	// and multi-branch string switches per entry across all search results.
+	specs := parseSelectedKeySpecs(selectedKeys)
 
 	for i, r := range results {
-		flatResults[i] = flattenEntry(r, selectedKeys, selectedKeysLower, showMeta)
+		flatResults[i] = flattenEntry(r, specs, showMeta)
 	}
 	return flatResults
 }
 
-func flattenEntry(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string, showMeta bool) map[string]any {
-	if len(selectedKeys) > 0 {
-		return flattenSelectedKeys(r, selectedKeys, selectedKeysLower)
+func flattenEntry(r provider.SearchResult, specs []selectedKeySpec, showMeta bool) map[string]any {
+	if len(specs) > 0 {
+		return flattenSelectedKeys(r, specs)
 	}
 	return flattenDefaultEntry(r, showMeta)
 }
 
-// flattenSelectedKeys extracts selected keys for a result entry without allocating a lowerAttrs map per result.
-func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selectedKeysLower []string) map[string]any {
-	flatRes := make(map[string]any, len(selectedKeys))
+// flattenSelectedKeys extracts selected keys for a result entry using pre-classified key specs.
+func flattenSelectedKeys(r provider.SearchResult, specs []selectedKeySpec) map[string]any {
+	flatRes := make(map[string]any, len(specs))
 
-	for j, field := range selectedKeys {
-		fieldLower := selectedKeysLower[j]
-		switch fieldLower {
-		case "_meta_":
+	for _, spec := range specs {
+		switch spec.kind {
+		case keyKindMeta:
 			metaMap := make(map[string]any)
 			if r.Provider != "" {
 				metaMap["provider"] = r.Provider
@@ -140,74 +207,74 @@ func flattenSelectedKeys(r provider.SearchResult, selectedKeys []string, selecte
 			if len(metaMap) > 0 {
 				flatRes["_meta_"] = metaMap
 			}
-		case "_meta_.provider":
+		case keyKindMetaProvider:
 			if r.Provider != "" {
 				flatRes["_meta_.provider"] = r.Provider
 			}
-		case "_meta_.vault":
+		case keyKindMetaVault:
 			if r.Vault != "" {
 				flatRes["_meta_.vault"] = r.Vault
 			}
-		case "_meta_.tags":
+		case keyKindMetaTags:
 			if len(r.Entry.Tags) > 0 {
 				flatRes["_meta_.tags"] = r.Entry.Tags
 			}
-		case "provider":
+		case keyKindProvider:
 			if r.Provider != "" {
 				flatRes["provider"] = r.Provider
 			}
-		case "vault":
+		case keyKindVault:
 			if r.Vault != "" {
 				flatRes["vault"] = r.Vault
 			}
-		case "path":
+		case keyKindPath:
 			if r.Path != "" {
 				flatRes["path"] = r.Path
 			}
-		case "title":
+		case keyKindTitle:
 			if r.Entry.Title != "" {
 				flatRes["title"] = r.Entry.Title
 			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "title"); ok {
 				flatRes["title"] = val
 			}
-		case "tags":
+		case keyKindTags:
 			if len(r.Entry.Tags) > 0 {
 				flatRes["tags"] = r.Entry.Tags
 			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "tags"); ok {
 				flatRes["tags"] = val
 			}
-		case "uuid":
+		case keyKindUUID:
 			if r.Entry.UUID != "" {
 				flatRes["uuid"] = r.Entry.UUID
 			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "uuid"); ok {
 				flatRes["uuid"] = val
 			}
-		case "group":
+		case keyKindGroup:
 			if r.Entry.Group != nil {
 				flatRes["group"] = r.Entry.Group
 			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "group"); ok {
 				flatRes["group"] = val
 			}
-		case "group_name":
+		case keyKindGroupName:
 			if r.Entry.Group != nil && r.Entry.Group.Name != "" {
 				flatRes["group_name"] = r.Entry.Group.Name
 			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "group_name"); ok {
 				flatRes["group_name"] = val
 			}
-		case "group_uuid":
+		case keyKindGroupUUID:
 			if r.Entry.Group != nil && r.Entry.Group.UUID != "" {
 				flatRes["group_uuid"] = r.Entry.Group.UUID
 			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "group_uuid"); ok {
 				flatRes["group_uuid"] = val
 			}
-		case "group_path":
+		case keyKindGroupPath:
 			if r.Entry.Group != nil && r.Entry.Group.Path != "" {
 				flatRes["group_path"] = r.Entry.Group.Path
 			} else if _, val, ok := findAttrCaseInsensitive(r.Entry.Attributes, "group_path"); ok {
 				flatRes["group_path"] = val
 			}
 		default:
-			key, val := resolveSelectedAttribute(r.Entry.Attributes, field)
+			key, val := resolveSelectedAttribute(r.Entry.Attributes, spec.field)
 			flatRes[key] = val
 		}
 	}
