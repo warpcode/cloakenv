@@ -247,7 +247,8 @@ func Show(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
-	ctx := context.Background()
+	ctx, stop := signalContext()
+	defer stop()
 
 	var entry provider.Entry
 

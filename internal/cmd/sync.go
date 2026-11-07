@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -74,7 +73,10 @@ func Sync(args []string, cfg *config.Config) int {
 		DryRun: dryRun,
 	}
 
-	summary, err := orch.Sync(context.Background(), source, target, opts)
+	ctx, stop := signalContext()
+	defer stop()
+
+	summary, err := orch.Sync(ctx, source, target, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Sync failed: %v\n", err)
 		return 1
