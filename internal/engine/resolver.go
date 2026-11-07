@@ -119,12 +119,12 @@ func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, 
 		matchedEntry := results[0].Entry
 		val, ok := matchedEntry.Attributes[attr]
 		if !ok {
-			for k, v := range matchedEntry.Attributes {
-				if strings.EqualFold(k, attr) {
-					val = v
-					ok = true
-					break
-				}
+			// Deterministic case-insensitive fallback (lexicographically
+			// smallest matching key wins) so case-colliding attribute names
+			// resolve stably across runs.
+			if v, found := findAttrCaseFold(matchedEntry.Attributes, attr); found {
+				val = v
+				ok = true
 			}
 		}
 		if !ok {

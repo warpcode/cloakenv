@@ -365,6 +365,9 @@ func TestSearchURIEncoding(t *testing.T) {
 	})
 
 	t.Run("DynamicAttributes", func(t *testing.T) {
+		// Note: the attribute section starts at the LAST "/" of the location,
+		// so a literal "/" inside a value truncates it here. Values containing
+		// "/" or "&" must be percent-encoded (see PercentEscapedValues below).
 		exprQuery, attr, err := parseSearchURI("username=admin&url=https://example.com/api_key")
 		if err != nil {
 			t.Fatalf("failed to parse: %v", err)
@@ -420,6 +423,45 @@ func TestSearchURIEncoding(t *testing.T) {
 		}
 	})
 
+	t.Run("PercentEscapedValues", func(t *testing.T) {
+		exprQuery, attr, err := parseSearchURI("url=https://example.com%2Fpath&tag=a%26b/Password")
+		if err != nil {
+			t.Fatalf("failed to parse: %v", err)
+		}
+		expectedExpr := `url == "https://example.com/path" and tag == "a&b"`
+		if exprQuery != expectedExpr {
+			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
+		}
+		if attr != "Password" {
+			t.Errorf("expected attribute 'Password', got %q", attr)
+		}
+	})
+
+	t.Run("PercentEscapeInvalidSequenceKeptVerbatim", func(t *testing.T) {
+		exprQuery, _, err := parseSearchURI("note=100%/Password")
+		if err != nil {
+			t.Fatalf("failed to parse: %v", err)
+		}
+		expectedExpr := `note == "100%"`
+		if exprQuery != expectedExpr {
+			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
+		}
+	})
+
+	t.Run("EmptyValueCondition", func(t *testing.T) {
+		exprQuery, attr, err := parseSearchURI("notes=&port=/Password")
+		if err != nil {
+			t.Fatalf("failed to parse: %v", err)
+		}
+		expectedExpr := `notes == "" and port == ""`
+		if exprQuery != expectedExpr {
+			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
+		}
+		if attr != "Password" {
+			t.Errorf("expected attribute 'Password', got %q", attr)
+		}
+	})
+
 	t.Run("InvalidParamKeys", func(t *testing.T) {
 		invalidCases := []string{
 			"invalid key=value/Password",
@@ -429,6 +471,7 @@ func TestSearchURIEncoding(t *testing.T) {
 			"a-b=value/Password",
 			".leading=value/Password",
 			"trailing.=value/Password",
+			"=value/Password",
 		}
 		for _, uri := range invalidCases {
 			_, _, err := parseSearchURI(uri)
@@ -444,8 +487,10 @@ func TestSearchURIEncoding(t *testing.T) {
 	t.Run("EmptyConditions", func(t *testing.T) {
 		emptyCases := []string{
 			"/Password",
-			"title=&username=/Password",
+			// "=", "tags=" and contains-style "title="/"path=" remain skipped
+			// when empty, so these still produce no query conditions.
 			"=&tags=/Password",
+			"path=&title=/Password",
 		}
 		for _, uri := range emptyCases {
 			_, _, err := parseSearchURI(uri)
@@ -1138,6 +1183,86 @@ func TestSearcher_UUIDAndGroupExpression(t *testing.T) {
 		}
 		if val != "testPassword123!" {
 			t.Errorf("expected 'testPassword123!', got %q", val)
+		}
+	})
+}
+
+func TestSearcher_GroupAttributeFallback(t *testing.T) {
+	keyring.MockInit()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"grp": {
+				Provider: "custom_vault",
+				Entities: config.ToCustomEntityMap(map[string]map[string]any{
+					// Capitalized attribute key: the fallback group lookup must
+					// be case-insensitive.
+					"svc1": {
+						"Group":    "Production",
+						"Password": "p1",
+					},
+					// Structured group attribute: name/path/uuid fields are
+					// extracted instead of stringifying the whole map.
+					"svc2": {
+						"group": map[string]any{
+							"name": "Staging",
+							"path": "Infra/Staging",
+						},
+						"Password": "p2",
+					},
+				}),
+			},
+		},
+	}
+
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+
+	ctx := context.Background()
+
+	t.Run("GroupAttrCaseInsensitive_MatchesGroupName", func(t *testing.T) {
+		results, err := orch.Search(ctx, `group.name == "Production"`, nil)
+		if err != nil {
+			t.Fatalf("Search by group.name failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("expected exactly 1 result for capitalized group attribute, got %d", len(results))
+		}
+	})
+
+	t.Run("GroupAttrStructuredMap_MatchesPath", func(t *testing.T) {
+		results, err := orch.Search(ctx, `group.path == "Infra/Staging"`, nil)
+		if err != nil {
+			t.Fatalf("Search by group.path failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Errorf("expected exactly 1 result for structured group attribute path, got %d", len(results))
+		}
+	})
+
+	t.Run("SearchURIByGroupAttr", func(t *testing.T) {
+		val, err := orch.Resolve(ctx, `{{ get "search://group=Production/Password" }}`)
+		if err != nil {
+			t.Fatalf("failed to resolve by group attribute: %v", err)
+		}
+		if val != "p1" {
+			t.Errorf("expected 'p1', got %q", val)
+		}
+	})
+
+	t.Run("RawGroupEquality_TypeMismatchErrors", func(t *testing.T) {
+		// Semantics change: an entry-attribute `group` is now exposed as the
+		// structured name/path map (not the raw string), so legacy raw
+		// expressions comparing `group` to a string fail loudly with a type
+		// mismatch instead of silently matching.
+		_, err := orch.Search(ctx, `group == "Production"`, nil)
+		if err == nil {
+			t.Fatal("expected type-mismatch error for raw group string equality after structured group change, got nil")
+		}
+		if !strings.Contains(err.Error(), "mismatched types") {
+			t.Errorf("unexpected error for raw group string equality: %v", err)
 		}
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -196,10 +197,31 @@ func (s *Searcher) filterResultsByExpression(ctx context.Context, expressionStr 
 			groupMap["name"] = r.Entry.Group.Name
 			groupMap["uuid"] = r.Entry.Group.UUID
 			groupMap["path"] = r.Entry.Group.Path
-		} else if gVal, ok := r.Entry.Attributes["group"]; ok && gVal != nil {
-			groupMap["name"] = fmt.Sprint(gVal)
-			groupMap["uuid"] = ""
-			groupMap["path"] = fmt.Sprint(gVal)
+		} else if gVal, ok := findAttrCaseFold(r.Entry.Attributes, "group"); ok && gVal != nil {
+			if gm, isMap := gVal.(map[string]any); isMap {
+				// Structured group attribute (e.g. YAML/JSON entries defining
+				// group as {name: ..., path: ..., uuid: ...}): extract fields
+				// case-insensitively instead of stringifying the whole map.
+				if n, ok := findAttrCaseFold(gm, "name"); ok && n != nil {
+					groupMap["name"] = fmt.Sprint(n)
+				} else {
+					groupMap["name"] = ""
+				}
+				if p, ok := findAttrCaseFold(gm, "path"); ok && p != nil {
+					groupMap["path"] = fmt.Sprint(p)
+				} else {
+					groupMap["path"] = groupMap["name"]
+				}
+				if u, ok := findAttrCaseFold(gm, "uuid"); ok && u != nil {
+					groupMap["uuid"] = fmt.Sprint(u)
+				} else {
+					groupMap["uuid"] = ""
+				}
+			} else {
+				groupMap["name"] = fmt.Sprint(gVal)
+				groupMap["uuid"] = ""
+				groupMap["path"] = fmt.Sprint(gVal)
+			}
 		} else {
 			groupMap["name"] = ""
 			groupMap["uuid"] = ""
@@ -509,7 +531,18 @@ func parseSearchURI(location string) (string, string, error) {
 		k = strings.TrimSpace(k)
 		v = strings.TrimSpace(v)
 		if k == "" {
+			if v != "" {
+				// "=value" carries no parameter key; reject it like main did
+				// instead of silently dropping user input.
+				return "", "", fmt.Errorf("invalid search parameter: %q", part)
+			}
 			continue
+		}
+		// Percent-decode values so reserved URI characters can be queried:
+		// %2F -> "/", %26 -> "&", %25 -> "%". Values with invalid escapes are
+		// kept verbatim.
+		if decoded, err := url.PathUnescape(v); err == nil {
+			v = decoded
 		}
 		switch k {
 		case "tags", "_meta_.tags":
@@ -565,40 +598,43 @@ func parseSearchURI(location string) (string, string, error) {
 			if !isValidSearchKey(k) {
 				return "", "", fmt.Errorf("invalid search parameter: %q", k)
 			}
-			if v != "" {
-				if hasConditions {
-					b.WriteString(" and ")
-				}
-				if n, err := strconv.ParseInt(v, 10, 64); err == nil && strconv.FormatInt(n, 10) == v {
-					b.WriteString("(")
-					b.WriteString(k)
-					b.WriteString(" == ")
-					quoteBuf = strconv.AppendQuote(quoteBuf[:0], v)
-					b.Write(quoteBuf)
-					b.WriteString(" or ")
-					b.WriteString(k)
-					b.WriteString(" == ")
-					b.WriteString(v)
-					b.WriteString(")")
-				} else if v == "true" || v == "false" {
-					b.WriteString("(")
-					b.WriteString(k)
-					b.WriteString(" == ")
-					quoteBuf = strconv.AppendQuote(quoteBuf[:0], v)
-					b.Write(quoteBuf)
-					b.WriteString(" or ")
-					b.WriteString(k)
-					b.WriteString(" == ")
-					b.WriteString(v)
-					b.WriteString(")")
-				} else {
-					b.WriteString(k)
-					b.WriteString(" == ")
-					quoteBuf = strconv.AppendQuote(quoteBuf[:0], v)
-					b.Write(quoteBuf)
-				}
-				hasConditions = true
+			if hasConditions {
+				b.WriteString(" and ")
 			}
+			if v == "" {
+				// "key=" is an explicit empty-string condition so empty
+				// attribute values remain queryable.
+				b.WriteString(k)
+				b.WriteString(` == ""`)
+			} else if n, err := strconv.ParseInt(v, 10, 64); err == nil && strconv.FormatInt(n, 10) == v {
+				b.WriteString("(")
+				b.WriteString(k)
+				b.WriteString(" == ")
+				quoteBuf = strconv.AppendQuote(quoteBuf[:0], v)
+				b.Write(quoteBuf)
+				b.WriteString(" or ")
+				b.WriteString(k)
+				b.WriteString(" == ")
+				b.WriteString(v)
+				b.WriteString(")")
+			} else if v == "true" || v == "false" {
+				b.WriteString("(")
+				b.WriteString(k)
+				b.WriteString(" == ")
+				quoteBuf = strconv.AppendQuote(quoteBuf[:0], v)
+				b.Write(quoteBuf)
+				b.WriteString(" or ")
+				b.WriteString(k)
+				b.WriteString(" == ")
+				b.WriteString(v)
+				b.WriteString(")")
+			} else {
+				b.WriteString(k)
+				b.WriteString(" == ")
+				quoteBuf = strconv.AppendQuote(quoteBuf[:0], v)
+				b.Write(quoteBuf)
+			}
+			hasConditions = true
 		}
 	}
 
@@ -607,6 +643,24 @@ func parseSearchURI(location string) (string, string, error) {
 	}
 
 	return b.String(), attr, nil
+}
+
+// findAttrCaseFold performs a deterministic case-insensitive attribute lookup.
+// When several keys fold to the same name, the lexicographically smallest key
+// wins so results are stable across runs despite randomized map iteration.
+func findAttrCaseFold(attrs map[string]any, key string) (any, bool) {
+	best := ""
+	found := false
+	for k := range attrs {
+		if strings.EqualFold(k, key) && (!found || k < best) {
+			best = k
+			found = true
+		}
+	}
+	if !found {
+		return nil, false
+	}
+	return attrs[best], true
 }
 
 func isValidSearchKey(k string) bool {
