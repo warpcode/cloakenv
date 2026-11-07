@@ -9,6 +9,29 @@ import (
 	"github.com/warpcode/cloakenv/internal/config"
 )
 
+var (
+	// version holds the application version at build time (injected via -X main.version=...).
+	version string
+
+	// commit holds the commit SHA at build time (injected via -X main.commit=...).
+	commit string
+
+	// date holds the build timestamp at build time (injected via -X main.date=...).
+	date string
+)
+
+func init() {
+	if version != "" {
+		cmd.Version = version
+	}
+	if commit != "" {
+		cmd.Commit = commit
+	}
+	if date != "" {
+		cmd.BuildDate = date
+	}
+}
+
 func main() {
 	os.Exit(run(os.Args, os.Stderr))
 }

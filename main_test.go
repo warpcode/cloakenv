@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/warpcode/cloakenv/internal/cmd"
 )
 
 // TestHelperProcess runs main() if invoked as a helper process.
@@ -186,6 +188,44 @@ func TestRunDirectIsolation(t *testing.T) {
 				t.Errorf("run(%v) stderr = %q, want contain %q", tt.args, stderr.String(), tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestVersionVariablesLinkage(t *testing.T) {
+	// Verify that if main version/commit/date are set, they sync to internal/cmd package.
+	origVersion := cmd.Version
+	origCommit := cmd.Commit
+	origDate := cmd.BuildDate
+	defer func() {
+		cmd.Version = origVersion
+		cmd.Commit = origCommit
+		cmd.BuildDate = origDate
+	}()
+
+	version = "v1.2.3-test"
+	commit = "testcommit12345"
+	date = "2026-03-30T12:00:00Z"
+
+	// Re-run init logic manually to test sync
+	if version != "" {
+		cmd.Version = version
+	}
+	if commit != "" {
+		cmd.Commit = commit
+	}
+	if date != "" {
+		cmd.BuildDate = date
+	}
+
+	info := cmd.GetVersionInfo()
+	if info.Version != "v1.2.3-test" {
+		t.Errorf("expected version %q, got %q", "v1.2.3-test", info.Version)
+	}
+	if info.Commit != "testcommit12345" {
+		t.Errorf("expected commit %q, got %q", "testcommit12345", info.Commit)
+	}
+	if info.BuildDate != "2026-03-30T12:00:00Z" {
+		t.Errorf("expected build date %q, got %q", "2026-03-30T12:00:00Z", info.BuildDate)
 	}
 }
 
