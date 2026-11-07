@@ -679,6 +679,48 @@ func TestTemplateEngine_Shquote(t *testing.T) {
 	}
 }
 
+func TestTemplateEngine_ASTCache(t *testing.T) {
+	ctx := context.Background()
+	te := engine.NewTemplateEngine(nil)
+
+	tmpl := `cached-test: {{ .Attributes.k }}`
+	data1 := engine.TemplateContext{Attributes: map[string]any{"k": "v1"}}
+	data2 := engine.TemplateContext{Attributes: map[string]any{"k": "v2"}}
+
+	res1, err := te.Render(ctx, tmpl, data1, 0, "")
+	if err != nil {
+		t.Fatalf("first render failed: %v", err)
+	}
+	if res1 != "cached-test: v1" {
+		t.Errorf("got %q, want %q", res1, "cached-test: v1")
+	}
+
+	// Second render with same template string hits AST cache
+	res2, err := te.Render(ctx, tmpl, data2, 0, "")
+	if err != nil {
+		t.Fatalf("second render failed: %v", err)
+	}
+	if res2 != "cached-test: v2" {
+		t.Errorf("got %q, want %q", res2, "cached-test: v2")
+	}
+
+	// Distinct template strings cache independently
+	distinctTmpl := `distinct-test: {{ .Attributes.k }}`
+	resDistinct, err := te.Render(ctx, distinctTmpl, data1, 0, "")
+	if err != nil {
+		t.Fatalf("distinct render failed: %v", err)
+	}
+	if resDistinct != "distinct-test: v1" {
+		t.Errorf("got %q, want %q", resDistinct, "distinct-test: v1")
+	}
+
+	// Malformed templates return an error and do not pollute the cache
+	invalidTmpl := `invalid-test: {{ .unclosed`
+	if _, err := te.Render(ctx, invalidTmpl, data1, 0, ""); err == nil {
+		t.Fatal("expected error for unclosed action, got nil")
+	}
+}
+
 func BenchmarkTemplateEngine_Render(b *testing.B) {
 	ctx := context.Background()
 	te := engine.NewTemplateEngine(nil)

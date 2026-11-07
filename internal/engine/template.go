@@ -2,7 +2,10 @@ package engine
 
 import (
 	"bytes"
+	"container/list"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +30,87 @@ var bufPool = sync.Pool{
 	New: func() any {
 		return new(bytes.Buffer)
 	},
+}
+
+const defaultTemplateCacheCapacity = 512
+
+type templateCacheEntry struct {
+	key  string
+	tmpl *template.Template
+}
+
+// templateLRUCache is a thread-safe LRU cache for precompiled *template.Template prototypes.
+type templateLRUCache struct {
+	mu       sync.Mutex
+	capacity int
+	items    map[string]*list.Element
+	order    *list.List
+}
+
+func newTemplateLRUCache(capacity int) *templateLRUCache {
+	if capacity <= 0 {
+		capacity = defaultTemplateCacheCapacity
+	}
+	return &templateLRUCache{
+		capacity: capacity,
+		items:    make(map[string]*list.Element, capacity),
+		order:    list.New(),
+	}
+}
+
+func (c *templateLRUCache) get(key string) (*template.Template, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	elem, ok := c.items[key]
+	if !ok {
+		return nil, false
+	}
+	c.order.MoveToFront(elem)
+	entry := elem.Value.(*templateCacheEntry)
+	cloned, err := entry.tmpl.Clone()
+	if err != nil {
+		return nil, false
+	}
+	return cloned, true
+}
+
+func (c *templateLRUCache) put(key string, tmpl *template.Template) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	cloned, err := tmpl.Clone()
+	if err != nil {
+		return
+	}
+
+	if elem, ok := c.items[key]; ok {
+		c.order.MoveToFront(elem)
+		elem.Value.(*templateCacheEntry).tmpl = cloned
+		return
+	}
+
+	if c.order.Len() >= c.capacity {
+		back := c.order.Back()
+		if back != nil {
+			c.order.Remove(back)
+			oldEntry := back.Value.(*templateCacheEntry)
+			delete(c.items, oldEntry.key)
+		}
+	}
+
+	elem := c.order.PushFront(&templateCacheEntry{
+		key:  key,
+		tmpl: cloned,
+	})
+	c.items[key] = elem
+}
+
+var globalTemplateCache = newTemplateLRUCache(defaultTemplateCacheCapacity)
+
+func templateHashKey(tmplStr string) string {
+	sum := sha256.Sum256([]byte(tmplStr))
+	return hex.EncodeToString(sum[:])
 }
 
 var userHomeDir = os.UserHomeDir
@@ -457,14 +541,22 @@ func (te *TemplateEngine) Render(ctx context.Context, tmplStr string, data any, 
 		},
 	}
 
-	tmpl, err := template.New("tmpl").Option("missingkey=error").Funcs(funcs).Parse(tmplStr)
-	if err != nil {
-		// Try to provide a good error message for template errors
-		keyPart := ""
-		if configKey != "" {
-			keyPart = fmt.Sprintf(" in configuration key %q", configKey)
+	cacheKey := templateHashKey(tmplStr)
+	tmpl, hit := globalTemplateCache.get(cacheKey)
+	if hit {
+		tmpl.Funcs(funcs)
+	} else {
+		parsed, err := template.New("tmpl").Option("missingkey=error").Funcs(funcs).Parse(tmplStr)
+		if err != nil {
+			// Try to provide a good error message for template errors
+			keyPart := ""
+			if configKey != "" {
+				keyPart = fmt.Sprintf(" in configuration key %q", configKey)
+			}
+			return "", fmt.Errorf("template parsing failed%s: %w", keyPart, err)
 		}
-		return "", fmt.Errorf("template parsing failed%s: %w", keyPart, err)
+		globalTemplateCache.put(cacheKey, parsed)
+		tmpl = parsed
 	}
 
 	execData := wrapTemplateData(data)
