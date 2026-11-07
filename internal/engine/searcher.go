@@ -614,7 +614,7 @@ func isValidSearchKey(k string) bool {
 		return false
 	}
 	startOfPart := true
-	for i := 0; i < len(k); i++ {
+	for i := range len(k) {
 		c := k[i]
 		if c == '.' {
 			if startOfPart || i == len(k)-1 {
