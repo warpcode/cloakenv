@@ -569,7 +569,9 @@ func createTestKeePassDatabase(t *testing.T, dbPath string, creds *gokeepasslib.
 	if err != nil {
 		t.Fatalf("failed to create db file: %v", err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	db := gokeepasslib.NewDatabase()
 	db.Credentials = creds

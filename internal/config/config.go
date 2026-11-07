@@ -429,7 +429,7 @@ func Load(path string) (*Config, error) {
 			}
 			vault.KeyFile = filepath.Clean(keyPath)
 
-			info, statErr := os.Stat(vault.KeyFile)
+			info, statErr := os.Stat(vault.KeyFile) //nolint:gosec // operator-configured key_file path
 			if statErr != nil {
 				return nil, fmt.Errorf("vault %q: key_file %q not found or inaccessible: %w", name, vault.KeyFile, statErr)
 			}

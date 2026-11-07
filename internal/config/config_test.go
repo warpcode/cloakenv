@@ -391,7 +391,7 @@ func TestLoad_KeyFile(t *testing.T) {
 	}
 	t.Setenv("TEST_KEY_FILE_ENV_VAR", envKeyFile)
 
-	yamlContent := fmt.Sprintf(`
+	yamlContent := `
 vaults:
   rel_key_vault:
     provider: "keepass"
@@ -405,8 +405,7 @@ vaults:
     provider: "keepass"
     vault_path: "~/db3.kdbx"
     key_file_env: "TEST_KEY_FILE_ENV_VAR"
-`,
-	)
+`
 
 	configFilePath := filepath.Join(configDir, "config.yaml")
 	if err := os.WriteFile(configFilePath, []byte(yamlContent), 0644); err != nil {
