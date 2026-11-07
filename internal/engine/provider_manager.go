@@ -279,13 +279,17 @@ func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName stri
 // initKeePass bootstraps a KeePass provider using settings.
 func (pm *ProviderManager) initKeePass(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
 	kp := provider.NewKeePassProvider()
+	settings := map[string]string{
+		"vault_path":         vault.VaultPath,
+		"remote_name":        vaultName,
+		"keyring_prefix":     pm.config.KeyringPrefix(),
+		"resolve_references": fmt.Sprintf("%t", vault.ResolveReferences),
+	}
+	if vault.KeyFile != "" {
+		settings["key_file"] = vault.KeyFile
+	}
 	err := kp.Initialize(ctx, provider.ProviderConfig{
-		Settings: map[string]string{
-			"vault_path":         vault.VaultPath,
-			"remote_name":        vaultName,
-			"keyring_prefix":     pm.config.KeyringPrefix(),
-			"resolve_references": fmt.Sprintf("%t", vault.ResolveReferences),
-		},
+		Settings:          settings,
 		SingleEntity:      vault.SingleEntity,
 		EntityName:        vault.EntityName,
 		Searchable:        vault.Searchable == nil || *vault.Searchable,
@@ -584,14 +588,18 @@ func (pm *ProviderManager) Login(ctx context.Context, vaultName string) error {
 	}
 
 	kp := provider.NewKeePassProvider()
+	settings := map[string]string{
+		"vault_path":         vault.VaultPath,
+		"remote_name":        vaultName,
+		"keyring_prefix":     pm.config.KeyringPrefix(),
+		"force_prompt":       "true",
+		"resolve_references": fmt.Sprintf("%t", vault.ResolveReferences),
+	}
+	if vault.KeyFile != "" {
+		settings["key_file"] = vault.KeyFile
+	}
 	return kp.Initialize(ctx, provider.ProviderConfig{
-		Settings: map[string]string{
-			"vault_path":         vault.VaultPath,
-			"remote_name":        vaultName,
-			"keyring_prefix":     pm.config.KeyringPrefix(),
-			"force_prompt":       "true",
-			"resolve_references": fmt.Sprintf("%t", vault.ResolveReferences),
-		},
+		Settings:          settings,
 		SingleEntity:      vault.SingleEntity,
 		EntityName:        vault.EntityName,
 		Searchable:        vault.Searchable == nil || *vault.Searchable,

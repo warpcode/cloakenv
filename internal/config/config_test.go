@@ -353,6 +353,122 @@ func TestKeyringPrefix(t *testing.T) {
 	}
 }
 
+func TestLoad_KeyFile(t *testing.T) {
+	tempDir := t.TempDir()
+	configDir := filepath.Join(tempDir, "config_dir")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create configDir: %v", err)
+	}
+
+	mockHome := filepath.Join(tempDir, "home")
+	if err := os.MkdirAll(mockHome, 0755); err != nil {
+		t.Fatalf("failed to create mockHome: %v", err)
+	}
+
+	oldUserHomeDir := userHomeDir
+	userHomeDir = func() (string, error) {
+		return mockHome, nil
+	}
+	defer func() { userHomeDir = oldUserHomeDir }()
+
+	// Create test key files
+	relKeyFile := filepath.Join(configDir, "keys", "rel.key")
+	if err := os.MkdirAll(filepath.Dir(relKeyFile), 0755); err != nil {
+		t.Fatalf("failed to create relKeyFile dir: %v", err)
+	}
+	if err := os.WriteFile(relKeyFile, []byte("relkeycontent"), 0600); err != nil {
+		t.Fatalf("failed to write relKeyFile: %v", err)
+	}
+
+	homeKeyFile := filepath.Join(mockHome, "home.keyx")
+	if err := os.WriteFile(homeKeyFile, []byte("homekeycontent"), 0600); err != nil {
+		t.Fatalf("failed to write homeKeyFile: %v", err)
+	}
+
+	envKeyFile := filepath.Join(tempDir, "env.key")
+	if err := os.WriteFile(envKeyFile, []byte("envkeycontent"), 0600); err != nil {
+		t.Fatalf("failed to write envKeyFile: %v", err)
+	}
+	t.Setenv("TEST_KEY_FILE_ENV_VAR", envKeyFile)
+
+	yamlContent := fmt.Sprintf(`
+vaults:
+  rel_key_vault:
+    provider: "keepass"
+    vault_path: "~/db1.kdbx"
+    key_file: "keys/rel.key"
+  home_key_vault:
+    provider: "keepass"
+    vault_path: "~/db2.kdbx"
+    key_file: "~/home.keyx"
+  env_key_vault:
+    provider: "keepass"
+    vault_path: "~/db3.kdbx"
+    key_file_env: "TEST_KEY_FILE_ENV_VAR"
+`,
+	)
+
+	configFilePath := filepath.Join(configDir, "config.yaml")
+	if err := os.WriteFile(configFilePath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := Load(configFilePath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Verify relative key_file anchored to config directory
+	vRel := cfg.Vaults["rel_key_vault"]
+	if vRel.KeyFile != relKeyFile {
+		t.Errorf("rel_key_vault: KeyFile = %q, want %q", vRel.KeyFile, relKeyFile)
+	}
+
+	// Verify home key_file expanded
+	vHome := cfg.Vaults["home_key_vault"]
+	if vHome.KeyFile != homeKeyFile {
+		t.Errorf("home_key_vault: KeyFile = %q, want %q", vHome.KeyFile, homeKeyFile)
+	}
+
+	// Verify key_file_env resolved
+	vEnv := cfg.Vaults["env_key_vault"]
+	if vEnv.KeyFile != envKeyFile {
+		t.Errorf("env_key_vault: KeyFile = %q, want %q", vEnv.KeyFile, envKeyFile)
+	}
+
+	// Test non-existent key_file error
+	badYaml := `
+vaults:
+  bad_key_vault:
+    provider: "keepass"
+    vault_path: "~/db.kdbx"
+    key_file: "nonexistent.key"
+`
+	badConfigPath := filepath.Join(configDir, "bad_key.yaml")
+	_ = os.WriteFile(badConfigPath, []byte(badYaml), 0644)
+	if _, err := Load(badConfigPath); err == nil {
+		t.Error("expected error for non-existent key_file, got nil")
+	} else if !strings.Contains(err.Error(), "key_file") || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected error to mention key_file not found, got %v", err)
+	}
+
+	// Test directory key_file error
+	dirYaml := `
+vaults:
+  dir_key_vault:
+    provider: "keepass"
+    vault_path: "~/db.kdbx"
+    key_file: "keys"
+`
+	dirConfigPath := filepath.Join(configDir, "dir_key.yaml")
+	_ = os.WriteFile(dirConfigPath, []byte(dirYaml), 0644)
+	if _, err := Load(dirConfigPath); err == nil {
+		t.Error("expected error for directory key_file, got nil")
+	} else if !strings.Contains(err.Error(), "is a directory") {
+		t.Errorf("expected error to mention is a directory, got %v", err)
+	}
+}
+
 func TestLoad_Templates(t *testing.T) {
 	tempDir := t.TempDir()
 

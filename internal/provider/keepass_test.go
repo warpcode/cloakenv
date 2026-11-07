@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -558,4 +560,250 @@ func TestKeePassProvider_CustomUUIDAttributePrecedence(t *testing.T) {
 	if e.Attributes["UUID"] != "custom-override-uuid" {
 		t.Errorf("e.Attributes[\"UUID\"] = %v, want 'custom-override-uuid'", e.Attributes["UUID"])
 	}
+}
+
+// helper to create a test KeePass database file with given credentials
+func createTestKeePassDatabase(t *testing.T, dbPath string, creds *gokeepasslib.DBCredentials) {
+	t.Helper()
+	f, err := os.Create(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create db file: %v", err)
+	}
+	defer f.Close()
+
+	db := gokeepasslib.NewDatabase()
+	db.Credentials = creds
+
+	entry := gokeepasslib.NewEntry()
+	entry.Values = append(entry.Values, gokeepasslib.ValueData{
+		Key:   "Title",
+		Value: gokeepasslib.V{Content: "KeyFileEntry"},
+	})
+	entry.Values = append(entry.Values, gokeepasslib.ValueData{
+		Key:   "Password",
+		Value: gokeepasslib.V{Content: "KeyFilePass123"},
+	})
+	entry.Values = append(entry.Values, gokeepasslib.ValueData{
+		Key:   "UserName",
+		Value: gokeepasslib.V{Content: "keyuser"},
+	})
+
+	rootGroup := gokeepasslib.NewGroup()
+	rootGroup.Name = "Root"
+	rootGroup.Entries = append(rootGroup.Entries, entry)
+	db.Content.Root.Groups = []gokeepasslib.Group{rootGroup}
+
+	enc := gokeepasslib.NewEncoder(f)
+	if err := enc.Encode(db); err != nil {
+		t.Fatalf("failed to encode test db: %v", err)
+	}
+}
+
+func TestKeePassProvider_KeyFileOnly(t *testing.T) {
+	keyring.MockInit()
+	ctx := context.Background()
+	tempDir := t.TempDir()
+
+	keyFilePath := filepath.Join(tempDir, "vault.key")
+	if err := os.WriteFile(keyFilePath, []byte("supersecretrawkeybytes1234567890"), 0600); err != nil {
+		t.Fatalf("failed to write key file: %v", err)
+	}
+
+	creds, err := gokeepasslib.NewKeyCredentials(keyFilePath)
+	if err != nil {
+		t.Fatalf("failed to build key credentials: %v", err)
+	}
+
+	dbPath := filepath.Join(tempDir, "keyfile_only.kdbx")
+	createTestKeePassDatabase(t, dbPath, creds)
+
+	t.Run("UnlockSuccess", func(t *testing.T) {
+		kp := NewKeePassProvider()
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path":  dbPath,
+				"key_file":    keyFilePath,
+				"remote_name": "test_key_only",
+			},
+		}
+
+		if err := kp.Initialize(ctx, cfg); err != nil {
+			t.Fatalf("Initialize failed for key-file only database: %v", err)
+		}
+
+		title, err := kp.GetEntryTitle(ctx, "KeyFileEntry")
+		if err != nil {
+			t.Fatalf("GetEntryTitle failed: %v", err)
+		}
+		if title != "KeyFileEntry" {
+			t.Errorf("expected title 'KeyFileEntry', got %q", title)
+		}
+
+		secret, err := kp.GetSecret(ctx, "KeyFileEntry")
+		if err != nil {
+			t.Fatalf("GetSecret failed: %v", err)
+		}
+		if secret != "KeyFilePass123" {
+			t.Errorf("expected secret 'KeyFilePass123', got %q", secret)
+		}
+	})
+
+	t.Run("WrongKeyFile", func(t *testing.T) {
+		wrongKeyPath := filepath.Join(tempDir, "wrong.key")
+		if err := os.WriteFile(wrongKeyPath, []byte("differentkeybytes0987654321"), 0600); err != nil {
+			t.Fatalf("failed to write wrong key file: %v", err)
+		}
+
+		kp := NewKeePassProvider()
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path":  dbPath,
+				"key_file":    wrongKeyPath,
+				"remote_name": "test_wrong_key",
+			},
+		}
+
+		// Since key file unlock fails and no password in keyring, it should return error instructing to log in
+		err := kp.Initialize(ctx, cfg)
+		if err == nil {
+			t.Fatalf("expected Initialize to fail with wrong key file")
+		}
+	})
+
+	t.Run("MissingKeyFile", func(t *testing.T) {
+		kp := NewKeePassProvider()
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path":  dbPath,
+				"key_file":    filepath.Join(tempDir, "missing.key"),
+				"remote_name": "test_missing_key",
+			},
+		}
+
+		err := kp.Initialize(ctx, cfg)
+		if err == nil {
+			t.Fatalf("expected Initialize to fail with missing key file")
+		}
+	})
+}
+
+func TestKeePassProvider_CompositeAuth(t *testing.T) {
+	keyring.MockInit()
+	ctx := context.Background()
+	tempDir := t.TempDir()
+
+	keyFilePath := filepath.Join(tempDir, "composite.key")
+	if err := os.WriteFile(keyFilePath, []byte("compositekeyfilecontent!@#$"), 0600); err != nil {
+		t.Fatalf("failed to write key file: %v", err)
+	}
+
+	masterPassword := "MasterSecret456!"
+	creds, err := gokeepasslib.NewPasswordAndKeyCredentials(masterPassword, keyFilePath)
+	if err != nil {
+		t.Fatalf("failed to build composite credentials: %v", err)
+	}
+
+	dbPath := filepath.Join(tempDir, "composite.kdbx")
+	createTestKeePassDatabase(t, dbPath, creds)
+
+	remoteName := "test_composite"
+	if err := keyring.Set("cloakenv", "provider/"+remoteName, masterPassword); err != nil {
+		t.Fatalf("failed to set keyring password: %v", err)
+	}
+
+	t.Run("UnlockSuccess", func(t *testing.T) {
+		kp := NewKeePassProvider()
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path":  dbPath,
+				"key_file":    keyFilePath,
+				"remote_name": remoteName,
+			},
+		}
+
+		if err := kp.Initialize(ctx, cfg); err != nil {
+			t.Fatalf("Initialize failed for composite credentials: %v", err)
+		}
+
+		secret, err := kp.GetSecret(ctx, "KeyFileEntry:UserName")
+		if err != nil {
+			t.Fatalf("GetSecret failed: %v", err)
+		}
+		if secret != "keyuser" {
+			t.Errorf("expected UserName 'keyuser', got %q", secret)
+		}
+	})
+
+	t.Run("WrongPasswordWithCorrectKeyFile", func(t *testing.T) {
+		wrongRemote := "test_composite_wrong_pass"
+		if err := keyring.Set("cloakenv", "provider/"+wrongRemote, "wrongpassword"); err != nil {
+			t.Fatalf("failed to set keyring password: %v", err)
+		}
+
+		kp := NewKeePassProvider()
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path":  dbPath,
+				"key_file":    keyFilePath,
+				"remote_name": wrongRemote,
+			},
+		}
+
+		err := kp.Initialize(ctx, cfg)
+		if err == nil {
+			t.Fatalf("expected Initialize to fail with wrong password")
+		}
+		if !strings.Contains(err.Error(), "decryption failed using credentials from keyring") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("CorrectPasswordWithWrongKeyFile", func(t *testing.T) {
+		wrongKeyPath := filepath.Join(tempDir, "other.key")
+		if err := os.WriteFile(wrongKeyPath, []byte("otherkeydata"), 0600); err != nil {
+			t.Fatalf("failed to write wrong key file: %v", err)
+		}
+
+		wrongKeyRemote := "test_composite_wrong_key"
+		if err := keyring.Set("cloakenv", "provider/"+wrongKeyRemote, masterPassword); err != nil {
+			t.Fatalf("failed to set keyring password: %v", err)
+		}
+
+		kp := NewKeePassProvider()
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path":  dbPath,
+				"key_file":    wrongKeyPath,
+				"remote_name": wrongKeyRemote,
+			},
+		}
+
+		err := kp.Initialize(ctx, cfg)
+		if err == nil {
+			t.Fatalf("expected Initialize to fail with wrong key file")
+		}
+		if !strings.Contains(err.Error(), "decryption failed using credentials from keyring") {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("KeyFileWithoutPasswordFailsCompositeUnlock", func(t *testing.T) {
+		// Remote has no password stored in keyring
+		kp := NewKeePassProvider()
+		cfg := ProviderConfig{
+			Settings: map[string]string{
+				"vault_path":  dbPath,
+				"key_file":    keyFilePath,
+				"remote_name": "test_composite_no_password",
+			},
+		}
+
+		err := kp.Initialize(ctx, cfg)
+		if err == nil {
+			t.Fatalf("expected Initialize to fail without password for composite db")
+		}
+		if !strings.Contains(err.Error(), "no credentials found for remote") {
+			t.Errorf("expected error instructing to login, got: %v", err)
+		}
+	})
 }
