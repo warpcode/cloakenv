@@ -55,6 +55,13 @@ func TestMainArgsParsing(t *testing.T) {
 			wantErr:  "",
 		},
 		{
+			name:     "help flag lists internal subcommand",
+			args:     []string{"--help"},
+			wantExit: 0,
+			wantOut:  "internal",
+			wantErr:  "",
+		},
+		{
 			name:     "short help flag",
 			args:     []string{"-h"},
 			wantExit: 0,
