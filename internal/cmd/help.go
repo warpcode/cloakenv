@@ -67,7 +67,7 @@ func PrintUsageStdout() {
 // PrintRunHelp prints usage help for the run subcommand.
 func PrintRunHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] [--dry-run] -- <command> [args]
+  cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [-f format] [--no-autoload] [--dry-run] -- <command> [args]
 
 Description:
   Wrap a binary execution, resolving and injecting secret environment variables.
@@ -160,8 +160,8 @@ Description:
 // PrintShowHelp prints usage help for the show subcommand.
 func PrintShowHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv show <entry-uri> [-m <entry-uri> ...] [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--raw] [--explain]
-  cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-o yaml | json | env | keys] [--raw] [--explain]
+  cloakenv show <entry-uri> [-f format] [-o yaml | json | env | keys] [--raw] [--explain] [--show-meta]
+   or: cloakenv show -m <entry-uri> [-e KEY=uri ...] [-t template_path] [-i KEY ...] [-f format] [-o yaml | json | env | keys] [--raw] [--explain] [--show-meta]
 
 Description:
   Retrieve and display a structured entry, or merge multiple entries/explicit mapping values.
@@ -185,7 +185,7 @@ Flags:
 // PrintSearchHelp prints usage help for the search subcommand.
 func PrintSearchHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
-  cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json]
+  cloakenv search [query] [--vault <vault> ...] [-i KEY ...] [-o yaml | json] [-f format] [--show-meta]
 
 Description:
   Search for structured entries matching the query (supporting query expressions on title, tags, _meta_.tags, uuid, group.name, group.path, etc.).
