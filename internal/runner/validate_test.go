@@ -69,7 +69,7 @@ func TestValidateCommand(t *testing.T) {
 			cmdArgs:    []string{"echo", "hello"},
 			env:        []string{"BAD\x00"},
 			wantCode:   1,
-			wantStderr: "Invalid environment variable \"BAD\\x00\" at index 0: contains null byte\n",
+			wantStderr: "Invalid environment variable at index 0: missing '=' or key is empty\n",
 		},
 		{
 			name:       "env variable missing equals",
