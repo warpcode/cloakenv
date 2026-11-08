@@ -296,8 +296,6 @@ func (p *staticProvider) GetEntryWithPath(ctx context.Context, location string) 
 }
 
 func (p *staticProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
-	var results []SearchResult
-
 	queryTitleLower := strings.ToLower(query.Title)
 	queryPathLower := strings.ToLower(query.Path)
 
@@ -315,15 +313,19 @@ func (p *staticProvider) Search(_ context.Context, query SearchQuery) ([]SearchR
 			return nil, fmt.Errorf("%s provider: single entity not found", p.scheme)
 		}
 
+		var results []SearchResult
 		if matchEntry(entry, "", query, queryTitleLower, queryPathLower, queryTagsLower) {
-			results = append(results, SearchResult{
+			results = []SearchResult{{
 				Path:  "",
 				Entry: entry,
-			})
+			}}
 		}
 		return results, nil
 	}
 
+	// Optimization: Preallocate results slice with capacity based on entries count to eliminate
+	// repeated slice reallocations and memory copies when collecting search matches.
+	results := make([]SearchResult, 0, len(p.entries))
 	for name, entry := range p.entries {
 		if matchEntry(entry, name, query, queryTitleLower, queryPathLower, queryTagsLower) {
 			results = append(results, SearchResult{
