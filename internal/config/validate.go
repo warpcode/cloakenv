@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -45,7 +46,7 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 		decoder := goyaml.NewDecoder(bytes.NewReader(data))
 		decoder.KnownFields(true)
 		var testCfg Config
-		if err := decoder.Decode(&testCfg); err != nil {
+		if err := decoder.Decode(&testCfg); err != nil && !errors.Is(err, io.EOF) {
 			res.Errors = append(res.Errors, fmt.Sprintf("schema validation error: %v", err))
 		}
 	} else {
@@ -138,6 +139,12 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 			} else if _, err := regexp.Compile(rule.Match); err != nil {
 				res.Errors = append(res.Errors, fmt.Sprintf("vault %q: invalid mapping regex %q: %v", vaultName, rule.Match, err))
 			}
+			if strings.Contains(rule.Key, "{{") {
+				tmpl := texttemplate.New("mapping").Funcs(StandardTemplateFuncs())
+				if _, err := tmpl.Parse(rule.Key); err != nil {
+					res.Errors = append(res.Errors, fmt.Sprintf("vault %q: mapping rule #%d invalid template syntax: %v", vaultName, i+1, err))
+				}
+			}
 		}
 
 		// Validate custom_vault entities
@@ -158,6 +165,18 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 				} else if _, err := regexp.Compile(rule.Match); err != nil {
 					res.Errors = append(res.Errors, fmt.Sprintf("vault %q entity %q: invalid mapping regex %q: %v", vaultName, entityName, rule.Match, err))
 				}
+				if strings.Contains(rule.Key, "{{") {
+					tmpl := texttemplate.New("mapping").Funcs(StandardTemplateFuncs())
+					if _, err := tmpl.Parse(rule.Key); err != nil {
+						res.Errors = append(res.Errors, fmt.Sprintf("vault %q entity %q: mapping rule #%d invalid template syntax: %v", vaultName, entityName, i+1, err))
+					}
+				}
+			}
+
+			switch entity.KeyFormat {
+			case "", "none", "env", "snake", "kebab":
+			default:
+				res.Errors = append(res.Errors, fmt.Sprintf("vault %q entity %q: invalid key_format %q (must be one of: none, env, snake, kebab)", vaultName, entityName, entity.KeyFormat))
 			}
 
 			// Validate entity templates in attributes

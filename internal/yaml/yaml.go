@@ -31,6 +31,7 @@ func Marshal(in any) ([]byte, error) {
 	defer bufPool.Put(buf)
 
 	enc := goyaml.NewEncoder(buf)
+	enc.SetIndent(2)
 	if err := enc.Encode(in); err != nil {
 		if closeErr := enc.Close(); closeErr != nil {
 			return nil, fmt.Errorf("yaml marshal failed: %w (close error: %w)", err, closeErr)
@@ -54,6 +55,7 @@ func MarshalString(in any) (string, error) {
 	defer bufPool.Put(buf)
 
 	enc := goyaml.NewEncoder(buf)
+	enc.SetIndent(2)
 	if err := enc.Encode(in); err != nil {
 		if closeErr := enc.Close(); closeErr != nil {
 			return "", fmt.Errorf("yaml marshal failed: %w (close error: %w)", err, closeErr)

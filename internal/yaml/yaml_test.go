@@ -41,6 +41,11 @@ func TestMarshal(t *testing.T) {
 			want:  "key: value\n",
 		},
 		{
+			name:  "nested map indentation",
+			input: map[string]any{"a": map[string]int{"b": 1}},
+			want:  "a:\n  b: 1\n",
+		},
+		{
 			name:    "failing marshaler",
 			input:   failMarshaler{},
 			wantErr: true,
@@ -71,6 +76,11 @@ func TestMarshalString(t *testing.T) {
 			name:  "valid map",
 			input: map[string]string{"key": "value"},
 			want:  "key: value",
+		},
+		{
+			name:  "nested map indentation",
+			input: map[string]any{"a": map[string]int{"b": 1}},
+			want:  "a:\n  b: 1",
 		},
 		{
 			name:    "failing marshaler",
