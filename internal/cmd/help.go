@@ -17,6 +17,8 @@ Usage:
   cloakenv [-c config_path] show <entry-uri> [args]
   cloakenv [-c config_path] search [query] [args]
   cloakenv [-c config_path] auth <login|forget|status> [vault]
+  cloakenv [-c config_path] config <subcommand> [flags]
+  cloakenv [-c config_path] completion <shell>
   cloakenv [-c config_path] internal <subcommand> [args]
 
 Commands:
@@ -29,7 +31,9 @@ Commands:
   show    Retrieve and display a structured entry
   search  Search for structured entries
   auth    Manage vault credentials and status (subcommands: login, forget, status)
-  internal  Developer & hook helpers (subcommands: match-alias)
+  config  Manage, inspect, and validate configuration (subcommands: check)
+  completion  Generate shell autocompletion script (bash, zsh, fish, powershell)
+  internal  Developer & hook helpers (subcommands: match-alias, list-vaults)
 
 Flags:
   -c config_path  Custom configuration file path (global flag)
@@ -279,5 +283,6 @@ Description:
   Internal helper commands for cloakenv integrations.
 
 Subcommands:
-  match-alias     Check if a command matches any configured autoload/run alias rule`)
+  match-alias     Check if a command matches any configured autoload/run alias rule
+  list-vaults     List configured vault names`)
 }

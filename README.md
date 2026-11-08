@@ -30,6 +30,8 @@
   - [`search` — Dynamic Querying Across Vaults](#search--dynamic-querying-across-vaults)
   - [`auth` — Manage Vault Authentication](#auth--manage-vault-authentication)
   - [`sync` — Cross-Vault Secret Synchronization](#sync--cross-vault-secret-synchronization)
+  - [`config` — Manage, Inspect & Validate Configuration](#config--manage-inspect--validate-configuration)
+  - [`completion` — Generate Shell Autocompletion Scripts](#completion--generate-shell-autocompletion-scripts)
   - [`internal` — Developer & Hook Helpers](#internal--developer--hook-helpers)
 - [Secret Providers & Schemes](#secret-providers--schemes)
   - [Built-In Providers (Zero Setup)](#built-in-providers-zero-setup)
@@ -37,12 +39,13 @@
     - [1. KeePass (`keepass`)](#1-keepass-keepass)
     - [2. YAML (`yaml`) & JSON (`json`)](#2-yaml-yaml--json-json)
     - [3. Custom Vault (`custom_vault`)](#3-custom-vault-custom_vault)
-    - [4. Stored Search Vault (`search`)](#4-stored-search-vault-search)
-    - [5. Field Filtering (`include_fields` and `exclude_fields`)](#5-field-filtering-include_fields-and-exclude_fields)
-    - [6. Field Key Mapping (`mapping`)](#6-field-key-mapping-mapping)
-    - [7. Key Formatting (`key_format`)](#7-key-formatting-key_format)
-    - [8. Universal Per-Entry Attributes Decorator (`attributes`)](#8-universal-per-entry-attributes-decorator-attributes)
-    - [9. KeePass Placeholders & Cross-Entry References (`resolve_references`)](#9-keepass-placeholders--cross-entry-references-resolve_references)
+    - [4. Password Store (`pass`)](#4-password-store-pass)
+    - [5. Stored Search Vault (`search`)](#5-stored-search-vault-search)
+    - [6. Field Filtering (`include_fields` and `exclude_fields`)](#6-field-filtering-include_fields-and-exclude_fields)
+    - [7. Field Key Mapping (`mapping`)](#7-field-key-mapping-mapping)
+    - [8. Key Formatting (`key_format`)](#8-key-formatting-key_format)
+    - [9. Universal Per-Entry Attributes Decorator (`attributes`)](#9-universal-per-entry-attributes-decorator-attributes)
+    - [10. KeePass Placeholders & Cross-Entry References (`resolve_references`)](#10-keepass-placeholders--cross-entry-references-resolve_references)
 - [Template Engine & FuncMap Reference](#template-engine--funcmap-reference)
 - [Command Autoloading & Alias Masking](#command-autoloading--alias-masking)
 - [Search Query Language Reference](#search-query-language-reference)
@@ -174,7 +177,7 @@ Every secret is referenced through a typed URI formatted as:
 
 $$\text{scheme://path/to/entry[:attribute]}$$
 
-- **Scheme**: Identifies either a built-in provider (`keyring`, `env`, `cache`, `search`) or a user-defined vault name from `config.yaml` (`work`, `home`, `staging_db`).
+- **Scheme**: Identifies either a built-in provider (`keyring`, `env`, `cache`, `pass`, `search`) or a user-defined vault name from `config.yaml` (`work`, `home`, `staging_db`).
 - **Path**: Location of the credential within that provider (e.g. `service/account` for keyrings, `Group/Entry` for KeePass, `key.subkey` for JSON/YAML).
 - **Attribute** *(optional)*: Specific field to retrieve (e.g., `:Password`, `:UserName`, `:api_token`, or `:attachment.txt`). Defaults to `:Password` if omitted for KeePass and custom vaults.
 
@@ -254,7 +257,9 @@ Commands:
   show    Retrieve and display a structured entry
   search  Search for structured entries across vaults
   auth    Manage vault credentials and status (login, forget, status)
-  internal  Developer & hook helpers (match-alias)
+  config  Manage, inspect, and validate configuration (subcommands: check)
+  completion  Generate shell autocompletion script (bash, zsh, fish, powershell)
+  internal  Developer & hook helpers (match-alias, list-vaults)
 ```
 
 ---
@@ -569,6 +574,55 @@ cloakenv sync "work://production/db" "keyring://prod_db"
 
 ---
 
+### `config` — Manage, Inspect & Validate Configuration
+
+Inspects and validates configuration syntax, schema conformity, file existence, and template expressions.
+
+```bash
+cloakenv config check [--strict]
+```
+
+#### Flags:
+- `--strict`: Enforce strict schema checking and reject unknown fields.
+
+#### Examples:
+
+```bash
+# Validate default configuration file (~/.config/cloakenv/config.yaml)
+cloakenv config check
+
+# Validate a specific configuration file with strict schema enforcement
+cloakenv -c ./config.yaml config check --strict
+```
+
+---
+
+### `completion` — Generate Shell Autocompletion Scripts
+
+Outputs shell autocompletion code for supported shells (`bash`, `zsh`, `fish`, `powershell`).
+
+```bash
+cloakenv completion <bash|zsh|fish|powershell>
+```
+
+#### Examples:
+
+```bash
+# Bash (eval in ~/.bashrc)
+source <(cloakenv completion bash)
+
+# Zsh (install into completion directory)
+cloakenv completion zsh > ~/.zsh/completion/_cloakenv
+
+# Fish (install into fish completions directory)
+cloakenv completion fish > ~/.config/fish/completions/cloakenv.fish
+
+# PowerShell (add to your PowerShell profile)
+cloakenv completion powershell | Out-String | Invoke-Expression
+```
+
+---
+
 ### `internal` — Developer & Hook Helpers
 
 Internal helper commands for scripting and automation. These are not intended for direct end-user usage.
@@ -597,6 +651,14 @@ cloakenv internal match-alias -- aws s3 ls
 
 # Get structured JSON output for scripting
 cloakenv internal match-alias --json -- kubectl get pods
+```
+
+#### `list-vaults` — List Configured Vault Names
+
+Outputs all configured vault names from the configuration file, sorted deterministically. Used by autocompletion scripts and integrations.
+
+```bash
+cloakenv internal list-vaults
 ```
 
 ---
@@ -672,6 +734,10 @@ vaults:
       database:
         username: "postgres"
         Password: '{{ get "keyring://db/prod_password" }}'
+
+  pass_store:
+    provider: "pass"
+    vault_path: "~/.password-store"
 ```
 
 #### 1. KeePass (`keepass`)
@@ -760,7 +826,20 @@ Defined directly inside `config.yaml` with no external files required. Supports 
             SUMMARY: "{{ .meta.Title }} contains {{ len .entries }} upstream models"
   ```
 
-#### 4. Stored Search Vault (`search`)
+#### 4. Password Store (`pass`)
+- Points to a standard Unix password store (`pass`) directory (defaults to `~/.password-store` or `$PASSWORD_STORE_DIR`).
+- Reads GPG-encrypted `.gpg` password files.
+- Resolves password from the first line and multi-line `Key: Value` attributes from subsequent lines.
+- Example config:
+```yaml
+vaults:
+  pass_store:
+    provider: "pass"
+    vault_path: "~/.password-store"
+    searchable: true
+```
+
+#### 5. Stored Search Vault (`search`)
 - Acts as a stored search definition over one or more source vaults, returning a filtered synthetic entry view.
 - Non-searchable and read-only by design (does not support the `searchable` flag).
 - Resolves entries matching a stored `query` against configured `source_vaults`.
@@ -773,8 +852,8 @@ vaults:
     query: '"service:openrouter" in tags'
 ```
 
-#### 5. Field Filtering (`include_fields` and `exclude_fields`)
-- Supported across structured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`).
+#### 6. Field Filtering (`include_fields` and `exclude_fields`)
+- Supported across structured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`, `pass`).
 - **Default Metadata Fields**: Default metadata fields (`title`, `uuid`, `group`, `group_name`, `group_uuid`, `group_path`, `path`) are included by default alongside entry attributes. Entry classification metadata (`tags`) along with vault and provider metadata are consolidated into the `_meta_` object and can be requested via `--show-meta` or explicitly via `-i tags`, `-i _meta_.tags`, `-i _meta_.provider`, or `-i _meta_.vault`.
 - **`include_fields`**: When configured, restricts returned entry attributes to fields matching at least one glob pattern. **Include rules always take precedence over exclude rules** (evaluated first). An **empty list means filtering is disabled** (all unexcluded attributes allowed), not deny-all.
 - **`exclude_fields`**: Drops attributes matching any configured glob pattern before returning secrets when not explicitly permitted by include rules.
@@ -803,8 +882,8 @@ vaults:
       - "secret:*"
 ```
 
-#### 6. Field Key Mapping (`mapping`)
-- Supported across vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`).
+#### 7. Field Key Mapping (`mapping`)
+- Supported across vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`, `pass`).
 - **`match`**: Regex pattern matched against raw attribute field names. Supports capture groups (e.g., `env:(.*)`).
 - **`key`**: Target output field name template using capture group references (e.g., `$1` or `\1`).
 - **Metadata Interpolation in `key`**: Target key names support Go `text/template` syntax referencing the entry's `.meta` context (such as `{{ .meta.Title | env }}_$1`). Case helper functions (`env`, `snake`, `kebab`, `upper`, `lower`) can be piped into capture groups and metadata values.
@@ -823,8 +902,8 @@ vaults:
         key: "\\1"
 ```
 
-#### 7. Key Formatting (`key_format`)
-Supported across all configured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`). Transforms entry attribute keys to a consistent casing and separator format:
+#### 8. Key Formatting (`key_format`)
+Supported across all configured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`, `pass`). Transforms entry attribute keys to a consistent casing and separator format:
 - `none` (default): Passes through the original key name unmodified.
 - `env`: UPPERCASE_WITH_UNDERSCORES.
 - `snake`: lowercase_with_underscores.
@@ -838,8 +917,8 @@ vaults:
     key_format: "snake"
 ```
 
-#### 8. Universal Per-Entry Attributes Decorator (`attributes`)
-Supported across all configured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`). Computes or overlays templated attributes onto every entry.
+#### 9. Universal Per-Entry Attributes Decorator (`attributes`)
+Supported across all configured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`, `pass`). Computes or overlays templated attributes onto every entry.
 
 - **Execution Order**: Wrapped strictly after `FilteringProvider` (`include_fields`, `exclude_fields`), `MappingProvider` (`mapping`), and `KeyFormatProvider` (`key_format`).
 - **Post-Filter Guarantee**: Templates in `attributes:` only see authorized, formatted attributes in `.attributes`, ensuring field filters cannot be bypassed by template evaluation (`RSK-002`, `REQ-005`).
@@ -857,7 +936,7 @@ vaults:
       SERVICE_NAME: "{{ .meta.Title | lower }}"
 ```
 
-#### 9. KeePass Placeholders & Cross-Entry References (`resolve_references`)
+#### 10. KeePass Placeholders & Cross-Entry References (`resolve_references`)
 Supported on `keepass` vaults when `resolve_references: true` is configured in `config.yaml`. Allows KeePass entries to dynamically reference fields within the same entry, calculate timestamps, perform text transformations, parse URL components, or pull attributes from other entries across the database.
 
 ##### Enabling Placeholder Resolution
@@ -987,7 +1066,7 @@ References field values from another entry in the database.
 
 ## Template Engine & FuncMap Reference
 
-`cloakenv` embeds Go's standard library `text/template` engine with `.Option("missingkey=error")` and recursion depth tracking. When `resolve_values: true` is enabled on a `custom_vault` or `custom_vault` entity, string attribute values containing `{{ ... }}` are dynamically rendered with access to entry metadata, attributes, and 25 built-in functions.
+`cloakenv` embeds Go's standard library `text/template` engine with `.Option("missingkey=error")` and recursion depth tracking. When `resolve_values: true` is enabled on a `custom_vault` or `custom_vault` entity, string attribute values containing `{{ ... }}` are dynamically rendered with access to entry metadata, attributes, and 31 built-in template functions and aliases.
 
 ### Top-Level Templates (`templates:`)
 
@@ -1018,10 +1097,10 @@ Evaluate configured templates using `{{ include "name" . }}` or evaluate externa
 | `search` | `(query string) ([]map[string]any, error)` | Executes a search query across vaults and returns a slice of entry context maps | `{{ range search "\"db\" in tags" }}{{ .meta.Title }}: {{ .attributes.HOST }}{{ end }}` |
 | `toEnv` | `(attrs any) (string, error)` | Serializes an attributes map into dotenv key-value format (sorted, excluding metadata) | `{{ .attributes \| toEnv }}` |
 | `toKv` | `(attrs any) (string, error)` | Alias for `toEnv` | `{{ .attributes \| toKv }}` |
-| `toJson` / `toJSON` | `(v any) (string, error)` | Serializes a value or map to a compact JSON string | `{{ .attributes \| toJson }}` |
-| `toYaml` / `toYAML` | `(v any) (string, error)` | Serializes a value or map to a YAML string | `{{ .attributes \| toYaml }}` |
-| `fromJSON` | `(str string) (any, error)` | Unmarshals a JSON string into an object (`map[string]any`) or slice (`[]any`) | `{{ (fromJSON .attributes.json_data).field }}` |
-| `fromYAML` | `(str string) (any, error)` | Unmarshals a YAML string into an object (`map[string]any`) or slice (`[]any`) | `{{ (fromYAML .attributes.yaml_data).field }}` |
+| `toJson` / `toJSON` / `json` | `(v any) (string, error)` | Serializes a value or map to a compact JSON string | `{{ .attributes \| toJson }}` |
+| `toYaml` / `toYAML` / `yaml` | `(v any) (string, error)` | Serializes a value or map to a YAML string | `{{ .attributes \| toYaml }}` |
+| `fromJSON` / `fromJson` | `(str string) (any, error)` | Unmarshals a JSON string into an object (`map[string]any`) or slice (`[]any`) | `{{ (fromJSON .attributes.json_data).field }}` |
+| `fromYAML` / `fromYaml` | `(str string) (any, error)` | Unmarshals a YAML string into an object (`map[string]any`) or slice (`[]any`) | `{{ (fromYAML .attributes.yaml_data).field }}` |
 | `upper` | `(s string) string` | Converts a string to UPPERCASE | `{{ .meta.Title \| upper }}` |
 | `lower` | `(s string) string` | Converts a string to lowercase | `{{ .meta.Title \| lower }}` |
 | `env` | `(s string) string` | Formats a string to `UPPERCASE_WITH_UNDERSCORES` | `{{ .meta.Title \| env }}_API_KEY` |

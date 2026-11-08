@@ -36,7 +36,7 @@ audit:
   format: "jsonl"
 
 # Custom vault definitions. Each mapping key becomes a custom URI scheme (ref).
-# Supported provider types: keepass, json, yaml, custom_vault, search
+# Supported provider types: keepass, json, yaml, custom_vault, search, pass
 vaults:
   # Defines the keepass_dev:// URI scheme (KeePass provider example using the provided database.kdbx)
   keepass_dev:
