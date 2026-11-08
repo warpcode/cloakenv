@@ -68,6 +68,35 @@ func TestParseURI(t *testing.T) {
 			uri:     "search://tags=prod\x00&title=db/Password",
 			wantErr: true,
 		},
+		{
+			name:    "scheme starting with number",
+			uri:     "1scheme://location",
+			wantErr: true,
+		},
+		{
+			name:    "scheme with spaces",
+			uri:     "  env  ://location",
+			wantErr: true,
+		},
+		{
+			name:    "scheme with invalid characters",
+			uri:     "a/b://location",
+			wantErr: true,
+		},
+		{
+			name:     "scheme with underscore",
+			uri:      "my_scheme://location",
+			scheme:   "my_scheme",
+			location: "location",
+			wantErr:  false,
+		},
+		{
+			name:     "scheme with valid symbols",
+			uri:      "my-scheme+1.0://location",
+			scheme:   "my-scheme+1.0",
+			location: "location",
+			wantErr:  false,
+		},
 	}
 
 	for _, tt := range tests {
