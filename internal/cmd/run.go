@@ -8,15 +8,10 @@ import (
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/engine"
 	"github.com/warpcode/cloakenv/internal/runner"
-	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 // Run handles "cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] [--dry-run] -- <cmd> [args]".
 func Run(args []string, cfg *config.Config) int {
-	if utils.HasHelpFlag(args) {
-		PrintRunHelp()
-		return 0
-	}
 	var (
 		explicitEnv = make(map[string]string)
 		merges      []string
@@ -25,10 +20,12 @@ func Run(args []string, cfg *config.Config) int {
 		noAutoload  bool
 		emptyEnv    bool
 		dryRun      bool
+		showHelp    bool
 		keyFormat   string
 	)
 
 	parser := NewFlagParser()
+	parser.Bool([]string{"-h", "--help"}, &showHelp)
 	parser.Var([]string{"-f", "--key-format"}, true, "flag -f/--key-format requires an argument", func(name, val string) error {
 		if val != "none" && val != "env" && val != "snake" && val != "kebab" {
 			return fmt.Errorf("invalid key format %q (expected none, env, snake, or kebab)", val)
@@ -74,6 +71,10 @@ func Run(args []string, cfg *config.Config) int {
 		parser.StopAtNonFlag = false
 		flagArgs := args[:dashDashIdx]
 		rem, err := parser.Parse(flagArgs)
+		if showHelp {
+			PrintRunHelp()
+			return 0
+		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -85,6 +86,10 @@ func Run(args []string, cfg *config.Config) int {
 		cmdArgs = args[dashDashIdx+1:]
 	} else {
 		rem, err := parser.Parse(args)
+		if showHelp {
+			PrintRunHelp()
+			return 0
+		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
