@@ -162,33 +162,49 @@ jobs:
 
           LDFLAGS="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE} -X github.com/warpcode/cloakenv/internal/cmd.Version=${VERSION} -X github.com/warpcode/cloakenv/internal/cmd.Commit=${COMMIT} -X github.com/warpcode/cloakenv/internal/cmd.BuildDate=${BUILD_DATE}"
           
-          # List of GOOS/GOARCH/BinarySuffix mappings
+          # List of GOOS/GOARCH/PlatformSuffix mappings
           targets=(
             "linux/amd64/linux-amd64"
             "linux/arm64/linux-arm64"
             "linux/arm/linux-arm"
             "darwin/amd64/macos-amd64"
             "darwin/arm64/macos-arm64"
-            "windows/amd64/windows-amd64.exe"
-            "windows/arm64/windows-arm64.exe"
+            "windows/amd64/windows-amd64"
+            "windows/arm64/windows-arm64"
           )
           
           for target in "${targets[@]}"; do
-            IFS="/" read -r goos goarch release_name <<< "$target"
-            echo "Building for ${goos}/${goarch}..."
-            
+            IFS="/" read -r goos goarch platform_name <<< "$target"
+            echo "Building and packaging for ${goos}/${goarch}..."
+
+            STAGE_DIR=$(mktemp -d)
+            BINARY_NAME="cloakenv"
+            if [ "${goos}" = "windows" ]; then
+              BINARY_NAME="cloakenv.exe"
+            fi
+
             # -s -w linker flags strip debug information and symbols to minimize binary size
             CGO_ENABLED=0 GOOS=${goos} GOARCH=${goarch} go build \
               -ldflags="${LDFLAGS}" \
-              -o "dist/cloakenv-${release_name}" \
+              -o "${STAGE_DIR}/${BINARY_NAME}" \
               .
+
+            cp README.md LICENSE "${STAGE_DIR}/"
+
+            if [ "${goos}" = "windows" ]; then
+              (cd "${STAGE_DIR}" && zip -9 -q "${GITHUB_WORKSPACE}/dist/cloakenv-${platform_name}.zip" "${BINARY_NAME}" README.md LICENSE)
+            else
+              tar -czf "dist/cloakenv-${platform_name}.tar.gz" -C "${STAGE_DIR}" "${BINARY_NAME}" README.md LICENSE
+            fi
+
+            rm -rf "${STAGE_DIR}"
           done
 
       - name: Generate Checksums
         if: steps.check-commits.outputs.has_commits == 'true'
         run: |
           cd dist
-          sha256sum cloakenv-* > checksums.txt
+          sha256sum cloakenv-*.tar.gz cloakenv-*.zip > checksums.txt
           cat checksums.txt
 
       # ----------------------------------------------------
@@ -207,7 +223,8 @@ jobs:
           prerelease: true
           draft: true
           files: |
-            dist/cloakenv-*
+            dist/*.tar.gz
+            dist/*.zip
             dist/checksums.txt
 
       - name: Undraft Dev Release
@@ -228,7 +245,8 @@ jobs:
         with:
           body_path: release-notes.md
           files: |
-            dist/cloakenv-*
+            dist/*.tar.gz
+            dist/*.zip
             dist/checksums.txt
           draft: false
           prerelease: false
