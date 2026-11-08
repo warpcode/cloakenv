@@ -633,3 +633,40 @@ func TestRun_DryRun(t *testing.T) {
 func boolPtr(b bool) *bool {
 	return &b
 }
+
+func TestRun_HelpFlag(t *testing.T) {
+	if os.Getenv("GO_WANT_RUN_HELP_SUBPROCESS") == "1" {
+		var args []string
+		if err := json.Unmarshal([]byte(os.Getenv("RUN_ARGS")), &args); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to unmarshal RUN_ARGS: %v\n", err)
+			os.Exit(1)
+		}
+
+		cfg := &config.Config{}
+		exitCode := Run(args, cfg)
+		os.Exit(exitCode)
+	}
+
+	t.Run("Does not hijack child command help flags when -- is absent", func(t *testing.T) {
+		runArgs := []string{
+			"--dry-run", "echo", "--help",
+		}
+
+		cmd := exec.Command(os.Args[0], "-test.run=TestRun_HelpFlag")
+		argsData, _ := json.Marshal(runArgs)
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_RUN_HELP_SUBPROCESS=1",
+			"RUN_ARGS="+string(argsData),
+		)
+
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
+		}
+
+		output := string(out)
+		if !strings.Contains(output, "Command: echo --help") {
+			t.Errorf("Expected 'Command: echo --help', got:\n%s", output)
+		}
+	})
+}
