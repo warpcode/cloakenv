@@ -135,6 +135,40 @@ make build
 # Binary is compiled to bin/cloakenv
 ```
 
+### Pre-compiled Binaries & Cryptographic Verification
+
+Pre-compiled release archives (`.tar.gz` for Linux/macOS and `.zip` for Windows) are available on the [Releases](https://github.com/warpcode/cloakenv/releases) page.
+
+Every release artifact includes a `checksums.txt` file, cryptographic keyless signatures (`.sigstore.json`, `.sig`, `.pem`) signed by Sigstore/Cosign via GitHub Actions OIDC, and verifiable SLSA Level 3 build provenance attestations.
+
+#### 1. Verify `checksums.txt` with Cosign
+```bash
+# Keyless verification using the self-contained Sigstore bundle
+cosign verify-blob \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp "^https://github.com/warpcode/cloakenv/" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  checksums.txt
+
+# Or verify using detached signature and certificate
+cosign verify-blob \
+  --signature checksums.txt.sig \
+  --certificate checksums.txt.pem \
+  --certificate-identity-regexp "^https://github.com/warpcode/cloakenv/" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  checksums.txt
+```
+
+#### 2. Verify Archive Checksum
+```bash
+sha256sum --ignore-missing -c checksums.txt
+```
+
+#### 3. Verify SLSA Level 3 Provenance with GitHub CLI
+```bash
+gh attestation verify cloakenv-linux-amd64.tar.gz --owner warpcode
+```
+
 ---
 
 ## Quick Start (Zero to Running in 2 Minutes)
