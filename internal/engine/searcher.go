@@ -165,7 +165,9 @@ func (s *Searcher) filterResultsByExpression(ctx context.Context, expressionStr 
 
 	fieldPolicy := provider.FieldPolicyFromContext(ctx)
 
-	var matchedResults []provider.SearchResult
+	// Optimization: Preallocate matchedResults capacity using allResults count to avoid
+	// repeated slice reallocations and memory copies of SearchResult structs during expression filtering.
+	matchedResults := make([]provider.SearchResult, 0, len(allResults))
 	env := make(map[string]any)
 	// Optimization: reuse groupMap and metaMap across search result iterations using clear()
 	// to avoid allocating a new map for every candidate entry during query evaluation.
