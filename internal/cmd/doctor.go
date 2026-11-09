@@ -79,7 +79,8 @@ func DoctorCmd(args []string, cfg *config.Config, stdout, stderr io.Writer) int 
 	for name, vault := range cfg.Vaults {
 		fmt.Fprintf(stdout, "  Vault %q (provider: %s):\n", name, vault.Provider)
 
-		if vault.Provider == "keepass" || vault.Provider == "yaml" || vault.Provider == "json" {
+		switch vault.Provider {
+		case "keepass", "yaml", "json":
 			if vault.VaultPath != "" {
 				if info, err := os.Stat(vault.VaultPath); err == nil {
 					if info.IsDir() {
@@ -110,11 +111,11 @@ func DoctorCmd(args []string, cfg *config.Config, stdout, stderr io.Writer) int 
 					hasErrors = true
 				}
 			}
-		} else if vault.Provider == "custom_vault" {
+		case "custom_vault":
 			fmt.Fprintln(stdout, "    [OK] Custom vault (in-memory)")
-		} else if vault.Provider == "search" {
+		case "search":
 			fmt.Fprintln(stdout, "    [OK] Search vault (dynamic)")
-		} else if vault.Provider == "vault" {
+		case "vault":
 			if vault.Address == "" {
 				fmt.Fprintln(stdout, "    [ERROR] Missing Vault address")
 				hasErrors = true

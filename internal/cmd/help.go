@@ -271,6 +271,11 @@ Flags:
 }
 
 // PrintInternalHelp prints usage help for the internal subcommand.
+// PrintDoctorHelp prints usage help for the doctor subcommand.
+func PrintDoctorHelp() {
+	PrintDoctorHelpTo(os.Stdout)
+}
+
 func PrintInternalHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
   cloakenv internal <subcommand> [args]
