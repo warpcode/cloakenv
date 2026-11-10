@@ -123,4 +123,80 @@ vaults:
 			t.Fatal("expected strict validation to flag unknown field, but passed")
 		}
 	})
+
+	t.Run("empty config file passes in strict mode", func(t *testing.T) {
+		cfgPath := filepath.Join(tempDir, "empty.yaml")
+		_ = os.WriteFile(cfgPath, []byte(""), 0600)
+		res, err := Validate(cfgPath, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.IsValid() {
+			t.Fatal("expected empty config to pass in strict mode")
+		}
+	})
+
+	t.Run("invalid vault KeyFormat fails validation", func(t *testing.T) {
+		invalidKeyFormatYAML := `
+vaults:
+  work:
+    provider: keepass
+    vault_path: ` + filepath.ToSlash(dummyDb) + `
+    key_format: camelCase
+`
+		cfgPath := filepath.Join(tempDir, "invalid_keyformat.yaml")
+		_ = os.WriteFile(cfgPath, []byte(invalidKeyFormatYAML), 0600)
+
+		res, err := Validate(cfgPath, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.IsValid() {
+			t.Fatal("expected validation failure for invalid key_format")
+		}
+	})
+
+	t.Run("invalid entity KeyFormat fails validation", func(t *testing.T) {
+		invalidEntityKeyFormatYAML := `
+vaults:
+  my_custom:
+    provider: custom_vault
+    entities:
+      my_entity:
+        key_format: uppercase
+`
+		cfgPath := filepath.Join(tempDir, "invalid_entity_keyformat.yaml")
+		_ = os.WriteFile(cfgPath, []byte(invalidEntityKeyFormatYAML), 0600)
+
+		res, err := Validate(cfgPath, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.IsValid() {
+			t.Fatal("expected validation failure for invalid entity key_format")
+		}
+	})
+
+	t.Run("invalid mapping rule template fails validation", func(t *testing.T) {
+		invalidMappingTemplateYAML := `
+vaults:
+  work:
+    provider: keepass
+    vault_path: ` + filepath.ToSlash(dummyDb) + `
+    mapping:
+      - match: "^Password$"
+        key: "{{ .foo | unknownFunc }}"
+`
+		cfgPath := filepath.Join(tempDir, "invalid_mapping_tmpl.yaml")
+		_ = os.WriteFile(cfgPath, []byte(invalidMappingTemplateYAML), 0600)
+
+		res, err := Validate(cfgPath, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.IsValid() {
+			t.Fatal("expected validation failure for invalid mapping template syntax")
+		}
+	})
+
 }
