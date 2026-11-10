@@ -114,6 +114,8 @@ func run(args []string, stderr io.Writer) int {
 		return cmd.Sync(parsedArgs[2:], cfg)
 	case "config":
 		return cmd.ConfigCmd(parsedArgs[2:], customConfigPath, os.Stdout, stderr)
+	case "doctor":
+		return cmd.DoctorCmd(parsedArgs[2:], cfg, os.Stdout, stderr)
 	case "internal":
 		return cmd.Internal(parsedArgs[2:], cfg)
 	default:
