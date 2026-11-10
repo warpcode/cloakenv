@@ -780,7 +780,7 @@ vaults:
 - Defaults to `:Password` attribute if omitted.
 - **Virtual Metadata Attributes**: KeePass entries expose virtual metadata attributes via `GetSecret` (e.g. `work://website/Test Website:UUID`, `work://website/Test Website:uuid`, `work://website/Test Website:group`, `work://website/Test Website:group_name`, `work://website/Test Website:group_uuid`, `work://website/Test Website:group_path`). Custom string fields take precedence over virtual metadata attributes.
 - **File Attachments**: Directly stream binary attachments by name (e.g. `vault://SSH/Keys:id_rsa`).
-- **Placeholder & Reference Resolution**: Set `resolve_references: true` in `config.yaml` to enable `{TITLE}`, `{REF:...}`, `{T-CONV:...}`, `{URL:...}`, and date/time expansion (see [KeePass Placeholders & Cross-Entry References](#9-keepass-placeholders--cross-entry-references-resolve_references)).
+- **Placeholder & Reference Resolution**: Set `resolve_references: true` in `config.yaml` to enable `{TITLE}`, `{REF:...}`, `{T-CONV:...}`, `{URL:...}`, and date/time expansion (see [KeePass Placeholders & Cross-Entry References](#10-keepass-placeholders--cross-entry-references-resolve_references)).
 
 ##### Placeholder Expansion & Field References
 `cloakenv` supports resolving field placeholders and cross-entry references embedded inside KeePass field values:
@@ -1084,7 +1084,7 @@ References field values from another entry in the database.
 >
 > When entries are exported or merged (e.g. via `cloakenv show` or `cloakenv run -m`), all attributes are exposed by default.
 >
-> **Mitigation**: Combine `resolve_references: true` with [Field Filtering](#5-field-filtering-include_fields-and-exclude_fields) (`exclude_fields` / `include_fields`) to constrain the blast radius and prevent secret fields from being exported:
+> **Mitigation**: Combine `resolve_references: true` with [Field Filtering](#6-field-filtering-include_fields-and-exclude_fields) (`exclude_fields` / `include_fields`) to constrain the blast radius and prevent secret fields from being exported:
 > ```yaml
 > vaults:
 >   work:
