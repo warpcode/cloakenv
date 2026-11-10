@@ -193,20 +193,23 @@ func (c *CustomVaultProvider) Search(ctx context.Context, query SearchQuery) ([]
 			// Optimization: Check title on the entity directly before allocating full entry.
 			// In toEntry, Title defaults to name, overridden by string value of any case-insensitive title attribute,
 			// or entity.Title. Non-string title attributes fall back to name.
-			titleCandidate := entity.Title
-			if titleCandidate == "" {
-				if tAttr, ok := findRawAttr(entity.Attributes, "title"); ok {
-					if s, ok := tAttr.(string); ok {
-						titleCandidate = s
+			// Only evaluate titleCandidate when a title query filter is active, avoiding redundant attribute scans.
+			if lowerQueryTitle != "" {
+				titleCandidate := entity.Title
+				if titleCandidate == "" {
+					if tAttr, ok := findRawAttr(entity.Attributes, "title"); ok {
+						if s, ok := tAttr.(string); ok {
+							titleCandidate = s
+						} else {
+							titleCandidate = name
+						}
 					} else {
 						titleCandidate = name
 					}
-				} else {
-					titleCandidate = name
 				}
-			}
-			if lowerQueryTitle != "" && !strings.Contains(strings.ToLower(titleCandidate), lowerQueryTitle) {
-				continue
+				if !strings.Contains(strings.ToLower(titleCandidate), lowerQueryTitle) {
+					continue
+				}
 			}
 
 			// Optimization: Check tags on the entity directly before allocating attributes map in toEntry.
