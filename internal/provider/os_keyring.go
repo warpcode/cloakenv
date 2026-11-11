@@ -164,15 +164,32 @@ func (o *OSKeyringProvider) SetSecret(_ context.Context, location string, value 
 	return o.store.Set(service, account, value)
 }
 
+// validateRawKeyringTarget verifies that service and account are non-empty and do not contain null bytes.
+func validateRawKeyringTarget(service, account string) error {
+	if service == "" || account == "" {
+		return errors.New("invalid keyring target: service and account must not be empty")
+	}
+	if strings.IndexByte(service, 0) != -1 || strings.IndexByte(account, 0) != -1 {
+		return errors.New("invalid keyring target: contains null byte")
+	}
+	return nil
+}
+
 // SetRawSecret stores a secret in the OS keyring using raw service and account strings.
 // Used by the "auth login" subcommand.
 func (o *OSKeyringProvider) SetRawSecret(service, account, password string) error {
+	if err := validateRawKeyringTarget(service, account); err != nil {
+		return err
+	}
 	return o.store.Set(service, account, password)
 }
 
 // DeleteRawSecret removes a secret from the OS keyring using raw service and account strings.
 // Used by the "auth forget" subcommand.
 func (o *OSKeyringProvider) DeleteRawSecret(service, account string) error {
+	if err := validateRawKeyringTarget(service, account); err != nil {
+		return err
+	}
 	return o.store.Delete(service, account)
 }
 
