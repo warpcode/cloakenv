@@ -31,6 +31,7 @@
   - [`auth` — Manage Vault Authentication](#auth--manage-vault-authentication)
   - [`sync` — Cross-Vault Secret Synchronization](#sync--cross-vault-secret-synchronization)
   - [`config` — Manage, Inspect & Validate Configuration](#config--manage-inspect--validate-configuration)
+  - [`doctor` — Diagnose Environment & Vault Reachability](#doctor--diagnose-environment--vault-reachability)
   - [`completion` — Generate Shell Autocompletion Scripts](#completion--generate-shell-autocompletion-scripts)
   - [`internal` — Developer & Hook Helpers](#internal--developer--hook-helpers)
 - [Secret Providers & Schemes](#secret-providers--schemes)
@@ -107,7 +108,7 @@ flowchart TD
 
 ## Prerequisites
 
-- [Go](https://go.dev/) 1.26.2 or higher.
+- [Go](https://go.dev/) 1.26.6 or higher.
 - A supported operating system credential store:
   - **macOS**: Keychain (built-in)
   - **Linux**: D-Bus Secret Service (`gnome-keyring`, `ksecretsservice`, or `keepassxc`)
@@ -292,6 +293,7 @@ Commands:
   search  Search for structured entries across vaults
   auth    Manage vault credentials and status (login, forget, status)
   config  Manage, inspect, and validate configuration (subcommands: check)
+  doctor  Diagnose environment and vault reachability
   completion  Generate shell autocompletion script (bash, zsh, fish, powershell)
   internal  Developer & hook helpers (match-alias, list-vaults)
 ```
@@ -627,6 +629,26 @@ cloakenv config check
 
 # Validate a specific configuration file with strict schema enforcement
 cloakenv -c ./config.yaml config check --strict
+```
+
+---
+
+### `doctor` — Diagnose Environment & Vault Reachability
+
+Diagnoses environment configuration and vault reachability. Inspects the loaded configuration, validates provider file reachability, checks cache directory permissions (0700), and outputs a diagnostic report without leaking secret values.
+
+```bash
+cloakenv doctor
+```
+
+#### Examples:
+
+```bash
+# Run diagnostics on default configuration and environment
+cloakenv doctor
+
+# Run diagnostics with a custom configuration file
+cloakenv -c ./config.yaml doctor
 ```
 
 ---

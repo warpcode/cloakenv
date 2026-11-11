@@ -54,7 +54,6 @@ func (pm *ProviderManager) SetSearchExecutor(exec provider.SearchExecutor) {
 	pm.searchExecutor = exec
 }
 
-// HasBuiltin reports whether the given scheme is a registered built-in provider.
 // SetGetEntriesFunc sets the callback for resolving multi-entry vaults.
 func (pm *ProviderManager) SetGetEntriesFunc(exec provider.GetEntriesFunc) {
 	pm.mu.Lock()
@@ -76,6 +75,7 @@ func (pm *ProviderManager) SetRenderTemplateFunc(exec provider.TemplateRenderFun
 	}
 }
 
+// HasBuiltin reports whether the given scheme is a registered built-in provider.
 func (pm *ProviderManager) HasBuiltin(scheme string) bool {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()

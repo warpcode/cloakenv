@@ -18,6 +18,7 @@ Usage:
   cloakenv [-c config_path] search [query] [args]
   cloakenv [-c config_path] auth <login|forget|status> [vault]
   cloakenv [-c config_path] config <subcommand> [flags]
+  cloakenv [-c config_path] doctor
   cloakenv [-c config_path] completion <shell>
   cloakenv [-c config_path] internal <subcommand> [args]
 
@@ -32,6 +33,7 @@ Commands:
   search  Search for structured entries
   auth    Manage vault credentials and status (subcommands: login, forget, status)
   config  Manage, inspect, and validate configuration (subcommands: check)
+  doctor  Diagnose environment and vault reachability
   completion  Generate shell autocompletion script (bash, zsh, fish, powershell)
   internal  Developer & hook helpers (subcommands: match-alias, list-vaults)
 
@@ -274,12 +276,12 @@ Flags:
   -r, --regex pat Filter keys by regular expression`)
 }
 
-// PrintInternalHelp prints usage help for the internal subcommand.
 // PrintDoctorHelp prints usage help for the doctor subcommand.
 func PrintDoctorHelp() {
 	PrintDoctorHelpTo(os.Stdout)
 }
 
+// PrintInternalHelp prints usage help for the internal subcommand.
 func PrintInternalHelp() {
 	fmt.Fprintln(os.Stdout, `Usage:
   cloakenv internal <subcommand> [args]
