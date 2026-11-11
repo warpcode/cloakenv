@@ -200,27 +200,61 @@ func TestOSKeyringProvider_RawSecrets(t *testing.T) {
 			},
 		},
 		{
-			name: "empty service",
+			name: "empty service rejected",
 			testFn: func(t *testing.T, kp *OSKeyringProvider, store *MockKeyringStore) {
-				errSet := kp.SetRawSecret("", "acc", "val")
-				_ = errSet
-				errDel := kp.DeleteRawSecret("", "acc")
-				if errDel == nil && errSet != nil {
-					t.Errorf("expected error deleting empty service")
+				if err := kp.SetRawSecret("", "acc", "val"); err == nil {
+					t.Errorf("expected error setting raw secret with empty service")
+				}
+				if err := kp.DeleteRawSecret("", "acc"); err == nil {
+					t.Errorf("expected error deleting raw secret with empty service")
 				}
 			},
 		},
 		{
-			name: "empty account",
+			name: "empty account rejected",
 			testFn: func(t *testing.T, kp *OSKeyringProvider, store *MockKeyringStore) {
-				_ = kp.SetRawSecret("svc", "", "val")
-				_ = kp.DeleteRawSecret("svc", "")
+				if err := kp.SetRawSecret("svc", "", "val"); err == nil {
+					t.Errorf("expected error setting raw secret with empty account")
+				}
+				if err := kp.DeleteRawSecret("svc", ""); err == nil {
+					t.Errorf("expected error deleting raw secret with empty account")
+				}
 			},
 		},
 		{
-			name: "empty password",
+			name: "empty password allowed",
 			testFn: func(t *testing.T, kp *OSKeyringProvider, store *MockKeyringStore) {
-				_ = kp.SetRawSecret("svc", "acc", "")
+				if err := kp.SetRawSecret("svc", "acc", ""); err != nil {
+					t.Errorf("expected setting empty password to succeed, got %v", err)
+				}
+			},
+		},
+		{
+			name: "null byte in service rejected",
+			testFn: func(t *testing.T, kp *OSKeyringProvider, store *MockKeyringStore) {
+				badServices := []string{"svc\x00", "\x00svc", "s\x00vc"}
+				for _, svc := range badServices {
+					if err := kp.SetRawSecret(svc, "acc", "val"); err == nil {
+						t.Errorf("expected error setting raw secret with null byte in service: %q", svc)
+					}
+					if err := kp.DeleteRawSecret(svc, "acc"); err == nil {
+						t.Errorf("expected error deleting raw secret with null byte in service: %q", svc)
+					}
+				}
+			},
+		},
+		{
+			name: "null byte in account rejected",
+			testFn: func(t *testing.T, kp *OSKeyringProvider, store *MockKeyringStore) {
+				badAccounts := []string{"acc\x00", "\x00acc", "a\x00cc"}
+				for _, acc := range badAccounts {
+					if err := kp.SetRawSecret("svc", acc, "val"); err == nil {
+						t.Errorf("expected error setting raw secret with null byte in account: %q", acc)
+					}
+					if err := kp.DeleteRawSecret("svc", acc); err == nil {
+						t.Errorf("expected error deleting raw secret with null byte in account: %q", acc)
+					}
+				}
 			},
 		},
 	}
