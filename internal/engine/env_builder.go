@@ -354,34 +354,48 @@ func (eb *EnvBuilder) evalAutoloadRules(cmdArgs []string) ([]string, map[string]
 	return autoMerges, autoExplicit, autoWhitelist, currentCmdArgs, nil
 }
 
+// cloakenvFnPrefixes contains candidate function invocation prefixes for detecting cloakenv template calls.
+// Hoisting these into a package-level slice eliminates repeated slice heap allocations inside the scan loop.
+var cloakenvFnPrefixes = []string{
+	"get ", "get\t", "get\"", "get`",
+	"tryGet ", "tryGet\t", "tryGet\"", "tryGet`",
+	"entry ", "entry\t", "entry\"", "entry`",
+	"search ", "search\t", "search\"", "search`",
+	"include ", "include\t", "include\"", "include`",
+	"includeFile ", "includeFile\t", "includeFile\"", "includeFile`",
+	"exec ", "exec\t", "exec\"", "exec`",
+	"shquote ", "shquote\t", "shquote\"", "shquote`",
+	"shellQuote ", "shellQuote\t", "shellQuote\"", "shellQuote`",
+}
+
+// hasCloakenvInvocation scans arg for cloakenv template function invocations.
+// Optimization: iterates through occurrences of "{{" using strings.Cut to avoid allocating
+// intermediate string slices on the heap via strings.Split (0 allocs/op).
 func hasCloakenvInvocation(arg string) bool {
 	if !strings.Contains(arg, "{{") {
 		return false
 	}
-	parts := strings.Split(arg, "{{")
-	for _, part := range parts[1:] {
-		endIdx := strings.Index(part, "}}")
+
+	remaining := arg
+	for {
+		var found bool
+		_, remaining, found = strings.Cut(remaining, "{{")
+		if !found {
+			break
+		}
+
+		endIdx := strings.Index(remaining, "}}")
 		var block string
 		if endIdx >= 0 {
-			block = part[:endIdx]
+			block = remaining[:endIdx]
 		} else {
-			block = part
+			block = remaining
 		}
 		trimmed := strings.TrimSpace(block)
 		trimmed = strings.TrimPrefix(trimmed, "-")
 		trimmed = strings.TrimSpace(trimmed)
 
-		for _, fn := range []string{
-			"get ", "get\t", "get\"", "get`",
-			"tryGet ", "tryGet\t", "tryGet\"", "tryGet`",
-			"entry ", "entry\t", "entry\"", "entry`",
-			"search ", "search\t", "search\"", "search`",
-			"include ", "include\t", "include\"", "include`",
-			"includeFile ", "includeFile\t", "includeFile\"", "includeFile`",
-			"exec ", "exec\t", "exec\"", "exec`",
-			"shquote ", "shquote\t", "shquote\"", "shquote`",
-			"shellQuote ", "shellQuote\t", "shellQuote\"", "shellQuote`",
-		} {
+		for _, fn := range cloakenvFnPrefixes {
 			if strings.HasPrefix(trimmed, fn) || strings.Contains(trimmed, " "+fn) || strings.Contains(trimmed, "("+fn) || strings.Contains(trimmed, "| "+fn) || strings.Contains(trimmed, "|"+fn) {
 				return true
 			}

@@ -1032,3 +1032,106 @@ func TestBuildEnvForCommandDetails(t *testing.T) {
 		t.Errorf("expected VAR_M to be filtered out by whitelist")
 	}
 }
+
+func TestHasCloakenvInvocation(t *testing.T) {
+	tests := []struct {
+		name string
+		arg  string
+		want bool
+	}{
+		{
+			name: "plain argument without braces",
+			arg:  "plain-arg",
+			want: false,
+		},
+		{
+			name: "docker format foreign template",
+			arg:  "'{{.State.Status}}'",
+			want: false,
+		},
+		{
+			name: "kubernetes jsonpath foreign template",
+			arg:  `{"id":"{{.Id}}"}`,
+			want: false,
+		},
+		{
+			name: "unclosed opening brace without invocation",
+			arg:  "prefix-{{-foo",
+			want: false,
+		},
+		{
+			name: "cloakenv get function",
+			arg:  `--token={{ get "env://CLI_TOKEN" }}`,
+			want: true,
+		},
+		{
+			name: "cloakenv tryGet function",
+			arg:  `--fallback={{ tryGet "env://NONEXISTENT" "env://CLI_TOKEN" }}`,
+			want: true,
+		},
+		{
+			name: "cloakenv entry function",
+			arg:  `--entry={{ entry "vault://path/to/entry" }}`,
+			want: true,
+		},
+		{
+			name: "cloakenv search function",
+			arg:  `--query={{ search "tag:prod" "password" }}`,
+			want: true,
+		},
+		{
+			name: "cloakenv include function",
+			arg:  `--tmpl={{ include "my_template" . }}`,
+			want: true,
+		},
+		{
+			name: "cloakenv includeFile function",
+			arg:  `--file={{ includeFile "path/file.txt" . }}`,
+			want: true,
+		},
+		{
+			name: "cloakenv exec function",
+			arg:  `--exec={{ exec "echo" "hello" }}`,
+			want: true,
+		},
+		{
+			name: "cloakenv shquote function",
+			arg:  `--quote={{ shquote "arg with spaces" }}`,
+			want: true,
+		},
+		{
+			name: "cloakenv shellQuote function",
+			arg:  `--quote={{ shellQuote "arg with spaces" }}`,
+			want: true,
+		},
+		{
+			name: "pipeline execution with cloakenv function",
+			arg:  `--token={{ .val | exec "sh" "-c" }}`,
+			want: true,
+		},
+		{
+			name: "grouped invocation with cloakenv function",
+			arg:  `--token={{ (get "vault://sec:key") }}`,
+			want: true,
+		},
+		{
+			name: "multiple template blocks with second having invocation",
+			arg:  `format={{.State.Status}}&secret={{ get "vault://sec:token" }}`,
+			want: true,
+		},
+		{
+			name: "multiple template blocks with neither having invocation",
+			arg:  `format={{.State.Status}}&id={{.Id}}`,
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hasCloakenvInvocation(tt.arg)
+			if got != tt.want {
+				t.Errorf("hasCloakenvInvocation(%q) = %v, want %v", tt.arg, got, tt.want)
+			}
+		})
+	}
+}

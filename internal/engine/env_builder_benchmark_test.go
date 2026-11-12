@@ -105,3 +105,43 @@ func BenchmarkBuildEnvMerges(b *testing.B) {
 		}
 	}
 }
+
+var benchmarkHasCloakenvRes bool
+
+func BenchmarkHasCloakenvInvocation(b *testing.B) {
+	b.Run("PlainArg", func(b *testing.B) {
+		arg := "--config=/path/to/app.conf"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			benchmarkHasCloakenvRes = hasCloakenvInvocation(arg)
+		}
+	})
+
+	b.Run("ForeignTemplate", func(b *testing.B) {
+		arg := "--format={{.State.Status}}:{{.Id}}"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			benchmarkHasCloakenvRes = hasCloakenvInvocation(arg)
+		}
+	})
+
+	b.Run("CloakenvInvocation", func(b *testing.B) {
+		arg := "--token={{ get \"vault://app:token\" }}"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			benchmarkHasCloakenvRes = hasCloakenvInvocation(arg)
+		}
+	})
+
+	b.Run("PipelineInvocation", func(b *testing.B) {
+		arg := "--token={{ .val | exec \"sh\" \"-c\" }}"
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			benchmarkHasCloakenvRes = hasCloakenvInvocation(arg)
+		}
+	})
+}
