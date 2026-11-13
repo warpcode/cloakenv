@@ -283,6 +283,12 @@ func TestEnvBuilder_IsKnownScheme(t *testing.T) {
 			want:   true,
 		},
 		{
+			name:   "builtin pass scheme",
+			config: nil,
+			scheme: "pass",
+			want:   true,
+		},
+		{
 			name:   "builtin search scheme",
 			config: nil,
 			scheme: "search",

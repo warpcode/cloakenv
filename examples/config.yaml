@@ -3,7 +3,7 @@
 
 # Reusable Go text/template definitions available to `include "name" .`
 templates:
-  # Inline template definition:
+  # Inline template definition (also accepts scalar shorthand: `dotenv: "{{ .attributes | toEnv }}"`):
   dotenv:
     template: "{{ .attributes | toEnv }}"
   # External file template definition (resolves relative to config.yaml or expands ~/):
@@ -42,7 +42,13 @@ vaults:
   keepass_dev:
     provider: "keepass"
     vault_path: "./examples/providers/keepass/database.kdbx"
+    # key_file: "~/secrets/work.keyx"       # Optional KeePass key file (.key / .keyx / raw key)
+    # key_file_env: "CLOAKENV_KEY_FILE"     # Optional env var specifying key file path (overrides key_file when set)
     # resolve_references: true  # Enables KeePass entry placeholder and cross-entry reference resolution ({TITLE}, {REF:...}, {T-CONV:...}, {URL:...})
+    # cache:                    # Optional transparent per-vault retrieval caching (also accepts `cache: true` or `cache: "15m"`)
+    #   enabled: true
+    #   ttl: "15m"
+    #   mode: "keyring"         # "keyring" (default, zero disk I/O) or "encrypted_disk" (AES-256-GCM)
 
   # Defines the pass_store:// URI scheme (Standard Unix Password Store / pass)
   pass_store:
@@ -76,7 +82,7 @@ vaults:
     entities_root_key: "entries"
 
   # Defines the dotenv_dev:// URI scheme (flat single-entity YAML database example)
-  # Defaults to single_entity: true because no entities_root_key is configured
+  # Defaults to single_entity: true when no entities_root_key and no top-level 'entities'/'entries' key are present
   dotenv_dev:
     provider: "yaml"
     vault_path: "./examples/providers/yaml/dotenv.yaml"

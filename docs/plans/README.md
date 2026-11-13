@@ -4,7 +4,7 @@
 
 | Plan | Status | Summary |
 |---|---|---|
-| [2026-11-04-cross-vault-sync-and-caching](2026-11-04-cross-vault-sync-and-caching.md) | Active | Unidirectional cross-vault synchronization (`cloakenv sync`) and transparent secure retrieval caching |
+| [2026-11-04-cross-vault-sync-and-caching](2026-11-04-cross-vault-sync-and-caching.md) | Completed | Unidirectional cross-vault synchronization (`cloakenv sync`) and transparent secure retrieval caching |
 
 ## Archived Plans
 

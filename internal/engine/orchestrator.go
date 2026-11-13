@@ -11,7 +11,7 @@ import (
 )
 
 // Orchestrator coordinates secret resolution across multiple vaults and providers.
-// Built-in schemes ("keyring", "env", "cache") are always available; configured vaults
+// Built-in schemes ("keyring", "env", "cache", "pass") are always available; configured vaults
 // become additional schemes at runtime.
 type Orchestrator struct {
 	config          *config.Config

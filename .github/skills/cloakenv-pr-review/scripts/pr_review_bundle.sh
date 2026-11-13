@@ -12,7 +12,7 @@ Usage: pr_review_bundle.sh <pr_number> [output_dir]
 Automated PR review bundle extraction and safety checks for cloakenv:
   1. Fetches PR metadata and checks base branch (warns if CI was inactive)
   2. Extracts diff against base and diff against origin/main
-  3. Verifies .github/workflows/reject-empty-commit.yml integrity
+  3. Verifies .github/workflows/ci.yml and semgrep.yml integrity
   4. Scans for smuggled autoload refactors (regexCache sync.Map, CompileAutoloadRules)
   5. Verifies provider switch cases in internal/engine/provider_manager.go
   6. Detects sibling PR duplicates (matching blob hashes)
@@ -116,17 +116,24 @@ fi
 COMBINED_DIFF="${PAYLOAD_DIR}/combined.diff"
 cat "$BASE_DIFF_PATH" "$MAIN_DIFF_PATH" > "$COMBINED_DIFF"
 
-# 4. Check workflow integrity (reject-empty-commit.yml, ci.yml)
+# 4. Check workflow integrity (ci.yml, semgrep.yml)
 WORKFLOW_PASSED="true"
-WORKFLOW_DETAIL="Workflow files are intact"
-if grep -q "diff --git a/\.github/workflows/reject-empty-commit\.yml" "$COMBINED_DIFF"; then
-    if grep -E '^\+\+\+ /dev/null|deleted file mode' "$COMBINED_DIFF" | grep -B2 "reject-empty-commit\.yml" >/dev/null 2>&1; then
-        WORKFLOW_PASSED="false"
-        WORKFLOW_DETAIL="ALERT: .github/workflows/reject-empty-commit.yml was deleted!"
-    else
-        WORKFLOW_DETAIL="Notice: .github/workflows/reject-empty-commit.yml was modified"
+WORKFLOW_DETAIL="CI workflow files are intact"
+for wf in "ci.yml" "semgrep.yml"; do
+    if grep -q "diff --git a/\.github/workflows/${wf}" "$COMBINED_DIFF"; then
+        if awk -v wf=".github/workflows/${wf}" '
+            /^diff --git / { in_wf = (index($0, "a/" wf) > 0) }
+            in_wf && (/^deleted file mode/ || /^\+\+\+ \/dev\/null/) { found = 1 }
+            END { exit !found }
+        ' "$COMBINED_DIFF"; then
+            WORKFLOW_PASSED="false"
+            WORKFLOW_DETAIL="ALERT: .github/workflows/${wf} was deleted!"
+            break
+        else
+            WORKFLOW_DETAIL="Notice: .github/workflows/${wf} was modified"
+        fi
     fi
-fi
+done
 
 # 5. Check smuggled autoload refactors
 AUTOLOAD_VIOLATIONS=()
@@ -154,10 +161,10 @@ MISSING_CASES=()
 
 if grep -q "diff --git a/internal/engine/provider_manager\.go" "$COMBINED_DIFF"; then
     SWITCH_MODIFIED="true"
-    # Verify all 5 cases are still present in provider_manager.go
+    # Verify all 7 cases are still present in provider_manager.go
     PM_FILE="internal/engine/provider_manager.go"
     if [[ -f "$PM_FILE" ]]; then
-        for provider_case in "keepass" "yaml" "json" "custom_vault" "search"; do
+        for provider_case in "keepass" "yaml" "json" "custom_vault" "env" "pass" "search"; do
             if ! grep -qE "case\s+[\"']${provider_case}[\"']:" "$PM_FILE"; then
                 MISSING_CASES+=("\"${provider_case}\"")
                 SWITCH_PASSED="false"
@@ -208,7 +215,7 @@ cat <<EOF
     "main_diff_path": "${MAIN_DIFF_PATH}"
   },
   "checks": {
-    "reject_empty_commit_workflow_intact": {
+    "ci_workflows_intact": {
       "passed": ${WORKFLOW_PASSED},
       "detail": "${WORKFLOW_DETAIL}"
     },

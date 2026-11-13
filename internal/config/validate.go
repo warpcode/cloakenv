@@ -72,6 +72,8 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 		"yaml":         true,
 		"json":         true,
 		"custom_vault": true,
+		"env":          true,
+		"pass":         true,
 		"search":       true,
 	}
 
@@ -79,7 +81,7 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 		if vault.Provider == "" {
 			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: missing required field 'provider'", vaultName))
 		} else if !validProviders[vault.Provider] {
-			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: unknown provider %q (must be one of: keepass, yaml, json, custom_vault, search)", vaultName, vault.Provider))
+			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: unknown provider %q (must be one of: keepass, yaml, json, custom_vault, env, pass, search)", vaultName, vault.Provider))
 		}
 
 		// File path existence check for file-backed providers

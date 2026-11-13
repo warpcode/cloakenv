@@ -43,7 +43,7 @@ _cloakenv_complete() {
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--help -h" -- "$cur") )
             else
-                local schemes="keyring:// env:// cache:// search://"
+                local schemes="keyring:// env:// cache:// pass:// search://"
                 local vaults=$(cloakenv internal list-vaults 2>/dev/null)
                 local vault_schemes=""
                 for v in $vaults; do
@@ -67,7 +67,7 @@ _cloakenv_complete() {
             ;;
         show)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "-m -e -t -i -f --key-format --show-meta -o --output --help -h" -- "$cur") )
+                COMPREPLY=( $(compgen -W "-m -e -t -i -f --key-format --raw --explain --show-meta -o --output --help -h" -- "$cur") )
             fi
             ;;
         search)
@@ -100,6 +100,11 @@ _cloakenv_complete() {
             ;;
         completion)
             COMPREPLY=( $(compgen -W "bash zsh fish powershell --help -h" -- "$cur") )
+            ;;
+        internal)
+            if [[ $cword -eq 2 || ($cword -eq 4 && "${words[1]}" == "-c") ]]; then
+                COMPREPLY=( $(compgen -W "match-alias list-vaults --help -h" -- "$cur") )
+            fi
             ;;
         *)
             ;;
@@ -156,6 +161,9 @@ _cloakenv() {
                 config)
                     _values 'subcommand' check
                     ;;
+                internal)
+                    _values 'subcommand' match-alias list-vaults
+                    ;;
                 *)
                     _files
                     ;;
@@ -191,6 +199,7 @@ complete -c cloakenv -n "__fish_use_subcommand" -a config -d "Inspect and valida
 complete -c cloakenv -n "__fish_use_subcommand" -a doctor -d "Diagnose environment and vault reachability"
 complete -c cloakenv -n "__fish_use_subcommand" -a completion -d "Generate shell completion script"
 complete -c cloakenv -n "__fish_use_subcommand" -a version -d "Print version information"
+complete -c cloakenv -n "__fish_use_subcommand" -a internal -d "Internal helper commands"
 
 # completion arguments
 complete -c cloakenv -n "__fish_seen_subcommand_from completion" -a "bash zsh fish powershell"
@@ -204,6 +213,9 @@ complete -c cloakenv -n "__fish_seen_subcommand_from auth" -a "login forget stat
 # config subcommands
 complete -c cloakenv -n "__fish_seen_subcommand_from config" -a "check"
 complete -c cloakenv -n "__fish_seen_subcommand_from check" -l strict -d "Enforce strict schema validation"
+
+# internal subcommands
+complete -c cloakenv -n "__fish_seen_subcommand_from internal" -a "match-alias list-vaults"
 `
 
 const powershellCompletionScript = `Register-ArgumentCompleter -Native -CommandName cloakenv -ScriptBlock {
@@ -225,7 +237,7 @@ const powershellCompletionScript = `Register-ArgumentCompleter -Native -CommandN
     $subcommands = @(
         'run', 'get', 'set', 'delete', 'cache',
         'show', 'search', 'auth', 'sync', 'config',
-        'doctor', 'completion', 'version'
+        'doctor', 'completion', 'version', 'internal'
     )
 
     if (-not $command) {
@@ -253,6 +265,11 @@ const powershellCompletionScript = `Register-ArgumentCompleter -Native -CommandN
         }
         'config' {
             @('check') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+            }
+        }
+        'internal' {
+            @('match-alias', 'list-vaults') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
                 [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
             }
         }

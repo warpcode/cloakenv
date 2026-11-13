@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-
 	"strings"
 
 	"github.com/warpcode/cloakenv/internal/config"
@@ -43,16 +42,14 @@ func DoctorCmd(args []string, cfg *config.Config, stdout, stderr io.Writer) int 
 	fmt.Fprintf(stdout, "Configuration Path: %s\n", cfg.ConfigPath)
 
 	// 2. Check cache directory permissions (0700)
+	prefix := cfg.KeyringPrefix()
 	var cacheDir string
-	if cfg.ConfigPath == "" {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			cacheDir = filepath.Join(home, ".config", "cloakenv", "cache")
-		} else {
-			cacheDir = "cache" // fallback
-		}
+	if userCache, err := os.UserCacheDir(); err == nil {
+		cacheDir = filepath.Join(userCache, prefix)
+	} else if home, err := os.UserHomeDir(); err == nil {
+		cacheDir = filepath.Join(home, ".cache", prefix)
 	} else {
-		cacheDir = filepath.Join(filepath.Dir(cfg.ConfigPath), "cache")
+		cacheDir = prefix // fallback
 	}
 
 	fmt.Fprintf(stdout, "Cache Directory: %s\n", cacheDir)

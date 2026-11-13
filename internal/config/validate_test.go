@@ -199,4 +199,23 @@ vaults:
 		}
 	})
 
+	t.Run("builtin pass and env providers pass validation", func(t *testing.T) {
+		builtinProvidersYAML := `vaults:
+  pass_store:
+    provider: pass
+    vault_path: ~/.password-store
+  proc_env:
+    provider: env`
+		cfgPath := filepath.Join(tempDir, "builtin_providers.yaml")
+		if err := os.WriteFile(cfgPath, []byte(builtinProvidersYAML), 0600); err != nil {
+			t.Fatalf("failed to write builtin providers config: %v", err)
+		}
+		res, err := Validate(cfgPath, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.IsValid() {
+			t.Fatalf("expected env and pass providers to be valid, got errors: %v", res.Errors)
+		}
+	})
 }

@@ -405,7 +405,7 @@ func hasCloakenvInvocation(arg string) bool {
 }
 
 func (eb *EnvBuilder) isKnownScheme(scheme string) bool {
-	if scheme == "env" || scheme == "cache" || scheme == "keyring" || scheme == "search" {
+	if scheme == "env" || scheme == "cache" || scheme == "keyring" || scheme == "pass" || scheme == "search" {
 		return true
 	}
 	if eb.config != nil && eb.config.Vaults != nil {
