@@ -62,52 +62,52 @@ Backends capable of receiving writes implement:
 package provider
 
 type WritableProvider interface {
-    SecretProvider
     SetSecret(ctx context.Context, location string, value string) error
     DeleteSecret(ctx context.Context, location string) error
 }
 ```
 
-- Providers implementing `WritableProvider`: `os_keyring`, `vault` (HashiCorp Vault), and future mutable backends.
-- Read-only providers (e.g. `keepass`, `env`, `static`) remain read-only; attempts to target them as sync destinations fail with clear validation errors.
+- Providers implementing writable operations: `os_keyring` (`keyring://`) and `cache` (`cache://`) are active sync targets today. `vault` (HashiCorp Vault in `internal/provider/vault.go`) also implements `WritableProvider`, pending registration in `ProviderManager`.
+- Read-only providers (`keepass`, `env`, `yaml`, `json`, `custom_vault`, `pass`, `search`) reject writes; `cloakenv sync` validates destinations up front and fails fast with clear errors when targeting read-only vaults.
 
 #### Sync Command Semantics
 ```bash
 cloakenv sync <source-uri-or-vault> <target-uri-or-vault> [flags]
 ```
 - Flags:
-  - `--tags <tag-filter>`: Only sync entries matching specified tags (e.g. `sync:keyring`).
-  - `--prefix <prefix>`: Prefix target keys in destination vault.
-  - `--dry-run`: Preview keys to be written/updated without executing writes.
-  - `--overwrite=false`: Skip existing keys in the target vault.
+  - `--tags <tag-filter>`: Only sync entries matching specified tags (comma-separated, e.g. `sync:keyring`).
+  - `--prefix <prefix>`: Filter source secret keys by prefix (`strings.HasPrefix`).
+  - `-r, --regex <pattern>`: Filter source secret keys using a regular expression.
+  - `--dry-run`: Preview keys to be added/updated without executing writes.
+- Future (deferred) options: `--overwrite=false` and `--prune` are not yet implemented.
 
 ---
 
 ### 4.2 Secure Retrieval Caching Architecture
 
 #### Per-Vault Configuration Schema
-In `config.yaml`, caching is configured per vault:
+In `config.yaml`, caching is configured per vault (supporting boolean `cache: true`, duration string `cache: "15m"`, or an explicit mapping):
 ```yaml
 vaults:
-  remote_vault:
-    provider: "vault"
-    address: "https://vault.company.internal"
+  work:
+    provider: "keepass"
+    vault_path: "~/secrets/work.kdbx"
     cache:
       enabled: true
-      ttl: 15m
+      ttl: "15m"
       mode: "keyring"   # Options: "keyring" (default) or "encrypted_disk"
 ```
 
 #### Storage Modes & Security Invariants
 1. **Mode: `keyring` (Default & Recommended)**:
-   - Secret payloads are stored directly in the OS Keyring under a dedicated cache namespace (`cloakenv_cache:<vault>:<hash>`).
+   - Secret payloads are stored directly in the OS Keyring under service `<prefix>_vault_cache` and account `cache_v2/<sha256(vaultName + "\x00" + location)>`.
    - Zero disk persistence. Managed by OS secure enclave / credential service.
 2. **Mode: `encrypted_disk`**:
-   - Payloads are encrypted via AES-256-GCM before writing to `~/.cache/cloakenv/<hash>`.
-   - The encryption key is stored exclusively in the OS Keyring.
+   - Payloads are encrypted via AES-256-GCM before writing to `<UserCacheDir>/<prefix>/vaults/<vault_hash>/<entry_hash>` (typically `~/.cache/cloakenv/vaults/...`) with `0700` directory and `0600` file permissions.
+   - The encryption key is stored exclusively in the OS Keyring under service `<prefix>` and account `cache_disk_token`.
    - Payloads contain an 8-byte big-endian write timestamp and an 8-byte TTL header.
    - Intermediate byte buffers are scrubbed immediately using `utils.ZeroBytes()`.
-   - Expired entries are deleted on read or pruned via `cloakenv cache prune`.
+   - Expired entries are deleted on read; `cloakenv cache prune` removes expired `cache://` entries under `<UserCacheDir>/<prefix>`.
 
 ---
 
@@ -120,4 +120,4 @@ vaults:
 
 ### Trade-offs & Limitations
 - Secrets cached in OS Keyring remain until TTL expiry or manual purge.
-- `cloakenv sync` is strictly unidirectional; deletions in source are not propagated as deletions in target unless explicit `--prune` is passed.
+- `cloakenv sync` is strictly unidirectional; deletions in source are not propagated to target (deletion pruning such as `--prune` and non-overwriting mode `--overwrite=false` remain future enhancements).

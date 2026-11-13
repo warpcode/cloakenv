@@ -26,7 +26,7 @@ type SecretProvider interface {
 }
 ```
 
-- **`Scheme()`**: Returns the URI scheme handled by this provider (e.g., `"keepass"`, `"yaml"`, `"json"`, `"vault"`).
+- **`Scheme()`**: Returns the URI scheme handled by this provider (e.g., `"keepass"`, `"yaml"`, `"json"`, `"pass"`).
 - **`Initialize(ctx, config)`**: Prepares the provider instance using backend-specific settings from `config.Settings`. For stateless backends, this may be a no-op; for stateful backends, it initializes connections or decrypts databases.
 - **`GetSecret(ctx, location)`**: Resolves a secret value given a location string (the path following `scheme://`). Must return an error if the location does not resolve.
 - **`SetSecret(ctx, location, value)`**: Writes a secret value at the given location. Returns an error if the provider is read-only.

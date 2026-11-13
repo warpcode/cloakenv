@@ -18,7 +18,9 @@ Usage:
   cloakenv [-c config_path] search [query] [args]
   cloakenv [-c config_path] auth <login|forget|status> [vault]
   cloakenv [-c config_path] config <subcommand> [flags]
+  cloakenv [-c config_path] doctor
   cloakenv [-c config_path] completion <shell>
+  cloakenv version
   cloakenv [-c config_path] internal <subcommand> [args]
 
 Commands:
@@ -32,11 +34,15 @@ Commands:
   search  Search for structured entries
   auth    Manage vault credentials and status (subcommands: login, forget, status)
   config  Manage, inspect, and validate configuration (subcommands: check)
+  doctor  Diagnose environment and vault reachability
   completion  Generate shell autocompletion script (bash, zsh, fish, powershell)
+  version Print build and runtime version information
   internal  Developer & hook helpers (subcommands: match-alias, list-vaults)
 
 Flags:
   -c config_path  Custom configuration file path (global flag)
+  -h, --help      Display help information (global flag)
+  -v, --version   Print version information (global flag)
   -E              Start with an empty environment (do not inherit from parent)
   -e KEY=uri      Map an environment variable to a secret URI (repeatable)
   -t template     Load template .env file mapping KEY=uri per line (repeatable)
@@ -51,6 +57,7 @@ URI schemes:
   keyring://service/account    Built-in: OS keyring (macOS Keychain, Linux D-Bus, Windows Credential Manager)
   env://VARIABLE_NAME          Built-in: read from current process environment (read-only)
   cache://KEY                  Built-in: local file cache (AES-GCM encrypted, key in OS keyring)
+  pass://path/to/entry[:attr]  Built-in: Unix password store (read-only)
   search://query/attribute     Built-in: resolve dynamically matched credentials
   <vault>://Path/To/Entry      Config-defined: resolved via ~/.config/cloakenv/config.yaml`
 
@@ -265,7 +272,7 @@ Description:
 
 Arguments:
   <source>        Source vault URI or entry URI (e.g. work://, keepass://website/Test Website, env://)
-  <target>        Destination writable vault URI (e.g. keyring://my_service)
+  <target>        Destination writable vault URI (e.g. keyring://my_service, cache://sync)
 
 Flags:
   --dry-run       Preview additions, updates, and skips without writing

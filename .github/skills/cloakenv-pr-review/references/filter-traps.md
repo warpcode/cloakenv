@@ -11,7 +11,7 @@ Reviewers must consult these patterns whenever evaluating changes to `internal/p
 Vault providers in `internal/engine/provider_manager.go:initVaultProvider` must be wrapped in a deterministic sequence:
 
 ```
-Base Provider (keepass / yaml / json / custom_vault / search)
+Base Provider (keepass / yaml / json / custom_vault / env / pass / search)
   └── 1. FilteringProvider   (vault.IncludeFields, vault.ExcludeFields)
         └── 2. MappingProvider     (vault.Mapping)
               └── 3. KeyFormatProvider   (vault.KeyFormat)
@@ -19,8 +19,8 @@ Base Provider (keepass / yaml / json / custom_vault / search)
 ```
 
 ### Invariants
-- **All Providers Decorated**: Both direct providers (`keepass`, `yaml`, `json`, `custom_vault`) and virtual providers (`search`) must be wrapped by this decorator chain.
-- **Attributes Last**: `AttributesProvider` must wrap the provider **strictly after** filtering, mapping, and key formatting. This ensures `.attributes` and `.entries` exposed to text templates contain only authorized, post-filter fields (RSK-002, REQ-005).
+- **All Providers Decorated**: Both direct/configured providers (`keepass`, `yaml`, `json`, `custom_vault`, `env`, `pass`) and virtual providers (`search`) must be wrapped by this decorator chain.
+- **Attributes Last**: `AttributesProvider` must wrap the provider **strictly after** filtering, mapping, and key formatting. This ensures `.attributes` and `.entries` exposed to text templates contain only authorized, post-filter fields ([RSK-002](../../../../docs/plans/archive/2026-10-24-template-and-merge-consolidation.md#rsk-002-filter-bypass-via-meta-or-unfiltered-source-entries-in-templates-accepted), [REQ-005](../../../../docs/plans/archive/2026-10-24-template-and-merge-consolidation.md#req-005-per-entry-attributes-decorator-across-all-vaults-accepted--p0)).
 
 ---
 
@@ -58,7 +58,7 @@ from `MappingProvider.GetSecret`.
 
 ### The Failure Mode
 While removing the fallback prevented secret leaks, deleting it outright broke two documented resolution paths:
-1. **Bare `provider://entity` URIs**: Lost per-scheme default attribute resolution (`effectiveAttr := "Password"` for `keepass` at `filter.go:649` and `custom_vault` at `:713`).
+1. **Bare `provider://entity` URIs**: Lost per-scheme default attribute resolution (`effectiveAttr := "Password"` for `keepass` at `filter.go:807`, `pass` at `filter.go:897`, and `custom_vault` at `filter.go:961`).
 2. **Multi-Entity YAML/JSON `GetSecret`**: Could not resolve at all, because `getRawEntryWithPath` reaches entity-keyed `GetEntryWithPath` while `staticProvider.GetSecret` resolves dot paths against `rawContent`.
 
 ### Invariants
@@ -71,14 +71,14 @@ While removing the fallback prevented secret leaks, deleting it outright broke t
 
 ### What Happened
 In `internal/provider/filter.go`, `FilteringProvider.GetSecret` builds colon-qualified candidates:
-- `entryPath + ":" + effectiveAttr` (`filter.go:674`)
-- `entryTitle + ":" + effectiveAttr` (`filter.go:690`)
-- `entityLoc + ":" + effectiveAttr` (`filter.go:740`)
+- `entryPath + ":" + effectiveAttr` (`filter.go:832` for `keepass`, `filter.go:922` for `pass`)
+- `entryTitle + ":" + effectiveAttr` (`filter.go:848` for `keepass`, `filter.go:938` for `pass`)
+- `entityLoc + ":" + effectiveAttr` (`filter.go:988` for `custom_vault`)
 
 However, generic helper `FilterEntryWithPath` and `projectRecursive` construct dot paths only (`entity.attribute`).
 
 ### The Failure Mode
-If a provider wrapper authorizes access through the generic filter instead of the colon-qualified chain, the colon form of `exclude_fields` (documented at `README.md:587`, such as `website/Test Website:*` or `website/*:Password`) is silently unenforced the moment any wrapper is active.
+If a provider wrapper authorizes access through the generic filter instead of the colon-qualified chain, the colon form of `exclude_fields` (documented in [Field Filtering](../../../../README.md#6-field-filtering-include_fields-and-exclude_fields), such as `website/Test Website:*` or `website/*:Password`) is silently unenforced the moment any wrapper is active.
 
 ### Invariants
 - Any provider wrapper must either:
@@ -112,4 +112,4 @@ When both `include_fields` and `exclude_fields` are configured on a vault:
 
 1. **Decorator Sequence**: Universal decorator `NewAttributesProvider` must wrap vaults strictly after filtering and mapping so that `.attributes` and `.entries` exposed to templates contain only authorized, post-filter fields.
 2. **Composed Entities**: `CustomVaultProvider.GetSecret` must check `entity.IsComposed` and evaluate via `resolveEntity` so dynamic merges, filters, mappings, and templates are computed rather than returning raw static maps.
-3. **Child Command Safety**: `resolveCmdArgs` in `internal/engine/env_builder.go` selectively evaluates only bare known URIs or templates containing cloakenv function invocations (`get`, `entry`, `search`, `include`, `includeFile`). Foreign templates (e.g. Docker format flags `'{{.State.Status}}'`, Helm templates, or kubectl queries) must pass through completely untouched.
+3. **Child Command Safety**: `resolveCmdArgs` in `internal/engine/env_builder.go` selectively evaluates only bare known URIs or templates containing cloakenv function invocations (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`, `exec`, `shquote`, `shellQuote`). Foreign templates (e.g. Docker format flags `'{{.State.Status}}'`, Helm templates, or kubectl queries) must pass through completely untouched.

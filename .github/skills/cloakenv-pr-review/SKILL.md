@@ -37,7 +37,7 @@ Run the automated PR review bundle script before reading individual files:
 The script extracts a full audit bundle to `/tmp/cloakenv_pr_<n>_<timestamp>/` and outputs structured JSON covering:
 - PR base branch and commit SHAs.
 - Full diff against `origin/main` (`main.diff`) and diff against base (`base.diff`).
-- Workflow integrity checks (verifies `reject-empty-commit.yml`, `ci.yml`, and `semgrep.yml`).
+- Workflow integrity checks (verifies `ci.yml` and `semgrep.yml`).
 - Smuggled refactor scans (detects `regexCache.*sync\.Map` or deleted autoload rules).
 - Switch drift checks (verifies provider cases in `initVaultProvider`).
 - Sibling PR duplicate detection (detects matching blob hashes from concurrent bot sessions).
@@ -46,7 +46,7 @@ The script extracts a full audit bundle to `/tmp/cloakenv_pr_<n>_<timestamp>/` a
 
 1. Inspect the `base_branch` field in the bundle JSON:
    - If `base_branch` is `main`: CI workflows (`ci.yml` and `semgrep.yml`) executed on the PR head.
-   - If `base_branch` is NOT `main` (e.g. `tidy/*`): **CI did NOT run**! Only `reject-empty-commit.yml` ran.
+   - If `base_branch` is NOT `main` (e.g. `tidy/*`): **CI workflows (`ci.yml` and `semgrep.yml`) did NOT run**!
 2. When reviewing stacked or branch-based PRs:
    - Review `main.diff` in the payload directory rather than relying solely on the GitHub web UI diff.
    - Verify that all checks pass against `origin/main` before considering approval.

@@ -7,7 +7,7 @@ Thank you for contributing to `cloakenv`! We welcome bug reports, feature reques
 ## 🛠️ Development Setup & Workflow
 
 ### Prerequisites
-- Go 1.26.2+ (or version matching `go.mod`)
+- Go 1.26.6+ (or version matching `go.mod`)
 - Git
 - `make`
 
@@ -80,7 +80,10 @@ All commit messages must follow the [Conventional Commits](https://www.conventio
 - `docs`: Documentation updates or additions.
 - `test`: Adding or refactoring unit/integration tests or benchmarks.
 - `refactor`: Code changes that neither fix a bug nor add a feature.
-- `chore`: Maintenance tasks, dependency bumps, or tooling adjustments.
+- `perf`: Performance improvements.
+- `ci`: CI/CD workflow and automation updates.
+- `build`: Build system, Makefile, or dependency updates.
+- `chore`: Maintenance tasks or tooling adjustments.
 
 ### Examples:
 ```

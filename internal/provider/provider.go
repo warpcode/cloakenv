@@ -26,7 +26,7 @@ import (
 )
 
 // SecretProvider is the core abstraction for all credential backends.
-// Built-in providers (keyring://, env://) and remote-type providers
+// Built-in providers (keyring://, env://, cache://, pass://) and remote-type providers
 // (e.g., keepass) both implement this interface.
 type SecretProvider interface {
 	// Scheme returns the URI scheme this provider handles (e.g., "keyring", "env").
