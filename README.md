@@ -30,7 +30,6 @@
   - [`search` — Dynamic Querying Across Vaults](#search--dynamic-querying-across-vaults)
   - [`auth` — Manage Vault Authentication](#auth--manage-vault-authentication)
   - [`sync` — Cross-Vault Secret Synchronization](#sync--cross-vault-secret-synchronization)
-  - [`config` — Manage, Inspect & Validate Configuration](#config--manage-inspect--validate-configuration)
   - [`doctor` — Diagnose Environment & Vaults](#doctor--diagnose-environment--vaults)
   - [`completion` — Generate Shell Autocompletion Scripts](#completion--generate-shell-autocompletion-scripts)
   - [`version` — Print Build & Runtime Version](#version--print-build--runtime-version)
@@ -295,8 +294,7 @@ Commands:
   show    Retrieve and display a structured entry
   search  Search for structured entries across vaults
   auth    Manage vault credentials and status (login, forget, status)
-  config  Manage, inspect, and validate configuration (subcommands: check)
-  doctor  Diagnose environment and vault reachability
+  doctor  Diagnose environment, validate config, and check vault reachability
   completion  Generate shell autocompletion script (bash, zsh, fish, powershell)
   version Print build and runtime version information
   internal  Developer & hook helpers (match-alias, list-vaults)
@@ -618,45 +616,25 @@ cloakenv sync "work://production/db" "keyring://prod_db"
 
 ---
 
-### `config` — Manage, Inspect & Validate Configuration
+### `doctor` — Diagnose Environment & Vaults
 
-Inspects and validates configuration syntax, schema conformity, file existence, and template expressions.
+Validates YAML syntax, schema conformity, file existence, regexes, and template expressions, checks cache directory permissions (`0700` under `<UserCacheDir>/<keyring_prefix>`), and inspects provider dependencies and configured vault reachability without exposing secret values.
 
 ```bash
-cloakenv config check [--strict]
+cloakenv [-c config_path] doctor [--strict]
 ```
 
 #### Flags:
-- `--strict`: Enforce strict schema checking and reject unknown fields.
+- `--strict`: Enforce strict schema checking (reject unknown fields) and exit non-zero on warnings.
 
 #### Examples:
 
 ```bash
-# Validate default configuration file (~/.config/cloakenv/config.yaml)
-cloakenv config check
-
-# Validate a specific configuration file with strict schema enforcement
-cloakenv -c ./config.yaml config check --strict
-```
-
----
-
-### `doctor` — Diagnose Environment & Vaults
-
-Inspects the loaded configuration, checks cache directory permissions (`0700` under `<UserCacheDir>/<keyring_prefix>`), and validates configured vault files and KeePass key files without exposing secret values.
-
-```bash
-cloakenv [-c config_path] doctor
-```
-
-#### Examples:
-
-```bash
-# Run diagnostics against default configuration
+# Run diagnostics and validate default configuration (~/.config/cloakenv/config.yaml)
 cloakenv doctor
 
-# Run diagnostics against a custom configuration file
-cloakenv -c ./config.yaml doctor
+# Validate a specific configuration file with strict schema and warning enforcement
+cloakenv -c ./config.yaml doctor --strict
 ```
 
 ---

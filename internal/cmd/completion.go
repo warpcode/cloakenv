@@ -15,7 +15,7 @@ _cloakenv_complete() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="run get set delete cache show search auth sync internal config doctor completion version"
+    local commands="run get set delete cache show search auth sync internal doctor completion version"
 
     if [[ $cword -eq 1 ]]; then
         COMPREPLY=( $(compgen -W "${commands} -c -h --help -v --version" -- "$cur") )
@@ -88,15 +88,8 @@ _cloakenv_complete() {
                 COMPREPLY=( $(compgen -W "--dry-run --tags --prefix -r --regex --help -h" -- "$cur") )
             fi
             ;;
-        config)
-            if [[ $cword -eq 2 || ($cword -eq 4 && "${words[1]}" == "-c") ]]; then
-                COMPREPLY=( $(compgen -W "check --help -h" -- "$cur") )
-            elif [[ "${words[2]}" == "check" || "${words[4]}" == "check" ]]; then
-                COMPREPLY=( $(compgen -W "--strict --help -h" -- "$cur") )
-            fi
-            ;;
         doctor)
-            COMPREPLY=( $(compgen -W "--help -h" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--strict --help -h" -- "$cur") )
             ;;
         completion)
             COMPREPLY=( $(compgen -W "bash zsh fish powershell --help -h" -- "$cur") )
@@ -129,8 +122,7 @@ _cloakenv() {
         'search:Search for structured entries'
         'auth:Manage vault authentication'
         'sync:Cross-vault secret synchronization'
-        'config:Inspect and validate configuration'
-        'doctor:Diagnose environment and vault reachability'
+        'doctor:Diagnose environment, validate config, and check vault reachability'
         'completion:Generate shell autocompletion script'
         'version:Print version information'
         'internal:Internal helper commands'
@@ -157,9 +149,6 @@ _cloakenv() {
                     ;;
                 auth)
                     _values 'subcommand' login forget status
-                    ;;
-                config)
-                    _values 'subcommand' check
                     ;;
                 internal)
                     _values 'subcommand' match-alias list-vaults
@@ -195,8 +184,7 @@ complete -c cloakenv -n "__fish_use_subcommand" -a show -d "Retrieve and display
 complete -c cloakenv -n "__fish_use_subcommand" -a search -d "Search for structured entries"
 complete -c cloakenv -n "__fish_use_subcommand" -a auth -d "Manage vault authentication"
 complete -c cloakenv -n "__fish_use_subcommand" -a sync -d "Cross-vault secret synchronization"
-complete -c cloakenv -n "__fish_use_subcommand" -a config -d "Inspect and validate configuration"
-complete -c cloakenv -n "__fish_use_subcommand" -a doctor -d "Diagnose environment and vault reachability"
+complete -c cloakenv -n "__fish_use_subcommand" -a doctor -d "Diagnose environment, validate config, and check vault reachability"
 complete -c cloakenv -n "__fish_use_subcommand" -a completion -d "Generate shell completion script"
 complete -c cloakenv -n "__fish_use_subcommand" -a version -d "Print version information"
 complete -c cloakenv -n "__fish_use_subcommand" -a internal -d "Internal helper commands"
@@ -210,9 +198,8 @@ complete -c cloakenv -n "__fish_seen_subcommand_from cache" -a "clear prune"
 # auth subcommands
 complete -c cloakenv -n "__fish_seen_subcommand_from auth" -a "login forget status"
 
-# config subcommands
-complete -c cloakenv -n "__fish_seen_subcommand_from config" -a "check"
-complete -c cloakenv -n "__fish_seen_subcommand_from check" -l strict -d "Enforce strict schema validation"
+# doctor flags
+complete -c cloakenv -n "__fish_seen_subcommand_from doctor" -l strict -d "Enforce strict schema and warning checks"
 
 # internal subcommands
 complete -c cloakenv -n "__fish_seen_subcommand_from internal" -a "match-alias list-vaults"
@@ -236,7 +223,7 @@ const powershellCompletionScript = `Register-ArgumentCompleter -Native -CommandN
 
     $subcommands = @(
         'run', 'get', 'set', 'delete', 'cache',
-        'show', 'search', 'auth', 'sync', 'config',
+        'show', 'search', 'auth', 'sync',
         'doctor', 'completion', 'version', 'internal'
     )
 
@@ -260,11 +247,6 @@ const powershellCompletionScript = `Register-ArgumentCompleter -Native -CommandN
         }
         'auth' {
             @('login', 'forget', 'status') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
-                [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
-            }
-        }
-        'config' {
-            @('check') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
                 [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
             }
         }

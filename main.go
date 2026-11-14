@@ -84,6 +84,22 @@ func run(args []string, stderr io.Writer) int {
 		return 0
 	}
 
+	if parsedArgs[1] == "doctor" {
+		cfgPath := customConfigPath
+		if cfgPath == "" {
+			var pathErr error
+			cfgPath, pathErr = config.DefaultConfigPath()
+			if pathErr != nil {
+				return cmd.DoctorCmd(parsedArgs[2:], &config.Config{}, os.Stdout, stderr)
+			}
+		}
+		cfg, loadErr := loadConfig(cfgPath)
+		if loadErr != nil {
+			cfg = &config.Config{ConfigPath: cfgPath}
+		}
+		return cmd.DoctorCmd(parsedArgs[2:], cfg, os.Stdout, stderr)
+	}
+
 	cfg, err := loadConfig(customConfigPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "Config error: %v\n", err)
@@ -112,10 +128,6 @@ func run(args []string, stderr io.Writer) int {
 		return cmd.Auth(parsedArgs[2:], cfg)
 	case "sync":
 		return cmd.Sync(parsedArgs[2:], cfg)
-	case "config":
-		return cmd.ConfigCmd(parsedArgs[2:], customConfigPath, os.Stdout, stderr)
-	case "doctor":
-		return cmd.DoctorCmd(parsedArgs[2:], cfg, os.Stdout, stderr)
 	case "internal":
 		return cmd.Internal(parsedArgs[2:], cfg)
 	default:

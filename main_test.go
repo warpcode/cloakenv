@@ -92,6 +92,20 @@ func TestMainArgsParsing(t *testing.T) {
 			wantErr:  "",
 		},
 		{
+			name:     "doctor help",
+			args:     []string{"doctor", "--help"},
+			wantExit: 0,
+			wantOut:  "cloakenv doctor [--strict]",
+			wantErr:  "",
+		},
+		{
+			name:     "removed config command",
+			args:     []string{"config", "check"},
+			wantExit: 1,
+			wantOut:  "",
+			wantErr:  "Unknown command: config",
+		},
+		{
 			name:     "unknown command",
 			args:     []string{"unknown"},
 			wantExit: 1,
