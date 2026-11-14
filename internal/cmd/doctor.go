@@ -184,19 +184,30 @@ func DoctorCmd(args []string, cfg *config.Config, stdout, stderr io.Writer) int 
 						storeDir = filepath.Join(home, ".password-store")
 					}
 				}
+				if storeDir != "" {
+					if strings.HasPrefix(storeDir, "~/") {
+						if home, err := os.UserHomeDir(); err == nil {
+							storeDir = filepath.Join(home, storeDir[2:])
+						}
+					}
+					storeDir = filepath.Clean(storeDir)
+				}
 				if storeDir == "" {
 					fmt.Fprintln(stdout, "    [ERROR] Cannot determine password store directory")
 					hasErrors = true
-				} else if info, err := os.Stat(storeDir); err == nil {
-					if !info.IsDir() {
-						fmt.Fprintf(stdout, "    [ERROR] Password store path %q is not a directory\n", storeDir)
-						hasErrors = true
-					} else {
-						fmt.Fprintln(stdout, "    [OK] Password store directory exists and is accessible")
-					}
 				} else {
-					fmt.Fprintf(stdout, "    [ERROR] Password store directory not accessible: %v\n", err)
-					hasErrors = true
+					info, err := os.Stat(storeDir) //nolint:gosec // operator-configured password store directory or env var
+					if err == nil {
+						if !info.IsDir() {
+							fmt.Fprintf(stdout, "    [ERROR] Password store path %q is not a directory\n", storeDir)
+							hasErrors = true
+						} else {
+							fmt.Fprintln(stdout, "    [OK] Password store directory exists and is accessible")
+						}
+					} else {
+						fmt.Fprintf(stdout, "    [ERROR] Password store directory not accessible: %v\n", err)
+						hasErrors = true
+					}
 				}
 
 				if _, err := exec.LookPath("gpg"); err != nil {

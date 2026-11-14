@@ -24,7 +24,7 @@ func TestHelperProcess(t *testing.T) { //nolint:unparam // fixed signature requi
 	argsStr := os.Getenv("GO_MAIN_ARGS")
 	var args []string
 	if argsStr != "" {
-		args = strings.Split(argsStr, "\x00")
+		args = strings.Split(argsStr, "\x1f")
 	}
 
 	os.Args = append([]string{"cloakenv"}, args...)
@@ -126,7 +126,7 @@ func TestMainArgsParsing(t *testing.T) {
 			cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess")
 			cmd.Env = append(os.Environ(), "GO_WANT_MAIN_PROCESS=1")
 			if len(tt.args) > 0 {
-				cmd.Env = append(cmd.Env, "GO_MAIN_ARGS="+strings.Join(tt.args, "\x00"))
+				cmd.Env = append(cmd.Env, "GO_MAIN_ARGS="+strings.Join(tt.args, "\x1f"))
 			}
 
 			var stdout, stderr bytes.Buffer

@@ -258,3 +258,62 @@ func TestDoctorCmd_PassProviderDependencyCheck(t *testing.T) {
 		t.Fatalf("expected exit 1 when gpg missing with --strict, got %d\nstdout:\n%s", code, stdout.String())
 	}
 }
+
+func TestDoctorCmd_PassProviderTildeExpansion(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tempDir)
+	t.Setenv("HOME", tempDir)
+	t.Setenv("USERPROFILE", tempDir)
+	t.Setenv("LocalAppData", tempDir)
+	t.Setenv("PATH", t.TempDir())
+
+	envStoreDir := filepath.Join(tempDir, "env-pass-store")
+	if err := os.MkdirAll(envStoreDir, 0700); err != nil {
+		t.Fatalf("failed to create env pass store dir: %v", err)
+	}
+	vaultStoreDir := filepath.Join(tempDir, "vault-pass-store")
+	if err := os.MkdirAll(vaultStoreDir, 0700); err != nil {
+		t.Fatalf("failed to create vault pass store dir: %v", err)
+	}
+
+	cfgPath := filepath.Join(tempDir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte("vaults: {}\n"), 0600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	t.Run("PASSWORD_STORE_DIR with tilde prefix", func(t *testing.T) {
+		t.Setenv("PASSWORD_STORE_DIR", "~/env-pass-store")
+		cfg := &config.Config{
+			ConfigPath: cfgPath,
+			Vaults: map[string]config.VaultConfig{
+				"env_pass": {Provider: "pass"},
+			},
+		}
+		var stdout, stderr bytes.Buffer
+		if code := DoctorCmd([]string{}, cfg, &stdout, &stderr); code != 0 {
+			t.Fatalf("expected exit 0, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "[OK] Password store directory exists and is accessible") {
+			t.Errorf("expected OK pass store dir message, got:\n%s", stdout.String())
+		}
+	})
+
+	t.Run("in-memory VaultPath with tilde prefix", func(t *testing.T) {
+		cfg := &config.Config{
+			ConfigPath: cfgPath,
+			Vaults: map[string]config.VaultConfig{
+				"vault_pass": {
+					Provider:  "pass",
+					VaultPath: "~/vault-pass-store",
+				},
+			},
+		}
+		var stdout, stderr bytes.Buffer
+		if code := DoctorCmd([]string{}, cfg, &stdout, &stderr); code != 0 {
+			t.Fatalf("expected exit 0, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "[OK] Password store directory exists and is accessible") {
+			t.Errorf("expected OK pass store dir message, got:\n%s", stdout.String())
+		}
+	})
+}
