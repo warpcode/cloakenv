@@ -131,37 +131,37 @@ jobs:
 
           VERIFICATION_DOCS=$(cat <<EOF
 
-### Verification & Attestation
+          ### Verification & Attestation
 
-Release artifacts are cryptographically signed with [Sigstore/Cosign](https://github.com/sigstore/cosign) via GitHub Actions keyless OIDC, and attested with SLSA Level 3 build provenance.
+          Release artifacts are cryptographically signed with [Sigstore/Cosign](https://github.com/sigstore/cosign) via GitHub Actions keyless OIDC, and attested with SLSA Level 3 build provenance.
 
-**Verify Checksums with Cosign:**
-\`\`\`bash
-# Keyless verification with Sigstore bundle
-cosign verify-blob \\
-  --bundle checksums.txt.sigstore.json \\
-  --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \\
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \\
-  checksums.txt
+          **Verify Checksums with Cosign:**
+          \`\`\`bash
+          # Keyless verification with Sigstore bundle
+          cosign verify-blob \\
+            --bundle checksums.txt.sigstore.json \\
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \\
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \\
+            checksums.txt
 
-# Or verify with detached signature and certificate
-cosign verify-blob \\
-  --signature checksums.txt.sig \\
-  --certificate checksums.txt.pem \\
-  --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \\
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \\
-  checksums.txt
+          # Or verify with detached signature and certificate
+          cosign verify-blob \\
+            --signature checksums.txt.sig \\
+            --certificate checksums.txt.pem \\
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \\
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \\
+            checksums.txt
 
-# Verify archive integrity
-sha256sum --ignore-missing -c checksums.txt
-\`\`\`
+          # Verify archive integrity
+          sha256sum --ignore-missing -c checksums.txt
+          \`\`\`
 
-**Verify SLSA Build Provenance:**
-\`\`\`bash
-gh attestation verify <archive-filename> --owner ${GITHUB_REPOSITORY%/*}
-\`\`\`
-EOF
-)
+          **Verify SLSA Build Provenance:**
+          \`\`\`bash
+          gh attestation verify <archive-filename> --owner ${GITHUB_REPOSITORY%/*}
+          \`\`\`
+          EOF
+          )
 
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             cat <<EOF > release-notes.md
