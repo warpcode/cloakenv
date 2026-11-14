@@ -17,8 +17,7 @@ Usage:
   cloakenv [-c config_path] show <entry-uri> [args]
   cloakenv [-c config_path] search [query] [args]
   cloakenv [-c config_path] auth <login|forget|status> [vault]
-  cloakenv [-c config_path] config <subcommand> [flags]
-  cloakenv [-c config_path] doctor
+  cloakenv [-c config_path] doctor [--strict]
   cloakenv [-c config_path] completion <shell>
   cloakenv version
   cloakenv [-c config_path] internal <subcommand> [args]
@@ -33,8 +32,7 @@ Commands:
   show    Retrieve and display a structured entry
   search  Search for structured entries
   auth    Manage vault credentials and status (subcommands: login, forget, status)
-  config  Manage, inspect, and validate configuration (subcommands: check)
-  doctor  Diagnose environment and vault reachability
+  doctor  Diagnose environment, validate config, and check vault reachability
   completion  Generate shell autocompletion script (bash, zsh, fish, powershell)
   version Print build and runtime version information
   internal  Developer & hook helpers (subcommands: match-alias, list-vaults)
