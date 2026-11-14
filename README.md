@@ -693,7 +693,7 @@ cloakenv internal match-alias [--json] -- <command> [args]
 ```
 
 - Exits with code **0** if a match is found, **1** if no match.
-- `--json`: Output structured JSON with the matched rule details (`match`, `command`, `vaults`, `merge`, `env`, `whitelist`).
+- `--json`: Output structured JSON with the matched rule details (`matched`, `match`, `command`, `vaults`, `merge`, `env`, `whitelist`).
 
 #### Examples:
 
@@ -790,7 +790,15 @@ vaults:
   pass_store:
     provider: "pass"
     vault_path: "~/.password-store"
+
+  proc_env:
+    provider: "env"
+    include_fields: ["APP_*"]
 ```
+
+> [!NOTE]
+> **`env` provider (`provider: "env"`)**: Wraps the built-in `env://` process environment provider so you can apply `include_fields`, `exclude_fields`, `mapping`, `key_format`, `attributes`, and `cache` decorators to environment variables.
+> **HashiCorp Vault (`provider: "vault"`)**: `internal/provider/vault.go` and `VaultConfig` fields exist as an experimental, unregistered implementation and are not currently wired into `ProviderManager` or `cloakenv doctor`.
 
 #### 1. KeePass (`keepass`)
 - Points to any KeePass 2.x `.kdbx` file.
@@ -1363,8 +1371,11 @@ keyring:
 # ==========================================
 # Audit Logging Configuration
 # ==========================================
+# Disabled by default (enabled: false). When enabled, log directories and files
+# are created with 0700 and 0600 permissions, and each record includes:
+# timestamp, uri, target, caller, pid, uid, subcommand, and outcome (never secret values).
 audit:
-  # Opt-in compliance audit trail for secret access events.
+  # Opt-in compliance audit trail for secret access events (defaults to false).
   enabled: true
   # Defaults to ~/.config/cloakenv/audit.jsonl when omitted.
   log_path: "~/.config/cloakenv/audit.jsonl"

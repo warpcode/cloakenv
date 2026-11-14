@@ -34,5 +34,8 @@ Examples:
   cloakenv completion zsh > ~/.zsh/completion/_cloakenv
 
   # Fish
-  cloakenv completion fish > ~/.config/fish/completions/cloakenv.fish`)
+  cloakenv completion fish > ~/.config/fish/completions/cloakenv.fish
+
+  # PowerShell (add to your PowerShell profile)
+  cloakenv completion powershell | Out-String | Invoke-Expression`)
 }

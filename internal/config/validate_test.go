@@ -218,4 +218,41 @@ vaults:
 			t.Fatalf("expected env and pass providers to be valid, got errors: %v", res.Errors)
 		}
 	})
+
+	t.Run("autoload wildcard glob pattern passes validation while broken regex fails", func(t *testing.T) {
+		validGlobYAML := `autoload:
+  - match: "*.sh"
+    env:
+      FOO: "env://FOO"
+  - match: "npm run *"
+    env:
+      BAR: "env://BAR"`
+		cfgPath := filepath.Join(tempDir, "autoload_glob.yaml")
+		if err := os.WriteFile(cfgPath, []byte(validGlobYAML), 0600); err != nil {
+			t.Fatalf("failed to write autoload glob config: %v", err)
+		}
+		res, err := Validate(cfgPath, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.IsValid() {
+			t.Fatalf("expected wildcard glob autoload patterns to be valid, got errors: %v", res.Errors)
+		}
+
+		invalidRegexYAML := `autoload:
+  - match: "^(aws"
+    env:
+      FOO: "env://FOO"`
+		badPath := filepath.Join(tempDir, "autoload_bad_regex.yaml")
+		if err := os.WriteFile(badPath, []byte(invalidRegexYAML), 0600); err != nil {
+			t.Fatalf("failed to write invalid regex config: %v", err)
+		}
+		badRes, err := Validate(badPath, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if badRes.IsValid() {
+			t.Fatal("expected validation failure for malformed regex autoload pattern")
+		}
+	})
 }

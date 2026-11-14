@@ -228,14 +228,18 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 
 	// 4. Validate Autoload Rules
 	for i, rule := range cfg.Autoload {
-		if rule.Match == "" {
+		if strings.TrimSpace(rule.Match) == "" {
 			res.Errors = append(res.Errors, fmt.Sprintf("autoload rule #%d: missing 'match' pattern", i+1))
-		} else {
-			if _, err := regexp.Compile(rule.Match); err != nil {
-				res.Errors = append(res.Errors, fmt.Sprintf("autoload rule #%d: invalid regex pattern %q: %v", i+1, rule.Match, err))
-			}
+		} else if _, err := regexp.Compile(rule.Match); err != nil && !isWildcardAutoloadPattern(rule.Match) {
+			res.Errors = append(res.Errors, fmt.Sprintf("autoload rule #%d: invalid regex pattern %q: %v", i+1, rule.Match, err))
 		}
 	}
 
 	return res, nil
+}
+
+// isWildcardAutoloadPattern reports whether pattern is a plain '*' wildcard glob
+// (e.g., "*.sh") supported by engine autoload fallback matching without regex syntax.
+func isWildcardAutoloadPattern(pattern string) bool {
+	return strings.Contains(pattern, "*") && !strings.ContainsAny(pattern, "()[]{}+?^$|\\")
 }

@@ -47,7 +47,7 @@ Flags:
   -m entry-uri    Merge attributes from an entry into the environment. Can target a single attribute using :attribute (repeatable)
   -i KEY          Filter/whitelist keys or select output fields (repeatable)
   -f, --key-format format  Override attribute key formatting (none, env, snake, kebab)
-  -o, --output    Output format: keys, json, yaml, env (depends on command)
+  -o, --output    Output format: keys, json, yaml, env, text (depends on command)
   --vault vault   Scope search to a specific vault (repeatable)
   --ttl duration  Expiration duration for cache entries (e.g. 5m, 1h, set only)
 
@@ -109,7 +109,7 @@ func PrintSetHelp() {
 
 Description:
   Store a secret value at a writable URI. Currently only 'keyring://' and 'cache://' schemes are writable.
-  The secret value will be securely read from standard input (stdin).
+  When run in an interactive terminal, prompts for masked input with confirmation; otherwise reads from standard input (stdin).
 
 Arguments:
   <uri>           The secret URI where the value will be stored
