@@ -805,6 +805,7 @@ func TestOrchestrator_CyclicMergeDepthError(t *testing.T) {
 			vaults: map[string]config.VaultConfig{
 				"loop_vault": {
 					Provider:      "search",
+					Sources:       []string{"search://true"},
 					ResolveValues: true,
 				},
 			},
@@ -837,6 +838,7 @@ func TestOrchestrator_CyclicMergeDepthError(t *testing.T) {
 			vaults: map[string]config.VaultConfig{
 				"self_vault": {
 					Provider:      "search",
+					Sources:       []string{"search://true"},
 					ResolveValues: true,
 				},
 			},
