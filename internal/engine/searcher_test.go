@@ -43,7 +43,7 @@ func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 	}
 	if err := injectMockVault(orch, "env_vault", []provider.SearchResult{
 		{
-			Provider: "search", Vault: "my_repo", Path: "ssh_prod",
+			Provider: "env", Vault: "env_vault", Path: "ssh_prod",
 			Entry: provider.Entry{
 				Title: "Production SSH Key",
 				Tags:  []string{"auth:ssh", "env:prod"},
@@ -55,7 +55,7 @@ func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 			},
 		},
 		{
-			Provider: "search", Vault: "my_repo", Path: "ssh_staging",
+			Provider: "env", Vault: "env_vault", Path: "ssh_staging",
 			Entry: provider.Entry{
 				Title: "Staging SSH Key",
 				Tags:  []string{"auth:ssh", "env:staging", "deprecated"},
@@ -67,7 +67,7 @@ func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 			},
 		},
 		{
-			Provider: "search", Vault: "my_repo", Path: "ssh_minimal",
+			Provider: "env", Vault: "env_vault", Path: "ssh_minimal",
 			Entry: provider.Entry{
 				Title: "Minimal Key",
 				Tags:  []string{"auth:ssh"},

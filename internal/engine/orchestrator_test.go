@@ -785,39 +785,73 @@ func TestOrchestrator_GetEntries(t *testing.T) {
 }
 
 func TestOrchestrator_CyclicMergeDepthError(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
 	ctx := context.Background()
 
 	tests := []struct {
 		name       string
 		vaults     map[string]config.VaultConfig
+		mockVault  string
+		entries    []provider.SearchResult
 		targetURI  string
 		wantErrSub string
 	}{
 		{
 			name: "two entities mutually merging cause max depth error",
 			vaults: map[string]config.VaultConfig{
-				"vault_a": {
-					Provider: "search",
-					Sources:  []string{"vault_b://"},
-				},
-				"vault_b": {
-					Provider: "search",
-					Sources:  []string{"vault_a://"},
+				"loop_vault": {
+					Provider: "env",
 				},
 			},
-			targetURI:  "vault_a://entity_a",
-			wantErrSub: "maximum recursion depth exceeded",
+			mockVault: "loop_vault",
+			entries: []provider.SearchResult{
+				{
+					Provider: "env", Vault: "loop_vault", Path: "entity_a",
+					Entry: provider.Entry{
+						Title: "Entity A",
+						Attributes: map[string]any{
+							"attr": `{{ get "loop_vault://entity_b:attr" }}`,
+						},
+					},
+				},
+				{
+					Provider: "env", Vault: "loop_vault", Path: "entity_b",
+					Entry: provider.Entry{
+						Title: "Entity B",
+						Attributes: map[string]any{
+							"attr": `{{ get "loop_vault://entity_a:attr" }}`,
+						},
+					},
+				},
+			},
+			targetURI:  "loop_vault://entity_a",
+			wantErrSub: "reached max depth 5",
 		},
 		{
 			name: "self-merging composed entity causes max depth error",
 			vaults: map[string]config.VaultConfig{
 				"self_vault": {
-					Provider: "search",
-					Sources:  []string{"self_vault://"},
+					Provider: "env",
+				},
+			},
+			mockVault: "self_vault",
+			entries: []provider.SearchResult{
+				{
+					Provider: "env", Vault: "self_vault", Path: "self_loop",
+					Entry: provider.Entry{
+						Title: "Self Loop",
+						Attributes: map[string]any{
+							"attr": `{{ get "self_vault://self_loop:attr" }}`,
+						},
+					},
 				},
 			},
 			targetURI:  "self_vault://self_loop",
-			wantErrSub: "maximum recursion depth exceeded",
+			wantErrSub: "reached max depth 5",
 		},
 	}
 
@@ -827,6 +861,9 @@ func TestOrchestrator_CyclicMergeDepthError(t *testing.T) {
 			orch, err := NewOrchestrator(cfg)
 			if err != nil {
 				t.Fatalf("failed to create orchestrator: %v", err)
+			}
+			if err := orch.InjectMockVaultForTest(tt.mockVault, tt.entries); err != nil {
+				t.Fatalf("failed to inject mock vault: %v", err)
 			}
 			_, err = orch.GetEntry(ctx, tt.targetURI)
 			if err == nil {

@@ -1081,11 +1081,133 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		return serializeVal(rawVal)
 
 	default:
+		if searchable, ok := f.underlying.(SearchableProvider); ok {
+			return f.getStructuredSecret(ctx, location, searchable)
+		}
 		if len(f.includeFields) > 0 || len(f.excludeFields) > 0 {
 			return "", fmt.Errorf("field filtering is not supported for provider scheme %q", f.underlying.Scheme())
 		}
 		return f.underlying.GetSecret(ctx, location)
 	}
+}
+
+func (f *FilteringProvider) getStructuredSecret(ctx context.Context, location string, searchable SearchableProvider) (string, error) {
+	effectiveAttr := "Password"
+	entityLoc := location
+	if strings.Contains(location, ":") {
+		parts := strings.SplitN(location, ":", 2)
+		entityLoc = parts[0]
+		effectiveAttr = parts[1]
+	} else if strings.Contains(location, ".") {
+		cleanLoc := normalizeDotPath(location)
+		dotParts := strings.Split(cleanLoc, ".")
+		entityLoc = dotParts[0]
+		effectiveAttr = strings.Join(dotParts[1:], ".")
+	}
+	if effectiveAttr == "" {
+		return "", fmt.Errorf("field %q is excluded by vault configuration", "")
+	}
+	leafAttr := effectiveAttr
+	if lastDot := strings.LastIndex(effectiveAttr, "."); lastDot >= 0 {
+		leafAttr = effectiveAttr[lastDot+1:]
+	}
+
+	var entryTitle string
+	if entityLoc != "" {
+		t, err := f.getCachedEntryTitle(ctx, entityLoc)
+		if err != nil {
+			return "", fmt.Errorf("%s provider: failed to resolve entry title for %q: %w", f.underlying.Scheme(), entityLoc, err)
+		}
+		entryTitle = t
+	}
+
+	var candidates []string
+	candidates = append(candidates, effectiveAttr, location)
+	if entityLoc != "" {
+		candidates = append(candidates, entityLoc, entityLoc+"."+effectiveAttr, entityLoc+":"+effectiveAttr)
+		cleanLoc := normalizeDotPath(entityLoc)
+		if cleanLoc != "" && cleanLoc != entityLoc {
+			candidates = append(candidates, cleanLoc, cleanLoc+"."+effectiveAttr)
+		}
+		dotParts := strings.Split(entityLoc, ".")
+		for i := 1; i < len(dotParts); i++ {
+			candidates = append(candidates, strings.Join(dotParts[:i], "."))
+		}
+		slashParts := strings.Split(entityLoc, "/")
+		for i := 1; i < len(slashParts); i++ {
+			candidates = append(candidates, strings.Join(slashParts[:i], "/"))
+		}
+		fullField := entityLoc + "." + effectiveAttr
+		segments := strings.Split(fullField, ".")
+		for i := 1; i < len(segments); i++ {
+			candidates = append(candidates, strings.Join(segments[:i], "."))
+		}
+	}
+	if entryTitle != "" && entryTitle != entityLoc {
+		candidates = append(candidates, entryTitle, entryTitle+"."+effectiveAttr, entryTitle+":"+effectiveAttr)
+		cleanTitle := normalizeDotPath(entryTitle)
+		if cleanTitle != "" && cleanTitle != entryTitle {
+			candidates = append(candidates, cleanTitle, cleanTitle+"."+effectiveAttr)
+		}
+		dotParts := strings.Split(entryTitle, ".")
+		for i := 1; i < len(dotParts); i++ {
+			candidates = append(candidates, strings.Join(dotParts[:i], "."))
+		}
+		slashParts := strings.Split(entryTitle, "/")
+		for i := 1; i < len(slashParts); i++ {
+			candidates = append(candidates, strings.Join(slashParts[:i], "/"))
+		}
+		fullTitleField := entryTitle + "." + effectiveAttr
+		segments := strings.Split(fullTitleField, ".")
+		for i := 1; i < len(segments); i++ {
+			candidates = append(candidates, strings.Join(segments[:i], "."))
+		}
+	}
+
+	var cleanCandidates []string
+	for _, c := range candidates {
+		if c != "" {
+			cleanCandidates = append(cleanCandidates, normalizeDotPath(c))
+		}
+	}
+
+	var ancestorCandidates []string
+	basePaths := []string{location}
+	if entityLoc != "" {
+		basePaths = append(basePaths, entityLoc)
+	}
+	for _, bp := range basePaths {
+		segments := strings.Split(normalizeDotPath(bp), ".")
+		for i := 1; i < len(segments); i++ {
+			ancestorCandidates = append(ancestorCandidates, strings.Join(segments[:i], "."))
+		}
+	}
+
+	allExcludeCandidates := make([]string, 0, len(cleanCandidates)+len(ancestorCandidates))
+	allExcludeCandidates = append(allExcludeCandidates, cleanCandidates...)
+	allExcludeCandidates = append(allExcludeCandidates, ancestorCandidates...)
+
+	if len(f.excludeFields) > 0 {
+		for _, pattern := range f.excludeFields {
+			if pattern == "*" && len(f.includeFields) > 0 {
+				continue
+			}
+			if matchPattern(pattern, leafAttr) {
+				return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
+			}
+			for _, c := range allExcludeCandidates {
+				if matchPattern(pattern, c) {
+					return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
+				}
+			}
+		}
+	}
+
+	if !isFieldAuthorized(leafAttr, cleanCandidates, f.includeFields, f.excludeFields) {
+		return "", fmt.Errorf("field %q is excluded by vault configuration", leafAttr)
+	}
+
+	return f.underlying.GetSecret(ctx, location)
 }
 
 // normalizeDotPath strips empty components from a dot-separated path (e.g. "a..b" -> "a.b").
