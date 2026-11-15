@@ -150,7 +150,7 @@ func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 	})
 
 	t.Run("SearchExprByMetaProviderAndVault", func(t *testing.T) {
-		results, err := orch.Search(ctx, `_meta_.provider == "env" and _meta_.vault == "env_vault" and "env:prod" in _meta_.tags`, nil)
+		results, err := orch.Search(ctx, `_meta_.provider == "search" and _meta_.vault == "env_vault" and "env:prod" in _meta_.tags`, nil)
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
