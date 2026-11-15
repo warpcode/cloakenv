@@ -804,7 +804,8 @@ func TestOrchestrator_CyclicMergeDepthError(t *testing.T) {
 			name: "two entities mutually merging cause max depth error",
 			vaults: map[string]config.VaultConfig{
 				"loop_vault": {
-					Provider: "env",
+					Provider:      "env",
+					ResolveValues: true,
 				},
 			},
 			mockVault: "loop_vault",
@@ -835,7 +836,8 @@ func TestOrchestrator_CyclicMergeDepthError(t *testing.T) {
 			name: "self-merging composed entity causes max depth error",
 			vaults: map[string]config.VaultConfig{
 				"self_vault": {
-					Provider: "env",
+					Provider:      "env",
+					ResolveValues: true,
 				},
 			},
 			mockVault: "self_vault",

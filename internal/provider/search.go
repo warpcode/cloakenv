@@ -433,9 +433,17 @@ func (s *SearchProvider) Search(ctx context.Context, query SearchQuery) ([]Searc
 
 	for _, r := range rawResults {
 		if matchEntry(r.Entry, r.Path, query, queryTitleLower, queryPathLower, queryTagsLower) {
+			providerName := "search"
+			if r.Provider != "" {
+				providerName = r.Provider
+			}
+			vaultName := s.vaultName
+			if r.Vault != "" {
+				vaultName = r.Vault
+			}
 			res := SearchResult{
-				Provider: "search",
-				Vault:    s.vaultName,
+				Provider: providerName,
+				Vault:    vaultName,
 				Path:     r.Path,
 				Entry:    r.Entry,
 			}
