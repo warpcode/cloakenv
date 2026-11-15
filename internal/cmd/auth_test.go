@@ -174,7 +174,7 @@ func TestAuth_Login(t *testing.T) {
 		{
 			name:          "unsupported scheme",
 			args:          []string{"login", "dummy"},
-			expectedError: "Authentication failed: vault/scheme \"dummy\" of type \"json\" does not support authentication",
+			expectedError: "Authentication failed: vault/scheme \"dummy\" of type \"env\" does not support authentication",
 			expectedCode:  1,
 		},
 		{
@@ -266,7 +266,7 @@ func TestAuth_Forget(t *testing.T) {
 		{
 			name:          "unsupported scheme",
 			args:          []string{"forget", "dummy"},
-			expectedError: "Failed to clear credentials: vault/scheme \"dummy\" of type \"json\" does not support authentication",
+			expectedError: "Failed to clear credentials: vault/scheme \"dummy\" of type \"env\" does not support authentication",
 			expectedCode:  1,
 		},
 		{

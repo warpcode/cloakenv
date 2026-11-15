@@ -661,8 +661,8 @@ func TestSearch(t *testing.T) {
 			Title: "Production SSH Key",
 			Tags:  "auth:ssh, env:prod",
 			Attributes: map[string]string{
-				"USERNAME":     "deploy",
-				"BIT_STRENGTH": "4096",
+				"username":     "deploy",
+				"bit_strength": "4096",
 			},
 		})
 		cfg := &config.Config{

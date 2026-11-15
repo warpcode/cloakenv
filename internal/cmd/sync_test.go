@@ -114,9 +114,8 @@ func TestSyncCommand(t *testing.T) {
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"mock_vault": {
-					Provider:      "keepass",
-					VaultPath:     dbPath,
-					IncludeFields: []string{"API_KEY"},
+					Provider:  "keepass",
+					VaultPath: dbPath,
 				},
 			},
 		}

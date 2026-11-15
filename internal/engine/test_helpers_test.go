@@ -91,7 +91,14 @@ func decorateTestVaultProvider(pm *ProviderManager, vaultName string, vault conf
 		p = provider.NewKeyFormatProvider(p, kf)
 	}
 	if len(vault.Attributes) > 0 {
-		p = provider.NewAttributesProvider(p, vault.Attributes, renderTemplate)
+		p = provider.NewAttributesProvider(p, vault.Attributes)
+		if renderTemplate != nil {
+			if tr, ok := p.(interface {
+				SetRenderTemplateFunc(provider.TemplateRenderFunc)
+			}); ok {
+				tr.SetRenderTemplateFunc(renderTemplate)
+			}
+		}
 	}
 	if vault.Cache.Enabled {
 		ttl := 5 * time.Minute
@@ -102,15 +109,14 @@ func decorateTestVaultProvider(pm *ProviderManager, vaultName string, vault conf
 		}
 		mode := provider.CacheModeKeyring
 		if vault.Cache.Mode != "" {
-			mode = provider.CacheMode(strings.ToLower(vault.Cache.Mode))
+			mode = strings.ToLower(vault.Cache.Mode)
 		}
 		var err error
 		p, err = provider.NewCachingProvider(p, provider.CachingConfig{
-			VaultName:       vaultName,
-			TTL:             ttl,
-			Mode:            mode,
-			KeyringPrefix:   pm.config.KeyringPrefix(),
-			EntitiesRootKey: vault.EntitiesRootKey,
+			VaultName:     vaultName,
+			TTL:           ttl,
+			Mode:          mode,
+			KeyringPrefix: pm.config.KeyringPrefix(),
 		})
 		if err != nil {
 			return nil, err
