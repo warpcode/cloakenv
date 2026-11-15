@@ -24,8 +24,7 @@ func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"my_repo": {
-				Provider:      "search",
-				Sources:       []string{"env://"},
+				Provider:      "keepass",
 				ResolveValues: true,
 			},
 		},

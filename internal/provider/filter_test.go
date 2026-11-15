@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-
 	"github.com/zalando/go-keyring"
 )
 

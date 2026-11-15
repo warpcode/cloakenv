@@ -29,9 +29,6 @@ func (f *failInitProvider) GetEntry(_ context.Context, _ string) (provider.Entry
 	return provider.Entry{}, nil
 }
 
-func boolPtr(b bool) *bool {
-	return &b
-}
 
 type mockCacheProvider struct {
 	clearCalled bool

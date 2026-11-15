@@ -24,20 +24,6 @@ func TestBuildMergedEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "aws_dev", []provider.SearchResult{
-		{Provider: "search", Vault: "aws_dev", Path: "aws", Entry: provider.Entry{Title: "aws", Attributes: map[string]any{
-			"AWS_ACCESS_KEY_ID":     "AKIA1111",
-			"AWS_SECRET_ACCESS_KEY": "secret1111",
-			"EXTRA_VAR":             "should_be_filtered",
-		}}},
-	}); err != nil {
-		t.Fatalf("injectMockVault(aws_dev) failed: %v", err)
-	}
-	if err := injectMockVault(orch, "k8s_vault", []provider.SearchResult{
-		{Provider: "search", Vault: "k8s_vault", Path: "staging", Entry: provider.Entry{Title: "staging", Attributes: map[string]any{"KUBECONFIG": "/path/to/staging.conf"}}},
-	}); err != nil {
-		t.Fatalf("injectMockVault(k8s_vault) failed: %v", err)
-	}
 	if err := injectMockVault(orch, "vaultA", []provider.SearchResult{
 		{
 			Provider: "search", Vault: "vaultA", Path: "entry1",
@@ -45,6 +31,13 @@ func TestBuildMergedEntry(t *testing.T) {
 				Title:      "entry1",
 				Tags:       []string{"tagA", "commonTag"},
 				Attributes: map[string]any{"user": "userA", "pass": "passA"},
+			},
+		},
+		{
+			Provider: "search", Vault: "vaultA", Path: "entry_extra",
+			Entry: provider.Entry{
+				Title:      "entry_extra",
+				Attributes: map[string]any{"k": "v"},
 			},
 		},
 	}); err != nil {
@@ -359,8 +352,8 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"aws_dev":   {Provider: "env"},
-			"k8s_vault": {Provider: "env"},
+			"aws_dev":   {Provider: "keepass"},
+			"k8s_vault": {Provider: "keepass"},
 		},
 		Autoload: []config.AutoloadRule{
 			{
@@ -384,6 +377,20 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "aws_dev", []provider.SearchResult{
+		{Provider: "search", Vault: "aws_dev", Path: "aws", Entry: provider.Entry{Title: "aws", Attributes: map[string]any{
+			"AWS_ACCESS_KEY_ID":     "AKIA1111",
+			"AWS_SECRET_ACCESS_KEY": "secret1111",
+			"EXTRA_VAR":             "should_be_filtered",
+		}}},
+	}); err != nil {
+		t.Fatalf("injectMockVault(aws_dev) failed: %v", err)
+	}
+	if err := injectMockVault(orch, "k8s_vault", []provider.SearchResult{
+		{Provider: "search", Vault: "k8s_vault", Path: "staging", Entry: provider.Entry{Title: "staging", Attributes: map[string]any{"KUBECONFIG": "/path/to/staging.conf"}}},
+	}); err != nil {
+		t.Fatalf("injectMockVault(k8s_vault) failed: %v", err)
 	}
 
 	t.Run("Matching command autoloads vaults, env, and applies whitelist", func(t *testing.T) {

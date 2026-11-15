@@ -552,7 +552,6 @@ func TestSearchProvider_GetSecretWithRaw(t *testing.T) {
 	}
 }
 
-
 func TestSearchProvider_Sources(t *testing.T) {
 	ctx := context.Background()
 

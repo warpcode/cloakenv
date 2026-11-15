@@ -642,7 +642,6 @@ func TestRun_DryRun(t *testing.T) {
 	})
 }
 
-
 func TestRun_HelpFlag(t *testing.T) {
 	if os.Getenv("GO_WANT_RUN_HELP_SUBPROCESS") == "1" {
 		var args []string

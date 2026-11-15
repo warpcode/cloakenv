@@ -35,8 +35,7 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 		},
 		Vaults: map[string]config.VaultConfig{
 			"vault_a": {
-				Provider:      "search",
-				Sources:       []string{"env://"},
+				Provider:      "keepass",
 				ResolveValues: true,
 			},
 		},
