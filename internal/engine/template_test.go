@@ -23,6 +23,7 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	boolTrue := true
 	cfg := &config.Config{
 		ConfigPath: filepath.Join(tmpDir, "config.yaml"),
 		Templates: map[string]config.TemplateConfig{
@@ -36,7 +37,7 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"vault_a_src": {
 				Provider:   "env",
-				Searchable: boolPtr(true),
+				Searchable: &boolTrue,
 			},
 			"vault_a": {
 				Provider:      "search",
