@@ -4,7 +4,7 @@
 > **Testdata credentials are strictly for automated testing and local development.**
 > These credentials and certificates must NEVER be used in production environments or deployed infrastructure.
 
-This directory houses static database fixtures, YAML/JSON configuration files, and environment templates used across `cloakenv` unit tests, integration tests, and performance benchmarks.
+This directory houses encrypted database fixtures, sample configuration files, and environment templates used across `cloakenv` unit tests, integration tests, and performance benchmarks.
 
 ---
 
@@ -67,14 +67,6 @@ cloakenv -c testdata/test_config.yaml auth forget testdb
 | `test_config.yaml` | Sample configuration mapping `testdb` vault to `testDB.kdbx`. |
 | `test_keepass_config.yaml` | Minimal configuration for KeePass provider tests. |
 | `test_search_config.yaml` | Search provider configuration testing stored queries over `testdb`. |
-| `test_custom_config.yaml` | Composed and flat custom vault entity test definitions. |
-| `test_custom_json_config.yaml` | Custom vault entity definitions referencing JSON sources. |
-| `test_entries.yaml` | Static YAML provider fixture containing structured records. |
-| `test_hosts.yaml` | YAML multi-host fixture for static path and filter tests. |
-| `test_hosts.json` | JSON equivalent of `test_hosts.yaml`. |
-| `test_root.yaml` | Root-keyed static fixture for `entities_root_key` testing. |
-| `test_commands_config.yaml` | Autoload command matching and alias test rules. |
-| `test_invalid_key_config.yaml` | Configuration fixture verifying error handling on invalid keys. |
 | `invalid_config.yaml` | Malformed YAML fixture testing config unmarshaling errors. |
 | `test_env.txt` | Environment variable template fixture. |
 | `test_env_override.txt` | Environment override test fixture. |

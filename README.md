@@ -38,16 +38,14 @@
   - [Built-In Providers (Zero Setup)](#built-in-providers-zero-setup)
   - [Configured Vaults](#configured-vaults)
     - [1. KeePass (`keepass`)](#1-keepass-keepass)
-    - [2. YAML (`yaml`) & JSON (`json`)](#2-yaml-yaml--json-json)
-    - [3. Custom Vault (`custom_vault`)](#3-custom-vault-custom_vault)
-    - [4. Password Store (`pass`)](#4-password-store-pass)
-    - [5. Stored Search Vault (`search`)](#5-stored-search-vault-search)
-    - [6. Field Filtering (`include_fields` and `exclude_fields`)](#6-field-filtering-include_fields-and-exclude_fields)
-    - [7. Field Key Mapping (`mapping`)](#7-field-key-mapping-mapping)
-    - [8. Key Formatting (`key_format`)](#8-key-formatting-key_format)
-    - [9. Universal Per-Entry Attributes Decorator (`attributes`)](#9-universal-per-entry-attributes-decorator-attributes)
-    - [10. KeePass Placeholders & Cross-Entry References (`resolve_references`)](#10-keepass-placeholders--cross-entry-references-resolve_references)
-    - [11. Transparent Per-Vault Caching (`cache`)](#11-transparent-per-vault-caching-cache)
+    - [2. Password Store (`pass`)](#2-password-store-pass)
+    - [3. Stored Search Vault (`search`)](#3-stored-search-vault-search)
+    - [4. Field Filtering (`include_fields` and `exclude_fields`)](#4-field-filtering-include_fields-and-exclude_fields)
+    - [5. Field Key Mapping (`mapping`)](#5-field-key-mapping-mapping)
+    - [6. Key Formatting (`key_format`)](#6-key-formatting-key_format)
+    - [7. Universal Per-Entry Attributes Decorator (`attributes`)](#7-universal-per-entry-attributes-decorator-attributes)
+    - [8. KeePass Placeholders & Cross-Entry References (`resolve_references`)](#8-keepass-placeholders--cross-entry-references-resolve_references)
+    - [9. Transparent Per-Vault Caching (`cache`)](#9-transparent-per-vault-caching-cache)
 - [Template Engine & FuncMap Reference](#template-engine--funcmap-reference)
 - [Command Autoloading & Alias Masking](#command-autoloading--alias-masking)
 - [Search Query Language Reference](#search-query-language-reference)
@@ -66,7 +64,7 @@ Managing application credentials usually forces bad trade-offs:
 
 `cloakenv` provides a single, uniform abstraction:
 - **Zero Disk Persistence**: Secrets are decrypted into process memory only for the duration of the child process.
-- **Universal URI Scheme**: Access any backend with the same syntax (`keyring://...`, `keepass://...`, `yaml://...`, `env://...`, `cache://...`).
+- **Universal URI Scheme**: Access any backend with the same syntax (`keyring://...`, `keepass://...`, `pass://...`, `env://...`, `cache://...`).
 - **Template Hydration**: Inject whole `.env` templates containing `{{ ... }}` secret expansions and Go templates on the fly.
 - **Command Autoloading**: Automatically attach the right credentials whenever specific CLI commands (like `aws`, `kubectl`, or custom tools) run.
 - **Cross-Platform**: Full support for Linux, macOS, and Windows.
@@ -90,7 +88,7 @@ flowchart TD
         OSKeyring["OS Keyring (Keychain / Secret Service / Credential Mgr)"]
         KeePass["KeePass .kdbx (AES Decryption)"]
         EncCache["Local AES-256 GCM Cache"]
-        YAML_JSON["Static YAML / JSON Vaults"]
+        Pass["Unix Password Store (pass / GPG)"]
         Env["Process Environment"]
     end
 
@@ -214,8 +212,8 @@ Every secret is referenced through a typed URI formatted as:
 $$\text{scheme://path/to/entry[:attribute]}$$
 
 - **Scheme**: Identifies either a built-in provider (`keyring`, `env`, `cache`, `pass`, `search`) or a user-defined vault name from `config.yaml` (`work`, `home`, `staging_db`).
-- **Path**: Location of the credential within that provider (e.g. `service/account` for keyrings, `Group/Entry` for KeePass, `key.subkey` for JSON/YAML).
-- **Attribute** *(optional)*: Specific field to retrieve (e.g., `:Password`, `:UserName`, `:api_token`, or `:attachment.txt`). Defaults to `:Password` if omitted for KeePass and custom vaults.
+- **Path**: Location of the credential within that provider (e.g. `service/account` for keyrings, `Group/Entry` for KeePass, `folder/entry` for pass).
+- **Attribute** *(optional)*: Specific field to retrieve (e.g., `:Password`, `:UserName`, `:api_token`, or `:attachment.txt`). Defaults to `:Password` if omitted for KeePass, `pass`, and `search` vaults.
 
 Examples:
 ```text
@@ -225,7 +223,7 @@ cache://session_token
 my_vault://Production/Database:Password
 my_vault://Production/Database:UserName
 my_vault://Production/SSH_Keys:id_rsa.pub
-json_db://servers.bastion.hostname
+pass://production/database:username
 ```
 
 ---
@@ -241,10 +239,9 @@ cloakenv run -e DATABASE_URL='postgres://{{ get "env://DB_USER" }}:{{ get "keyri
 #### Core Template Mechanics:
 1. **Unified Go `text/template` Engine**: Expressions use standard Go template syntax `{{ ... }}` with strict key checking (`missingkey=error`). Referencing an undefined attribute or field aborts with a descriptive error instead of outputting `<no value>`.
 2. **Explicit Secret Retrieval**: Use `{{ get "scheme://..." }}` to fetch a secret string from any vault or built-in provider.
-3. **Structured Context (`.`)**: Attribute and composed vault templates receive a structured dot context containing:
+3. **Structured Context (`.`)**: Per-vault `attributes:` templates receive a structured dot context containing:
    - **`.meta` / `.Meta`**: Entry metadata map (`Title`/`title`, `Tags`/`tags`, `UUID`/`uuid`, `Vault`/`vault`, `Provider`/`provider`, `Path`/`path`, `Group`/`group`).
    - **`.attributes` / `.Attributes`**: Entry attributes after field filtering, mapping, and key formatting.
-   - **`.entries` / `.Entries`**: Slice of upstream source entry contexts when resolving composed `custom_vault` entities.
 4. **Child Command Argument Pass-Through Safety (`resolveCmdArgs`)**:
    When `cloakenv run` executes child processes, command-line arguments are safely inspected:
    - Arguments that are bare known `scheme://...` URIs or templates invoking `cloakenv` functions (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`, `exec`, `shquote`, `shellQuote`) are resolved before process execution.
@@ -731,7 +728,7 @@ These providers are always available and do not require registration in `config.
 
 #### Dynamic `search://` URI Scheme Example:
 
-`search://` queries support both URL parameter syntax and Go Expr syntax (`in`, `==`, `!=`) interchangeably across `cloakenv get` and `custom_vault` `merge:`.
+`search://` queries support both URL parameter syntax and Go Expr syntax (`in`, `==`, `!=`) interchangeably across `cloakenv get`, `cloakenv search`, and `search` vault `sources:`.
 
 ```bash
 # Dynamically finds the entry with tags "env:prod" and "service:redis" and extracts its Password (URL query parameters)
@@ -753,7 +750,7 @@ cloakenv get "search://notes=/Password"
 > [!NOTE]
 > The query section ends at the **last** `/` of the URI, which starts the requested
 > attribute (defaulting to `Password` if omitted). Both URL parameter and Expr expressions
-> work interchangeably in `get` and `custom_vault` `merge:`. Literal `/` and `&` inside a URL query
+> work interchangeably in `get`, `search`, and `search` vault `sources:`. Literal `/` and `&` inside a URL query
 > value must be percent-encoded as `%2F` and `%26` (and a literal `%` as `%25`). In URL parameter
 > queries, `title` and `path` parameters use substring matching; all other parameters (including
 > `group`) match exactly, with numeric and boolean values compared type-coerced.
@@ -770,26 +767,14 @@ vaults:
     provider: "keepass"
     vault_path: "~/secrets/work.kdbx"
 
-  infra_yaml:
-    provider: "yaml"
-    vault_path: "~/secrets/infra.yaml"
-    entities_root_key: "entries"
-
-  hosts_json:
-    provider: "json"
-    vault_path: "~/secrets/hosts.json"
-    entities_root_key: "hosts"
-
-  static_vault:
-    provider: "custom_vault"
-    entities:
-      database:
-        username: "postgres"
-        Password: '{{ get "keyring://db/prod_password" }}'
-
   pass_store:
     provider: "pass"
     vault_path: "~/.password-store"
+
+  openrouter:
+    provider: "search"
+    source_vaults: ["work"]
+    query: '"service:openrouter" in tags'
 
   proc_env:
     provider: "env"
@@ -807,7 +792,7 @@ vaults:
 - **Virtual Metadata Attributes**: KeePass entries expose virtual metadata attributes via `GetSecret` (e.g. `work://website/Test Website:UUID`, `work://website/Test Website:uuid`, `work://website/Test Website:group`, `work://website/Test Website:group_name`, `work://website/Test Website:group_uuid`, `work://website/Test Website:group_path`). Custom string fields take precedence over virtual metadata attributes.
 - **Key Files (`key_file` / `key_file_env`)**: Configure `key_file` with a path to a `.key`, `.keyx`, or raw KeePass key file, or set `key_file_env` to the name of an environment variable holding that path (overrides `key_file` when non-empty).
 - **File Attachments**: Directly stream binary attachments by name (e.g. `vault://SSH/Keys:id_rsa`).
-- **Placeholder & Reference Resolution**: Set `resolve_references: true` in `config.yaml` to enable `{TITLE}`, `{REF:...}`, `{T-CONV:...}`, `{URL:...}`, and date/time expansion (see [KeePass Placeholders & Cross-Entry References](#10-keepass-placeholders--cross-entry-references-resolve_references)).
+- **Placeholder & Reference Resolution**: Set `resolve_references: true` in `config.yaml` to enable `{TITLE}`, `{REF:...}`, `{T-CONV:...}`, `{URL:...}`, and date/time expansion (see [KeePass Placeholders & Cross-Entry References](#8-keepass-placeholders--cross-entry-references-resolve_references)).
 
 ##### Placeholder Expansion & Field References
 `cloakenv` supports resolving field placeholders and cross-entry references embedded inside KeePass field values:
@@ -834,60 +819,7 @@ vaults:
 > - **Accidental Overwrite Risk**: Users opening the database in KeePass/KeePassXC may see unexpanded text and attempt to "correct" or overwrite the field, accidentally destroying the placeholder logic.
 > - **Authoring Recommendation**: Keep `cloakenv`-specific extension placeholders out of fields that you also view or edit interactively within KeePass or KeePassXC.
 
-#### 2. YAML (`yaml`) & JSON (`json`)
-- Reads static structured YAML or JSON files.
-- Supports dot-separated object navigation (`vault://servers.bastion.hostname`) and array index addressing (`vault://servers.bastion.public_keys.0`).
-- Supports multi-entity registries (under `entities_root_key`) or flat single-entity databases (`single_entity: true`).
-
-#### 3. Custom Vault (`custom_vault`)
-Defined directly inside `config.yaml` with no external files required. Supports both static attribute definitions and multi-entry composed entities.
-
-- **`resolve_values: true`**: Enables recursive resolution of URI lookups and `{{ ... }}` template expressions within attribute values during retrieval (up to recursion depth 5). On composed entities, `attributes:` templates containing `{{ ... }}` always render against the merged context during composition, while vault-level `resolve_values: true` governs subsequent recursive URI/attribute expansion.
-- **Legacy Flat Entities**: Fully backward-compatible. Any entity defined as a flat key-value map of attributes resolves attributes directly:
-  ```yaml
-  vaults:
-    custom_static:
-      provider: "custom_vault"
-      entities:
-        database:
-          username: "admin"
-          password: "plain-secret"
-  ```
-- **Composed Custom Vault Entities**: When an entity configures composition keys (`merge`, `attributes`, `mapping`, `include_fields`, `exclude_fields`, `key_format`, `resolve_values`), `cloakenv` treats it as a composed entity:
-  - **`merge`**: A list of source URIs to combine into this entity. Can target specific entries (`work://infra/db`) or multi-entry vaults (`openrouter://`, which automatically expands all entries returned by `Search` in deterministic order).
-  - **Per-Source Transformation**: Each upstream entry is transformed in sequence: `include_fields` $\rightarrow$ `exclude_fields` $\rightarrow$ `mapping` $\rightarrow$ `key_format`.
-  - **Deterministic Fold**: Transformed attributes are folded into `.attributes`, while upstream entry contexts are preserved in `.entries`.
-  - **`attributes`**: Configures static attributes or `{{ ... }}` templates evaluated against the merged `.meta`, `.attributes`, and `.entries` context.
-  - **Strict Validation**: Unrecognized top-level fields on composed entities are rejected to catch typos.
-  - **Queryable**: Composed entities can be inspected via `cloakenv show <vault>://<entity>`, resolved via `cloakenv get <vault>://<entity>:<attribute>`, or injected into processes via `cloakenv run -m <vault>://<entity>`.
-  - Example composed entity:
-  ```yaml
-  vaults:
-    config:
-      provider: "custom_vault"
-      resolve_values: true
-      entities:
-        jules:
-          title: "Jules Agent Configuration"
-          tags: ["ai", "composed"]
-          merge:
-            - "openrouter://"
-            - "work://ai/credentials"
-          include_fields:
-            - "API_*"
-            - "DATABASE_*"
-          exclude_fields:
-            - "API_SECRET_KEY"
-          mapping:
-            - match: "^API_(.*)"
-              key: "{{ .meta.Title | env }}_API_$1"
-          key_format: "env"
-          attributes:
-            DOTENV: "{{ .attributes | toEnv }}"
-            SUMMARY: "{{ .meta.Title }} contains {{ len .entries }} upstream models"
-  ```
-
-#### 4. Password Store (`pass`)
+#### 2. Password Store (`pass`)
 - Points to a standard Unix password store (`pass`) directory (defaults to `~/.password-store` or `$PASSWORD_STORE_DIR`).
 - Reads GPG-encrypted `.gpg` password files.
 - Resolves password from the first line and multi-line `Key: Value` attributes from subsequent lines.
@@ -900,10 +832,11 @@ vaults:
     searchable: true
 ```
 
-#### 5. Stored Search Vault (`search`)
-- Acts as a stored search definition over one or more source vaults, returning a filtered synthetic entry view.
+#### 3. Stored Search Vault (`search`)
+- Acts as a stored search view over one or more real vault providers, returning a filtered synthetic entry view.
 - Non-searchable and read-only by design (does not support the `searchable` flag).
-- Resolves entries matching a stored `query` against configured `source_vaults`.
+- Supports **`source_vaults` + `query`** (evaluate a stored search query across listed vaults) and **`sources`** (group multiple entry URIs such as `work://infra/db`, `search://...`, or search query expressions into one virtual vault with deduplication).
+- Supports `resolve_values: true` to enable recursive `{{ ... }}` template evaluation on returned entries.
 - Example config:
 ```yaml
 vaults:
@@ -911,10 +844,19 @@ vaults:
     provider: "search"
     source_vaults: ["work"]
     query: '"service:openrouter" in tags'
+
+  app_stack:
+    provider: "search"
+    resolve_values: true
+    sources:
+      - "work://infra/db"
+      - 'search://"api" in tags'
+    include_fields: ["DB_*", "API_*"]
+    key_format: "env"
 ```
 
-#### 6. Field Filtering (`include_fields` and `exclude_fields`)
-- Supported across structured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`, `pass`).
+#### 4. Field Filtering (`include_fields` and `exclude_fields`)
+- Supported across structured vault providers (`keepass`, `env`, `pass`, `search`).
 - **Default Metadata Fields**: Default metadata fields (`title`, `uuid`, `group`, `group_name`, `group_uuid`, `group_path`, `path`) are included by default alongside entry attributes. Entry classification metadata (`tags`) along with vault and provider metadata are consolidated into the `_meta_` object and can be requested via `--show-meta` or explicitly via `-i tags`, `-i _meta_.tags`, `-i _meta_.provider`, or `-i _meta_.vault`.
 - **`include_fields`**: When configured, restricts returned entry attributes to fields matching at least one glob pattern. **Include rules always take precedence over exclude rules** (evaluated first). An **empty list means filtering is disabled** (all unexcluded attributes allowed), not deny-all.
 - **`exclude_fields`**: Drops attributes matching any configured glob pattern before returning secrets when not explicitly permitted by include rules.
@@ -926,7 +868,7 @@ vaults:
   - **Entry titles & qualified attributes**: e.g., `Test Website.notes`, `Test Website:notes`.
   - **Subtree exclusions via ancestor segments**: e.g., `exclude_fields: ["db"]` or `["entities.db"]` blocks all attributes beneath that container. Directly requesting and including a container grants its unexcluded nested attributes.
 - **Path Separators (`/` vs `.`) and Wildcards**:
-  - In Go's `path.Match`, the `*` wildcard does not match across `/` directory separators. However, for hierarchical vaults (`keepass`, `custom_vault`), each `/`-separated group prefix is also generated as a candidate path (`filter.go:837-840, 927-930, 997-1000`). For example, resolving `keepass://website/Test Website:Password` generates the candidate prefix `website`. Because `path.Match("*", "website")` is true, an exclude pattern like `exclude_fields: ["*"]` matches the top-level group prefix and **excludes every secret in all top-level groups**.
+  - In Go's `path.Match`, the `*` wildcard does not match across `/` directory separators. However, for hierarchical vaults (`keepass`, `pass`), each `/`-separated group prefix is also generated as a candidate path. For example, resolving `keepass://website/Test Website:Password` generates the candidate prefix `website`. Because `path.Match("*", "website")` is true, an exclude pattern like `exclude_fields: ["*"]` matches the top-level group prefix and **excludes every secret in all top-level groups**.
   - In contrast, the `*.notes` pattern below targets title-qualified attribute candidates (e.g. `Test Website.notes`), matching any entry's notes attribute without matching slashed group prefixes. To exclude specific hierarchical groups or subtrees safely without blocking entire vaults, use qualified patterns (e.g. `website/*` or `group/subgroup/*`).
 - Filters apply consistently across `GetEntry`, `Search`, and scalar `GetSecret` resolution.
 - Example config:
@@ -943,8 +885,8 @@ vaults:
       - "secret:*"
 ```
 
-#### 7. Field Key Mapping (`mapping`)
-- Supported across vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`, `pass`).
+#### 5. Field Key Mapping (`mapping`)
+- Supported across vault providers (`keepass`, `env`, `pass`, `search`).
 - **`match`**: Regex pattern matched against raw attribute field names. Supports capture groups (e.g., `env:(.*)`).
 - **`key`**: Target output field name template using capture group references (e.g., `$1` or `\1`).
 - **Metadata Interpolation in `key`**: Target key names support Go `text/template` syntax referencing the entry's `.meta` context (such as `{{ .meta.Title | env }}_$1`). Case helper functions (`env`, `snake`, `kebab`, `upper`, `lower`) can be piped into capture groups and metadata values.
@@ -963,8 +905,8 @@ vaults:
         key: "\\1"
 ```
 
-#### 8. Key Formatting (`key_format`)
-Supported across all configured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`, `pass`). Transforms entry attribute keys to a consistent casing and separator format:
+#### 6. Key Formatting (`key_format`)
+Supported across all configured vault providers (`keepass`, `env`, `pass`, `search`). Transforms entry attribute keys to a consistent casing and separator format:
 - `none` (default): Passes through the original key name unmodified.
 - `env`: UPPERCASE_WITH_UNDERSCORES.
 - `snake`: lowercase_with_underscores.
@@ -978,8 +920,8 @@ vaults:
     key_format: "snake"
 ```
 
-#### 9. Universal Per-Entry Attributes Decorator (`attributes`)
-Supported across all configured vault providers (`keepass`, `yaml`, `json`, `custom_vault`, `search`, `pass`). Computes or overlays templated attributes onto every entry.
+#### 7. Universal Per-Entry Attributes Decorator (`attributes`)
+Supported across all configured vault providers (`keepass`, `env`, `pass`, `search`). Computes or overlays templated attributes onto every entry.
 
 - **Execution Order**: Wrapped strictly after `FilteringProvider` (`include_fields`, `exclude_fields`), `MappingProvider` (`mapping`), and `KeyFormatProvider` (`key_format`).
 - **Post-Filter Guarantee**: Templates in `attributes:` only see authorized, formatted attributes in `.attributes`, ensuring field filters cannot be bypassed by template evaluation ([RSK-002](docs/plans/archive/2026-10-24-template-and-merge-consolidation.md#rsk-002-filter-bypass-via-meta-or-unfiltered-source-entries-in-templates-accepted), [REQ-005](docs/plans/archive/2026-10-24-template-and-merge-consolidation.md#req-005-per-entry-attributes-decorator-across-all-vaults-accepted--p0)).
@@ -997,7 +939,7 @@ vaults:
       SERVICE_NAME: "{{ .meta.Title | lower }}"
 ```
 
-#### 10. KeePass Placeholders & Cross-Entry References (`resolve_references`)
+#### 8. KeePass Placeholders & Cross-Entry References (`resolve_references`)
 Supported on `keepass` vaults when `resolve_references: true` is configured in `config.yaml`. Allows KeePass entries to dynamically reference fields within the same entry, calculate timestamps, perform text transformations, parse URL components, or pull attributes from other entries across the database.
 
 ##### Enabling Placeholder Resolution
@@ -1111,7 +1053,7 @@ References field values from another entry in the database.
 >
 > When entries are exported or merged (e.g. via `cloakenv show` or `cloakenv run -m`), all attributes are exposed by default.
 >
-> **Mitigation**: Combine `resolve_references: true` with [Field Filtering](#6-field-filtering-include_fields-and-exclude_fields) (`exclude_fields` / `include_fields`) to constrain the blast radius and prevent secret fields from being exported:
+> **Mitigation**: Combine `resolve_references: true` with [Field Filtering](#4-field-filtering-include_fields-and-exclude_fields) (`exclude_fields` / `include_fields`) to constrain the blast radius and prevent secret fields from being exported:
 > ```yaml
 > vaults:
 >   work:
@@ -1123,7 +1065,7 @@ References field values from another entry in the database.
 >       - "raw_*"
 > ```
 
-#### 11. Transparent Per-Vault Caching (`cache`)
+#### 9. Transparent Per-Vault Caching (`cache`)
 Opt-in per-vault caching speeds up expensive secret lookups (such as Argon2 KeePass decryption or nested template/search resolution) while keeping zero plaintext secrets on disk.
 
 - **Wrapper Placement**: `CachingProvider` wraps as the outermost vault decorator (outside `FilteringProvider`, `MappingProvider`, `KeyFormatProvider`, and `AttributesProvider`), so only authorized, transformed payloads are cached.
@@ -1150,7 +1092,7 @@ vaults:
 
 ## Template Engine & FuncMap Reference
 
-`cloakenv` embeds Go's standard library `text/template` engine with `.Option("missingkey=error")` and recursion depth tracking. When `resolve_values: true` is enabled on a `custom_vault` or `custom_vault` entity, string attribute values containing `{{ ... }}` are dynamically rendered with access to entry metadata, attributes, and 31 built-in template functions and aliases.
+`cloakenv` embeds Go's standard library `text/template` engine with `.Option("missingkey=error")` and recursion depth tracking. When `resolve_values: true` is enabled on a `search` vault (or evaluated in built-in providers and `attributes:` decorators), string attribute values containing `{{ ... }}` are dynamically rendered with access to entry metadata, attributes, and 31 built-in template functions and aliases.
 
 ### Top-Level Templates (`templates:`)
 
@@ -1204,7 +1146,7 @@ Evaluate configured templates using `{{ include "name" . }}` or evaluate externa
 
 ### Template Context (`.`)
 
-Templates rendered within vaults, per-entry `attributes:`, and composed entities receive a root dot context (`.`):
+Templates rendered within `search` vaults (`resolve_values: true`) and per-entry `attributes:` decorators receive a root dot context (`.`):
 
 | Context Variable | Description |
 |---|---|
@@ -1212,7 +1154,6 @@ Templates rendered within vaults, per-entry `attributes:`, and composed entities
 | `.attributes` / `.Attributes` | Post-filter, post-map, post-format entry attributes map. Excluded fields are never accessible in `.attributes`. |
 | `.original` / `.Original` | Pre-filter/pre-format snapshot exposing `.meta` / `.attributes` prior to decorator transforms when available. |
 | `.output` / `.Output` | Current output entry snapshot exposing `.meta` / `.attributes`. |
-| `.entries` / `.Entries` | Ordered slice of upstream entry context maps when evaluating composed `custom_vault` entities (`nil` for single-entry per-vault `attributes:` templates). |
 
 ### Error Handling & Safety
 - **Strict Key Checking (`missingkey=error`)**: Accessing an unmapped or misspelled attribute key (e.g. `{{ .attributes.MissingKey }}`) triggers an immediate evaluation error, preventing silent generation of broken configurations.
@@ -1252,7 +1193,7 @@ autoload:
   # Example 3: Wildcard / Glob Matching
   - match: "kubectl*"
     merge:
-      - "infra_yaml://clusters/staging"
+      - "work://clusters/staging"
     env:
       KUBECONFIG_TOKEN: "keyring://k8s/token"
 ```
@@ -1399,62 +1340,33 @@ vaults:
     #   ttl: "15m"
     #   mode: "keyring"         # "keyring" (default) or "encrypted_disk"
 
-  # YAML File Vault (multiple entities)
-  infra_yaml:
-    provider: "yaml"
-    vault_path: "./examples/providers/yaml/database.yaml"
-    entities_root_key: "entries" # Use "." for document root
-
-  # JSON File Vault
-  hosts_json:
-    provider: "json"
-    vault_path: "./examples/providers/json/database.json"
-    entities_root_key: "entries"
-
-  # Flat Single-Entity Dotenv Vault
-  dotenv_dev:
-    provider: "yaml"
-    vault_path: "./examples/providers/yaml/dotenv.yaml"
-    single_entity: true
-    entity_name: "Local Development Config"
-    tags: ["env:dev", "local"]
-
-  # Inline Custom Vault (with recursive URI and template resolution)
-  custom_static:
-    provider: "custom_vault"
-    resolve_values: true
-    entities:
-      api_gateway:
-        username: "admin"
-        Password: '{{ get "keyring://gateway/admin_pass" }}'
-        tags: ["static", "gateway"]
-
-  # Composed Custom Vault (multi-source merge, filtering, mapping, and templates)
-  composed_vault:
-    provider: "custom_vault"
-    resolve_values: true
-    entities:
-      jules_stack:
-        title: "Jules AI Stack"
-        tags: ["composed", "ai"]
-        merge:
-          - "openrouter://"
-          - "work://ai/keys"
-        include_fields:
-          - "API_*"
-        mapping:
-          - match: "^API_(.*)"
-            key: "{{ .meta.Title | env }}_API_$1"
-        key_format: "env"
-        attributes:
-          DOTENV: "{{ .attributes | toEnv }}"
-          SUMMARY: "{{ .meta.Title }} contains {{ len .entries }} models"
+  # Unix Password Store Vault (pass / GPG)
+  pass_store:
+    provider: "pass"
+    vault_path: "~/.password-store"
+    searchable: true
 
   # Stored Search Vault (filtered view over source vaults)
   openrouter:
     provider: "search"
     source_vaults: ["work"]
     query: '"service:openrouter" in tags'
+
+  # Stored Search Vault with sources (grouping entry URIs & search queries)
+  jules_stack:
+    provider: "search"
+    resolve_values: true
+    sources:
+      - "work://ai/keys"
+      - 'search://"service:openrouter" in tags'
+    include_fields:
+      - "API_*"
+    mapping:
+      - match: "^API_(.*)"
+        key: "{{ .meta.Title | env }}_API_$1"
+    key_format: "env"
+    attributes:
+      DOTENV: "{{ .attributes | toEnv }}"
 
   # Vault with Regex Field Key Mapping & Key Formatting
   mapped_vault:
@@ -1507,7 +1419,7 @@ autoload:
          -e API_KEY=env://SECRET_API_KEY \
          -- ./deploy.sh
    ```
-2. **Static JSON/YAML or custom vaults**: Mount encrypted or pipeline-generated files without requiring interactive master password prompts.
+2. **Environment & encrypted vaults**: Read CI environment variables via `env://` or encrypted `.kdbx` / `.gpg` stores without interactive master password prompts (use `CLOAKENV_MASTER_PASSWORD` or OS keyring when needed).
 3. **Zero Interactive Prompts**: When secrets are supplied via `env://` or files, `cloakenv` never prompts for terminal input.
 
 ---

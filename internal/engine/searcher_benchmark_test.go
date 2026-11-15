@@ -26,7 +26,7 @@ func BenchmarkMultiVaultSearch(b *testing.B) {
 	vaultCount := 8
 	vaults := make(map[string]config.VaultConfig, vaultCount)
 	for i := range vaultCount {
-		vaults[fmt.Sprintf("v%d", i)] = config.VaultConfig{Provider: "custom_vault"}
+		vaults[fmt.Sprintf("v%d", i)] = config.VaultConfig{Provider: "env"}
 	}
 	cfg := &config.Config{Vaults: vaults}
 

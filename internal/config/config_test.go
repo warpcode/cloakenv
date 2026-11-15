@@ -50,10 +50,11 @@ vaults:
     entities_root_key: entries
     searchable: false
     single_entity: false
-  custom_static:
-    provider: custom_vault
-    single_entity: true
-    entity_name: "Static Vault"
+  search_view:
+    provider: search
+    sources:
+      - "keepass://app"
+      - '"prod" in tags'
     tags: [tag1, tag2]
     attributes:
       secret_key: secret_val
@@ -62,7 +63,7 @@ autoload:
     vaults:
       - "keepass"
     merge:
-      - "custom_static"
+      - "search_view"
     env:
       AWS_REGION: "env://REGION"
     whitelist:
@@ -170,25 +171,22 @@ vaults:
 		t.Error("expected single_entity to be false")
 	}
 
-	// Verify custom static vault parsing
-	staticVault, ok := cfg.Vaults["custom_static"]
+	// Verify search vault sources and attributes parsing
+	searchVault, ok := cfg.Vaults["search_view"]
 	if !ok {
-		t.Fatal("expected 'custom_static' vault to exist")
+		t.Fatal("expected 'search_view' vault to exist")
 	}
-	if staticVault.Provider != "custom_vault" {
-		t.Errorf("expected provider 'custom_vault', got %q", staticVault.Provider)
+	if searchVault.Provider != "search" {
+		t.Errorf("expected provider 'search', got %q", searchVault.Provider)
 	}
-	if staticVault.SingleEntity == nil || *staticVault.SingleEntity != true {
-		t.Error("expected custom_static single_entity to be true")
+	if len(searchVault.Sources) != 2 || searchVault.Sources[0] != "keepass://app" || searchVault.Sources[1] != `"prod" in tags` {
+		t.Errorf("expected sources [keepass://app, \"prod\" in tags], got %v", searchVault.Sources)
 	}
-	if staticVault.EntityName != "Static Vault" {
-		t.Errorf("expected entity_name 'Static Vault', got %q", staticVault.EntityName)
+	if len(searchVault.Tags) != 2 || searchVault.Tags[0] != "tag1" || searchVault.Tags[1] != "tag2" {
+		t.Errorf("expected tags [tag1, tag2], got %v", searchVault.Tags)
 	}
-	if len(staticVault.Tags) != 2 || staticVault.Tags[0] != "tag1" || staticVault.Tags[1] != "tag2" {
-		t.Errorf("expected tags [tag1, tag2], got %v", staticVault.Tags)
-	}
-	if val, ok := staticVault.Attributes["secret_key"]; !ok || val != "secret_val" {
-		t.Errorf("expected attributes to contain secret_key=secret_val, got %v", staticVault.Attributes)
+	if val, ok := searchVault.Attributes["secret_key"]; !ok || val != "secret_val" {
+		t.Errorf("expected attributes to contain secret_key=secret_val, got %v", searchVault.Attributes)
 	}
 
 	// Verify autoload rules parsing
@@ -202,8 +200,8 @@ vaults:
 	if len(rule.Vaults) != 1 || rule.Vaults[0] != "keepass" {
 		t.Errorf("expected vaults ['keepass'], got %v", rule.Vaults)
 	}
-	if len(rule.Merge) != 1 || rule.Merge[0] != "custom_static" {
-		t.Errorf("expected merge ['custom_static'], got %v", rule.Merge)
+	if len(rule.Merge) != 1 || rule.Merge[0] != "search_view" {
+		t.Errorf("expected merge ['search_view'], got %v", rule.Merge)
 	}
 	if rule.Env["AWS_REGION"] != "env://REGION" {
 		t.Errorf("expected env AWS_REGION='env://REGION', got %q", rule.Env["AWS_REGION"])
@@ -693,201 +691,36 @@ templates:
 	}
 }
 
-func TestLoad_CustomVaultEntities(t *testing.T) {
+func TestLoad_UnsupportedProviders(t *testing.T) {
 	tempDir := t.TempDir()
 
-	yamlContent := `
-vaults:
-  my_custom:
-    provider: "custom_vault"
-    entities:
-      flat_entity:
-        username: "bob"
-        Password: "123"
-      composed_entity:
-        merge:
-          - "openrouter://"
-        key_format: "env"
-        attributes:
-          dotenv: "{{ .attributes | toEnv }}"
-`
-	configPath := filepath.Join(tempDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
-		t.Fatalf("failed to write config.yaml: %v", err)
+	tests := []struct {
+		name     string
+		provider string
+		wantSub  string
+	}{
+		{name: "yaml", provider: "yaml", wantSub: "unsupported provider"},
+		{name: "json", provider: "json", wantSub: "unsupported provider"},
+		{name: "custom_vault", provider: "custom_vault", wantSub: "unsupported provider"},
+		{name: "unknown", provider: "bogus", wantSub: "unsupported provider"},
+		{name: "missing", provider: "", wantSub: "missing required field 'provider'"},
 	}
 
-	cfg, err := Load(configPath)
-	if err != nil {
-		t.Fatalf("Load failed for custom vault entities: %v", err)
-	}
-
-	vault, ok := cfg.Vaults["my_custom"]
-	if !ok {
-		t.Fatal("expected 'my_custom' vault")
-	}
-
-	flat, ok := vault.Entities["flat_entity"]
-	if !ok {
-		t.Fatal("expected 'flat_entity'")
-	}
-	if flat.IsComposed {
-		t.Error("expected flat_entity IsComposed to be false")
-	}
-	if flat.Attributes["username"] != "bob" || flat.Attributes["Password"] != "123" {
-		t.Errorf("unexpected flat_entity attributes: %v", flat.Attributes)
-	}
-
-	composed, ok := vault.Entities["composed_entity"]
-	if !ok {
-		t.Fatal("expected 'composed_entity'")
-	}
-	if !composed.IsComposed {
-		t.Error("expected composed_entity IsComposed to be true")
-	}
-	if len(composed.Merge) != 1 || composed.Merge[0] != "openrouter://" {
-		t.Errorf("unexpected Merge in composed entity: %v", composed.Merge)
-	}
-	if composed.KeyFormat != "env" {
-		t.Errorf("expected KeyFormat 'env', got %q", composed.KeyFormat)
-	}
-	if composed.Attributes["dotenv"] != "{{ .attributes | toEnv }}" {
-		t.Errorf("unexpected Attributes in composed entity: %v", composed.Attributes)
-	}
-
-	// Test composed entity with title, tags, and merge
-	composedWithMetaYaml := `
-vaults:
-  my_custom:
-    provider: "custom_vault"
-    entities:
-      composed_meta:
-        title: "Composed Jules Entity"
-        tags: ["ai", "assistant"]
-        merge:
-          - "openrouter://"
-        key_format: "env"
-        attributes:
-          dotenv: "{{ .attributes | toEnv }}"
-`
-	metaConfigPath := filepath.Join(tempDir, "meta_config.yaml")
-	if err := os.WriteFile(metaConfigPath, []byte(composedWithMetaYaml), 0644); err != nil {
-		t.Fatalf("failed to write meta_config.yaml: %v", err)
-	}
-
-	cfgMeta, err := Load(metaConfigPath)
-	if err != nil {
-		t.Fatalf("Load failed for composed entity with metadata: %v", err)
-	}
-
-	metaEntity, ok := cfgMeta.Vaults["my_custom"].Entities["composed_meta"]
-	if !ok {
-		t.Fatal("expected 'composed_meta' entity")
-	}
-	if !metaEntity.IsComposed {
-		t.Error("expected composed_meta IsComposed to be true")
-	}
-	if metaEntity.Title != "Composed Jules Entity" {
-		t.Errorf("expected Title 'Composed Jules Entity', got %q", metaEntity.Title)
-	}
-	if len(metaEntity.Tags) != 2 || metaEntity.Tags[0] != "ai" || metaEntity.Tags[1] != "assistant" {
-		t.Errorf("expected Tags [ai, assistant], got %v", metaEntity.Tags)
-	}
-	if len(metaEntity.Merge) != 1 || metaEntity.Merge[0] != "openrouter://" {
-		t.Errorf("unexpected Merge in composed_meta entity: %v", metaEntity.Merge)
-	}
-
-	// Test unknown top-level field in composed entity
-	unknownKeyYaml := `
-vaults:
-  my_custom:
-    provider: "custom_vault"
-    entities:
-      bad_composed:
-        merge:
-          - "openrouter://"
-        include_feilds:
-          - "Password"
-`
-	unknownConfigPath := filepath.Join(tempDir, "unknown.yaml")
-	if err := os.WriteFile(unknownConfigPath, []byte(unknownKeyYaml), 0644); err != nil {
-		t.Fatalf("failed to write unknown.yaml: %v", err)
-	}
-	_, err = Load(unknownConfigPath)
-	if err == nil {
-		t.Fatal("expected error for unknown top-level field in composed entity, got nil")
-	}
-	if !strings.Contains(err.Error(), "unknown field") {
-		t.Errorf("expected error to mention unknown field, got: %v", err)
-	}
-}
-
-func TestLoad_CustomVaultEntityValidation(t *testing.T) {
-	tempDir := t.TempDir()
-
-	yamlContent := `
-vaults:
-  validated_vault:
-    provider: "custom_vault"
-    entities:
-      valid_entity:
-        merge:
-          - "openrouter://"
-        key_format: "snake"
-        include_fields:
-          - "env:*"
-        exclude_fields:
-          - "secret:*"
-        mapping:
-          - match: "Password"
-            key: "API_KEY"
-`
-	configPath := filepath.Join(tempDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
-		t.Fatalf("failed to write config.yaml: %v", err)
-	}
-
-	cfg, err := Load(configPath)
-	if err != nil {
-		t.Fatalf("Load failed for entity validation: %v", err)
-	}
-
-	entity := cfg.Vaults["validated_vault"].Entities["valid_entity"]
-	if len(entity.Mapping) != 1 || entity.Mapping[0].CompiledRegex == nil {
-		t.Error("expected entity mapping regex to be precompiled")
-	}
-
-	// Test invalid entity key_format
-	invalidFmtYaml := `
-vaults:
-  v:
-    provider: "custom_vault"
-    entities:
-      e:
-        merge: ["a://"]
-        key_format: "invalid_format"
-`
-	invPath := filepath.Join(tempDir, "inv_fmt.yaml")
-	_ = os.WriteFile(invPath, []byte(invalidFmtYaml), 0644)
-	_, err = Load(invPath)
-	if err == nil {
-		t.Fatal("expected error for invalid entity key_format, got nil")
-	}
-
-	// Test invalid entity include_fields glob
-	invalidGlobYaml := `
-vaults:
-  v:
-    provider: "custom_vault"
-    entities:
-      e:
-        merge: ["a://"]
-        include_fields: ["bad[glob"]
-`
-	invGlobPath := filepath.Join(tempDir, "inv_glob.yaml")
-	_ = os.WriteFile(invGlobPath, []byte(invalidGlobYaml), 0644)
-	_, err = Load(invGlobPath)
-	if err == nil {
-		t.Fatal("expected error for invalid entity glob pattern, got nil")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			content := fmt.Sprintf("vaults:\n  bad:\n    provider: %q\n", tt.provider)
+			cfgPath := filepath.Join(tempDir, tt.name+".yaml")
+			if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
+				t.Fatalf("failed to write config: %v", err)
+			}
+			_, err := Load(cfgPath)
+			if err == nil {
+				t.Fatalf("expected Load to reject provider %q", tt.provider)
+			}
+			if !strings.Contains(err.Error(), tt.wantSub) {
+				t.Errorf("expected error containing %q, got %v", tt.wantSub, err)
+			}
+		})
 	}
 }
 
@@ -1082,21 +915,21 @@ vaults:
     provider: "keepass"
     vault_path: "./database.kdbx"
   rel_sub:
-    provider: "yaml"
+    provider: "pass"
     vault_path: "sub/dir/secrets.yaml"
   home_vault:
     provider: "keepass"
     vault_path: "~/secrets.kdbx"
   abs_vault:
-    provider: "json"
+    provider: "keepass"
     vault_path: %q
   empty_vault:
-    provider: "custom_vault"
+    provider: "env"
   rel_parent:
-    provider: "json"
+    provider: "pass"
     vault_path: "../shared/vault.kdbx"
   abs_vault_dirty:
-    provider: "json"
+    provider: "keepass"
     vault_path: %q
   home_vault_dirty:
     provider: "keepass"

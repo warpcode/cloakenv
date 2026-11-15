@@ -9,6 +9,7 @@ import (
 	"github.com/zalando/go-keyring"
 
 	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/provider"
 )
 
 func TestOrchestrator_Sync(t *testing.T) {
@@ -100,28 +101,11 @@ func TestOrchestrator_Sync(t *testing.T) {
 		}
 	})
 
-	t.Run("sync custom_vault with filtering (tags, prefix, regex)", func(t *testing.T) {
+	t.Run("sync searchable vault with filtering (tags, prefix, regex)", func(t *testing.T) {
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"mock_src": {
-					Provider: "custom_vault",
-					Entities: map[string]config.CustomEntityConfig{
-						"api": {
-							Title: "API Service",
-							Tags:  []string{"sync:keyring", "env:prod"},
-							Attributes: map[string]any{
-								"KEY":    "api_key_val",
-								"SECRET": "api_secret_val",
-							},
-						},
-						"db": {
-							Title: "DB Service",
-							Tags:  []string{"internal"},
-							Attributes: map[string]any{
-								"PASSWORD": "db_pass_val",
-							},
-						},
-					},
+					Provider: "env",
 				},
 			},
 		}
@@ -129,6 +113,35 @@ func TestOrchestrator_Sync(t *testing.T) {
 		orch, err := NewOrchestrator(cfg)
 		if err != nil {
 			t.Fatalf("NewOrchestrator failed: %v", err)
+		}
+		if err := injectMockVault(orch, "mock_src", []provider.SearchResult{
+			{
+				Provider: "search",
+				Vault:    "mock_src",
+				Path:     "api",
+				Entry: provider.Entry{
+					Title: "API Service",
+					Tags:  []string{"sync:keyring", "env:prod"},
+					Attributes: map[string]any{
+						"KEY":    "api_key_val",
+						"SECRET": "api_secret_val",
+					},
+				},
+			},
+			{
+				Provider: "search",
+				Vault:    "mock_src",
+				Path:     "db",
+				Entry: provider.Entry{
+					Title: "DB Service",
+					Tags:  []string{"internal"},
+					Attributes: map[string]any{
+						"PASSWORD": "db_pass_val",
+					},
+				},
+			},
+		}); err != nil {
+			t.Fatalf("injectMockVault failed: %v", err)
 		}
 
 		// 1. Filter by tag: only "api" entity matches "sync:keyring"
@@ -172,15 +185,7 @@ func TestOrchestrator_Sync(t *testing.T) {
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"leak_src": {
-					Provider: "custom_vault",
-					Entities: map[string]config.CustomEntityConfig{
-						"creds": {
-							Title: "Credentials",
-							Attributes: map[string]any{
-								"TOKEN": "super_sensitive_token_do_not_leak",
-							},
-						},
-					},
+					Provider: "env",
 				},
 			},
 		}
@@ -188,6 +193,19 @@ func TestOrchestrator_Sync(t *testing.T) {
 		orch, err := NewOrchestrator(cfg)
 		if err != nil {
 			t.Fatalf("NewOrchestrator failed: %v", err)
+		}
+		if err := injectMockVault(orch, "leak_src", []provider.SearchResult{
+			{
+				Provider: "search",
+				Vault:    "leak_src",
+				Path:     "creds",
+				Entry: provider.Entry{
+					Title:      "Credentials",
+					Attributes: map[string]any{"TOKEN": "super_sensitive_token_do_not_leak"},
+				},
+			},
+		}); err != nil {
+			t.Fatalf("injectMockVault failed: %v", err)
 		}
 
 		summary, err := orch.Sync(ctx, "leak_src://", "keyring://app", SyncOptions{DryRun: true})

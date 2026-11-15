@@ -533,7 +533,7 @@ func TestSearch(t *testing.T) {
 		args := []string{}
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
-				"my_yaml": {
+				"bad_vault": {
 					Provider: "invalid_provider",
 				},
 			},
@@ -567,11 +567,19 @@ func TestSearch(t *testing.T) {
 		os.Stderr = w
 
 		args := []string{"invalid syntax === "}
+		dbPath := writeTestKDBX(t, "ssh_vault", "password123", testKDBXEntry{
+			Title: "Production SSH Key",
+			Tags:  "auth:ssh, env:prod",
+			Attributes: map[string]string{
+				"USERNAME":     "deploy",
+				"BIT_STRENGTH": "4096",
+			},
+		})
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
-				"my_yaml": {
-					Provider:  "yaml",
-					VaultPath: "../../testdata/test_entries.yaml",
+				"ssh_vault": {
+					Provider:  "keepass",
+					VaultPath: dbPath,
 				},
 			},
 		}
@@ -604,11 +612,19 @@ func TestSearch(t *testing.T) {
 		os.Stdout = w
 
 		args := []string{"title == 'Production SSH Key'", "-o", "json"}
+		dbPath := writeTestKDBX(t, "ssh_vault", "password123", testKDBXEntry{
+			Title: "Production SSH Key",
+			Tags:  "auth:ssh, env:prod",
+			Attributes: map[string]string{
+				"USERNAME":     "deploy",
+				"BIT_STRENGTH": "4096",
+			},
+		})
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
-				"my_yaml": {
-					Provider:  "yaml",
-					VaultPath: "../../testdata/test_entries.yaml",
+				"ssh_vault": {
+					Provider:  "keepass",
+					VaultPath: dbPath,
 				},
 			},
 		}
@@ -641,11 +657,19 @@ func TestSearch(t *testing.T) {
 		os.Stdout = w
 
 		args := []string{"-i", "title", "-i", "USERNAME", "-o", "json"}
+		dbPath := writeTestKDBX(t, "ssh_vault", "password123", testKDBXEntry{
+			Title: "Production SSH Key",
+			Tags:  "auth:ssh, env:prod",
+			Attributes: map[string]string{
+				"USERNAME":     "deploy",
+				"BIT_STRENGTH": "4096",
+			},
+		})
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
-				"my_yaml": {
-					Provider:  "yaml",
-					VaultPath: "../../testdata/test_entries.yaml",
+				"ssh_vault": {
+					Provider:  "keepass",
+					VaultPath: dbPath,
 				},
 			},
 		}
@@ -681,11 +705,19 @@ func TestSearch(t *testing.T) {
 		os.Stdout = w
 
 		args := []string{"title == 'Production SSH Key'", "-o", "yaml"}
+		dbPath := writeTestKDBX(t, "ssh_vault", "password123", testKDBXEntry{
+			Title: "Production SSH Key",
+			Tags:  "auth:ssh, env:prod",
+			Attributes: map[string]string{
+				"USERNAME":     "deploy",
+				"BIT_STRENGTH": "4096",
+			},
+		})
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
-				"my_yaml": {
-					Provider:  "yaml",
-					VaultPath: "../../testdata/test_entries.yaml",
+				"ssh_vault": {
+					Provider:  "keepass",
+					VaultPath: dbPath,
 				},
 			},
 		}
@@ -718,11 +750,19 @@ func TestSearch(t *testing.T) {
 		os.Stdout = w
 
 		args := []string{"title == 'Production SSH Key'", "-o", "json"}
+		dbPath := writeTestKDBX(t, "ssh_vault", "password123", testKDBXEntry{
+			Title: "Production SSH Key",
+			Tags:  "auth:ssh, env:prod",
+			Attributes: map[string]string{
+				"USERNAME":     "deploy",
+				"BIT_STRENGTH": "4096",
+			},
+		})
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
-				"my_yaml": {
-					Provider:  "yaml",
-					VaultPath: "../../testdata/test_entries.yaml",
+				"ssh_vault": {
+					Provider:  "keepass",
+					VaultPath: dbPath,
 					KeyFormat: "env",
 				},
 			},
@@ -788,11 +828,19 @@ func TestSearch_RuntimeKeyFormatOverride(t *testing.T) {
 	os.Stdout = w
 
 	args := []string{"title == 'Production SSH Key'", "-o", "json", "-f", "snake"}
+	dbPath := writeTestKDBX(t, "ssh_vault", "password123", testKDBXEntry{
+		Title: "Production SSH Key",
+		Tags:  "auth:ssh, env:prod",
+		Attributes: map[string]string{
+			"USERNAME":     "deploy",
+			"BIT_STRENGTH": "4096",
+		},
+	})
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"my_yaml": {
-				Provider:  "yaml",
-				VaultPath: "../../testdata/test_entries.yaml",
+			"ssh_vault": {
+				Provider:  "keepass",
+				VaultPath: dbPath,
 				KeyFormat: "env", // configured as env, overridden as snake
 			},
 		},
@@ -833,11 +881,19 @@ func TestSearch_ShowMetaTags(t *testing.T) {
 	os.Stdout = w
 
 	args := []string{"title == 'Production SSH Key'", "-o", "json", "--show-meta"}
+	dbPath := writeTestKDBX(t, "ssh_vault", "password123", testKDBXEntry{
+		Title: "Production SSH Key",
+		Tags:  "auth:ssh, env:prod",
+		Attributes: map[string]string{
+			"USERNAME":     "deploy",
+			"BIT_STRENGTH": "4096",
+		},
+	})
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"my_yaml": {
-				Provider:  "yaml",
-				VaultPath: "../../testdata/test_entries.yaml",
+			"ssh_vault": {
+				Provider:  "keepass",
+				VaultPath: dbPath,
 			},
 		},
 	}

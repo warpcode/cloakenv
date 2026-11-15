@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 // SearchExecutor defines a function that executes a search query across source vaults at a given depth.
@@ -19,7 +20,9 @@ type SearchProvider struct {
 	vaultName      string
 	query          string
 	sourceVaults   []string
+	sources        []string
 	searchExecutor SearchExecutor
+	getEntriesFunc GetEntriesFunc
 	includeFields  []string
 	excludeFields  []string
 	mapping        []config.MappingRule
@@ -40,6 +43,11 @@ func (s *SearchProvider) SetSearchExecutor(exec SearchExecutor) {
 	s.searchExecutor = exec
 }
 
+// SetGetEntriesFunc sets the callback used to resolve entry or vault URIs specified in sources.
+func (s *SearchProvider) SetGetEntriesFunc(fn GetEntriesFunc) {
+	s.getEntriesFunc = fn
+}
+
 // Initialize prepares the search provider with configuration parameters.
 func (s *SearchProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 	s.vaultName = cfg.Settings["vault_name"]
@@ -48,6 +56,7 @@ func (s *SearchProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 		s.query = cfg.Settings["query"]
 	}
 	s.sourceVaults = cfg.SourceVaults
+	s.sources = cfg.Sources
 	s.includeFields = cfg.IncludeFields
 	s.excludeFields = cfg.ExcludeFields
 	s.mapping = cfg.Mapping
@@ -57,10 +66,6 @@ func (s *SearchProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 const maxSearchDepth = 5
 
 func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, error) {
-	if s.searchExecutor == nil {
-		return nil, errors.New("search provider: search executor not configured")
-	}
-
 	depth := depthFromContext(ctx)
 	if depth >= maxSearchDepth {
 		return nil, fmt.Errorf("search provider %q: maximum recursion depth exceeded", s.vaultName)
@@ -71,11 +76,142 @@ func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, err
 	if len(s.includeFields) > 0 || len(s.excludeFields) > 0 || len(s.mapping) > 0 {
 		nextCtx = WithFieldPolicyAndMapping(nextCtx, s.includeFields, s.excludeFields, s.mapping)
 	}
-	results, err := s.searchExecutor(nextCtx, s.query, s.sourceVaults, depth+1)
-	if err != nil {
-		return nil, fmt.Errorf("search provider %q: stored query execution failed: %w", s.vaultName, err)
+
+	if len(s.sources) == 0 {
+		if s.searchExecutor == nil {
+			return nil, errors.New("search provider: search executor not configured")
+		}
+		results, err := s.searchExecutor(nextCtx, s.query, s.sourceVaults, depth+1)
+		if err != nil {
+			return nil, fmt.Errorf("search provider %q: stored query execution failed: %w", s.vaultName, err)
+		}
+		return results, nil
 	}
-	return results, nil
+
+	var combined []SearchResult
+	if s.query != "" && len(s.sourceVaults) > 0 {
+		if s.searchExecutor == nil {
+			return nil, errors.New("search provider: search executor not configured")
+		}
+		results, err := s.searchExecutor(nextCtx, s.query, s.sourceVaults, depth+1)
+		if err != nil {
+			return nil, fmt.Errorf("search provider %q: stored query execution failed: %w", s.vaultName, err)
+		}
+		combined = append(combined, results...)
+	}
+
+	for _, src := range s.sources {
+		trimmed := strings.TrimSpace(src)
+		if trimmed == "" {
+			continue
+		}
+
+		if strings.Contains(trimmed, "://") {
+			scheme, location, err := utils.ParseURI(trimmed)
+			if err != nil {
+				return nil, fmt.Errorf("search provider %q: invalid source URI %q: %w", s.vaultName, src, err)
+			}
+			if scheme == "search" {
+				subQuery := location
+				if subQuery == "" {
+					subQuery = s.query
+				}
+				if s.searchExecutor != nil {
+					res, err := s.searchExecutor(nextCtx, subQuery, s.sourceVaults, depth+1)
+					if err != nil {
+						return nil, fmt.Errorf("search provider %q: source %q execution failed: %w", s.vaultName, src, err)
+					}
+					combined = append(combined, res...)
+					continue
+				}
+				if s.getEntriesFunc == nil {
+					return nil, errors.New("search provider: search executor not configured")
+				}
+				entries, err := s.getEntriesFunc(nextCtx, trimmed)
+				if err != nil {
+					return nil, fmt.Errorf("search provider %q: failed to resolve source URI %q: %w", s.vaultName, src, err)
+				}
+				for _, e := range entries {
+					combined = append(combined, SearchResult{
+						Provider: scheme,
+						Vault:    scheme,
+						Path:     e.Title,
+						Entry:    e,
+					})
+				}
+				continue
+			}
+
+			if location == "" {
+				if s.searchExecutor != nil {
+					res, err := s.searchExecutor(nextCtx, s.query, []string{scheme}, depth+1)
+					if err != nil {
+						return nil, fmt.Errorf("search provider %q: source %q execution failed: %w", s.vaultName, src, err)
+					}
+					combined = append(combined, res...)
+					continue
+				}
+				if s.getEntriesFunc == nil {
+					return nil, errors.New("search provider: search executor not configured")
+				}
+				entries, err := s.getEntriesFunc(nextCtx, trimmed)
+				if err != nil {
+					return nil, fmt.Errorf("search provider %q: failed to resolve source URI %q: %w", s.vaultName, src, err)
+				}
+				for _, e := range entries {
+					combined = append(combined, SearchResult{
+						Provider: scheme,
+						Vault:    scheme,
+						Path:     e.Title,
+						Entry:    e,
+					})
+				}
+				continue
+			}
+
+			if s.getEntriesFunc == nil {
+				return nil, fmt.Errorf("search provider %q: entry retrieval function not configured", s.vaultName)
+			}
+			entries, err := s.getEntriesFunc(nextCtx, trimmed)
+			if err != nil {
+				return nil, fmt.Errorf("search provider %q: failed to resolve source URI %q: %w", s.vaultName, src, err)
+			}
+			for _, e := range entries {
+				resPath := location
+				if len(entries) > 1 && e.Title != "" {
+					resPath = e.Title
+				}
+				combined = append(combined, SearchResult{
+					Provider: scheme,
+					Vault:    scheme,
+					Path:     resPath,
+					Entry:    e,
+				})
+			}
+			continue
+		}
+
+		if s.searchExecutor == nil {
+			return nil, errors.New("search provider: search executor not configured")
+		}
+		res, err := s.searchExecutor(nextCtx, trimmed, s.sourceVaults, depth+1)
+		if err != nil {
+			return nil, fmt.Errorf("search provider %q: source query %q execution failed: %w", s.vaultName, src, err)
+		}
+		combined = append(combined, res...)
+	}
+
+	seen := make(map[string]bool, len(combined))
+	deduped := make([]SearchResult, 0, len(combined))
+	for _, r := range combined {
+		key := r.Vault + "\x00" + r.Path + "\x00" + r.Entry.Title
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		deduped = append(deduped, r)
+	}
+	return deduped, nil
 }
 
 // lookupEntryAttributeRaw searches entry.Attributes first (exact match, then case-insensitive sorted),

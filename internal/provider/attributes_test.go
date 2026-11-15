@@ -132,7 +132,7 @@ func TestAttributesProvider_TemplateRendering(t *testing.T) {
 		},
 		results: []SearchResult{
 			{
-				Provider: "custom_vault",
+				Provider: "mock",
 				Vault:    "main",
 				Path:     "prod/api",
 				Entry: Entry{

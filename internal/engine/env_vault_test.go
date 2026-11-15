@@ -7,6 +7,7 @@ import (
 
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/engine"
+	"github.com/warpcode/cloakenv/internal/provider"
 )
 
 func TestEnvVault_StandardPipelineAndDecorators(t *testing.T) {
@@ -100,11 +101,8 @@ func TestEnvVault_NamedInstanceAndSearchScoping(t *testing.T) {
 	t.Run("UnscopedSearchExcludesEnvByDefault", func(t *testing.T) {
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
-				"custom_static": {
-					Provider: "custom_vault",
-					Entities: config.ToCustomEntityMap(map[string]map[string]any{
-						"entry1": {"key": "val1"},
-					}),
+				"mock_static": {
+					Provider: "env",
 				},
 			},
 		}
@@ -112,6 +110,16 @@ func TestEnvVault_NamedInstanceAndSearchScoping(t *testing.T) {
 		orch, err := engine.NewOrchestrator(cfg)
 		if err != nil {
 			t.Fatalf("NewOrchestrator failed: %v", err)
+		}
+		if err := orch.InjectMockVaultForTest("mock_static", []provider.SearchResult{
+			{
+				Provider: "search",
+				Vault:    "mock_static",
+				Path:     "entry1",
+				Entry:    provider.Entry{Title: "entry1", Attributes: map[string]any{"key": "val1"}},
+			},
+		}); err != nil {
+			t.Fatalf("InjectMockVaultForTest failed: %v", err)
 		}
 
 		ctx := context.Background()

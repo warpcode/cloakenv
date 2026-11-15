@@ -58,13 +58,13 @@ func (o *Orchestrator) Sync(ctx context.Context, sourceURI, targetURI string, op
 
 	// Validate target by checking scheme; read-only providers are rejected fast
 	switch targetScheme {
-	case "env", "keepass", "search", "yaml", "json", "custom_vault":
+	case "env", "keepass", "search":
 		return nil, fmt.Errorf("target vault %q is read-only or does not support writing", targetScheme)
 	}
 	if o.config != nil && o.config.Vaults != nil {
 		if vCfg, exists := o.config.Vaults[targetScheme]; exists {
 			switch vCfg.Provider {
-			case "keepass", "search", "yaml", "json", "custom_vault":
+			case "keepass", "search":
 				return nil, fmt.Errorf("target vault %q is read-only or does not support writing", targetScheme)
 			}
 		}

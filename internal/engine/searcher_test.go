@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,49 +18,15 @@ import (
 )
 
 func TestOrchestratorRecursiveAndSearch(t *testing.T) {
-	// Create temp dir
-	tempDir := t.TempDir()
-
 	// Set up environment variable for testing env:// resolution
 	t.Setenv("ORCH_TEST_USER", "env_user")
 
-	// Create entries.yaml
-	// Here username maps to {{ get "env://ORCH_TEST_USER" }}, demonstrating recursive resolution!
-	yamlContent := `
-entries:
-  ssh_prod:
-    tags:
-      - auth:ssh
-      - env:prod
-    title: "Production SSH Key"
-    username: '{{ get "env://ORCH_TEST_USER" }}'
-    password: "my_raw_password"
-    bit_strength: 4096
-  ssh_staging:
-    tags:
-      - auth:ssh
-      - env:staging
-      - deprecated
-    title: "Staging SSH Key"
-    username: "stage_user"
-    password: "stage_password"
-    bit_strength: 2048
-  ssh_minimal:
-    tags:
-      - auth:ssh
-    title: "Minimal Key"
-`
-	yamlPath := filepath.Join(tempDir, "entries.yaml")
-	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0644); err != nil {
-		t.Fatalf("failed to write temp yaml file: %v", err)
-	}
-
-	// Create Orchestrator with mock config
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"my_repo": {
-				Provider:  "yaml",
-				VaultPath: yamlPath,
+				Provider:      "search",
+				Sources:       []string{"env://"},
+				ResolveValues: true,
 			},
 		},
 	}
@@ -71,13 +35,48 @@ entries:
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
+	if err := injectMockVault(orch, "my_repo", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "my_repo", Path: "ssh_prod",
+			Entry: provider.Entry{
+				Title: "Production SSH Key",
+				Tags:  []string{"auth:ssh", "env:prod"},
+				Attributes: map[string]any{
+					"username":     `{{ get "env://ORCH_TEST_USER" }}`,
+					"password":     "my_raw_password",
+					"bit_strength": 4096,
+				},
+			},
+		},
+		{
+			Provider: "search", Vault: "my_repo", Path: "ssh_staging",
+			Entry: provider.Entry{
+				Title: "Staging SSH Key",
+				Tags:  []string{"auth:ssh", "env:staging", "deprecated"},
+				Attributes: map[string]any{
+					"username":     "stage_user",
+					"password":     "stage_password",
+					"bit_strength": 2048,
+				},
+			},
+		},
+		{
+			Provider: "search", Vault: "my_repo", Path: "ssh_minimal",
+			Entry: provider.Entry{
+				Title: "Minimal Key",
+				Tags:  []string{"auth:ssh"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault(my_repo) failed: %v", err)
+	}
 
 	ctx := context.Background()
 
 	t.Run("RecursiveResolution", func(t *testing.T) {
 		// 1. Test recursive resolution
 		// {{ get "my_repo://entries.ssh_prod.username" }} should resolve to {{ get "env://ORCH_TEST_USER" }} which resolves to "env_user"
-		val, err := orch.Resolve(ctx, `{{ get "my_repo://entries.ssh_prod.username" }}`)
+		val, err := orch.Resolve(ctx, `{{ get "my_repo://ssh_prod:username" }}`)
 		if err != nil {
 			t.Fatalf("failed to resolve: %v", err)
 		}
@@ -145,7 +144,7 @@ entries:
 	})
 
 	t.Run("SearchExprByMetaProviderAndVault", func(t *testing.T) {
-		results, err := orch.Search(ctx, `_meta_.provider == "yaml" and _meta_.vault == "my_repo" and "env:prod" in _meta_.tags`, nil)
+		results, err := orch.Search(ctx, `_meta_.provider == "search" and _meta_.vault == "my_repo" and "env:prod" in _meta_.tags`, nil)
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
@@ -295,9 +294,9 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 	t.Run("ConcurrentMultiVaultExecution", func(t *testing.T) {
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
-				"v1": {Provider: "custom_vault"},
-				"v2": {Provider: "custom_vault"},
-				"v3": {Provider: "custom_vault"},
+				"v1": {Provider: "env"},
+				"v2": {Provider: "env"},
+				"v3": {Provider: "env"},
 			},
 		}
 
@@ -355,8 +354,8 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 	t.Run("ErrorPropagationAndCancellation", func(t *testing.T) {
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
-				"v_ok":   {Provider: "custom_vault"},
-				"v_fail": {Provider: "custom_vault"},
+				"v_ok":   {Provider: "env"},
+				"v_fail": {Provider: "env"},
 			},
 		}
 
@@ -633,66 +632,14 @@ func TestSearchURIEncoding(t *testing.T) {
 }
 
 func TestOrchestratorVaultsAndSearch(t *testing.T) {
-	tempDir := t.TempDir()
-
-	// Write single_db.yaml content
-	singleDbContent := `
-title: "My Flat Secrets Database"
-tags: [env:prod, local]
-api_key: "super_secret_api_token"
-port: 8080
-metadata:
-  owner: "devops"
-  cluster: "us-east-1"
-servers:
-  - "bastion.example.com"
-  - "app.example.com"
-`
-	singleDbPath := filepath.Join(tempDir, "single_db.yaml")
-	if err := os.WriteFile(singleDbPath, []byte(singleDbContent), 0644); err != nil {
-		t.Fatalf("failed to write single db file: %v", err)
-	}
-
-	isTrue := true
 	isFalse := false
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"custom_static": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"custom1": {
-						"username": "custom_user",
-						"Password": "custom_password",
-					},
-				}),
-			},
-			"custom_single": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"Static_Flat": {
-						"db_user": "postgres",
-						"db_port": 5432,
-						"tags":    []any{"static", "local"},
-					},
-				}),
-			},
-			"flat_file": {
-				Provider:     "yaml",
-				VaultPath:    singleDbPath,
-				SingleEntity: &isTrue,
-				EntityName:   "Prod Flat File",
-				Tags:         []string{"flat", "prod"},
-			},
-			"non_searchable": {
-				Provider:   "custom_vault",
-				Searchable: &isFalse,
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"secret_entry": {
-						"Password": "hidden_pass",
-					},
-				}),
-			},
+			"custom_static":  {Provider: "env"},
+			"custom_single":  {Provider: "env"},
+			"flat_file":      {Provider: "env"},
+			"non_searchable": {Provider: "env", Searchable: &isFalse},
 		},
 	}
 
@@ -700,6 +647,27 @@ servers:
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
+	_ = injectMockVault(orch, "custom_static", []provider.SearchResult{
+		{Provider: "search", Vault: "custom_static", Path: "custom1", Entry: provider.Entry{Title: "custom1", Attributes: map[string]any{"username": "custom_user", "Password": "custom_password"}}},
+	})
+	_ = injectMockVault(orch, "custom_single", []provider.SearchResult{
+		{Provider: "search", Vault: "custom_single", Path: "Static_Flat", Entry: provider.Entry{Title: "Static_Flat", Tags: []string{"static", "local"}, Attributes: map[string]any{"db_user": "postgres", "db_port": 5432}}},
+	})
+	_ = injectMockVault(orch, "flat_file", []provider.SearchResult{
+		{Provider: "search", Vault: "flat_file", Path: "Prod Flat File", Entry: provider.Entry{
+			Title: "Prod Flat File",
+			Tags:  []string{"flat", "prod"},
+			Attributes: map[string]any{
+				"api_key":  "super_secret_api_token",
+				"port":     8080,
+				"metadata": map[string]any{"owner": "devops", "cluster": "us-east-1"},
+				"servers":  []any{"bastion.example.com", "app.example.com"},
+			},
+		}},
+	})
+	_ = injectMockVault(orch, "non_searchable", []provider.SearchResult{
+		{Provider: "search", Vault: "non_searchable", Path: "secret_entry", Entry: provider.Entry{Title: "secret_entry", Attributes: map[string]any{"Password": "hidden_pass"}}},
+	})
 
 	ctx := context.Background()
 
@@ -848,7 +816,7 @@ func TestBuiltinsNonSearchable(t *testing.T) {
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"env": {
-					Provider: "custom_vault",
+					Provider: "keepass",
 				},
 			},
 		}
@@ -865,7 +833,7 @@ func TestBuiltinsNonSearchable(t *testing.T) {
 		cfgSearch := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"search": {
-					Provider: "custom_vault",
+					Provider: "env",
 				},
 			},
 		}
@@ -903,20 +871,18 @@ func TestSearchConcurrentCompilation(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"vault1": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"item1": {
-						"Password": "pass",
-					},
-				}),
-			},
+			"vault1": {Provider: "env"},
 		},
 	}
 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "vault1", []provider.SearchResult{
+		{Provider: "search", Vault: "vault1", Path: "item1", Entry: provider.Entry{Title: "item1", Attributes: map[string]any{"Password": "pass"}}},
+	}); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
 	}
 
 	const numGoroutines = 30
@@ -1108,33 +1074,14 @@ func TestSearchNilConfig(t *testing.T) {
 }
 
 func TestSearcher_InferredRoot_PreResolutionExclusion(t *testing.T) {
-	tempDir := t.TempDir()
-
-	// YAML file has "entities" root key, but EntitiesRootKey will be omitted from VaultConfig.
-	// staticProvider infers entitiesRootKey = "entities".
-	// The entry has a secret URI reference that must never be dereferenced when excluded.
-	yamlContent := `
-entities:
-  api:
-    title: "api_service"
-    username: "api_user"
-    secret_ref: '{{ get "tripwire://must_not_be_called" }}'
-`
-	yamlPath := filepath.Join(tempDir, "inferred_root.yaml")
-	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0644); err != nil {
-		t.Fatalf("failed to write yaml fixture: %v", err)
-	}
-
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"yaml_vault": {
-				Provider:  "yaml",
-				VaultPath: yamlPath,
-				// EntitiesRootKey intentionally omitted to test inferred root handling
+			"rooted_vault": {
+				Provider: "env",
 			},
 			"virtual_search": {
 				Provider:      "search",
-				SourceVaults:  []string{"yaml_vault"},
+				SourceVaults:  []string{"rooted_vault"},
 				ResolveValues: true,
 				ExcludeFields: []string{"entities.*.secret_ref"},
 			},
@@ -1144,6 +1091,20 @@ entities:
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "rooted_vault", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "rooted_vault", Path: "api",
+			Entry: provider.Entry{
+				Title: "api_service",
+				Attributes: map[string]any{
+					"username":   "api_user",
+					"secret_ref": `{{ get "tripwire://must_not_be_called" }}`,
+				},
+			},
+		},
+	}, "entities"); err != nil {
+		t.Fatalf("injectMockVault(rooted_vault) failed: %v", err)
 	}
 
 	tw := &tripwireProvider{}
@@ -1320,32 +1281,19 @@ func TestSearcher_GroupAttributeFallback(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"grp": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					// Capitalized attribute key: the fallback group lookup must
-					// be case-insensitive.
-					"svc1": {
-						"Group":    "Production",
-						"Password": "p1",
-					},
-					// Structured group attribute: name/path/uuid fields are
-					// extracted instead of stringifying the whole map.
-					"svc2": {
-						"group": map[string]any{
-							"name": "Staging",
-							"path": "Infra/Staging",
-						},
-						"Password": "p2",
-					},
-				}),
-			},
+			"grp": {Provider: "env"},
 		},
 	}
 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "grp", []provider.SearchResult{
+		{Provider: "search", Vault: "grp", Path: "svc1", Entry: provider.Entry{Title: "svc1", Attributes: map[string]any{"Group": "Production", "Password": "p1"}}},
+		{Provider: "search", Vault: "grp", Path: "svc2", Entry: provider.Entry{Title: "svc2", Attributes: map[string]any{"group": map[string]any{"name": "Staging", "path": "Infra/Staging"}, "Password": "p2"}}},
+	}); err != nil {
+		t.Fatalf("injectMockVault(grp) failed: %v", err)
 	}
 
 	ctx := context.Background()

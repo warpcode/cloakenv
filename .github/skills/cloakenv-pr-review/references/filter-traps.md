@@ -11,7 +11,7 @@ Reviewers must consult these patterns whenever evaluating changes to `internal/p
 Vault providers in `internal/engine/provider_manager.go:initVaultProvider` must be wrapped in a deterministic sequence:
 
 ```
-Base Provider (keepass / yaml / json / custom_vault / env / pass / search)
+Base Provider (keepass / env / pass / search)
   └── 1. FilteringProvider   (vault.IncludeFields, vault.ExcludeFields)
         └── 2. MappingProvider     (vault.Mapping)
               └── 3. KeyFormatProvider   (vault.KeyFormat)
@@ -19,7 +19,7 @@ Base Provider (keepass / yaml / json / custom_vault / env / pass / search)
 ```
 
 ### Invariants
-- **All Providers Decorated**: Both direct/configured providers (`keepass`, `yaml`, `json`, `custom_vault`, `env`, `pass`) and virtual providers (`search`) must be wrapped by this decorator chain.
+- **All Providers Decorated**: Both direct/configured providers (`keepass`, `env`, `pass`) and virtual providers (`search`) must be wrapped by this decorator chain.
 - **Attributes Last**: `AttributesProvider` must wrap the provider **strictly after** filtering, mapping, and key formatting. This ensures `.attributes` and `.entries` exposed to text templates contain only authorized, post-filter fields ([RSK-002](../../../../docs/plans/archive/2026-10-24-template-and-merge-consolidation.md#rsk-002-filter-bypass-via-meta-or-unfiltered-source-entries-in-templates-accepted), [REQ-005](../../../../docs/plans/archive/2026-10-24-template-and-merge-consolidation.md#req-005-per-entry-attributes-decorator-across-all-vaults-accepted--p0)).
 
 ---
@@ -58,8 +58,8 @@ from `MappingProvider.GetSecret`.
 
 ### The Failure Mode
 While removing the fallback prevented secret leaks, deleting it outright broke two documented resolution paths:
-1. **Bare `provider://entity` URIs**: Lost per-scheme default attribute resolution (`effectiveAttr := "Password"` for `keepass` at `filter.go:807`, `pass` at `filter.go:897`, and `custom_vault` at `filter.go:961`).
-2. **Multi-Entity YAML/JSON `GetSecret`**: Could not resolve at all, because `getRawEntryWithPath` reaches entity-keyed `GetEntryWithPath` while `staticProvider.GetSecret` resolves dot paths against `rawContent`.
+1. **Bare `provider://entity` URIs**: Lost per-scheme default attribute resolution (`effectiveAttr := "Password"` for `keepass` and `pass`).
+2. **Stored Search / Decorated Vault `GetSecret`**: Must preserve default `:Password` fallback and colon-qualified filtering without falling through to an unfiltered underlying provider.
 
 ### Invariants
 - When removing a passthrough or fallback, explicitly enumerate all resolution paths it previously handled (default attributes, multi-entity dot paths, virtual metadata).
@@ -71,9 +71,8 @@ While removing the fallback prevented secret leaks, deleting it outright broke t
 
 ### What Happened
 In `internal/provider/filter.go`, `FilteringProvider.GetSecret` builds colon-qualified candidates:
-- `entryPath + ":" + effectiveAttr` (`filter.go:832` for `keepass`, `filter.go:922` for `pass`)
-- `entryTitle + ":" + effectiveAttr` (`filter.go:848` for `keepass`, `filter.go:938` for `pass`)
-- `entityLoc + ":" + effectiveAttr` (`filter.go:988` for `custom_vault`)
+- `entryPath + ":" + effectiveAttr` (for `keepass` and `pass`)
+- `entryTitle + ":" + effectiveAttr` (for `keepass` and `pass`)
 
 However, generic helper `FilterEntryWithPath` and `projectRecursive` construct dot paths only (`entity.attribute`).
 
@@ -111,5 +110,4 @@ When both `include_fields` and `exclude_fields` are configured on a vault:
 ## 7. Template Engine & Command Injection Invariants
 
 1. **Decorator Sequence**: Universal decorator `NewAttributesProvider` must wrap vaults strictly after filtering and mapping so that `.attributes` and `.entries` exposed to templates contain only authorized, post-filter fields.
-2. **Composed Entities**: `CustomVaultProvider.GetSecret` must check `entity.IsComposed` and evaluate via `resolveEntity` so dynamic merges, filters, mappings, and templates are computed rather than returning raw static maps.
 3. **Child Command Safety**: `resolveCmdArgs` in `internal/engine/env_builder.go` selectively evaluates only bare known URIs or templates containing cloakenv function invocations (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`, `exec`, `shquote`, `shellQuote`). Foreign templates (e.g. Docker format flags `'{{.State.Status}}'`, Helm templates, or kubectl queries) must pass through completely untouched.

@@ -3,12 +3,9 @@ package provider
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/warpcode/cloakenv/internal/config"
 
 	"github.com/zalando/go-keyring"
 )
@@ -217,35 +214,40 @@ func TestFilterAttributesAndEntry(t *testing.T) {
 	}
 }
 
+func newFilterTestSearchProvider(results ...SearchResult) *SearchProvider {
+	sp := NewSearchProvider()
+	sp.SetSearchExecutor(func(_ context.Context, _ string, _ []string, _ int) ([]SearchResult, error) {
+		return results, nil
+	})
+	return sp
+}
+
 func TestFilteringProvider(t *testing.T) {
 	ctx := context.Background()
 
-	rawProvider := NewCustomVaultProvider()
-	err := rawProvider.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_name": "work",
-		},
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"db_prod": {
+	rawProvider := newFilterTestSearchProvider(SearchResult{
+		Provider: "mock",
+		Vault:    "work",
+		Path:     "db_prod",
+		Entry: Entry{
+			Title: "db_prod",
+			Attributes: map[string]any{
 				"UserName":     "admin",
 				"Password":     "supersecret",
 				"env:HOST":     "db.internal",
 				"secret:token": "tok123",
 				"db.notes":     "production database",
 			},
-		}),
+		},
 	})
-	if err != nil {
-		t.Fatalf("failed to initialize CustomVaultProvider: %v", err)
-	}
 
 	includeFields := []string{"env:*", "UserName"}
 	excludeFields := []string{"*.notes", "secret:*"}
 
 	fp := NewFilteringProvider(rawProvider, includeFields, excludeFields)
 
-	if fp.Scheme() != "custom_vault" {
-		t.Errorf("Scheme() = %q, want %q", fp.Scheme(), "custom_vault")
+	if fp.Scheme() != "search" {
+		t.Errorf("Scheme() = %q, want %q", fp.Scheme(), "search")
 	}
 
 	vr, ok := fp.(ValueResolvableProvider)
@@ -336,139 +338,20 @@ func TestFilteringProvider(t *testing.T) {
 	})
 }
 
-func TestFilteringProvider_SingleEntityYAML(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-	yamlPath := filepath.Join(tmpDir, "single.yaml")
-
-	content := `
-api_key: "my_api_key_val"
-db_password: "my_db_password_val"
-username: "app_user"
-`
-	if err := os.WriteFile(yamlPath, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write yaml fixture: %v", err)
-	}
-
-	isSingle := true
-	p := NewYamlProvider()
-	if err := p.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": yamlPath,
-		},
-		SingleEntity: &isSingle,
-	}); err != nil {
-		t.Fatalf("failed to init YAML provider: %v", err)
-	}
-
-	t.Run("AllowedAttributeWithoutColon", func(t *testing.T) {
-		fp := NewFilteringProvider(p, []string{"api_key", "username"}, []string{"db_password"})
-		val, err := fp.GetSecret(ctx, "api_key")
-		if err != nil {
-			t.Fatalf("GetSecret(api_key) failed: %v", err)
-		}
-		if val != "my_api_key_val" {
-			t.Errorf("GetSecret(api_key) = %q, want 'my_api_key_val'", val)
-		}
-	})
-
-	t.Run("ExcludedAttributeWithoutColon", func(t *testing.T) {
-		fp := NewFilteringProvider(p, []string{"api_key", "username"}, []string{"db_password"})
-		_, err := fp.GetSecret(ctx, "db_password")
-		if err == nil {
-			t.Fatalf("expected error for excluded db_password, got nil")
-		}
-		if !strings.Contains(err.Error(), "excluded") {
-			t.Errorf("unexpected error message: %v", err)
-		}
-	})
-
-	t.Run("ExplicitlyExcludedFieldWithoutColon", func(t *testing.T) {
-		fp := NewFilteringProvider(p, nil, []string{"api_key"})
-		_, err := fp.GetSecret(ctx, "api_key")
-		if err == nil {
-			t.Fatalf("expected error for excluded api_key, got nil")
-		}
-		if !strings.Contains(err.Error(), "excluded") {
-			t.Errorf("unexpected error message: %v", err)
-		}
-	})
-}
-
-func TestFilteringProvider_MultiEntityYAML_DotPath(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-	yamlPath := filepath.Join(tmpDir, "multi.yaml")
-
-	content := `
-entities:
-  db:
-    username: "db_admin"
-    password: "db_secret_pw"
-    notes: "db notes"
-`
-	if err := os.WriteFile(yamlPath, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write yaml fixture: %v", err)
-	}
-
-	p := NewYamlProvider()
-	if err := p.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": yamlPath,
-		},
-		EntitiesRootKey: "entities",
-	}); err != nil {
-		t.Fatalf("failed to init YAML provider: %v", err)
-	}
-
-	fp := NewFilteringProvider(p, nil, []string{"password", "*.notes"})
-
-	t.Run("ExcludedLeafDotPath", func(t *testing.T) {
-		_, err := fp.GetSecret(ctx, "entities.db.password")
-		if err == nil {
-			t.Fatalf("expected error for excluded entities.db.password, got nil")
-		}
-		if !strings.Contains(err.Error(), "excluded") {
-			t.Errorf("unexpected error message: %v", err)
-		}
-	})
-
-	t.Run("ExcludedPatternDotPath", func(t *testing.T) {
-		_, err := fp.GetSecret(ctx, "entities.db.notes")
-		if err == nil {
-			t.Fatalf("expected error for excluded entities.db.notes, got nil")
-		}
-		if !strings.Contains(err.Error(), "excluded") {
-			t.Errorf("unexpected error message: %v", err)
-		}
-	})
-
-	t.Run("AllowedDotPath", func(t *testing.T) {
-		val, err := fp.GetSecret(ctx, "entities.db.username")
-		if err != nil {
-			t.Fatalf("GetSecret(entities.db.username) failed: %v", err)
-		}
-		if val != "db_admin" {
-			t.Errorf("GetSecret(entities.db.username) = %q, want 'db_admin'", val)
-		}
-	})
-}
-
 func TestFilteringProvider_BareLocation_Password(t *testing.T) {
 	ctx := context.Background()
-	rawProvider := NewCustomVaultProvider()
-	err := rawProvider.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{"vault_name": "work"},
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"db_prod": {
+	rawProvider := newFilterTestSearchProvider(SearchResult{
+		Provider: "mock",
+		Vault:    "work",
+		Path:     "db_prod",
+		Entry: Entry{
+			Title: "db_prod",
+			Attributes: map[string]any{
 				"UserName": "admin",
 				"Password": "supersecret",
 			},
-		}),
+		},
 	})
-	if err != nil {
-		t.Fatalf("failed to initialize CustomVaultProvider: %v", err)
-	}
 
 	t.Run("PasswordExcluded_BareLocationFails", func(t *testing.T) {
 		fp := NewFilteringProvider(rawProvider, []string{"UserName"}, nil)
@@ -556,28 +439,22 @@ func TestFilteringProvider_SearchVault(t *testing.T) {
 }
 
 func TestFilteringProvider_InterfaceShape(t *testing.T) {
-	ctx := context.Background()
-
-	// 1. CustomVaultProvider implements ValueResolvableProvider -> wrapper must implement it
-	cv := NewCustomVaultProvider()
-	_ = cv.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{"vault_name": "test"},
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{"e": {"k": "v"}}),
-	})
-	fpCV := NewFilteringProvider(cv, nil, nil)
-	vrCV, ok := fpCV.(ValueResolvableProvider)
+	// 1. SearchProvider implements ValueResolvableProvider -> wrapper must implement it
+	sp := NewSearchProvider()
+	fpSP := NewFilteringProvider(sp, nil, nil)
+	vrSP, ok := fpSP.(ValueResolvableProvider)
 	if !ok {
-		t.Fatalf("expected fpCV to implement ValueResolvableProvider")
+		t.Fatalf("expected fpSP to implement ValueResolvableProvider")
 	}
-	if !vrCV.SupportsValueResolution() {
+	if !vrSP.SupportsValueResolution() {
 		t.Errorf("expected SupportsValueResolution() = true")
 	}
 
-	// 2. YamlProvider does NOT implement ValueResolvableProvider -> wrapper must NOT implement it
-	yp := NewYamlProvider()
-	fpYP := NewFilteringProvider(yp, nil, nil)
-	if _, ok := fpYP.(ValueResolvableProvider); ok {
-		t.Errorf("expected fpYP to NOT implement ValueResolvableProvider")
+	// 2. EnvProvider does NOT implement ValueResolvableProvider -> wrapper must NOT implement it
+	ep := NewEnvProvider()
+	fpEP := NewFilteringProvider(ep, nil, nil)
+	if _, ok := fpEP.(ValueResolvableProvider); ok {
+		t.Errorf("expected fpEP to NOT implement ValueResolvableProvider")
 	}
 
 	// 3. KeePassProvider does NOT implement ValueResolvableProvider -> wrapper must NOT implement it
@@ -695,112 +572,6 @@ func TestFilteringProvider_Search_CaseInsensitiveBypass(t *testing.T) {
 	}
 	if val != "search_api_key_123" {
 		t.Errorf("api_key = %q, want 'search_api_key_123'", val)
-	}
-}
-
-func TestFilteringProvider_YAML_ColonInKey(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-	yamlPath := filepath.Join(tmpDir, "colon_key.yaml")
-
-	content := `
-env:TOKEN: "token_value_abc"
-Password: "secret_password"
-`
-	if err := os.WriteFile(yamlPath, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write yaml fixture: %v", err)
-	}
-
-	isSingle := true
-	p := NewYamlProvider()
-	if err := p.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": yamlPath,
-		},
-		SingleEntity: &isSingle,
-	}); err != nil {
-		t.Fatalf("failed to init YAML provider: %v", err)
-	}
-
-	fp := NewFilteringProvider(p, []string{"env:*"}, []string{"Password"})
-
-	val, err := fp.GetSecret(ctx, "env:TOKEN")
-	if err != nil {
-		t.Fatalf("failed to get env:TOKEN: %v", err)
-	}
-	if val != "token_value_abc" {
-		t.Errorf("env:TOKEN = %q, want 'token_value_abc'", val)
-	}
-
-	_, errPass := fp.GetSecret(ctx, "Password")
-	if errPass == nil {
-		t.Fatalf("expected error for excluded Password, got nil")
-	}
-}
-
-func TestFilteringProvider_JSON_RootKeyAndDotPath(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-	jsonPath := filepath.Join(tmpDir, "multi.json")
-
-	content := `{
-  "entities": {
-    "db": {
-      "username": "db_admin",
-      "password": "json_secret_pw"
-    }
-  }
-}`
-	if err := os.WriteFile(jsonPath, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write json fixture: %v", err)
-	}
-
-	p := NewJsonProvider()
-	if err := p.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": jsonPath,
-		},
-		EntitiesRootKey: "entities",
-	}); err != nil {
-		t.Fatalf("failed to init JSON provider: %v", err)
-	}
-
-	fp := NewFilteringProvider(p, nil, []string{"password"})
-
-	// Excluded path with root key
-	_, err := fp.GetSecret(ctx, "entities.db.password")
-	if err == nil {
-		t.Fatalf("expected error for excluded entities.db.password, got nil")
-	}
-	if !strings.Contains(err.Error(), "excluded") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-
-	// Excluded path without root key
-	_, errNoRoot := fp.GetSecret(ctx, "db.password")
-	if errNoRoot == nil {
-		t.Fatalf("expected error for excluded db.password, got nil")
-	}
-
-	// Allowed path with root key
-	val, err := fp.GetSecret(ctx, "entities.db.username")
-	if err != nil {
-		t.Fatalf("failed to get entities.db.username: %v", err)
-	}
-	if val != "db_admin" {
-		t.Errorf("username = %q, want 'db_admin'", val)
-	}
-
-	// Entire entity JSON serialized without password
-	valEntity, err := fp.GetSecret(ctx, "entities.db")
-	if err != nil {
-		t.Fatalf("failed to get entities.db: %v", err)
-	}
-	if strings.Contains(valEntity, "json_secret_pw") {
-		t.Errorf("entities.db exposed excluded password: %s", valEntity)
-	}
-	if !strings.Contains(valEntity, "db_admin") {
-		t.Errorf("entities.db missing username: %s", valEntity)
 	}
 }
 
@@ -975,226 +746,6 @@ func TestFilteringProvider_Search_DuplicatePath_MultiResult_MixedCase(t *testing
 	})
 }
 
-func TestFilteringProvider_Static_FullPath_RootPrefixedAndRootless(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-	jsonPath := filepath.Join(tmpDir, "db.json")
-
-	content := `{
-  "entities": {
-    "db": {
-      "username": "db_admin",
-      "password": "json_secret_pw",
-      "port": 5432
-    }
-  }
-}`
-	if err := os.WriteFile(jsonPath, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write json fixture: %v", err)
-	}
-
-	initProvider := func() SecretProvider {
-		p := NewJsonProvider()
-		if err := p.Initialize(ctx, ProviderConfig{
-			Settings: map[string]string{
-				"vault_path": jsonPath,
-			},
-			EntitiesRootKey: "entities",
-		}); err != nil {
-			t.Fatalf("failed to init JSON provider: %v", err)
-		}
-		return p
-	}
-
-	t.Run("Exclude_FullPath_RootPrefixedRule", func(t *testing.T) {
-		// exclude_fields has the full canonical path "entities.db.password"
-		p := initProvider()
-		fp := NewFilteringProvider(p, nil, []string{"entities.db.password"})
-
-		// Root-prefixed URI must be excluded
-		_, errPrefixed := fp.GetSecret(ctx, "entities.db.password")
-		if errPrefixed == nil {
-			t.Fatalf("expected error for excluded entities.db.password, got nil")
-		}
-
-		// Rootless URI alias must also be excluded (bypassing via rootless alias is blocked)
-		_, errRootless := fp.GetSecret(ctx, "db.password")
-		if errRootless == nil {
-			t.Fatalf("expected error for excluded db.password, got nil")
-		}
-
-		// Allowed field accessible via both forms
-		val1, err := fp.GetSecret(ctx, "entities.db.username")
-		if err != nil {
-			t.Fatalf("failed to get entities.db.username: %v", err)
-		}
-		if val1 != "db_admin" {
-			t.Errorf("username = %q, want 'db_admin'", val1)
-		}
-
-		val2, err := fp.GetSecret(ctx, "db.username")
-		if err != nil {
-			t.Fatalf("failed to get db.username: %v", err)
-		}
-		if val2 != "db_admin" {
-			t.Errorf("username = %q, want 'db_admin'", val2)
-		}
-	})
-
-	t.Run("Include_FullPath_RootPrefixedRule", func(t *testing.T) {
-		// include_fields has the full canonical path "entities.db.username"
-		p := initProvider()
-		fp := NewFilteringProvider(p, []string{"entities.db.username"}, nil)
-
-		// Root-prefixed URI is allowed
-		val1, err := fp.GetSecret(ctx, "entities.db.username")
-		if err != nil {
-			t.Fatalf("failed to get entities.db.username: %v", err)
-		}
-		if val1 != "db_admin" {
-			t.Errorf("username = %q, want 'db_admin'", val1)
-		}
-
-		// Rootless alias must also be allowed (not falsely rejected)
-		val2, err := fp.GetSecret(ctx, "db.username")
-		if err != nil {
-			t.Fatalf("failed to get db.username: %v", err)
-		}
-		if val2 != "db_admin" {
-			t.Errorf("username = %q, want 'db_admin'", val2)
-		}
-
-		// Other fields excluded via both forms
-		if _, err := fp.GetSecret(ctx, "entities.db.password"); err == nil {
-			t.Fatalf("expected error for password, got nil")
-		}
-		if _, err := fp.GetSecret(ctx, "db.password"); err == nil {
-			t.Fatalf("expected error for password, got nil")
-		}
-	})
-
-	t.Run("Exclude_RootlessFullPathRule", func(t *testing.T) {
-		// exclude_fields has the rootless path "db.password"
-		p := initProvider()
-		fp := NewFilteringProvider(p, nil, []string{"db.password"})
-
-		// Both forms must be excluded
-		if _, err := fp.GetSecret(ctx, "entities.db.password"); err == nil {
-			t.Fatalf("expected error for entities.db.password, got nil")
-		}
-		if _, err := fp.GetSecret(ctx, "db.password"); err == nil {
-			t.Fatalf("expected error for db.password, got nil")
-		}
-	})
-
-	t.Run("NormalizeEmptyPathComponents", func(t *testing.T) {
-		p := initProvider()
-		fp := NewFilteringProvider(p, nil, []string{"entities.db.password"})
-
-		// Consecutive dots or leading/trailing dots must not bypass exclusion
-		if _, err := fp.GetSecret(ctx, "entities..db.password"); err == nil {
-			t.Fatalf("expected error for entities..db.password, got nil")
-		}
-		if _, err := fp.GetSecret(ctx, ".db.password"); err == nil {
-			t.Fatalf("expected error for .db.password, got nil")
-		}
-
-		// Allowed fields with redundant dots are normalized and resolve properly
-		val1, err := fp.GetSecret(ctx, "entities..db.username")
-		if err != nil {
-			t.Fatalf("failed to get entities..db.username: %v", err)
-		}
-		if val1 != "db_admin" {
-			t.Errorf("username = %q, want 'db_admin'", val1)
-		}
-
-		val2, err := fp.GetSecret(ctx, ".db.username.")
-		if err != nil {
-			t.Fatalf("failed to get .db.username.: %v", err)
-		}
-		if val2 != "db_admin" {
-			t.Errorf("username = %q, want 'db_admin'", val2)
-		}
-	})
-
-	t.Run("EntityMap_FullPathFiltering", func(t *testing.T) {
-		// exclude_fields has full path "entities.db.password"
-		p := initProvider()
-		fp := NewFilteringProvider(p, nil, []string{"entities.db.password"})
-
-		// Fetching entities.db or db should omit password from the serialized map
-		valEntity1, err := fp.GetSecret(ctx, "entities.db")
-		if err != nil {
-			t.Fatalf("failed to get entities.db: %v", err)
-		}
-		if strings.Contains(valEntity1, "json_secret_pw") {
-			t.Errorf("entities.db exposed excluded password: %s", valEntity1)
-		}
-		if !strings.Contains(valEntity1, "db_admin") {
-			t.Errorf("entities.db missing username: %s", valEntity1)
-		}
-
-		valEntity2, err := fp.GetSecret(ctx, "db")
-		if err != nil {
-			t.Fatalf("failed to get db: %v", err)
-		}
-		if strings.Contains(valEntity2, "json_secret_pw") {
-			t.Errorf("db exposed excluded password: %s", valEntity2)
-		}
-		if !strings.Contains(valEntity2, "db_admin") {
-			t.Errorf("db missing username: %s", valEntity2)
-		}
-	})
-
-	t.Run("EntityMap_AggregateInclude_RootPrefixedAndRootless", func(t *testing.T) {
-		// include_fields has leaf "username"
-		p := initProvider()
-		fp := NewFilteringProvider(p, []string{"username"}, nil)
-
-		// Root-prefixed container entities.db must include username and exclude password
-		valEntity1, err := fp.GetSecret(ctx, "entities.db")
-		if err != nil {
-			t.Fatalf("failed to get entities.db: %v", err)
-		}
-		if !strings.Contains(valEntity1, "db_admin") {
-			t.Errorf("entities.db missing username: %s", valEntity1)
-		}
-		if strings.Contains(valEntity1, "json_secret_pw") {
-			t.Errorf("entities.db exposed non-included password: %s", valEntity1)
-		}
-
-		// Rootless container db must also include username and exclude password
-		valEntity2, err := fp.GetSecret(ctx, "db")
-		if err != nil {
-			t.Fatalf("failed to get db: %v", err)
-		}
-		if !strings.Contains(valEntity2, "db_admin") {
-			t.Errorf("db missing username: %s", valEntity2)
-		}
-		if strings.Contains(valEntity2, "json_secret_pw") {
-			t.Errorf("db exposed non-included password: %s", valEntity2)
-		}
-
-		// Full-path include rules: "entities.db.username" and "db.username"
-		fpFullPath := NewFilteringProvider(p, []string{"entities.db.username"}, nil)
-		valFullPath1, err := fpFullPath.GetSecret(ctx, "entities.db")
-		if err != nil {
-			t.Fatalf("failed to get entities.db with full-path include: %v", err)
-		}
-		if !strings.Contains(valFullPath1, "db_admin") || strings.Contains(valFullPath1, "json_secret_pw") {
-			t.Errorf("unexpected output with full-path include: %s", valFullPath1)
-		}
-
-		valFullPath2, err := fpFullPath.GetSecret(ctx, "db")
-		if err != nil {
-			t.Fatalf("failed to get db with full-path include: %v", err)
-		}
-		if !strings.Contains(valFullPath2, "db_admin") || strings.Contains(valFullPath2, "json_secret_pw") {
-			t.Errorf("unexpected output with full-path include: %s", valFullPath2)
-		}
-	})
-}
-
 func TestFilteringProvider_Search_SinglePassConsistency(t *testing.T) {
 	ctx := context.Background()
 
@@ -1230,357 +781,6 @@ func TestFilteringProvider_Search_SinglePassConsistency(t *testing.T) {
 	}
 	if val != "pw_snapshot_1" {
 		t.Errorf("val = %q, want 'pw_snapshot_1'", val)
-	}
-}
-
-func TestFilteringProvider_StructuredOutput_RecursiveCanonicalProjection(t *testing.T) {
-	ctx := context.Background()
-
-	rawContent := []byte(`
-entities:
-  db:
-    credentials:
-      token: "secret_token_123"
-      user: "db_admin"
-    accounts:
-      - token: "acct_token_1"
-        name: "acct1"
-      - token: "acct_token_2"
-        name: "acct2"
-    flat.dotted.secret: "flat_secret_val"
-    flat.dotted.safe: "flat_safe_val"
-`)
-	tmpDir := t.TempDir()
-	filePath := filepath.Join(tmpDir, "vault.yaml")
-	if err := os.WriteFile(filePath, rawContent, 0600); err != nil {
-		t.Fatalf("failed to write test file: %v", err)
-	}
-
-	initProvider := func() SecretProvider {
-		p := NewYamlProvider()
-		err := p.Initialize(ctx, ProviderConfig{
-			Settings: map[string]string{
-				"vault_path": filePath,
-				"vault_name": "test_yaml",
-			},
-			EntitiesRootKey: "entities",
-			Searchable:      true,
-		})
-		if err != nil {
-			t.Fatalf("failed to initialize yaml provider: %v", err)
-		}
-		return p
-	}
-
-	t.Run("NestedMap_ExcludeLeaf", func(t *testing.T) {
-		p := initProvider()
-		fp := NewFilteringProvider(p, nil, []string{"token"})
-
-		searchable, ok := fp.(SearchableProvider)
-		if !ok {
-			t.Fatalf("expected SearchableProvider")
-		}
-
-		entry, err := searchable.GetEntry(ctx, "db")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-
-		creds, ok := entry.Attributes["credentials"].(map[string]any)
-		if !ok {
-			t.Fatalf("expected credentials to be map[string]any, got %T", entry.Attributes["credentials"])
-		}
-		if _, hasToken := creds["token"]; hasToken {
-			t.Errorf("expected token to be excluded from credentials map, got %v", creds)
-		}
-		if creds["user"] != "db_admin" {
-			t.Errorf("expected user 'db_admin', got %v", creds["user"])
-		}
-	})
-
-	t.Run("NestedMap_RootedRuleExclusion", func(t *testing.T) {
-		// exclude_fields has canonical full path "entities.db.credentials.token"
-		p := initProvider()
-		fp := NewFilteringProvider(p, nil, []string{"entities.db.credentials.token"})
-
-		searchable := fp.(SearchableProvider)
-		entry, err := searchable.GetEntry(ctx, "db")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-
-		creds, ok := entry.Attributes["credentials"].(map[string]any)
-		if !ok {
-			t.Fatalf("expected credentials map")
-		}
-		if _, hasToken := creds["token"]; hasToken {
-			t.Errorf("expected token excluded under rooted rule, got %v", creds)
-		}
-		if creds["user"] != "db_admin" {
-			t.Errorf("expected user preserved, got %v", creds["user"])
-		}
-	})
-
-	t.Run("MapsInsideArray_Exclusion", func(t *testing.T) {
-		p := initProvider()
-		fp := NewFilteringProvider(p, nil, []string{"token"})
-
-		searchable := fp.(SearchableProvider)
-		entry, err := searchable.GetEntry(ctx, "db")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-
-		accounts, ok := entry.Attributes["accounts"].([]any)
-		if !ok {
-			t.Fatalf("expected accounts to be []any, got %T", entry.Attributes["accounts"])
-		}
-		if len(accounts) != 2 {
-			t.Fatalf("expected 2 accounts, got %d", len(accounts))
-		}
-		for i, acctRaw := range accounts {
-			acct, ok := acctRaw.(map[string]any)
-			if !ok {
-				t.Fatalf("account %d is not map[string]any", i)
-			}
-			if _, hasToken := acct["token"]; hasToken {
-				t.Errorf("account %d has excluded token: %v", i, acct)
-			}
-			if acct["name"] == "" {
-				t.Errorf("account %d missing name: %v", i, acct)
-			}
-		}
-	})
-
-	t.Run("DottedAttributeKeys_Exclusion", func(t *testing.T) {
-		p := initProvider()
-		fp := NewFilteringProvider(p, nil, []string{"*.secret"})
-
-		searchable := fp.(SearchableProvider)
-		entry, err := searchable.GetEntry(ctx, "db")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-
-		if _, hasSecret := entry.Attributes["flat.dotted.secret"]; hasSecret {
-			t.Errorf("flat.dotted.secret was not excluded: %v", entry.Attributes)
-		}
-		if entry.Attributes["flat.dotted.safe"] != "flat_safe_val" {
-			t.Errorf("flat.dotted.safe missing or altered: %v", entry.Attributes)
-		}
-	})
-
-	t.Run("Search_StructuredOutput_Filtering", func(t *testing.T) {
-		p := initProvider()
-		fp := NewFilteringProvider(p, nil, []string{"token"})
-
-		searchable := fp.(SearchableProvider)
-		results, err := searchable.Search(ctx, SearchQuery{})
-		if err != nil {
-			t.Fatalf("Search failed: %v", err)
-		}
-		if len(results) == 0 {
-			t.Fatalf("expected search results")
-		}
-
-		for _, r := range results {
-			if creds, ok := r.Entry.Attributes["credentials"].(map[string]any); ok {
-				if _, hasToken := creds["token"]; hasToken {
-					t.Errorf("search result exposed excluded token in credentials: %v", creds)
-				}
-			}
-		}
-	})
-}
-
-func TestFilteringProvider_Static_SlicePath(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-	yamlPath := filepath.Join(tmpDir, "slice.yaml")
-
-	content := `
-entities:
-  db:
-    accounts:
-      - token: "tok_1"
-        name: "acct1"
-      - token: "tok_2"
-        name: "acct2"
-`
-	if err := os.WriteFile(yamlPath, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write yaml fixture: %v", err)
-	}
-
-	p := NewYamlProvider()
-	if err := p.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": yamlPath,
-		},
-		EntitiesRootKey: "entities",
-	}); err != nil {
-		t.Fatalf("failed to init YAML provider: %v", err)
-	}
-
-	fp := NewFilteringProvider(p, nil, []string{"token"})
-
-	val, err := fp.GetSecret(ctx, "entities.db.accounts")
-	if err != nil {
-		t.Fatalf("GetSecret(entities.db.accounts) failed: %v", err)
-	}
-	if strings.Contains(val, "tok_") {
-		t.Errorf("serialized slice exposed excluded token fields: %s", val)
-	}
-	if !strings.Contains(val, "acct1") || !strings.Contains(val, "acct2") {
-		t.Errorf("serialized slice is missing expected name fields: %s", val)
-	}
-}
-
-func TestFilteringProvider_Static_AncestorExclusion(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-	jsonPath := filepath.Join(tmpDir, "ancestor.json")
-
-	content := `{
-  "entities": {
-    "db": {
-      "username": "db_admin",
-      "port": 5432
-    },
-    "cache": {
-      "host": "redis.internal"
-    }
-  }
-}`
-	if err := os.WriteFile(jsonPath, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write json fixture: %v", err)
-	}
-
-	p := NewJsonProvider()
-	if err := p.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": jsonPath,
-		},
-		EntitiesRootKey: "entities",
-	}); err != nil {
-		t.Fatalf("failed to init JSON provider: %v", err)
-	}
-
-	// exclude_fields: ["db"] — should block access to any nested path under "db"
-	fp := NewFilteringProvider(p, nil, []string{"db"})
-
-	// Accessing db.username must be blocked because ancestor "db" is excluded
-	_, err := fp.GetSecret(ctx, "db.username")
-	if err == nil {
-		t.Fatalf("expected error for db.username when ancestor 'db' is excluded, got nil")
-	}
-	if !strings.Contains(err.Error(), "excluded") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-
-	// Sibling entity "cache" must still be accessible
-	val, err := fp.GetSecret(ctx, "cache.host")
-	if err != nil {
-		t.Fatalf("GetSecret(cache.host) should succeed but failed: %v", err)
-	}
-	if val != "redis.internal" {
-		t.Errorf("cache.host = %q, want 'redis.internal'", val)
-	}
-}
-
-func TestFilteringProvider_Static_AncestorExclusion_Structured(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-	jsonPath := filepath.Join(tmpDir, "ancestor_struct.json")
-
-	content := `{
-  "entities": {
-    "db": {
-      "username": "db_admin",
-      "port": 5432
-    },
-    "cache": {
-      "host": "redis.internal"
-    }
-  }
-}`
-	if err := os.WriteFile(jsonPath, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write json fixture: %v", err)
-	}
-
-	p := NewJsonProvider()
-	if err := p.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": jsonPath,
-		},
-		EntitiesRootKey: "entities",
-	}); err != nil {
-		t.Fatalf("failed to init JSON provider: %v", err)
-	}
-
-	// 1. exclude_fields: ["db"] — structured GetEntry and Search on "db" must have attributes excluded
-	fp := NewFilteringProvider(p, nil, []string{"db"})
-	sfp, ok := fp.(SearchableProvider)
-	if !ok {
-		t.Fatalf("FilteringProvider should implement SearchableProvider")
-	}
-
-	entryDB, err := sfp.GetEntry(ctx, "db")
-	if err != nil {
-		t.Fatalf("GetEntry(db) failed: %v", err)
-	}
-	if len(entryDB.Attributes) != 0 {
-		t.Errorf("GetEntry(db) exposed attributes despite ancestor exclude: %v", entryDB.Attributes)
-	}
-
-	entryCache, err := sfp.GetEntry(ctx, "cache")
-	if err != nil {
-		t.Fatalf("GetEntry(cache) failed: %v", err)
-	}
-	if entryCache.Attributes["host"] != "redis.internal" {
-		t.Errorf("GetEntry(cache) host = %v, want 'redis.internal'", entryCache.Attributes["host"])
-	}
-
-	// Search
-	results, err := sfp.Search(ctx, SearchQuery{})
-	if err != nil {
-		t.Fatalf("Search failed: %v", err)
-	}
-	for _, r := range results {
-		if r.Path == "db" && len(r.Entry.Attributes) != 0 {
-			t.Errorf("Search result for 'db' exposed attributes: %v", r.Entry.Attributes)
-		}
-		if r.Path == "cache" && r.Entry.Attributes["host"] != "redis.internal" {
-			t.Errorf("Search result for 'cache' missing host: %v", r.Entry.Attributes)
-		}
-	}
-
-	// 2. exclude_fields: ["entities.db"] — root-prefixed ancestor exclusion
-	fpRoot := NewFilteringProvider(p, nil, []string{"entities.db"})
-	sfpRoot := fpRoot.(SearchableProvider)
-	entryDBRoot, err := sfpRoot.GetEntry(ctx, "db")
-	if err != nil {
-		t.Fatalf("GetEntry(db) with entities.db exclude failed: %v", err)
-	}
-	if len(entryDBRoot.Attributes) != 0 {
-		t.Errorf("GetEntry(db) exposed attributes with entities.db exclude: %v", entryDBRoot.Attributes)
-	}
-
-	// 3. include_fields: ["db"] — subtree inclusion
-	fpInc := NewFilteringProvider(p, []string{"db"}, nil)
-	sfpInc := fpInc.(SearchableProvider)
-	entryDBInc, err := sfpInc.GetEntry(ctx, "db")
-	if err != nil {
-		t.Fatalf("GetEntry(db) with include 'db' failed: %v", err)
-	}
-	if entryDBInc.Attributes["username"] != "db_admin" {
-		t.Errorf("GetEntry(db) username = %v, want 'db_admin'", entryDBInc.Attributes["username"])
-	}
-	entryCacheInc, err := sfpInc.GetEntry(ctx, "cache")
-	if err != nil {
-		t.Fatalf("GetEntry(cache) with include 'db' failed: %v", err)
-	}
-	if len(entryCacheInc.Attributes) != 0 {
-		t.Errorf("GetEntry(cache) should have empty attributes when only 'db' is included, got: %v", entryCacheInc.Attributes)
 	}
 }
 
@@ -1667,25 +867,23 @@ func TestFilteringProvider_KeePass_EntryPathCandidates(t *testing.T) {
 	}
 }
 
-func TestFilteringProvider_CustomVault_EntryPathCandidates(t *testing.T) {
+func TestFilteringProvider_Search_EntryPathCandidates(t *testing.T) {
 	ctx := context.Background()
-	cv := NewCustomVaultProvider()
-	if err := cv.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{},
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"my_entity": {
+	sp := newFilterTestSearchProvider(SearchResult{
+		Provider: "mock",
+		Vault:    "work",
+		Path:     "my_entity",
+		Entry: Entry{
+			Title: "my_entity",
+			Attributes: map[string]any{
 				"Password": "my_secret_pass",
 				"UserName": "my_user",
 			},
-		}),
-	}); err != nil {
-		t.Fatalf("failed to initialize custom vault: %v", err)
-	}
+		},
+	})
 
-	// 1. Path-qualified exclusion: exclude_fields: ["my_entity.Password"]
-	fp := NewFilteringProvider(cv, nil, []string{"my_entity.Password"})
+	fp := NewFilteringProvider(sp, nil, []string{"my_entity.Password"})
 
-	// GetSecret with explicit attribute
 	_, err := fp.GetSecret(ctx, "my_entity:Password")
 	if err == nil {
 		t.Fatalf("expected error for my_entity:Password, got nil")
@@ -1694,13 +892,11 @@ func TestFilteringProvider_CustomVault_EntryPathCandidates(t *testing.T) {
 		t.Errorf("unexpected error message: %v", err)
 	}
 
-	// GetSecret with bare entity (defaults to Password)
 	_, err = fp.GetSecret(ctx, "my_entity")
 	if err == nil {
 		t.Fatalf("expected error for bare my_entity, got nil")
 	}
 
-	// UserName should succeed
 	val, err := fp.GetSecret(ctx, "my_entity:UserName")
 	if err != nil {
 		t.Fatalf("GetSecret(my_entity:UserName) failed: %v", err)
@@ -1709,7 +905,6 @@ func TestFilteringProvider_CustomVault_EntryPathCandidates(t *testing.T) {
 		t.Errorf("UserName = %q, want 'my_user'", val)
 	}
 
-	// Structured GetEntry
 	sfp := fp.(SearchableProvider)
 	entry, err := sfp.GetEntry(ctx, "my_entity")
 	if err != nil {
@@ -1722,8 +917,7 @@ func TestFilteringProvider_CustomVault_EntryPathCandidates(t *testing.T) {
 		t.Errorf("GetEntry UserName = %v, want 'my_user'", entry.Attributes["UserName"])
 	}
 
-	// 2. Full entity exclusion: exclude_fields: ["my_entity"]
-	fpAll := NewFilteringProvider(cv, nil, []string{"my_entity"})
+	fpAll := NewFilteringProvider(sp, nil, []string{"my_entity"})
 	_, err = fpAll.GetSecret(ctx, "my_entity:Password")
 	if err == nil {
 		t.Fatalf("expected error when entire entity is excluded, got nil")
@@ -1742,7 +936,7 @@ func TestFilteringProvider_Search_PathQualifiedAndSnapshot(t *testing.T) {
 	sp.searchExecutor = func(_ context.Context, _ string, _ []string, _ int) ([]SearchResult, error) {
 		return []SearchResult{
 			{
-				Provider: "custom_vault",
+				Provider: "mock",
 				Vault:    "src",
 				Path:     "db/main",
 				Entry: Entry{
@@ -1795,169 +989,6 @@ func TestFilteringProvider_Search_PathQualifiedAndSnapshot(t *testing.T) {
 	}
 }
 
-func TestFilteringProvider_Static_TopLevelSlice_ExactContainerInclude(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-
-	// 1. Single-entity / rootless static provider with top-level slices
-	jsonSinglePath := filepath.Join(tmpDir, "slices_single.json")
-	contentSingle := `{
-  "accounts": [
-    {"name": "acct1", "token": "tok1"},
-    {"name": "acct2", "token": "tok2"}
-  ],
-  "regions": ["prod", "us-east"]
-}`
-	if err := os.WriteFile(jsonSinglePath, []byte(contentSingle), 0600); err != nil {
-		t.Fatalf("failed to write json fixture: %v", err)
-	}
-
-	p := NewJsonProvider()
-	if err := p.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": jsonSinglePath,
-		},
-	}); err != nil {
-		t.Fatalf("failed to init single-entity JSON provider: %v", err)
-	}
-
-	// include_fields: ["accounts"] — should keep entire list of maps
-	fpAccts := NewFilteringProvider(p, []string{"accounts"}, nil)
-	valAccts, err := fpAccts.GetSecret(ctx, "accounts")
-	if err != nil {
-		t.Fatalf("GetSecret(accounts) failed: %v", err)
-	}
-	if !strings.Contains(valAccts, "acct1") || !strings.Contains(valAccts, "tok1") {
-		t.Errorf("GetSecret(accounts) missing expected content: %s", valAccts)
-	}
-
-	// include_fields: ["regions"] — should keep primitive array
-	fpRegions := NewFilteringProvider(p, []string{"regions"}, nil)
-	valRegions, err := fpRegions.GetSecret(ctx, "regions")
-	if err != nil {
-		t.Fatalf("GetSecret(regions) failed: %v", err)
-	}
-	if !strings.Contains(valRegions, "prod") || !strings.Contains(valRegions, "us-east") {
-		t.Errorf("GetSecret(regions) missing expected array items: %s", valRegions)
-	}
-
-	// False rejection: include_fields: ["other"] should reject accounts and regions
-	fpOther := NewFilteringProvider(p, []string{"other"}, nil)
-	_, err = fpOther.GetSecret(ctx, "accounts")
-	if err == nil {
-		t.Fatalf("expected error for accounts with include_fields: ['other'], got nil")
-	}
-	if !strings.Contains(err.Error(), "excluded") {
-		t.Errorf("unexpected error message: %v", err)
-	}
-	_, err = fpOther.GetSecret(ctx, "regions")
-	if err == nil {
-		t.Fatalf("expected error for regions with include_fields: ['other'], got nil")
-	}
-
-	// 2. Rooted multi-entity static provider (entities_root_key: "entities")
-	jsonRootedPath := filepath.Join(tmpDir, "slices_rooted.json")
-	contentRooted := `{
-  "entities": {
-    "db": {
-      "accounts": [
-        {"name": "acct3", "token": "tok3"}
-      ],
-      "tags": ["internal", "v2"]
-    }
-  }
-}`
-	if err := os.WriteFile(jsonRootedPath, []byte(contentRooted), 0600); err != nil {
-		t.Fatalf("failed to write rooted json fixture: %v", err)
-	}
-
-	pRoot := NewJsonProvider()
-	if err := pRoot.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": jsonRootedPath,
-		},
-		EntitiesRootKey: "entities",
-	}); err != nil {
-		t.Fatalf("failed to init rooted JSON provider: %v", err)
-	}
-
-	// include_fields: ["entities.db.accounts"] — should allow both rootless and root-prefixed forms
-	fpRootAccts := NewFilteringProvider(pRoot, []string{"entities.db.accounts"}, nil)
-	valRoot1, err := fpRootAccts.GetSecret(ctx, "db.accounts")
-	if err != nil {
-		t.Fatalf("GetSecret(db.accounts) with entities.db.accounts include failed: %v", err)
-	}
-	if !strings.Contains(valRoot1, "acct3") {
-		t.Errorf("GetSecret(db.accounts) missing acct3: %s", valRoot1)
-	}
-	valRoot2, err := fpRootAccts.GetSecret(ctx, "entities.db.accounts")
-	if err != nil {
-		t.Fatalf("GetSecret(entities.db.accounts) with entities.db.accounts include failed: %v", err)
-	}
-	if !strings.Contains(valRoot2, "acct3") {
-		t.Errorf("GetSecret(entities.db.accounts) missing acct3: %s", valRoot2)
-	}
-
-	// include_fields: ["entities.db.tags"] — primitive list under root key
-	fpRootTags := NewFilteringProvider(pRoot, []string{"entities.db.tags"}, nil)
-	valRootTags, err := fpRootTags.GetSecret(ctx, "db.tags")
-	if err != nil {
-		t.Fatalf("GetSecret(db.tags) with entities.db.tags include failed: %v", err)
-	}
-	if !strings.Contains(valRootTags, "internal") || !strings.Contains(valRootTags, "v2") {
-		t.Errorf("GetSecret(db.tags) missing expected items: %s", valRootTags)
-	}
-}
-
-func TestFilteringProvider_CustomVault_StructuredProjection(t *testing.T) {
-	ctx := context.Background()
-	cvp := NewCustomVaultProvider()
-
-	cfg := ProviderConfig{
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"app": {
-				"data": map[string]any{
-					"user":  "alice",
-					"token": "secret123",
-				},
-				"items": []any{
-					map[string]any{"id": 1, "secret": "s1"},
-					map[string]any{"id": 2, "secret": "s2"},
-				},
-			},
-		}),
-	}
-	if err := cvp.Initialize(ctx, cfg); err != nil {
-		t.Fatalf("failed to init custom_vault: %v", err)
-	}
-
-	// 1. Exclude nested field in map: exclude_fields: ["*.token"]
-	fpMap := NewFilteringProvider(cvp, nil, []string{"*.token"})
-	resMap, err := fpMap.GetSecret(ctx, "app:data")
-	if err != nil {
-		t.Fatalf("GetSecret(app:data) failed: %v", err)
-	}
-	if strings.Contains(resMap, "secret123") {
-		t.Errorf("expected token 'secret123' to be excluded from serialized map, got: %s", resMap)
-	}
-	if !strings.Contains(resMap, "alice") {
-		t.Errorf("expected user 'alice' to be present in serialized map, got: %s", resMap)
-	}
-
-	// 2. Exclude nested field in slice: exclude_fields: ["*.secret"]
-	fpSlice := NewFilteringProvider(cvp, nil, []string{"*.secret"})
-	resSlice, err := fpSlice.GetSecret(ctx, "app:items")
-	if err != nil {
-		t.Fatalf("GetSecret(app:items) failed: %v", err)
-	}
-	if strings.Contains(resSlice, "s1") || strings.Contains(resSlice, "s2") {
-		t.Errorf("expected secrets to be excluded from serialized slice, got: %s", resSlice)
-	}
-	if !strings.Contains(resSlice, "id: 1") && !strings.Contains(resSlice, "id: 2") {
-		t.Errorf("expected ids to be retained in serialized slice, got: %s", resSlice)
-	}
-}
-
 func TestFilteringProvider_Search_StructuredProjection(t *testing.T) {
 	ctx := context.Background()
 	sp := NewSearchProvider()
@@ -1993,126 +1024,10 @@ func TestFilteringProvider_Search_StructuredProjection(t *testing.T) {
 	}
 }
 
-func TestFilteringProvider_SingleEntity_RootSymmetry(t *testing.T) {
-	ctx := context.Background()
-	tmpDir := t.TempDir()
-	jsonPath := filepath.Join(tmpDir, "single_entity_symmetry.json")
-
-	content := `{
-  "entities": {
-    "db": {
-      "host": "localhost",
-      "password": "secret_password"
-    }
-  }
-}`
-	if err := os.WriteFile(jsonPath, []byte(content), 0600); err != nil {
-		t.Fatalf("failed to write json fixture: %v", err)
-	}
-
-	singleEntity := true
-	p := NewJsonProvider()
-	if err := p.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": jsonPath,
-		},
-		EntitiesRootKey: "entities",
-		SingleEntity:    &singleEntity,
-	}); err != nil {
-		t.Fatalf("failed to init single-entity JSON provider: %v", err)
-	}
-
-	// Test 1: Exclude with rooted path "entities.db.password"
-	fpRooted := NewFilteringProvider(p, nil, []string{"entities.db.password"})
-
-	// Rootless query db.password must be blocked
-	_, err := fpRooted.GetSecret(ctx, "db.password")
-	if err == nil {
-		t.Fatalf("expected error for db.password with exclude_fields: ['entities.db.password'], got nil")
-	}
-
-	// Root-prefixed query entities.db.password must also be blocked
-	_, err = fpRooted.GetSecret(ctx, "entities.db.password")
-	if err == nil {
-		t.Fatalf("expected error for entities.db.password with exclude_fields: ['entities.db.password'], got nil")
-	}
-
-	// Allowed field must succeed for both forms
-	valRootless, err := fpRooted.GetSecret(ctx, "db.host")
-	if err != nil {
-		t.Fatalf("GetSecret(db.host) failed: %v", err)
-	}
-	if valRootless != "localhost" {
-		t.Errorf("expected localhost, got %q", valRootless)
-	}
-
-	valRooted, err := fpRooted.GetSecret(ctx, "entities.db.host")
-	if err != nil {
-		t.Fatalf("GetSecret(entities.db.host) failed: %v", err)
-	}
-	if valRooted != "localhost" {
-		t.Errorf("expected localhost, got %q", valRooted)
-	}
-
-	// Test 2: Exclude with rootless path "db.password"
-	fpRootless := NewFilteringProvider(p, nil, []string{"db.password"})
-
-	// Both forms must be blocked symmetrically
-	_, err = fpRootless.GetSecret(ctx, "db.password")
-	if err == nil {
-		t.Fatalf("expected error for db.password with exclude_fields: ['db.password'], got nil")
-	}
-	_, err = fpRootless.GetSecret(ctx, "entities.db.password")
-	if err == nil {
-		t.Fatalf("expected error for entities.db.password with exclude_fields: ['db.password'], got nil")
-	}
-}
-
 func TestSearchableFilteringProvider_GetEntry_AuthoritativePathVsCallerAlias(t *testing.T) {
 	ctx := context.Background()
-	tmpDir := t.TempDir()
 
-	// 1. Single-entity static provider:
-	// The entry's authoritative Title is "guest_user".
-	// The allowlist includes only "admin.*".
-	// A caller injecting location "admin.super" must NOT inherit inclusion for the entry's attributes.
-	yamlPath := filepath.Join(tmpDir, "single_entity_alias.yaml")
-	yamlContent := `
-title: "guest_user"
-token: "secret_token_123"
-name: "guest"
-`
-	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0600); err != nil {
-		t.Fatalf("failed to write yaml: %v", err)
-	}
-
-	singleEntity := true
-	yp := NewYamlProvider()
-	if err := yp.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": yamlPath,
-		},
-		SingleEntity: &singleEntity,
-	}); err != nil {
-		t.Fatalf("failed to init YAML provider: %v", err)
-	}
-
-	fp := NewFilteringProvider(yp, []string{"admin.*"}, nil)
-	sfp, ok := fp.(SearchableProvider)
-	if !ok {
-		t.Fatal("expected SearchableProvider wrapper")
-	}
-
-	// Caller attempts alias injection by asking for "admin.super"
-	entry, err := sfp.GetEntry(ctx, "admin.super")
-	if err != nil {
-		t.Fatalf("GetEntry failed: %v", err)
-	}
-	if len(entry.Attributes) != 0 {
-		t.Errorf("expected all attributes to be excluded under authoritative title 'guest_user', but got: %v", entry.Attributes)
-	}
-
-	// 2. Single-result SearchProvider:
+	// Single-result SearchProvider:
 	// Result path is "guest/account". Allowlist includes only "admin/*".
 	// Caller requesting "admin/account" must NOT inherit inclusion.
 	sp := NewSearchProvider()
@@ -2246,410 +1161,62 @@ func TestFilteringProvider_SliceIndexing(t *testing.T) {
 func TestFilteringProvider_TitleQualifiedExclusion(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("StaticProvider_TitleQualifiedExclusion", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		yamlPath := filepath.Join(tmpDir, "title_excl.yaml")
-		yamlContent := `
-entities:
-  entry1:
-    title: "Database Admin"
-    token: "secret_admin_tok"
-    host: "db.internal"
-`
-		if err := os.WriteFile(yamlPath, []byte(yamlContent), 0600); err != nil {
-			t.Fatalf("failed to write yaml: %v", err)
-		}
-
-		yp := NewYamlProvider()
-		if err := yp.Initialize(ctx, ProviderConfig{
-			Settings: map[string]string{
-				"vault_path": yamlPath,
+	sp := newFilterTestSearchProvider(SearchResult{
+		Provider: "keepass",
+		Vault:    "work",
+		Path:     "services/backend",
+		Entry: Entry{
+			Title: "Backend Service",
+			Attributes: map[string]any{
+				"api_key":  "secret_key_999",
+				"endpoint": "https://service.internal",
 			},
-			EntitiesRootKey: "entities",
-		}); err != nil {
-			t.Fatalf("failed to init YAML: %v", err)
-		}
-
-		// exclude_fields: ["Database Admin.token"]
-		fp := NewFilteringProvider(yp, nil, []string{"Database Admin.token"})
-
-		// Scalar GetSecret must be blocked using title-prefixed exclusion
-		_, err := fp.GetSecret(ctx, "entry1.token")
-		if err == nil {
-			t.Errorf("expected GetSecret(entry1.token) to be blocked by title-qualified exclusion, got nil")
-		}
-
-		// Non-excluded field must succeed
-		val, err := fp.GetSecret(ctx, "entry1.host")
-		if err != nil {
-			t.Fatalf("GetSecret(entry1.host) failed: %v", err)
-		}
-		if val != "db.internal" {
-			t.Errorf("expected 'db.internal', got %q", val)
-		}
-
-		// Structured GetEntry must also exclude token
-		sfp := fp.(SearchableProvider)
-		entry, err := sfp.GetEntry(ctx, "entry1")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-		if _, hasToken := entry.Attributes["token"]; hasToken {
-			t.Errorf("expected token to be excluded in GetEntry, but got: %v", entry.Attributes)
-		}
-	})
-
-	t.Run("CustomVault_TitleQualifiedExclusion", func(t *testing.T) {
-		cp := NewCustomVaultProvider()
-		if err := cp.Initialize(ctx, ProviderConfig{
-			Entities: config.ToCustomEntityMap(map[string]map[string]any{
-				"e1": {
-					"title":    "My App Secret",
-					"Password": "top_secret_pass",
-					"username": "admin",
-				},
-			}),
-		}); err != nil {
-			t.Fatalf("failed to init CustomVault: %v", err)
-		}
-
-		// exclude_fields: ["My App Secret.Password"]
-		fp := NewFilteringProvider(cp, nil, []string{"My App Secret.Password"})
-
-		// Scalar GetSecret with default Password
-		_, err := fp.GetSecret(ctx, "e1")
-		if err == nil {
-			t.Errorf("expected GetSecret(e1) to be blocked by title-qualified exclusion, got nil")
-		}
-
-		// Scalar GetSecret with explicit attribute
-		_, err = fp.GetSecret(ctx, "e1:Password")
-		if err == nil {
-			t.Errorf("expected GetSecret(e1:Password) to be blocked by title-qualified exclusion, got nil")
-		}
-
-		// Non-excluded field succeeds
-		val, err := fp.GetSecret(ctx, "e1:username")
-		if err != nil {
-			t.Fatalf("GetSecret(e1:username) failed: %v", err)
-		}
-		if val != "admin" {
-			t.Errorf("expected admin, got %q", val)
-		}
-
-		// Structured GetEntry must also exclude Password
-		sfp := fp.(SearchableProvider)
-		entry, err := sfp.GetEntry(ctx, "e1")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-		if _, hasPass := entry.Attributes["Password"]; hasPass {
-			t.Errorf("expected Password to be excluded in GetEntry, got: %v", entry.Attributes)
-		}
-	})
-
-	t.Run("SearchProvider_TitleQualifiedExclusion", func(t *testing.T) {
-		sp := NewSearchProvider()
-		sp.SetSearchExecutor(func(_ context.Context, _ string, _ []string, _ int) ([]SearchResult, error) {
-			return []SearchResult{
-				{
-					Vault: "src",
-					Path:  "services/backend",
-					Entry: Entry{
-						Title: "Backend Service",
-						Attributes: map[string]any{
-							"api_key":  "secret_key_999",
-							"endpoint": "https://service.internal",
-						},
-					},
-				},
-			}, nil
-		})
-
-		// exclude_fields: ["Backend Service.api_key"]
-		fp := NewFilteringProvider(sp, nil, []string{"Backend Service.api_key"})
-
-		_, err := fp.GetSecret(ctx, "services/backend:api_key")
-		if err == nil {
-			t.Errorf("expected GetSecret to be blocked by title-qualified exclusion, got nil")
-		}
-
-		val, err := fp.GetSecret(ctx, "services/backend:endpoint")
-		if err != nil {
-			t.Fatalf("GetSecret for endpoint failed: %v", err)
-		}
-		if val != "https://service.internal" {
-			t.Errorf("expected endpoint, got %q", val)
-		}
-
-		sfp := fp.(SearchableProvider)
-		entry, err := sfp.GetEntry(ctx, "services/backend")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-		if _, hasKey := entry.Attributes["api_key"]; hasKey {
-			t.Errorf("expected api_key to be excluded in GetEntry, got: %v", entry.Attributes)
-		}
-	})
-
-	t.Run("StaticProvider_SingleEntity_TitleQualified", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		yamlPath := filepath.Join(tmpDir, "single_entity_title.yaml")
-		yamlContent := `
-token: "secret_admin_tok"
-username: "app_user"
-host: "app.internal"
-`
-		if err := os.WriteFile(yamlPath, []byte(yamlContent), 0600); err != nil {
-			t.Fatalf("failed to write yaml: %v", err)
-		}
-
-		yp := NewYamlProvider()
-		if err := yp.Initialize(ctx, ProviderConfig{
-			EntityName: "app",
-			Settings: map[string]string{
-				"vault_path": yamlPath,
-			},
-		}); err != nil {
-			t.Fatalf("failed to init single-entity YAML: %v", err)
-		}
-
-		// 1. Title-qualified exclusion: exclude_fields: ["app.token"]
-		fpExcl := NewFilteringProvider(yp, nil, []string{"app.token"})
-
-		// Scalar GetSecret("token") must be blocked
-		_, err := fpExcl.GetSecret(ctx, "token")
-		if err == nil {
-			t.Errorf("expected GetSecret(token) to be blocked by title-qualified exclusion, got nil")
-		}
-
-		// Non-excluded field must succeed
-		val, err := fpExcl.GetSecret(ctx, "username")
-		if err != nil {
-			t.Fatalf("GetSecret(username) failed: %v", err)
-		}
-		if val != "app_user" {
-			t.Errorf("expected 'app_user', got %q", val)
-		}
-
-		// Structured GetEntry("") must also exclude token
-		sfpExcl := fpExcl.(SearchableProvider)
-		entryExcl, err := sfpExcl.GetEntry(ctx, "")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-		if _, hasToken := entryExcl.Attributes["token"]; hasToken {
-			t.Errorf("expected token to be excluded in GetEntry, got: %v", entryExcl.Attributes)
-		}
-
-		// 2. Title-qualified inclusion: include_fields: ["app.username"]
-		fpInc := NewFilteringProvider(yp, []string{"app.username"}, nil)
-
-		// Scalar GetSecret("username") must be allowed
-		valInc, err := fpInc.GetSecret(ctx, "username")
-		if err != nil {
-			t.Fatalf("GetSecret(username) failed with title-qualified include: %v", err)
-		}
-		if valInc != "app_user" {
-			t.Errorf("expected 'app_user', got %q", valInc)
-		}
-
-		// Scalar GetSecret("token") must be rejected by include
-		_, err = fpInc.GetSecret(ctx, "token")
-		if err == nil {
-			t.Errorf("expected GetSecret(token) to be rejected by title-qualified include, got nil")
-		}
-
-		// Structured GetEntry("") must only include username
-		sfpInc := fpInc.(SearchableProvider)
-		entryInc, err := sfpInc.GetEntry(ctx, "")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-		if entryInc.Attributes["username"] != "app_user" {
-			t.Errorf("expected username in GetEntry, got: %v", entryInc.Attributes)
-		}
-		if _, hasToken := entryInc.Attributes["token"]; hasToken {
-			t.Errorf("expected token to not be included in GetEntry, got: %v", entryInc.Attributes)
-		}
-	})
-
-	t.Run("StaticProvider_DotRoot_TitleQualified", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		yamlPath := filepath.Join(tmpDir, "dot_root_title.yaml")
-		yamlContent := `
-db:
-  title: MyApp
-  username: "db_user"
-  password: "secret_db_password"
-  token: "secret_admin_tok"
-`
-		if err := os.WriteFile(yamlPath, []byte(yamlContent), 0600); err != nil {
-			t.Fatalf("failed to write yaml: %v", err)
-		}
-
-		yp := NewYamlProvider()
-		if err := yp.Initialize(ctx, ProviderConfig{
-			EntitiesRootKey: ".",
-			Settings: map[string]string{
-				"vault_path": yamlPath,
-			},
-		}); err != nil {
-			t.Fatalf("failed to init dot-root YAML: %v", err)
-		}
-
-		// 1. Title-qualified exclusion: exclude_fields: ["MyApp.token"]
-		fpExcl := NewFilteringProvider(yp, nil, []string{"MyApp.token"})
-
-		// Scalar GetSecret("db.token") must be blocked by MyApp.token
-		_, err := fpExcl.GetSecret(ctx, "db.token")
-		if err == nil {
-			t.Errorf("expected GetSecret(db.token) to be blocked by title-qualified exclusion, got nil")
-		}
-
-		// Non-excluded field must succeed
-		val, err := fpExcl.GetSecret(ctx, "db.username")
-		if err != nil {
-			t.Fatalf("GetSecret(db.username) failed: %v", err)
-		}
-		if val != "db_user" {
-			t.Errorf("expected 'db_user', got %q", val)
-		}
-
-		// Structured GetEntry("db") must also exclude token
-		sfpExcl := fpExcl.(SearchableProvider)
-		entryExcl, err := sfpExcl.GetEntry(ctx, "db")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-		if _, hasToken := entryExcl.Attributes["token"]; hasToken {
-			t.Errorf("expected token to be excluded in GetEntry, got: %v", entryExcl.Attributes)
-		}
-		if entryExcl.Attributes["username"] != "db_user" {
-			t.Errorf("expected username in GetEntry, got: %v", entryExcl.Attributes["username"])
-		}
-
-		// 2. Title-qualified inclusion: include_fields: ["MyApp.username"]
-		fpInc := NewFilteringProvider(yp, []string{"MyApp.username"}, nil)
-
-		// Scalar GetSecret("db.username") must be allowed
-		valInc, err := fpInc.GetSecret(ctx, "db.username")
-		if err != nil {
-			t.Fatalf("GetSecret(db.username) failed under title include: %v", err)
-		}
-		if valInc != "db_user" {
-			t.Errorf("expected 'db_user', got %q", valInc)
-		}
-
-		// Scalar GetSecret("db.password") must be rejected
-		_, err = fpInc.GetSecret(ctx, "db.password")
-		if err == nil {
-			t.Errorf("expected GetSecret(db.password) to be rejected by title-qualified include, got nil")
-		}
-
-		// Structured GetEntry("db") must only include username
-		sfpInc := fpInc.(SearchableProvider)
-		entryInc, err := sfpInc.GetEntry(ctx, "db")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-		if entryInc.Attributes["username"] != "db_user" {
-			t.Errorf("expected username in GetEntry, got: %v", entryInc.Attributes)
-		}
-		if _, hasPass := entryInc.Attributes["password"]; hasPass {
-			t.Errorf("expected password to not be included in GetEntry, got: %v", entryInc.Attributes)
-		}
-		if _, hasToken := entryInc.Attributes["token"]; hasToken {
-			t.Errorf("expected token to not be included in GetEntry, got: %v", entryInc.Attributes)
-		}
-	})
-}
-
-func TestFilteringProvider_TitleResolutionError(t *testing.T) {
-	ctx := context.Background()
-
-	// Custom vault: lookup for nonexistent entity title must return error
-	cp := NewCustomVaultProvider()
-	if err := cp.Initialize(ctx, ProviderConfig{
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"valid_entity": {
-				"Password": "secret",
-				"title":    "Valid Title",
-			},
-		}),
-	}); err != nil {
-		t.Fatalf("failed to initialize custom vault: %v", err)
-	}
-
-	fp := NewFilteringProvider(cp, nil, []string{"Valid Title.Password"})
-
-	// Looking up a nonexistent entity must surface the lookup error, not silently drop candidate title
-	_, err := fp.GetSecret(ctx, "missing_entity:Password")
-	if err == nil {
-		t.Errorf("expected error when resolving nonexistent entity, got nil")
-	}
-}
-
-func TestFilteringProvider_AncestorInclusionIsolation(t *testing.T) {
-	ctx := context.Background()
-
-	tmpDir := t.TempDir()
-	yamlPath := filepath.Join(tmpDir, "ancestor_inc.yaml")
-	yamlContent := `
-entities:
-  db:
-    username: "db_user"
-    password: "db_password"
-`
-	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0600); err != nil {
-		t.Fatalf("failed to write yaml fixture: %v", err)
-	}
-
-	yp := NewYamlProvider()
-	if err := yp.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": yamlPath,
 		},
-		EntitiesRootKey: "entities",
-	}); err != nil {
-		t.Fatalf("failed to init YAML: %v", err)
-	}
+	})
 
-	// include_fields: ["entities"] must NOT act as a no-op allowlist that grants all children
-	fp := NewFilteringProvider(yp, []string{"entities"}, nil)
+	fp := NewFilteringProvider(sp, nil, []string{"Backend Service.api_key"})
 
-	// Scalar GetSecret for "db.username" must NOT be granted by the ancestor "entities"
-	_, err := fp.GetSecret(ctx, "db.username")
+	_, err := fp.GetSecret(ctx, "services/backend:api_key")
 	if err == nil {
-		t.Errorf("expected GetSecret(db.username) to be rejected by include_fields: ['entities'], got nil")
+		t.Errorf("expected GetSecret to be blocked by title-qualified exclusion, got nil")
 	}
 
-	// Structured GetEntry for "db" must not expose username or password when only ancestor "entities" is included
+	val, err := fp.GetSecret(ctx, "services/backend:endpoint")
+	if err != nil {
+		t.Fatalf("GetSecret for endpoint failed: %v", err)
+	}
+	if val != "https://service.internal" {
+		t.Errorf("expected endpoint, got %q", val)
+	}
+
 	sfp := fp.(SearchableProvider)
-	entry, err := sfp.GetEntry(ctx, "db")
+	entry, err := sfp.GetEntry(ctx, "services/backend")
 	if err != nil {
 		t.Fatalf("GetEntry failed: %v", err)
 	}
-	if len(entry.Attributes) != 0 {
-		t.Errorf("expected empty attributes with include_fields: ['entities'], got: %v", entry.Attributes)
+	if _, hasKey := entry.Attributes["api_key"]; hasKey {
+		t.Errorf("expected api_key to be excluded in GetEntry, got: %v", entry.Attributes)
 	}
 }
 
 func TestFilteringProvider_ColonQualifiedCandidateInclusionAndExclusion(t *testing.T) {
 	ctx := context.Background()
 
-	cp := NewCustomVaultProvider()
-	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"app": {
+	sp := newFilterTestSearchProvider(SearchResult{
+		Provider: "mock",
+		Vault:    "work",
+		Path:     "app",
+		Entry: Entry{
+			Title: "app",
+			Attributes: map[string]any{
 				"Password": "secret_password",
 				"UserName": "test_user",
 			},
-		}),
+		},
 	})
 
 	// 1. Colon-qualified exclude_fields: ["app:*"]
-	fpExcl := NewFilteringProvider(cp, nil, []string{"app:*"})
+	fpExcl := NewFilteringProvider(sp, nil, []string{"app:*"})
 	sfpExcl := fpExcl.(SearchableProvider)
 
 	entryExcl, err := sfpExcl.GetEntry(ctx, "app")
@@ -2672,7 +1239,7 @@ func TestFilteringProvider_ColonQualifiedCandidateInclusionAndExclusion(t *testi
 	}
 
 	// 2. Colon-qualified include_fields: ["app:UserName"]
-	fpInc := NewFilteringProvider(cp, []string{"app:UserName"}, nil)
+	fpInc := NewFilteringProvider(sp, []string{"app:UserName"}, nil)
 	sfpInc := fpInc.(SearchableProvider)
 
 	entryInc, err := sfpInc.GetEntry(ctx, "app")

@@ -7,6 +7,7 @@ import (
 
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/engine"
+	"github.com/warpcode/cloakenv/internal/provider"
 )
 
 func TestSearchProviderIntegration_EndToEnd(t *testing.T) {
@@ -15,19 +16,7 @@ func TestSearchProviderIntegration_EndToEnd(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"work": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"openrouter_key": {
-						"title":   "OpenRouter Key",
-						"tags":    []string{"service:openrouter", "prod"},
-						"api_key": "sk-or-test-secret-value",
-					},
-					"github_token": {
-						"title": "GitHub Token",
-						"tags":  []string{"service:github"},
-						"token": "ghp_test123",
-					},
-				}),
+				Provider: "env",
 			},
 			"openrouter_vault": {
 				Provider:     "search",
@@ -40,6 +29,30 @@ func TestSearchProviderIntegration_EndToEnd(t *testing.T) {
 	orch, err := engine.NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := orch.InjectMockVaultForTest("work", []provider.SearchResult{
+		{
+			Provider: "search",
+			Vault:    "work",
+			Path:     "openrouter_key",
+			Entry: provider.Entry{
+				Title:      "OpenRouter Key",
+				Tags:       []string{"service:openrouter", "prod"},
+				Attributes: map[string]any{"api_key": "sk-or-test-secret-value"},
+			},
+		},
+		{
+			Provider: "search",
+			Vault:    "work",
+			Path:     "github_token",
+			Entry: provider.Entry{
+				Title:      "GitHub Token",
+				Tags:       []string{"service:github"},
+				Attributes: map[string]any{"token": "ghp_test123"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("InjectMockVaultForTest failed: %v", err)
 	}
 
 	t.Run("Resolve secret using path:attr syntax", func(t *testing.T) {
@@ -119,26 +132,8 @@ func TestSearchProviderIntegration_MultiSourceVaults(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"vault_a": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"key_a": {
-						"title":    "Key A",
-						"tags":     []string{"service:openrouter"},
-						"Password": "pass_a",
-					},
-				}),
-			},
-			"vault_b": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"key_b": {
-						"title":    "Key B",
-						"tags":     []string{"service:openrouter"},
-						"Password": "pass_b",
-					},
-				}),
-			},
+			"vault_a": {Provider: "env"},
+			"vault_b": {Provider: "env"},
 			"combined": {
 				Provider:     "search",
 				SourceVaults: []string{"vault_a", "vault_b"},
@@ -150,6 +145,22 @@ func TestSearchProviderIntegration_MultiSourceVaults(t *testing.T) {
 	orch, err := engine.NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := orch.InjectMockVaultForTest("vault_a", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "vault_a", Path: "key_a",
+			Entry: provider.Entry{Title: "Key A", Tags: []string{"service:openrouter"}, Attributes: map[string]any{"Password": "pass_a"}},
+		},
+	}); err != nil {
+		t.Fatalf("InjectMockVaultForTest(vault_a) failed: %v", err)
+	}
+	if err := orch.InjectMockVaultForTest("vault_b", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "vault_b", Path: "key_b",
+			Entry: provider.Entry{Title: "Key B", Tags: []string{"service:openrouter"}, Attributes: map[string]any{"Password": "pass_b"}},
+		},
+	}); err != nil {
+		t.Fatalf("InjectMockVaultForTest(vault_b) failed: %v", err)
 	}
 
 	valA, err := orch.Resolve(ctx, "combined://key_a:Password")
@@ -248,17 +259,7 @@ func TestSearchProviderIntegration_MappingWithExcludeAllFields(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"kp": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"my_entry": {
-						"title":       "My Entry",
-						"tags":        []string{"dotenv:jules"},
-						"env:API_KEY": "sk-jules-secret",
-						"OTHER":       "unmapped_val",
-					},
-				}),
-			},
+			"kp": {Provider: "env"},
 			"jules": {
 				Provider:      "search",
 				SourceVaults:  []string{"kp"},
@@ -272,6 +273,21 @@ func TestSearchProviderIntegration_MappingWithExcludeAllFields(t *testing.T) {
 	orch, err := engine.NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := orch.InjectMockVaultForTest("kp", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "kp", Path: "my_entry",
+			Entry: provider.Entry{
+				Title: "My Entry",
+				Tags:  []string{"dotenv:jules"},
+				Attributes: map[string]any{
+					"env:API_KEY": "sk-jules-secret",
+					"OTHER":       "unmapped_val",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("InjectMockVaultForTest(kp) failed: %v", err)
 	}
 
 	// 1. GetSecret on mapped key
@@ -348,15 +364,7 @@ func TestSearchProviderIntegration_IncludeAboveExclude(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"kp": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"my_entry": {
-						"title":       "My Entry",
-						"tags":        []string{"dotenv:jules"},
-						"env:API_KEY": "sk-jules-secret",
-						"OTHER":       "unmapped_val",
-					},
-				}),
+				Provider: "env",
 			},
 			"jules": {
 				Provider:      "search",
@@ -372,6 +380,21 @@ func TestSearchProviderIntegration_IncludeAboveExclude(t *testing.T) {
 	orch, err := engine.NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := orch.InjectMockVaultForTest("kp", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "kp", Path: "my_entry",
+			Entry: provider.Entry{
+				Title: "My Entry",
+				Tags:  []string{"dotenv:jules"},
+				Attributes: map[string]any{
+					"env:API_KEY": "sk-jules-secret",
+					"OTHER":       "unmapped_val",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("InjectMockVaultForTest failed: %v", err)
 	}
 
 	// 1. GetSecret on mapped key
@@ -442,15 +465,7 @@ func TestSearchProviderIntegration_MappingOnlyKeepsDefaultFields(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"kp": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"my_entry": {
-						"title":       "My Entry",
-						"tags":        []string{"dotenv:jules"},
-						"env:API_KEY": "sk-jules-secret",
-						"OTHER":       "unmapped_val",
-					},
-				}),
+				Provider: "env",
 			},
 			"jules": {
 				Provider:     "search",
@@ -464,6 +479,21 @@ func TestSearchProviderIntegration_MappingOnlyKeepsDefaultFields(t *testing.T) {
 	orch, err := engine.NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := orch.InjectMockVaultForTest("kp", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "kp", Path: "my_entry",
+			Entry: provider.Entry{
+				Title: "My Entry",
+				Tags:  []string{"dotenv:jules"},
+				Attributes: map[string]any{
+					"env:API_KEY": "sk-jules-secret",
+					"OTHER":       "unmapped_val",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("InjectMockVaultForTest failed: %v", err)
 	}
 
 	// 1. GetSecret on mapped key
@@ -528,21 +558,14 @@ func TestSearchProviderIntegration_KeyFormatOverrideLowestPriority(t *testing.T)
 	rule := config.MappingRule{Match: "^env:(.*)$", Key: "$1"}
 	_ = rule.Compile()
 
-	makeConfig := func(keyFormatOverride string, kpKeyFormat string) *config.Config {
-		return &config.Config{
+	makeOrch := func(t *testing.T, keyFormatOverride string, kpKeyFormat string) *engine.Orchestrator {
+		t.Helper()
+		cfg := &config.Config{
 			KeyFormatOverride: keyFormatOverride,
 			Vaults: map[string]config.VaultConfig{
 				"kp": {
-					Provider:  "custom_vault",
+					Provider:  "env",
 					KeyFormat: kpKeyFormat,
-					Entities: config.ToCustomEntityMap(map[string]map[string]any{
-						"my_entry": {
-							"title":       "My Entry",
-							"tags":        []string{"dotenv:jules"},
-							"env:API_KEY": "sk-jules-secret",
-							"OTHER":       "unmapped_val",
-						},
-					}),
 				},
 				"jules": {
 					Provider:      "search",
@@ -554,14 +577,30 @@ func TestSearchProviderIntegration_KeyFormatOverrideLowestPriority(t *testing.T)
 				},
 			},
 		}
-	}
-
-	t.Run("OverrideEnv", func(t *testing.T) {
-		cfg := makeConfig("env", "")
 		orch, err := engine.NewOrchestrator(cfg)
 		if err != nil {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
+		if err := orch.InjectMockVaultForTest("kp", []provider.SearchResult{
+			{
+				Provider: "search", Vault: "kp", Path: "my_entry",
+				Entry: provider.Entry{
+					Title: "My Entry",
+					Tags:  []string{"dotenv:jules"},
+					Attributes: map[string]any{
+						"env:API_KEY": "sk-jules-secret",
+						"OTHER":       "unmapped_val",
+					},
+				},
+			},
+		}); err != nil {
+			t.Fatalf("InjectMockVaultForTest failed: %v", err)
+		}
+		return orch
+	}
+
+	t.Run("OverrideEnv", func(t *testing.T) {
+		orch := makeOrch(t, "env", "")
 
 		results, err := orch.Search(ctx, "", []string{"jules"})
 		if err != nil {
@@ -576,11 +615,7 @@ func TestSearchProviderIntegration_KeyFormatOverrideLowestPriority(t *testing.T)
 	})
 
 	t.Run("OverrideSnake", func(t *testing.T) {
-		cfg := makeConfig("snake", "")
-		orch, err := engine.NewOrchestrator(cfg)
-		if err != nil {
-			t.Fatalf("failed to create orchestrator: %v", err)
-		}
+		orch := makeOrch(t, "snake", "")
 
 		results, err := orch.Search(ctx, "", []string{"jules"})
 		if err != nil {
@@ -595,11 +630,7 @@ func TestSearchProviderIntegration_KeyFormatOverrideLowestPriority(t *testing.T)
 	})
 
 	t.Run("SourceVaultConfiguredKeyFormatSnake", func(t *testing.T) {
-		cfg := makeConfig("", "snake")
-		orch, err := engine.NewOrchestrator(cfg)
-		if err != nil {
-			t.Fatalf("failed to create orchestrator: %v", err)
-		}
+		orch := makeOrch(t, "", "snake")
 
 		results, err := orch.Search(ctx, "", []string{"jules"})
 		if err != nil {
@@ -612,4 +643,53 @@ func TestSearchProviderIntegration_KeyFormatOverrideLowestPriority(t *testing.T)
 			t.Errorf("expected API_KEY preserved from source vault with key_format: snake, got %v", results[0].Entry.Attributes)
 		}
 	})
+}
+
+func TestSearchProviderIntegration_Sources(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"vault_a": {Provider: "env"},
+			"vault_b": {Provider: "env"},
+			"grouped": {
+				Provider:     "search",
+				SourceVaults: []string{"vault_a", "vault_b"},
+				Sources: []string{
+					"vault_a://svc_a",
+					`"tier:edge" in tags`,
+				},
+			},
+		},
+	}
+
+	orch, err := engine.NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("NewOrchestrator failed: %v", err)
+	}
+	if err := orch.InjectMockVaultForTest("vault_a", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "vault_a", Path: "svc_a",
+			Entry: provider.Entry{Title: "Service A", Attributes: map[string]any{"API_KEY": "alpha"}},
+		},
+	}); err != nil {
+		t.Fatalf("InjectMockVaultForTest(vault_a) failed: %v", err)
+	}
+	if err := orch.InjectMockVaultForTest("vault_b", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "vault_b", Path: "edge_svc",
+			Entry: provider.Entry{Title: "Edge Service", Tags: []string{"tier:edge"}, Attributes: map[string]any{"TOKEN": "beta"}},
+		},
+	}); err != nil {
+		t.Fatalf("InjectMockVaultForTest(vault_b) failed: %v", err)
+	}
+
+	valA, err := orch.Resolve(ctx, "grouped://svc_a:API_KEY")
+	if err != nil || valA != "alpha" {
+		t.Fatalf("Resolve(grouped://svc_a:API_KEY) = (%q, %v), want alpha", valA, err)
+	}
+	valB, err := orch.Resolve(ctx, "grouped://edge_svc:TOKEN")
+	if err != nil || valB != "beta" {
+		t.Fatalf("Resolve(grouped://edge_svc:TOKEN) = (%q, %v), want beta", valB, err)
+	}
 }

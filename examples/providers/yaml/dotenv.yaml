@@ -1,7 +1,0 @@
-# Static YAML Secret Database Example (Single Entity)
-# This database represents a single flat entity. Attributes map directly to keys.
-secret_key: "<your-secret>"
-db_pass: "<your-db-password>"
-tags:
-  - local
-  - dotenv

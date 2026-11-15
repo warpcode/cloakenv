@@ -156,24 +156,46 @@ vaults:
 		}
 	})
 
-	t.Run("invalid entity KeyFormat fails validation", func(t *testing.T) {
-		invalidEntityKeyFormatYAML := `
-vaults:
-  my_custom:
-    provider: custom_vault
-    entities:
-      my_entity:
-        key_format: uppercase
-`
-		cfgPath := filepath.Join(tempDir, "invalid_entity_keyformat.yaml")
-		_ = os.WriteFile(cfgPath, []byte(invalidEntityKeyFormatYAML), 0600)
+	t.Run("unsupported providers fail validation", func(t *testing.T) {
+		for _, prov := range []string{"yaml", "json", "custom_vault"} {
+			cfgYAML := "vaults:\n  bad:\n    provider: " + prov + "\n"
+			cfgPath := filepath.Join(tempDir, "unsupported_"+prov+".yaml")
+			_ = os.WriteFile(cfgPath, []byte(cfgYAML), 0600)
 
-		res, err := Validate(cfgPath, false)
+			res, err := Validate(cfgPath, false)
+			if err != nil {
+				t.Fatalf("unexpected error for %s: %v", prov, err)
+			}
+			if res.IsValid() {
+				t.Fatalf("expected validation failure for unsupported provider %q", prov)
+			}
+		}
+	})
+
+	t.Run("search vault with sources passes validation without warnings", func(t *testing.T) {
+		cfgYAML := `
+vaults:
+  work:
+    provider: keepass
+    vault_path: ` + filepath.ToSlash(dummyDb) + `
+  grouped:
+    provider: search
+    sources:
+      - "work://app"
+      - '"prod" in tags'
+`
+		cfgPath := filepath.Join(tempDir, "search_sources.yaml")
+		_ = os.WriteFile(cfgPath, []byte(cfgYAML), 0600)
+
+		res, err := Validate(cfgPath, true)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if res.IsValid() {
-			t.Fatal("expected validation failure for invalid entity key_format")
+		if !res.IsValid() {
+			t.Fatalf("expected valid config, got errors: %v", res.Errors)
+		}
+		if len(res.Warnings) != 0 {
+			t.Fatalf("expected 0 warnings, got %v", res.Warnings)
 		}
 	})
 

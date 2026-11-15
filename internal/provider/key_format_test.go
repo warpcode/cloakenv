@@ -2,22 +2,60 @@ package provider
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/utils"
 )
 
+type mockKeyFormatProvider struct {
+	mockSearchableValueResolvableProvider
+}
+
+func newMockKeyFormatProvider(entries map[string]Entry) *mockKeyFormatProvider {
+	results := make([]SearchResult, 0, len(entries))
+	for path, e := range entries {
+		results = append(results, SearchResult{
+			Provider: "mock",
+			Vault:    "mock",
+			Path:     path,
+			Entry:    e,
+		})
+	}
+	return &mockKeyFormatProvider{
+		mockSearchableValueResolvableProvider: mockSearchableValueResolvableProvider{
+			mockSearchableProvider: mockSearchableProvider{
+				entries: entries,
+				results: results,
+			},
+		},
+	}
+}
+
+func (m *mockKeyFormatProvider) GetSecret(_ context.Context, location string) (string, error) {
+	entityLoc, attr, hasColon := strings.Cut(location, ":")
+	entry, ok := m.entries[entityLoc]
+	if !ok {
+		return "", fmt.Errorf("entry %q not found", entityLoc)
+	}
+	if !hasColon {
+		attr = "Password"
+	}
+	v, exists := entry.Attributes[attr]
+	if !exists {
+		return "", fmt.Errorf("attribute %q not found in %q", attr, entityLoc)
+	}
+	return fmt.Sprintf("%v", v), nil
+}
+
 func TestKeyFormatProvider_InterfacePreservation(t *testing.T) {
-	cp := NewCustomVaultProvider()
-	_ = cp.Initialize(context.Background(), ProviderConfig{
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"app": {"api-key": "secret"},
-		}),
+	mockProv := newMockKeyFormatProvider(map[string]Entry{
+		"app": {Title: "app", Attributes: map[string]any{"api-key": "secret"}},
 	})
 
-	// CustomVault implements both SearchableProvider and ValueResolvableProvider
-	p := NewKeyFormatProvider(cp, utils.KeyFormatSnake)
+	p := NewKeyFormatProvider(mockProv, utils.KeyFormatSnake)
 
 	if _, ok := p.(SearchableProvider); !ok {
 		t.Fatal("expected KeyFormatProvider to implement SearchableProvider")
@@ -30,13 +68,11 @@ func TestKeyFormatProvider_InterfacePreservation(t *testing.T) {
 func TestKeyFormatProvider_GetEntryFormats(t *testing.T) {
 	ctx := context.Background()
 
-	rawEntities := map[string]map[string]any{
-		"app": {
-			"api-key":               "key123",
-			"database.user_name":    "admin",
-			"UserName":              "alice",
-			"multiple___underscore": "val",
-		},
+	attrs := map[string]any{
+		"api-key":               "key123",
+		"database.user_name":    "admin",
+		"UserName":              "alice",
+		"multiple___underscore": "val",
 	}
 
 	tests := []struct {
@@ -88,12 +124,10 @@ func TestKeyFormatProvider_GetEntryFormats(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cp := NewCustomVaultProvider()
-			_ = cp.Initialize(ctx, ProviderConfig{
-				Entities: config.ToCustomEntityMap(rawEntities),
+			mockProv := newMockKeyFormatProvider(map[string]Entry{
+				"app": {Title: "app", Attributes: attrs},
 			})
-
-			p := NewKeyFormatProvider(cp, tt.format)
+			p := NewKeyFormatProvider(mockProv, tt.format)
 			sp, ok := p.(SearchableProvider)
 			if !ok {
 				t.Fatalf("expected SearchableProvider")
@@ -115,27 +149,22 @@ func TestKeyFormatProvider_GetEntryFormats(t *testing.T) {
 
 func TestKeyFormatProvider_SearchFormats(t *testing.T) {
 	ctx := context.Background()
-	cp := NewCustomVaultProvider()
-	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"app": {
-				"database.user_name": "dbadmin",
-			},
-		}),
+	mockProv := newMockKeyFormatProvider(map[string]Entry{
+		"app": {
+			Title:      "app",
+			Attributes: map[string]any{"database.user_name": "dbadmin"},
+		},
 	})
-
-	p := NewKeyFormatProvider(cp, utils.KeyFormatKebab)
+	p := NewKeyFormatProvider(mockProv, utils.KeyFormatKebab)
 	sp := p.(SearchableProvider)
 
 	results, err := sp.Search(ctx, SearchQuery{})
 	if err != nil {
 		t.Fatalf("Search failed: %v", err)
 	}
-
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-
 	if _, ok := results[0].Entry.Attributes["database-user-name"]; !ok {
 		t.Errorf("expected kebab-case key 'database-user-name', got: %v", results[0].Entry.Attributes)
 	}
@@ -143,19 +172,17 @@ func TestKeyFormatProvider_SearchFormats(t *testing.T) {
 
 func TestKeyFormatProvider_GetSecretResolution(t *testing.T) {
 	ctx := context.Background()
-	cp := NewCustomVaultProvider()
-	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"app": {
+	mockProv := newMockKeyFormatProvider(map[string]Entry{
+		"app": {
+			Title: "app",
+			Attributes: map[string]any{
 				"api-key":  "secret123",
 				"UserName": "admin_user",
 			},
-		}),
+		},
 	})
+	p := NewKeyFormatProvider(mockProv, utils.KeyFormatSnake)
 
-	p := NewKeyFormatProvider(cp, utils.KeyFormatSnake)
-
-	// Direct lookup using formatted name
 	val, err := p.GetSecret(ctx, "app:api_key")
 	if err != nil {
 		t.Fatalf("GetSecret(app:api_key) failed: %v", err)
@@ -164,7 +191,6 @@ func TestKeyFormatProvider_GetSecretResolution(t *testing.T) {
 		t.Errorf("expected secret123, got %q", val)
 	}
 
-	// Lookup using original name
 	valOrig, errOrig := p.GetSecret(ctx, "app:api-key")
 	if errOrig != nil {
 		t.Fatalf("GetSecret(app:api-key) failed: %v", errOrig)
@@ -173,7 +199,6 @@ func TestKeyFormatProvider_GetSecretResolution(t *testing.T) {
 		t.Errorf("expected secret123, got %q", valOrig)
 	}
 
-	// Lookup UserName via snake name username
 	valUser, errUser := p.GetSecret(ctx, "app:username")
 	if errUser != nil {
 		t.Fatalf("GetSecret(app:username) failed: %v", errUser)
@@ -185,46 +210,37 @@ func TestKeyFormatProvider_GetSecretResolution(t *testing.T) {
 
 func TestKeyFormatProvider_CompositionWithFilterAndMapping(t *testing.T) {
 	ctx := context.Background()
-	cp := NewCustomVaultProvider()
-	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"app": {
+	mockProv := newMockKeyFormatProvider(map[string]Entry{
+		"app": {
+			Title: "app",
+			Attributes: map[string]any{
 				"raw_password": "pass",
 				"client_token": "token123",
 				"hidden_field": "hidden",
 			},
-		}),
+		},
 	})
 
-	// 1. Filtering: exclude hidden_field
-	fp := NewFilteringProvider(cp, nil, []string{"hidden_field"})
-
-	// 2. Mapping: rename raw_password -> client.secret_key
+	fp := NewFilteringProvider(mockProv, nil, []string{"hidden_field"})
 	mp, err := NewMappingProvider(fp, []config.MappingRule{
 		{Match: `^raw_password$`, Key: "client.secret_key"},
 	})
 	if err != nil {
 		t.Fatalf("NewMappingProvider failed: %v", err)
 	}
-
-	// 3. Key formatting: kebab
 	kp := NewKeyFormatProvider(mp, utils.KeyFormatKebab)
-
 	sp := kp.(SearchableProvider)
+
 	entry, err := sp.GetEntry(ctx, "app")
 	if err != nil {
 		t.Fatalf("GetEntry failed: %v", err)
 	}
-
-	// client.secret_key formatted as kebab -> client-secret-key
 	if _, ok := entry.Attributes["client-secret-key"]; !ok {
 		t.Errorf("expected 'client-secret-key' in attributes, got: %v", entry.Attributes)
 	}
-	// client_token formatted as kebab -> client-token
 	if _, ok := entry.Attributes["client-token"]; !ok {
 		t.Errorf("expected 'client-token' in attributes, got: %v", entry.Attributes)
 	}
-	// hidden_field was excluded by filter
 	if _, ok := entry.Attributes["hidden-field"]; ok {
 		t.Errorf("hidden-field should have been filtered out")
 	}

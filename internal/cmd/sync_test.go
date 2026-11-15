@@ -104,19 +104,19 @@ func TestSyncCommand(t *testing.T) {
 	})
 
 	t.Run("dry-run and synchronization output with zero secret leakage", func(t *testing.T) {
+		dbPath := writeTestKDBX(t, "mock_vault", "testpass", testKDBXEntry{
+			Title: "creds",
+			Tags:  "sync:keyring",
+			Attributes: map[string]string{
+				"API_KEY": "super_secret_42",
+			},
+		})
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"mock_vault": {
-					Provider: "custom_vault",
-					Entities: map[string]config.CustomEntityConfig{
-						"creds": {
-							Title: "Credentials",
-							Tags:  []string{"sync:keyring"},
-							Attributes: map[string]any{
-								"API_KEY": "super_secret_42",
-							},
-						},
-					},
+					Provider:      "keepass",
+					VaultPath:     dbPath,
+					IncludeFields: []string{"API_KEY"},
 				},
 			},
 		}

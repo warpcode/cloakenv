@@ -292,20 +292,24 @@ func TestRun_Autoload(t *testing.T) {
 			os.Exit(1)
 		}
 
+		dbPath := writeTestKDBX(t, "mock_vault", "testpass", testKDBXEntry{
+			Title: "app",
+			Attributes: map[string]string{
+				"CLOAKENV_TEST_AUTOLOAD_VAR": "autoloaded_secret_value",
+			},
+		})
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"mock_vault": {
-					Provider:     "custom_vault",
-					SingleEntity: boolPtr(true),
-					Attributes: map[string]any{
-						"CLOAKENV_TEST_AUTOLOAD_VAR": "autoloaded_secret_value",
-					},
+					Provider:      "keepass",
+					VaultPath:     dbPath,
+					IncludeFields: []string{"CLOAKENV_TEST_AUTOLOAD_VAR"},
 				},
 			},
 			Autoload: []config.AutoloadRule{
 				{
 					Match:  "*TestHelperProcess*",
-					Vaults: []string{"mock_vault"},
+					Vaults: []string{"mock_vault://app"},
 				},
 			},
 		}
@@ -319,21 +323,25 @@ func TestRun_Autoload(t *testing.T) {
 		if err := json.Unmarshal([]byte(os.Getenv("RUN_ARGS")), &args); err != nil {
 			os.Exit(1)
 		}
+		dbPath := writeTestKDBX(t, "mock_vault", "testpass", testKDBXEntry{
+			Title: "app",
+			Attributes: map[string]string{
+				"CLOAKENV_TEST_REGEX_SECRET": "transformed_secret_val",
+			},
+		})
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"mock_vault": {
-					Provider:     "custom_vault",
-					SingleEntity: boolPtr(true),
-					Attributes: map[string]any{
-						"CLOAKENV_TEST_REGEX_SECRET": "transformed_secret_val",
-					},
+					Provider:      "keepass",
+					VaultPath:     dbPath,
+					IncludeFields: []string{"CLOAKENV_TEST_REGEX_SECRET"},
 				},
 			},
 			Autoload: []config.AutoloadRule{
 				{
 					Match:   `^my-alias\s+(.*)$`,
 					Command: fmt.Sprintf("%q $1", os.Args[0]),
-					Vaults:  []string{"mock_vault"},
+					Vaults:  []string{"mock_vault://app"},
 				},
 			},
 		}
@@ -453,23 +461,27 @@ func TestRun_DryRun(t *testing.T) {
 			os.Exit(1)
 		}
 
+		dbPath := writeTestKDBX(t, "mock_vault", "testpass", testKDBXEntry{
+			Title: "app",
+			Attributes: map[string]string{
+				"CLOAKENV_TEST_USER":   "secret_admin_user",
+				"CLOAKENV_TEST_PASS":   "super_secret_password_12345",
+				"CLOAKENV_TEST_FILTER": "unwanted_secret_value",
+			},
+		})
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"mock_vault": {
-					Provider:     "custom_vault",
-					SingleEntity: boolPtr(true),
-					Attributes: map[string]any{
-						"CLOAKENV_TEST_USER":   "secret_admin_user",
-						"CLOAKENV_TEST_PASS":   "super_secret_password_12345",
-						"CLOAKENV_TEST_FILTER": "unwanted_secret_value",
-					},
+					Provider:      "keepass",
+					VaultPath:     dbPath,
+					IncludeFields: []string{"CLOAKENV_TEST_*"},
 				},
 			},
 			Autoload: []config.AutoloadRule{
 				{
 					Match:   `^my-alias\s+(.*)$`,
 					Command: "expanded-tool $1",
-					Vaults:  []string{"mock_vault"},
+					Vaults:  []string{"mock_vault://app"},
 				},
 			},
 		}
@@ -630,9 +642,6 @@ func TestRun_DryRun(t *testing.T) {
 	})
 }
 
-func boolPtr(b bool) *bool {
-	return &b
-}
 
 func TestRun_HelpFlag(t *testing.T) {
 	if os.Getenv("GO_WANT_RUN_HELP_SUBPROCESS") == "1" {
