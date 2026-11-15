@@ -652,13 +652,24 @@ func TestSearchProviderIntegration_Sources(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"vault_a": {Provider: "env"},
 			"vault_b": {Provider: "env"},
+			"vault_c": {
+				Provider:      "env",
+				IncludeFields: []string{"ALLOWED_SECRET"},
+				ExcludeFields: []string{"LEAKED_SECRET"},
+			},
 			"grouped": {
 				Provider:     "search",
 				SourceVaults: []string{"vault_a", "vault_b"},
 				Sources: []string{
 					"vault_a://svc_a",
 					`"tier:edge" in tags`,
+					"vault_b://",
+					`search://"tier:edge" in tags`,
 				},
+			},
+			"grouped_filtered": {
+				Provider: "search",
+				Sources:  []string{"vault_c://svc_c"},
 			},
 		},
 	}
@@ -667,9 +678,10 @@ func TestSearchProviderIntegration_Sources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOrchestrator failed: %v", err)
 	}
+
 	if err := orch.InjectMockVaultForTest("vault_a", []provider.SearchResult{
 		{
-			Provider: "search", Vault: "vault_a", Path: "svc_a",
+			Provider: "env", Vault: "vault_a", Path: "svc_a",
 			Entry: provider.Entry{Title: "Service A", Attributes: map[string]any{"API_KEY": "alpha"}},
 		},
 	}); err != nil {
@@ -677,19 +689,45 @@ func TestSearchProviderIntegration_Sources(t *testing.T) {
 	}
 	if err := orch.InjectMockVaultForTest("vault_b", []provider.SearchResult{
 		{
-			Provider: "search", Vault: "vault_b", Path: "edge_svc",
+			Provider: "env", Vault: "vault_b", Path: "edge_svc",
 			Entry: provider.Entry{Title: "Edge Service", Tags: []string{"tier:edge"}, Attributes: map[string]any{"TOKEN": "beta"}},
 		},
 	}); err != nil {
 		t.Fatalf("InjectMockVaultForTest(vault_b) failed: %v", err)
+	}
+	if err := orch.InjectMockVaultForTest("vault_c", []provider.SearchResult{
+		{
+			Provider: "env", Vault: "vault_c", Path: "svc_c",
+			Entry: provider.Entry{
+				Title: "Service C",
+				Attributes: map[string]any{
+					"ALLOWED_SECRET": "allowed_value",
+					"LEAKED_SECRET":  "should_be_blocked",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("InjectMockVaultForTest(vault_c) failed: %v", err)
 	}
 
 	valA, err := orch.Resolve(ctx, "grouped://svc_a:API_KEY")
 	if err != nil || valA != "alpha" {
 		t.Fatalf("Resolve(grouped://svc_a:API_KEY) = (%q, %v), want alpha", valA, err)
 	}
+
 	valB, err := orch.Resolve(ctx, "grouped://edge_svc:TOKEN")
 	if err != nil || valB != "beta" {
 		t.Fatalf("Resolve(grouped://edge_svc:TOKEN) = (%q, %v), want beta", valB, err)
+	}
+
+	// Verify source-vault filtering is strictly enforced through search.sources
+	valAllowed, err := orch.Resolve(ctx, "grouped_filtered://svc_c:ALLOWED_SECRET")
+	if err != nil || valAllowed != "allowed_value" {
+		t.Fatalf("Resolve(grouped_filtered://svc_c:ALLOWED_SECRET) = (%q, %v), want allowed_value", valAllowed, err)
+	}
+
+	_, err = orch.Resolve(ctx, "grouped_filtered://svc_c:LEAKED_SECRET")
+	if err == nil {
+		t.Fatalf("expected error resolving LEAKED_SECRET through grouped_filtered, got nil")
 	}
 }

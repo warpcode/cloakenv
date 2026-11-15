@@ -21,10 +21,17 @@ func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 	// Set up environment variable for testing env:// resolution
 	t.Setenv("ORCH_TEST_USER", "env_user")
 
+	boolTrue := true
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
+			"env_vault": {
+				Provider:   "env",
+				Searchable: &boolTrue,
+			},
 			"my_repo": {
-				Provider:      "vault",
+				Provider:      "search",
+				SourceVaults:  []string{"env_vault"},
+				Sources:       []string{"env_vault://"},
 				ResolveValues: true,
 			},
 		},
@@ -34,7 +41,7 @@ func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "my_repo", []provider.SearchResult{
+	if err := injectMockVault(orch, "env_vault", []provider.SearchResult{
 		{
 			Provider: "search", Vault: "my_repo", Path: "ssh_prod",
 			Entry: provider.Entry{
@@ -143,7 +150,7 @@ func TestOrchestratorRecursiveAndSearch(t *testing.T) {
 	})
 
 	t.Run("SearchExprByMetaProviderAndVault", func(t *testing.T) {
-		results, err := orch.Search(ctx, `_meta_.provider == "search" and _meta_.vault == "my_repo" and "env:prod" in _meta_.tags`, nil)
+		results, err := orch.Search(ctx, `_meta_.provider == "env" and _meta_.vault == "env_vault" and "env:prod" in _meta_.tags`, nil)
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}

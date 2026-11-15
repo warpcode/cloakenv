@@ -53,10 +53,19 @@ func (pm *ProviderManager) SetSearchExecutor(exec provider.SearchExecutor) {
 	defer pm.mu.Unlock()
 	pm.searchExecutor = exec
 	for _, p := range pm.vaultCache {
-		if sp, ok := p.(interface {
-			SetSearchExecutor(provider.SearchExecutor)
-		}); ok {
-			sp.SetSearchExecutor(exec)
+		for curr := p; curr != nil; {
+			if sp, ok := curr.(interface {
+				SetSearchExecutor(provider.SearchExecutor)
+			}); ok {
+				sp.SetSearchExecutor(exec)
+			}
+			if u, ok := curr.(interface {
+				Underlying() provider.SecretProvider
+			}); ok {
+				curr = u.Underlying()
+			} else {
+				break
+			}
 		}
 	}
 }
@@ -67,10 +76,19 @@ func (pm *ProviderManager) SetGetEntriesFunc(exec provider.GetEntriesFunc) {
 	defer pm.mu.Unlock()
 	pm.getEntriesFunc = exec
 	for _, p := range pm.vaultCache {
-		if gp, ok := p.(interface {
-			SetGetEntriesFunc(provider.GetEntriesFunc)
-		}); ok {
-			gp.SetGetEntriesFunc(exec)
+		for curr := p; curr != nil; {
+			if gp, ok := curr.(interface {
+				SetGetEntriesFunc(provider.GetEntriesFunc)
+			}); ok {
+				gp.SetGetEntriesFunc(exec)
+			}
+			if u, ok := curr.(interface {
+				Underlying() provider.SecretProvider
+			}); ok {
+				curr = u.Underlying()
+			} else {
+				break
+			}
 		}
 	}
 }
@@ -81,10 +99,19 @@ func (pm *ProviderManager) SetRenderTemplateFunc(exec provider.TemplateRenderFun
 	defer pm.mu.Unlock()
 	pm.renderTemplateFunc = exec
 	for _, p := range pm.vaultCache {
-		if tr, ok := p.(interface {
-			SetRenderTemplateFunc(provider.TemplateRenderFunc)
-		}); ok {
-			tr.SetRenderTemplateFunc(exec)
+		for curr := p; curr != nil; {
+			if tr, ok := curr.(interface {
+				SetRenderTemplateFunc(provider.TemplateRenderFunc)
+			}); ok {
+				tr.SetRenderTemplateFunc(exec)
+			}
+			if u, ok := curr.(interface {
+				Underlying() provider.SecretProvider
+			}); ok {
+				curr = u.Underlying()
+			} else {
+				break
+			}
 		}
 	}
 }

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -1862,4 +1863,377 @@ func TestFieldFiltering_MetaTags(t *testing.T) {
 			t.Errorf("expected tags to be disallowed when _meta_.tags is in exclude_fields")
 		}
 	})
+}
+
+type mockStructuredProvider struct {
+	scheme       string
+	entries      map[string]Entry
+	secrets      map[string]string
+	rootPrefixes []string
+}
+
+func (m *mockStructuredProvider) Scheme() string {
+	if m.scheme != "" {
+		return m.scheme
+	}
+	return "mock"
+}
+func (m *mockStructuredProvider) Initialize(_ context.Context, _ ProviderConfig) error { return nil }
+func (m *mockStructuredProvider) SetSecret(_ context.Context, _, _ string) error        { return nil }
+func (m *mockStructuredProvider) DeleteSecret(_ context.Context, _ string) error        { return nil }
+func (m *mockStructuredProvider) Validate(_ map[string]string) error                    { return nil }
+func (m *mockStructuredProvider) RootPrefixes() []string                                { return m.rootPrefixes }
+
+func (m *mockStructuredProvider) GetSecret(_ context.Context, location string) (string, error) {
+	if val, ok := m.secrets[location]; ok {
+		return val, nil
+	}
+	if strings.Contains(location, ":") {
+		parts := strings.SplitN(location, ":", 2)
+		if e, ok := m.entries[parts[0]]; ok {
+			if v, ok := e.Attributes[parts[1]]; ok {
+				return fmt.Sprint(v), nil
+			}
+			return "", fmt.Errorf("attribute %q not found in entry %q", parts[1], parts[0])
+		}
+		return "", fmt.Errorf("entry %q not found", parts[0])
+	}
+	if strings.Contains(location, ".") {
+		parts := strings.Split(location, ".")
+		entryKey := parts[0]
+		remaining := parts[1:]
+		if len(m.rootPrefixes) > 0 && entryKey == m.rootPrefixes[0] && len(parts) > 1 {
+			entryKey = parts[1]
+			remaining = parts[2:]
+		}
+		if e, ok := m.entries[entryKey]; ok {
+			if len(remaining) == 0 {
+				data, _ := json.Marshal(e.Attributes)
+				return string(data), nil
+			}
+			curr := any(e.Attributes)
+			for _, part := range remaining {
+				if mCurr, ok := curr.(map[string]any); ok {
+					curr = mCurr[part]
+				} else {
+					return "", fmt.Errorf("path %q not found", location)
+				}
+			}
+			if curr != nil {
+				if str, ok := curr.(string); ok {
+					return str, nil
+				}
+				data, _ := json.Marshal(curr)
+				return string(data), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("secret not found: %s", location)
+}
+
+func (m *mockStructuredProvider) GetEntry(_ context.Context, location string) (Entry, error) {
+	if e, ok := m.entries[location]; ok {
+		return e, nil
+	}
+	return Entry{}, fmt.Errorf("entry %q not found", location)
+}
+
+func (m *mockStructuredProvider) Search(_ context.Context, _ SearchQuery) ([]SearchResult, error) {
+	var res []SearchResult
+	for path, e := range m.entries {
+		res = append(res, SearchResult{
+			Provider: m.Scheme(),
+			Vault:    m.Scheme(),
+			Path:     path,
+			Entry:    e,
+		})
+	}
+	return res, nil
+}
+
+func TestFilteringProvider_StructuredOutput_RecursiveCanonicalProjection(t *testing.T) {
+	ctx := context.Background()
+
+	initProvider := func() SecretProvider {
+		return &mockStructuredProvider{
+			scheme:       "test_mock",
+			rootPrefixes: []string{"entities"},
+			entries: map[string]Entry{
+				"db": {
+					Title: "db",
+					Attributes: map[string]any{
+						"credentials": map[string]any{
+							"token": "secret_token_123",
+							"user":  "db_admin",
+						},
+						"accounts": []any{
+							map[string]any{"token": "acct_token_1", "name": "acct1"},
+							map[string]any{"token": "acct_token_2", "name": "acct2"},
+						},
+						"flat.dotted.secret": "flat_secret_val",
+						"flat.dotted.safe":   "flat_safe_val",
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("NestedMap_ExcludeLeaf", func(t *testing.T) {
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"token"})
+		searchable, ok := fp.(SearchableProvider)
+		if !ok {
+			t.Fatalf("expected SearchableProvider")
+		}
+		entry, err := searchable.GetEntry(ctx, "db")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		creds, ok := entry.Attributes["credentials"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected credentials to be map[string]any, got %T", entry.Attributes["credentials"])
+		}
+		if _, hasToken := creds["token"]; hasToken {
+			t.Errorf("expected token to be excluded from credentials map, got %v", creds)
+		}
+		if creds["user"] != "db_admin" {
+			t.Errorf("expected user 'db_admin', got %v", creds["user"])
+		}
+	})
+
+	t.Run("NestedMap_RootedRuleExclusion", func(t *testing.T) {
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"entities.db.credentials.token"})
+		searchable := fp.(SearchableProvider)
+		entry, err := searchable.GetEntry(ctx, "db")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		creds, ok := entry.Attributes["credentials"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected credentials map")
+		}
+		if _, hasToken := creds["token"]; hasToken {
+			t.Errorf("expected token excluded under rooted rule, got %v", creds)
+		}
+		if creds["user"] != "db_admin" {
+			t.Errorf("expected user preserved, got %v", creds["user"])
+		}
+	})
+
+	t.Run("MapsInsideArray_Exclusion", func(t *testing.T) {
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"token"})
+		searchable := fp.(SearchableProvider)
+		entry, err := searchable.GetEntry(ctx, "db")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		accounts, ok := entry.Attributes["accounts"].([]any)
+		if !ok {
+			t.Fatalf("expected accounts to be []any, got %T", entry.Attributes["accounts"])
+		}
+		if len(accounts) != 2 {
+			t.Fatalf("expected 2 accounts, got %d", len(accounts))
+		}
+		for i, acctRaw := range accounts {
+			acct, ok := acctRaw.(map[string]any)
+			if !ok {
+				t.Fatalf("account %d is not map[string]any", i)
+			}
+			if _, hasToken := acct["token"]; hasToken {
+				t.Errorf("account %d has excluded token: %v", i, acct)
+			}
+			if acct["name"] == "" {
+				t.Errorf("account %d missing name: %v", i, acct)
+			}
+		}
+	})
+
+	t.Run("DottedAttributeKeys_Exclusion", func(t *testing.T) {
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"*.secret"})
+		searchable := fp.(SearchableProvider)
+		entry, err := searchable.GetEntry(ctx, "db")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if _, hasSecret := entry.Attributes["flat.dotted.secret"]; hasSecret {
+			t.Errorf("flat.dotted.secret was not excluded: %v", entry.Attributes)
+		}
+		if entry.Attributes["flat.dotted.safe"] != "flat_safe_val" {
+			t.Errorf("flat.dotted.safe missing or altered: %v", entry.Attributes)
+		}
+	})
+
+	t.Run("Search_StructuredOutput_Filtering", func(t *testing.T) {
+		p := initProvider()
+		fp := NewFilteringProvider(p, nil, []string{"token"})
+		searchable := fp.(SearchableProvider)
+		results, err := searchable.Search(ctx, SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) == 0 {
+			t.Fatalf("expected search results")
+		}
+		for _, r := range results {
+			if creds, ok := r.Entry.Attributes["credentials"].(map[string]any); ok {
+				if _, hasToken := creds["token"]; hasToken {
+					t.Errorf("search result exposed excluded token in credentials: %v", creds)
+				}
+			}
+		}
+	})
+}
+
+func TestFilteringProvider_Static_AncestorExclusion(t *testing.T) {
+	ctx := context.Background()
+	p := &mockStructuredProvider{
+		scheme:       "ancestor_mock",
+		rootPrefixes: []string{"entities"},
+		entries: map[string]Entry{
+			"db": {
+				Title: "db",
+				Attributes: map[string]any{
+					"username": "db_admin",
+					"port":     5432,
+				},
+			},
+			"cache": {
+				Title: "cache",
+				Attributes: map[string]any{
+					"host": "redis.internal",
+				},
+			},
+		},
+	}
+
+	fp := NewFilteringProvider(p, nil, []string{"db"})
+
+	_, err := fp.GetSecret(ctx, "db.username")
+	if err == nil {
+		t.Fatalf("expected error for db.username when ancestor 'db' is excluded, got nil")
+	}
+	if !strings.Contains(err.Error(), "excluded") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+
+	val, err := fp.GetSecret(ctx, "cache.host")
+	if err != nil {
+		t.Fatalf("GetSecret(cache.host) should succeed but failed: %v", err)
+	}
+	if val != "redis.internal" {
+		t.Errorf("cache.host = %q, want 'redis.internal'", val)
+	}
+}
+
+func TestFilteringProvider_Static_AncestorExclusion_Structured(t *testing.T) {
+	ctx := context.Background()
+	p := &mockStructuredProvider{
+		scheme:       "ancestor_struct",
+		rootPrefixes: []string{"entities"},
+		entries: map[string]Entry{
+			"db": {
+				Title: "db",
+				Attributes: map[string]any{
+					"username": "db_admin",
+					"port":     5432,
+				},
+			},
+			"cache": {
+				Title: "cache",
+				Attributes: map[string]any{
+					"host": "redis.internal",
+				},
+			},
+		},
+	}
+
+	fp := NewFilteringProvider(p, nil, []string{"db"})
+	sfp, ok := fp.(SearchableProvider)
+	if !ok {
+		t.Fatalf("FilteringProvider should implement SearchableProvider")
+	}
+
+	entryDB, err := sfp.GetEntry(ctx, "db")
+	if err != nil {
+		t.Fatalf("GetEntry(db) failed: %v", err)
+	}
+	if len(entryDB.Attributes) != 0 {
+		t.Errorf("GetEntry(db) exposed attributes despite ancestor exclude: %v", entryDB.Attributes)
+	}
+
+	entryCache, err := sfp.GetEntry(ctx, "cache")
+	if err != nil {
+		t.Fatalf("GetEntry(cache) failed: %v", err)
+	}
+	if entryCache.Attributes["host"] != "redis.internal" {
+		t.Errorf("GetEntry(cache) host = %v, want 'redis.internal'", entryCache.Attributes["host"])
+	}
+
+	results, err := sfp.Search(ctx, SearchQuery{})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	for _, r := range results {
+		if r.Path == "db" && len(r.Entry.Attributes) != 0 {
+			t.Errorf("Search result for 'db' exposed attributes: %v", r.Entry.Attributes)
+		}
+	}
+}
+
+func TestFilteringProvider_TitleResolutionError(t *testing.T) {
+	ctx := context.Background()
+	p := &mockStructuredProvider{
+		scheme: "custom_mock",
+		entries: map[string]Entry{
+			"valid_entity": {
+				Title: "Valid Title",
+				Attributes: map[string]any{
+					"Password": "secret",
+				},
+			},
+		},
+	}
+
+	fp := NewFilteringProvider(p, nil, []string{"Valid Title.Password"})
+
+	_, err := fp.GetSecret(ctx, "missing_entity:Password")
+	if err == nil {
+		t.Errorf("expected error when resolving nonexistent entity, got nil")
+	}
+}
+
+func TestFilteringProvider_AncestorInclusionIsolation(t *testing.T) {
+	ctx := context.Background()
+	p := &mockStructuredProvider{
+		scheme:       "ancestor_inc",
+		rootPrefixes: []string{"entities"},
+		entries: map[string]Entry{
+			"db": {
+				Title: "db",
+				Attributes: map[string]any{
+					"username": "db_user",
+					"password": "db_password",
+				},
+			},
+		},
+	}
+
+	fp := NewFilteringProvider(p, []string{"entities"}, nil)
+
+	_, err := fp.GetSecret(ctx, "db.username")
+	if err == nil {
+		t.Errorf("expected GetSecret(db.username) to be rejected by include_fields: ['entities'], got nil")
+	}
+
+	sfp := fp.(SearchableProvider)
+	entry, err := sfp.GetEntry(ctx, "db")
+	if err != nil {
+		t.Fatalf("GetEntry failed: %v", err)
+	}
+	if len(entry.Attributes) != 0 {
+		t.Errorf("expected empty attributes with include_fields: ['entities'], got: %v", entry.Attributes)
+	}
 }

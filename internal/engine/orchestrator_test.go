@@ -783,3 +783,58 @@ func TestOrchestrator_GetEntries(t *testing.T) {
 		})
 	}
 }
+
+func TestOrchestrator_CyclicMergeDepthError(t *testing.T) {
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		vaults     map[string]config.VaultConfig
+		targetURI  string
+		wantErrSub string
+	}{
+		{
+			name: "two entities mutually merging cause max depth error",
+			vaults: map[string]config.VaultConfig{
+				"vault_a": {
+					Provider: "search",
+					Sources:  []string{"vault_b://"},
+				},
+				"vault_b": {
+					Provider: "search",
+					Sources:  []string{"vault_a://"},
+				},
+			},
+			targetURI:  "vault_a://entity_a",
+			wantErrSub: "maximum recursion depth exceeded",
+		},
+		{
+			name: "self-merging composed entity causes max depth error",
+			vaults: map[string]config.VaultConfig{
+				"self_vault": {
+					Provider: "search",
+					Sources:  []string{"self_vault://"},
+				},
+			},
+			targetURI:  "self_vault://self_loop",
+			wantErrSub: "maximum recursion depth exceeded",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Vaults: tt.vaults}
+			orch, err := NewOrchestrator(cfg)
+			if err != nil {
+				t.Fatalf("failed to create orchestrator: %v", err)
+			}
+			_, err = orch.GetEntry(ctx, tt.targetURI)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tt.wantErrSub)
+			}
+			if !strings.Contains(err.Error(), tt.wantErrSub) {
+				t.Errorf("error %q does not contain %q", err.Error(), tt.wantErrSub)
+			}
+		})
+	}
+}

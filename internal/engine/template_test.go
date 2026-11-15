@@ -34,8 +34,14 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 			},
 		},
 		Vaults: map[string]config.VaultConfig{
+			"vault_a_src": {
+				Provider:   "env",
+				Searchable: boolPtr(true),
+			},
 			"vault_a": {
-				Provider:      "vault",
+				Provider:      "search",
+				SourceVaults:  []string{"vault_a_src"},
+				Sources:       []string{"vault_a_src://"},
 				ResolveValues: true,
 			},
 		},
@@ -45,7 +51,7 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := orch.InjectMockVaultForTest("vault_a", []provider.SearchResult{
+	if err := orch.InjectMockVaultForTest("vault_a_src", []provider.SearchResult{
 		{
 			Provider: "search", Vault: "vault_a", Path: "myentity",
 			Entry: provider.Entry{

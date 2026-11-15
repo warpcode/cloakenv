@@ -77,6 +77,13 @@ func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, err
 		nextCtx = WithFieldPolicyAndMapping(nextCtx, s.includeFields, s.excludeFields, s.mapping)
 	}
 
+	// For resolving entries via getEntriesFunc, do not pass WithRawKeys so source-vault
+	// filtering, mapping, key formatting, and decorators are preserved and enforced.
+	getEntriesCtx := context.WithValue(ctx, ContextKeyDepth, depth+1)
+	if len(s.includeFields) > 0 || len(s.excludeFields) > 0 || len(s.mapping) > 0 {
+		getEntriesCtx = WithFieldPolicyAndMapping(getEntriesCtx, s.includeFields, s.excludeFields, s.mapping)
+	}
+
 	if len(s.sources) == 0 {
 		if s.searchExecutor == nil {
 			return nil, errors.New("search provider: search executor not configured")
@@ -112,30 +119,22 @@ func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, err
 				return nil, fmt.Errorf("search provider %q: invalid source URI %q: %w", s.vaultName, src, err)
 			}
 			if scheme == "search" {
-				subQuery := location
-				if subQuery == "" {
-					subQuery = s.query
-				}
-				if s.searchExecutor != nil {
-					res, err := s.searchExecutor(nextCtx, subQuery, s.sourceVaults, depth+1)
-					if err != nil {
-						return nil, fmt.Errorf("search provider %q: source %q execution failed: %w", s.vaultName, src, err)
-					}
-					combined = append(combined, res...)
-					continue
-				}
 				if s.getEntriesFunc == nil {
-					return nil, errors.New("search provider: search executor not configured")
+					return nil, errors.New("search provider: entry retrieval function not configured")
 				}
-				entries, err := s.getEntriesFunc(nextCtx, trimmed)
+				entries, err := s.getEntriesFunc(getEntriesCtx, trimmed)
 				if err != nil {
 					return nil, fmt.Errorf("search provider %q: failed to resolve source URI %q: %w", s.vaultName, src, err)
 				}
 				for _, e := range entries {
+					resPath := e.Title
+					if e.Group != nil && e.Group.Path != "" {
+						resPath = e.Group.Path + "/" + e.Title
+					}
 					combined = append(combined, SearchResult{
 						Provider: scheme,
 						Vault:    scheme,
-						Path:     e.Title,
+						Path:     resPath,
 						Entry:    e,
 					})
 				}
@@ -144,7 +143,7 @@ func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, err
 
 			if location == "" {
 				if s.searchExecutor != nil {
-					res, err := s.searchExecutor(nextCtx, s.query, []string{scheme}, depth+1)
+					res, err := s.searchExecutor(nextCtx, "", []string{scheme}, depth+1)
 					if err != nil {
 						return nil, fmt.Errorf("search provider %q: source %q execution failed: %w", s.vaultName, src, err)
 					}
@@ -152,17 +151,21 @@ func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, err
 					continue
 				}
 				if s.getEntriesFunc == nil {
-					return nil, errors.New("search provider: search executor not configured")
+					return nil, errors.New("search provider: entry retrieval function not configured")
 				}
-				entries, err := s.getEntriesFunc(nextCtx, trimmed)
+				entries, err := s.getEntriesFunc(getEntriesCtx, trimmed)
 				if err != nil {
 					return nil, fmt.Errorf("search provider %q: failed to resolve source URI %q: %w", s.vaultName, src, err)
 				}
 				for _, e := range entries {
+					resPath := e.Title
+					if e.Group != nil && e.Group.Path != "" {
+						resPath = e.Group.Path + "/" + e.Title
+					}
 					combined = append(combined, SearchResult{
 						Provider: scheme,
 						Vault:    scheme,
-						Path:     e.Title,
+						Path:     resPath,
 						Entry:    e,
 					})
 				}
@@ -172,13 +175,15 @@ func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, err
 			if s.getEntriesFunc == nil {
 				return nil, fmt.Errorf("search provider %q: entry retrieval function not configured", s.vaultName)
 			}
-			entries, err := s.getEntriesFunc(nextCtx, trimmed)
+			entries, err := s.getEntriesFunc(getEntriesCtx, trimmed)
 			if err != nil {
 				return nil, fmt.Errorf("search provider %q: failed to resolve source URI %q: %w", s.vaultName, src, err)
 			}
 			for _, e := range entries {
 				resPath := location
-				if len(entries) > 1 && e.Title != "" {
+				if e.Group != nil && e.Group.Path != "" {
+					resPath = e.Group.Path + "/" + e.Title
+				} else if len(entries) > 1 && e.Title != "" {
 					resPath = e.Title
 				}
 				combined = append(combined, SearchResult{
