@@ -1081,8 +1081,8 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 		return serializeVal(rawVal)
 
 	default:
-		if searchable, ok := f.underlying.(SearchableProvider); ok {
-			return f.getStructuredSecret(ctx, location, searchable)
+		if _, ok := f.underlying.(SearchableProvider); ok {
+			return f.getStructuredSecret(ctx, location)
 		}
 		if len(f.includeFields) > 0 || len(f.excludeFields) > 0 {
 			return "", fmt.Errorf("field filtering is not supported for provider scheme %q", f.underlying.Scheme())
@@ -1091,7 +1091,7 @@ func (f *FilteringProvider) GetSecret(ctx context.Context, location string) (str
 	}
 }
 
-func (f *FilteringProvider) getStructuredSecret(ctx context.Context, location string, searchable SearchableProvider) (string, error) {
+func (f *FilteringProvider) getStructuredSecret(ctx context.Context, location string) (string, error) {
 	effectiveAttr := "Password"
 	entityLoc := location
 	if strings.Contains(location, ":") {

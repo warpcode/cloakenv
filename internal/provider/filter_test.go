@@ -1878,11 +1878,26 @@ func (m *mockStructuredProvider) Scheme() string {
 	}
 	return "mock"
 }
-func (m *mockStructuredProvider) Initialize(_ context.Context, _ ProviderConfig) error { return nil }
-func (m *mockStructuredProvider) SetSecret(_ context.Context, _, _ string) error        { return nil }
-func (m *mockStructuredProvider) DeleteSecret(_ context.Context, _ string) error        { return nil }
-func (m *mockStructuredProvider) Validate(_ map[string]string) error                    { return nil }
-func (m *mockStructuredProvider) RootPrefixes() []string                                { return m.rootPrefixes }
+
+func (m *mockStructuredProvider) Initialize(_ context.Context, _ ProviderConfig) error {
+	return nil
+}
+
+func (m *mockStructuredProvider) SetSecret(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockStructuredProvider) DeleteSecret(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockStructuredProvider) Validate(_ map[string]string) error {
+	return nil
+}
+
+func (m *mockStructuredProvider) RootPrefixes() []string {
+	return m.rootPrefixes
+}
 
 func (m *mockStructuredProvider) GetSecret(_ context.Context, location string) (string, error) {
 	if val, ok := m.secrets[location]; ok {
