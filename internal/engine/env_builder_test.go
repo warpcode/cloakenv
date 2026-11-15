@@ -352,8 +352,8 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"aws_dev":   {Provider: "keepass"},
-			"k8s_vault": {Provider: "keepass"},
+			"aws_dev":   {Provider: "vault"},
+			"k8s_vault": {Provider: "vault"},
 		},
 		Autoload: []config.AutoloadRule{
 			{
