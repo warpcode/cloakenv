@@ -65,6 +65,47 @@ func (s *SearchProvider) Initialize(_ context.Context, cfg ProviderConfig) error
 
 const maxSearchDepth = 5
 
+// extractSearchSourceQuery strips an optional trailing /<attribute> suffix outside quotes
+// from a search:// URI location and returns the non-empty query string.
+func extractSearchSourceQuery(location string) (string, error) {
+	lastSlashOutsideQuotes := -1
+	var quote rune
+	escaped := false
+
+	for i, r := range location {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if quote != 0 {
+			if quote != '`' && r == '\\' {
+				escaped = true
+				continue
+			}
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch r {
+		case '"', '\'', '`':
+			quote = r
+		case '/':
+			lastSlashOutsideQuotes = i
+		}
+	}
+
+	queryPart := location
+	if lastSlashOutsideQuotes != -1 {
+		queryPart = location[:lastSlashOutsideQuotes]
+	}
+	queryPart = strings.TrimSpace(queryPart)
+	if queryPart == "" {
+		return "", errors.New("invalid search URI: no query conditions specified")
+	}
+	return queryPart, nil
+}
+
 func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, error) {
 	depth := depthFromContext(ctx)
 	if depth >= maxSearchDepth {
@@ -119,25 +160,18 @@ func (s *SearchProvider) executeSearch(ctx context.Context) ([]SearchResult, err
 				return nil, fmt.Errorf("search provider %q: invalid source URI %q: %w", s.vaultName, src, err)
 			}
 			if scheme == "search" {
-				if s.getEntriesFunc == nil {
-					return nil, errors.New("search provider: entry retrieval function not configured")
+				if s.searchExecutor == nil {
+					return nil, fmt.Errorf("search provider %q: search executor not configured", s.vaultName)
 				}
-				entries, err := s.getEntriesFunc(getEntriesCtx, trimmed)
+				queryPart, err := extractSearchSourceQuery(location)
 				if err != nil {
-					return nil, fmt.Errorf("search provider %q: failed to resolve source URI %q: %w", s.vaultName, src, err)
+					return nil, fmt.Errorf("search provider %q: invalid source URI %q: %w", s.vaultName, src, err)
 				}
-				for _, e := range entries {
-					resPath := e.Title
-					if e.Group != nil && e.Group.Path != "" {
-						resPath = e.Group.Path + "/" + e.Title
-					}
-					combined = append(combined, SearchResult{
-						Provider: scheme,
-						Vault:    scheme,
-						Path:     resPath,
-						Entry:    e,
-					})
+				res, err := s.searchExecutor(nextCtx, queryPart, nil, depth+1)
+				if err != nil {
+					return nil, fmt.Errorf("search provider %q: source URI %q execution failed: %w", s.vaultName, src, err)
 				}
+				combined = append(combined, res...)
 				continue
 			}
 

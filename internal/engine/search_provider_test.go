@@ -667,6 +667,12 @@ func TestSearchProviderIntegration_Sources(t *testing.T) {
 					`search://"tier:edge" in tags`,
 				},
 			},
+			"grouped_search_only": {
+				Provider: "search",
+				Sources: []string{
+					`search://_meta_.provider == "env" and _meta_.vault == "vault_b" and "tier:edge" in _meta_.tags/TOKEN`,
+				},
+			},
 			"grouped_filtered": {
 				Provider: "search",
 				Sources:  []string{"vault_c://svc_c"},
@@ -729,5 +735,29 @@ func TestSearchProviderIntegration_Sources(t *testing.T) {
 	_, err = orch.Resolve(ctx, "grouped_filtered://svc_c:LEAKED_SECRET")
 	if err == nil {
 		t.Fatalf("expected error resolving LEAKED_SECRET through grouped_filtered, got nil")
+	}
+
+	groupedResults, err := orch.Search(ctx, "", []string{"grouped"})
+	if err != nil {
+		t.Fatalf("Search(grouped) failed: %v", err)
+	}
+	if len(groupedResults) != 2 {
+		t.Fatalf("expected 2 deduplicated results from grouped, got %d: %+v", len(groupedResults), groupedResults)
+	}
+
+	searchOnlyResults, err := orch.Search(ctx, "", []string{"grouped_search_only"})
+	if err != nil {
+		t.Fatalf("Search(grouped_search_only) failed: %v", err)
+	}
+	if len(searchOnlyResults) != 1 {
+		t.Fatalf("expected 1 result from grouped_search_only, got %d: %+v", len(searchOnlyResults), searchOnlyResults)
+	}
+	if searchOnlyResults[0].Path != "edge_svc" {
+		t.Errorf("expected canonical path edge_svc from grouped_search_only, got %q", searchOnlyResults[0].Path)
+	}
+
+	valSearchOnly, err := orch.Resolve(ctx, "grouped_search_only://edge_svc:TOKEN")
+	if err != nil || valSearchOnly != "beta" {
+		t.Fatalf("Resolve(grouped_search_only://edge_svc:TOKEN) = (%q, %v), want beta", valSearchOnly, err)
 	}
 }
