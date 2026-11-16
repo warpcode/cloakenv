@@ -670,7 +670,7 @@ func TestSearchProviderIntegration_Sources(t *testing.T) {
 			"grouped_search_only": {
 				Provider: "search",
 				Sources: []string{
-					`search://_meta_.provider == "env" and _meta_.vault == "vault_b" and "tier:edge" in _meta_.tags/TOKEN`,
+					`search://_meta_.provider == "search" and _meta_.vault == "vault_b" and "tier:edge" in _meta_.tags/TOKEN`,
 				},
 			},
 			"grouped_filtered": {
