@@ -143,7 +143,7 @@ func DoctorCmd(args []string, cfg *config.Config, stdout, stderr io.Writer) int 
 			fmt.Fprintf(stdout, "  Vault %q (provider: %s):\n", name, vault.Provider)
 
 			switch vault.Provider {
-			case "keepass", "yaml", "json":
+			case "keepass":
 				if vault.VaultPath != "" {
 					if info, err := os.Stat(vault.VaultPath); err == nil {
 						if info.IsDir() {
@@ -218,8 +218,6 @@ func DoctorCmd(args []string, cfg *config.Config, stdout, stderr io.Writer) int 
 				}
 			case "env":
 				fmt.Fprintln(stdout, "    [OK] Process environment provider (in-memory)")
-			case "custom_vault":
-				fmt.Fprintln(stdout, "    [OK] Custom vault (in-memory)")
 			case "search":
 				fmt.Fprintln(stdout, "    [OK] Search vault (dynamic)")
 			case "vault":
@@ -230,7 +228,7 @@ func DoctorCmd(args []string, cfg *config.Config, stdout, stderr io.Writer) int 
 					fmt.Fprintln(stdout, "    [OK] HashiCorp Vault configured (reachability check deferred to runtime)")
 				}
 			default:
-				fmt.Fprintf(stdout, "    [ERROR] Unknown provider %q\n", vault.Provider)
+				fmt.Fprintf(stdout, "    [ERROR] Unsupported provider %q\n", vault.Provider)
 				hasErrors = true
 			}
 		}

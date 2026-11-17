@@ -530,15 +530,9 @@ func TestExecMemo_ZeroTTLDoesNotInitializeCacheProvider(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"custom": {
-				Provider:      "custom_vault",
+				Provider:      "search",
+				Sources:       []string{"env://"},
 				ResolveValues: true,
-				Entities: map[string]config.CustomEntityConfig{
-					"app": {
-						Attributes: map[string]any{
-							"token": `{{ exec "echo" "no-cache-init" }}`,
-						},
-					},
-				},
 			},
 		},
 	}
@@ -546,6 +540,21 @@ func TestExecMemo_ZeroTTLDoesNotInitializeCacheProvider(t *testing.T) {
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("NewOrchestrator failed: %v", err)
+	}
+	if err := injectMockVault(orch, "custom", []provider.SearchResult{
+		{
+			Provider: "search",
+			Vault:    "custom",
+			Path:     "app",
+			Entry: provider.Entry{
+				Title: "app",
+				Attributes: map[string]any{
+					"token": `{{ exec "echo" "no-cache-init" }}`,
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
 	}
 
 	val, err := orch.Resolve(context.Background(), "custom://app:token")
@@ -593,16 +602,23 @@ func TestExecMemo_OrchestratorIntegration(t *testing.T) {
 		},
 		Vaults: map[string]config.VaultConfig{
 			"custom": {
-				Provider:      "custom_vault",
+				Provider:      "search",
+				Sources:       []string{"env://"},
 				ResolveValues: true,
-				Entities: map[string]config.CustomEntityConfig{
-					"app": {
-						Attributes: map[string]any{
-							"token_a": expr,
-							"token_b": expr,
-							"token_c": expr,
-						},
-					},
+			},
+		},
+	}
+	mockResults := []provider.SearchResult{
+		{
+			Provider: "search",
+			Vault:    "custom",
+			Path:     "app",
+			Entry: provider.Entry{
+				Title: "app",
+				Attributes: map[string]any{
+					"token_a": expr,
+					"token_b": expr,
+					"token_c": expr,
 				},
 			},
 		},
@@ -611,6 +627,9 @@ func TestExecMemo_OrchestratorIntegration(t *testing.T) {
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "custom", mockResults); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -642,6 +661,9 @@ func TestExecMemo_OrchestratorIntegration(t *testing.T) {
 	orch2, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create second orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch2, "custom", mockResults); err != nil {
+		t.Fatalf("injectMockVault(orch2) failed: %v", err)
 	}
 	val2, err := orch2.Resolve(ctx, "custom://app:token_a")
 	if err != nil {

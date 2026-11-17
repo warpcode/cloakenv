@@ -57,13 +57,13 @@ type SecretProvider interface {
 type ProviderConfig struct {
 	Settings          map[string]string
 	Attributes        map[string]any
-	Entities          map[string]config.CustomEntityConfig
 	SingleEntity      *bool
 	EntityName        string
 	Searchable        bool
 	Tags              []string
 	EntitiesRootKey   string
 	SourceVaults      []string
+	Sources           []string
 	Query             string
 	IncludeFields     []string
 	ExcludeFields     []string

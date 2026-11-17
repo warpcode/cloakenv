@@ -21,7 +21,7 @@ func TestCheckAccess(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"valid_vault": {
-				Provider: "custom_vault",
+				Provider: "env",
 			},
 		},
 	}
@@ -152,23 +152,10 @@ func TestOrchestrator_MultiStagePipelineWithOriginalState(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"backend": {
-				Provider: "custom_vault",
-				Entities: map[string]config.CustomEntityConfig{
-					"db": {
-						Title: "Database Cluster",
-						Attributes: map[string]any{
-							"db_user":       "postgres",
-							"db_pass":       "topsecret",
-							"endpoint":      "db.internal",
-							"port":          "5432",
-							"replica_hosts": []string{"r1.internal", "r2.internal"},
-						},
-					},
-				},
-			},
+			"backend": {Provider: "env"},
 			"app": {
-				Provider:      "custom_vault",
+				Provider:      "search",
+				Sources:       []string{"backend://db"},
 				ExcludeFields: []string{"db_*"},
 				Mapping: []config.MappingRule{
 					{
@@ -181,12 +168,6 @@ func TestOrchestrator_MultiStagePipelineWithOriginalState(t *testing.T) {
 					"DATABASE_URL": "postgres://{{ .original.attributes.db_user }}:{{ .original.attributes.db_pass }}@{{ .output.attributes.SERVER_HOST }}:{{ .attributes.PORT }}",
 					"REPLICAS":     "{{ .original.attributes.replica_hosts | join \",\" }}",
 				},
-				Entities: map[string]config.CustomEntityConfig{
-					"db": {
-						IsComposed: true,
-						Merge:      []string{"backend://db"},
-					},
-				},
 			},
 		},
 	}
@@ -194,6 +175,25 @@ func TestOrchestrator_MultiStagePipelineWithOriginalState(t *testing.T) {
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("NewOrchestrator failed: %v", err)
+	}
+	if err := injectMockVault(orch, "backend", []provider.SearchResult{
+		{
+			Provider: "search",
+			Vault:    "backend",
+			Path:     "db",
+			Entry: provider.Entry{
+				Title: "Database Cluster",
+				Attributes: map[string]any{
+					"db_user":       "postgres",
+					"db_pass":       "topsecret",
+					"endpoint":      "db.internal",
+					"port":          "5432",
+					"replica_hosts": []string{"r1.internal", "r2.internal"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
 	}
 
 	t.Run("GetEntry enforces pipeline stages, derives composite from .original, and omits excluded fields", func(t *testing.T) {
@@ -367,15 +367,11 @@ func TestProviderManager_MappingIntegration(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
+			"src": {Provider: "env"},
 			"mapped_vault": {
-				Provider: "custom_vault",
+				Provider: "search",
+				Sources:  []string{"src://app"},
 				Mapping:  []config.MappingRule{rule1},
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"app": {
-						"env:OPENROUTER_API_KEY": "sk-test-secret",
-						"UNMAPPED":               "unmapped_value",
-					},
-				}),
 			},
 		},
 	}
@@ -383,6 +379,20 @@ func TestProviderManager_MappingIntegration(t *testing.T) {
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "src", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "src", Path: "app",
+			Entry: provider.Entry{
+				Title: "app",
+				Attributes: map[string]any{
+					"env:OPENROUTER_API_KEY": "sk-test-secret",
+					"UNMAPPED":               "unmapped_value",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -426,19 +436,13 @@ func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
+			"src": {Provider: "env"},
 			"composed_vault": {
-				Provider:      "custom_vault",
+				Provider:      "search",
+				Sources:       []string{"src://app"},
 				Mapping:       []config.MappingRule{rule1},
 				IncludeFields: []string{"OPENROUTER_API_KEY", "test:foo", "INCLUDED_FIELD"},
 				ExcludeFields: []string{"EXCLUDED_FIELD"},
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"app": {
-						"env:OPENROUTER_API_KEY": "sk-test-secret",
-						"env:test:foo":           "bar",
-						"INCLUDED_FIELD":         "included_val",
-						"EXCLUDED_FIELD":         "excluded_val",
-					},
-				}),
 			},
 		},
 	}
@@ -446,6 +450,22 @@ func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "src", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "src", Path: "app",
+			Entry: provider.Entry{
+				Title: "app",
+				Attributes: map[string]any{
+					"env:OPENROUTER_API_KEY": "sk-test-secret",
+					"env:test:foo":           "bar",
+					"INCLUDED_FIELD":         "included_val",
+					"EXCLUDED_FIELD":         "excluded_val",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -502,21 +522,26 @@ func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
 	// 5. Verify that colon-qualified candidate filtering provided by FilteringProvider is active in the composed chain
 	cfg2 := &config.Config{
 		Vaults: map[string]config.VaultConfig{
+			"src2": {Provider: "env"},
 			"colon_vault": {
-				Provider:      "custom_vault",
+				Provider:      "search",
+				Sources:       []string{"src2://app"},
 				Mapping:       []config.MappingRule{rule1},
 				ExcludeFields: []string{"app:*"},
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"app": {
-						"Password": "pass_val",
-					},
-				}),
 			},
 		},
 	}
 	orch2, err := NewOrchestrator(cfg2)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch2, "src2", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "src2", Path: "app",
+			Entry: provider.Entry{Title: "app", Attributes: map[string]any{"Password": "pass_val"}},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
 	}
 	p2, _, err := orch2.providerManager.GetProvider(ctx, "colon_vault")
 	if err != nil {
@@ -534,18 +559,13 @@ func TestProviderManager_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
+			"src": {Provider: "env"},
 			"override_vault": {
-				Provider:      "custom_vault",
+				Provider:      "search",
+				Sources:       []string{"src://service"},
 				Mapping:       []config.MappingRule{rule1},
 				IncludeFields: []string{"UNMAPPED_KEPT"},
 				ExcludeFields: []string{"UNMAPPED_DROPPED", "MAPPED_KEY"},
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"service": {
-						"env:MAPPED_KEY":   "mapped_secret_value",
-						"UNMAPPED_KEPT":    "kept_val",
-						"UNMAPPED_DROPPED": "dropped_val",
-					},
-				}),
 			},
 		},
 	}
@@ -553,6 +573,21 @@ func TestProviderManager_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "src", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "src", Path: "service",
+			Entry: provider.Entry{
+				Title: "service",
+				Attributes: map[string]any{
+					"env:MAPPED_KEY":   "mapped_secret_value",
+					"UNMAPPED_KEPT":    "kept_val",
+					"UNMAPPED_DROPPED": "dropped_val",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
 	}
 
 	ctx := context.Background()
@@ -595,22 +630,32 @@ func TestProviderManager_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 	// 5. When exclude_fields is wildcard "*", mapped key STILL shows and resolves
 	cfgWildcard := &config.Config{
 		Vaults: map[string]config.VaultConfig{
+			"src_wc": {Provider: "env"},
 			"wildcard_vault": {
-				Provider:      "custom_vault",
+				Provider:      "search",
+				Sources:       []string{"src_wc://service"},
 				Mapping:       []config.MappingRule{rule1},
 				ExcludeFields: []string{"*"},
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"service": {
-						"env:MAPPED_KEY": "wildcard_secret",
-						"OTHER_FIELD":    "other_val",
-					},
-				}),
 			},
 		},
 	}
 	orchWildcard, err := NewOrchestrator(cfgWildcard)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orchWildcard, "src_wc", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "src_wc", Path: "service",
+			Entry: provider.Entry{
+				Title: "service",
+				Attributes: map[string]any{
+					"env:MAPPED_KEY": "wildcard_secret",
+					"OTHER_FIELD":    "other_val",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
 	}
 	valWildcard, err := orchWildcard.Resolve(ctx, "wildcard_vault://service:MAPPED_KEY")
 	if err != nil {
@@ -635,7 +680,7 @@ func TestProviderManagerUnknownSchemeDoesNotAllocateLock(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"known_vault": {
-				Provider: "custom_vault",
+				Provider: "env",
 			},
 		},
 	}
@@ -716,12 +761,7 @@ func TestProviderManagerConcurrentInitialization(t *testing.T) {
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"test_vault": {
-					Provider: "custom_vault",
-					Entities: config.ToCustomEntityMap(map[string]map[string]any{
-						"app": {
-							"KEY": "val",
-						},
-					}),
+					Provider: "env",
 				},
 			},
 		}
@@ -773,11 +813,13 @@ func TestProviderManager_KeyFormatOverride(t *testing.T) {
 		KeyFormatOverride: "snake",
 		Vaults: map[string]config.VaultConfig{
 			"vault_env": {
-				Provider:  "custom_vault",
+				Provider:  "search",
+				Sources:   []string{"env://"},
 				KeyFormat: "env",
 			},
 			"vault_none": {
-				Provider:  "custom_vault",
+				Provider:  "search",
+				Sources:   []string{"env://"},
 				KeyFormat: "env",
 			},
 		},
@@ -825,128 +867,102 @@ func TestProviderManager_SetGetEntriesFunc_And_SetRenderTemplateFunc(t *testing.
 
 	ctx := context.Background()
 
-	tests := []struct {
-		name              string
-		setGetEntries     bool
-		setRenderTemplate bool
-		composedEntity    config.CustomEntityConfig
-		wantErr           bool
-		wantErrSub        string
-		checkFn           func(t *testing.T, entry provider.Entry, getEntriesCalled, renderTemplateCalled bool)
-	}{
-		{
-			name:              "both callbacks set are propagated to custom_vault provider",
-			setGetEntries:     true,
-			setRenderTemplate: true,
-			composedEntity: config.CustomEntityConfig{
-				Title:      "Composed App",
-				IsComposed: true,
-				Merge:      []string{"mock://entries"},
-				Attributes: map[string]any{
-					"RENDERED_KEY": "{{ .attributes.SRC_KEY }}",
-				},
-			},
-			wantErr: false,
-			checkFn: func(t *testing.T, entry provider.Entry, getEntriesCalled, renderTemplateCalled bool) {
-				if !getEntriesCalled {
-					t.Errorf("expected getEntriesFunc to have been called")
-				}
-				if !renderTemplateCalled {
-					t.Errorf("expected renderTemplateFunc to have been called")
-				}
-				if entry.Attributes["RENDERED_KEY"] != "rendered:src_val" {
-					t.Errorf("RENDERED_KEY = %v, want 'rendered:src_val'", entry.Attributes["RENDERED_KEY"])
-				}
-			},
-		},
-		{
-			name:              "missing getEntriesFunc returns error when composed entity has merge",
-			setGetEntries:     false,
-			setRenderTemplate: true,
-			composedEntity: config.CustomEntityConfig{
-				Title:      "Composed App",
-				IsComposed: true,
-				Merge:      []string{"mock://entries"},
-			},
-			wantErr:    true,
-			wantErrSub: "merge execution not supported in this context",
-		},
-		{
-			name:              "missing renderTemplateFunc returns error when composed entity has template",
-			setGetEntries:     true,
-			setRenderTemplate: false,
-			composedEntity: config.CustomEntityConfig{
-				Title:      "Composed App",
-				IsComposed: true,
-				Merge:      []string{"mock://entries"},
-				Attributes: map[string]any{
-					"RENDERED_KEY": "{{ .attributes.SRC_KEY }}",
-				},
-			},
-			wantErr:    true,
-			wantErrSub: "template rendering not supported in this context",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{
-				Vaults: map[string]config.VaultConfig{
-					"test_vault": {
-						Provider: "custom_vault",
-						Entities: map[string]config.CustomEntityConfig{
-							"comp": tt.composedEntity,
-						},
+	t.Run("getEntriesFunc and renderTemplateFunc are propagated to search provider", func(t *testing.T) {
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"src": {Provider: "env"},
+				"search_vault": {
+					Provider: "search",
+					Sources:  []string{"src://app"},
+					Attributes: map[string]any{
+						"RENDERED_KEY": "{{ .attributes.SRC_KEY }}",
 					},
 				},
-			}
+			},
+		}
 
-			pm := NewProviderManager(cfg, nil, nil)
-			var getEntriesCalled bool
-			var renderTemplateCalled bool
+		pm := NewProviderManager(cfg, nil, nil)
+		var getEntriesCalled bool
+		var renderTemplateCalled bool
 
-			if tt.setGetEntries {
-				pm.SetGetEntriesFunc(func(ctx context.Context, uri string) ([]provider.Entry, error) {
-					getEntriesCalled = true
-					return []provider.Entry{
-						{
-							Title: "Src",
-							Attributes: map[string]any{
-								"SRC_KEY": "src_val",
-							},
-						},
-					}, nil
-				})
-			}
-
-			if tt.setRenderTemplate {
-				pm.SetRenderTemplateFunc(func(ctx context.Context, tmplStr string, data any) (string, error) {
-					renderTemplateCalled = true
-					return "rendered:src_val", nil
-				})
-			}
-
-			p, _, err := pm.GetProvider(ctx, "test_vault")
-			if err != nil {
-				t.Fatalf("GetProvider failed: %v", err)
-			}
-
-			sp, ok := p.(provider.SearchableProvider)
-			if !ok {
-				t.Fatalf("provider does not implement SearchableProvider")
-			}
-
-			entry, err := sp.GetEntry(ctx, "comp")
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("GetEntry() error = %v, wantErr = %v", err, tt.wantErr)
-			}
-			if tt.wantErr {
-				if tt.wantErrSub != "" && !strings.Contains(err.Error(), tt.wantErrSub) {
-					t.Errorf("error %q does not contain expected substring %q", err.Error(), tt.wantErrSub)
-				}
-			} else if tt.checkFn != nil {
-				tt.checkFn(t, entry, getEntriesCalled, renderTemplateCalled)
-			}
+		pm.SetGetEntriesFunc(func(ctx context.Context, uri string) ([]provider.Entry, error) {
+			getEntriesCalled = true
+			return []provider.Entry{
+				{
+					Title: "app",
+					Attributes: map[string]any{
+						"SRC_KEY": "src_val",
+					},
+				},
+			}, nil
 		})
-	}
+		pm.SetRenderTemplateFunc(func(ctx context.Context, tmplStr string, data any) (string, error) {
+			renderTemplateCalled = true
+			return "rendered:src_val", nil
+		})
+
+		p, _, err := pm.GetProvider(ctx, "search_vault")
+		if err != nil {
+			t.Fatalf("GetProvider failed: %v", err)
+		}
+		sp, ok := p.(provider.SearchableProvider)
+		if !ok {
+			t.Fatalf("provider does not implement SearchableProvider")
+		}
+		entry, err := sp.GetEntry(ctx, "app")
+		if err != nil {
+			t.Fatalf("GetEntry failed: %v", err)
+		}
+		if !getEntriesCalled {
+			t.Errorf("expected getEntriesFunc to have been called")
+		}
+		if !renderTemplateCalled {
+			t.Errorf("expected renderTemplateFunc to have been called")
+		}
+		if entry.Attributes["RENDERED_KEY"] != "rendered:src_val" {
+			t.Errorf("RENDERED_KEY = %v, want 'rendered:src_val'", entry.Attributes["RENDERED_KEY"])
+		}
+	})
+
+	t.Run("missing getEntriesFunc returns error when search source has entry URI", func(t *testing.T) {
+		cfg := &config.Config{
+			Vaults: map[string]config.VaultConfig{
+				"src": {Provider: "env"},
+				"search_vault": {
+					Provider: "search",
+					Sources:  []string{"src://app"},
+				},
+			},
+		}
+
+		pm := NewProviderManager(cfg, nil, nil)
+		p, _, err := pm.GetProvider(ctx, "search_vault")
+		if err != nil {
+			t.Fatalf("GetProvider failed: %v", err)
+		}
+		sp, ok := p.(provider.SearchableProvider)
+		if !ok {
+			t.Fatalf("provider does not implement SearchableProvider")
+		}
+		if _, err := sp.GetEntry(ctx, "app"); err == nil || !strings.Contains(err.Error(), "entry retrieval function not configured") {
+			t.Fatalf("expected entry retrieval error, got %v", err)
+		}
+	})
+
+	t.Run("initVaultProvider and newBareProvider reject removed static providers", func(t *testing.T) {
+		for _, prov := range []string{"yaml", "json", "custom_vault"} {
+			cfg := &config.Config{
+				Vaults: map[string]config.VaultConfig{
+					"bad": {Provider: prov},
+				},
+			}
+			pm := NewProviderManager(cfg, nil, nil)
+			if _, _, err := pm.GetProvider(ctx, "bad"); err == nil || !strings.Contains(err.Error(), "unsupported provider type") {
+				t.Errorf("GetProvider(%s) = %v, want unsupported provider type error", prov, err)
+			}
+			if _, err := newBareProvider(prov); err == nil || !strings.Contains(err.Error(), "unsupported provider type") {
+				t.Errorf("newBareProvider(%s) = %v, want unsupported provider type error", prov, err)
+			}
+		}
+	})
 }

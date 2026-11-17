@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/provider"
 )
 
 func BenchmarkFormatEnvMap(b *testing.B) {
@@ -71,7 +72,7 @@ func BenchmarkBuildEnvMerges(b *testing.B) {
 	b.ReportAllocs()
 	ctx := context.Background()
 
-	entities := make(map[string]map[string]any)
+	var results []provider.SearchResult
 	var merges []string
 	for i := range 10 {
 		entityName := fmt.Sprintf("app_%d", i)
@@ -79,15 +80,19 @@ func BenchmarkBuildEnvMerges(b *testing.B) {
 		for j := range 20 {
 			attrs[fmt.Sprintf("VAR_%d_%d", i, j)] = fmt.Sprintf("val_%d_%d", i, j)
 		}
-		entities[entityName] = attrs
+		results = append(results, provider.SearchResult{
+			Provider: "search",
+			Vault:    "bench_vault",
+			Path:     entityName,
+			Entry:    provider.Entry{Title: entityName, Attributes: attrs},
+		})
 		merges = append(merges, fmt.Sprintf("bench_vault://%s", entityName))
 	}
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"bench_vault": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(entities),
+				Provider: "env",
 			},
 		},
 	}
@@ -95,6 +100,9 @@ func BenchmarkBuildEnvMerges(b *testing.B) {
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		b.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "bench_vault", results); err != nil {
+		b.Fatalf("injectMockVault failed: %v", err)
 	}
 
 	b.ResetTimer()

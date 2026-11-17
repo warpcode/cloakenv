@@ -8,6 +8,7 @@ import (
 	"github.com/warpcode/cloakenv/internal/audit"
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/provider"
+	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 // Orchestrator coordinates secret resolution across multiple vaults and providers.
@@ -273,24 +274,6 @@ func validateVaultConfig(vaultName string, vault config.VaultConfig, cfg *config
 		if err := kp.Validate(settings); err != nil {
 			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
 		}
-	case "yaml":
-		yp := provider.NewYamlProvider()
-		settings := map[string]string{
-			"vault_path": vault.VaultPath,
-		}
-		if err := yp.Validate(settings); err != nil {
-			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
-		}
-	case "json":
-		jp := provider.NewJsonProvider()
-		settings := map[string]string{
-			"vault_path": vault.VaultPath,
-		}
-		if err := jp.Validate(settings); err != nil {
-			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
-		}
-	case "custom_vault":
-		// custom_vault is statically defined in config, so it is always valid.
 	case "env":
 		// env provider reads directly from process environment; no specific required settings.
 	case "pass":
@@ -306,8 +289,8 @@ func validateVaultConfig(vaultName string, vault config.VaultConfig, cfg *config
 		if vault.Searchable != nil {
 			return fmt.Errorf("invalid config for vault %q: search provider does not support the searchable flag", vaultName)
 		}
-		if len(vault.SourceVaults) == 0 {
-			return fmt.Errorf("invalid config for vault %q: search provider requires at least one source vault", vaultName)
+		if len(vault.SourceVaults) == 0 && len(vault.Sources) == 0 {
+			return fmt.Errorf("invalid config for vault %q: search provider requires at least one source vault or source", vaultName)
 		}
 		for _, sv := range vault.SourceVaults {
 			if strings.TrimSpace(sv) == "" {
@@ -318,6 +301,26 @@ func validateVaultConfig(vaultName string, vault config.VaultConfig, cfg *config
 			}
 			if _, exists := cfg.Vaults[sv]; !exists && !pm.HasBuiltin(sv) {
 				return fmt.Errorf("invalid config for vault %q: source vault %q does not exist", vaultName, sv)
+			}
+		}
+		for _, src := range vault.Sources {
+			trimmed := strings.TrimSpace(src)
+			if trimmed == "" {
+				return fmt.Errorf("invalid config for vault %q: empty source entry", vaultName)
+			}
+			if strings.Contains(trimmed, "://") {
+				scheme, _, err := utils.ParseURI(trimmed)
+				if err != nil {
+					return fmt.Errorf("invalid config for vault %q: invalid source URI %q: %w", vaultName, src, err)
+				}
+				if scheme == vaultName {
+					return fmt.Errorf("invalid config for vault %q: search provider cannot reference itself in sources", vaultName)
+				}
+				if scheme != "search" {
+					if _, exists := cfg.Vaults[scheme]; !exists && !pm.HasBuiltin(scheme) {
+						return fmt.Errorf("invalid config for vault %q: source vault %q does not exist", vaultName, scheme)
+					}
+				}
 			}
 		}
 		sp := provider.NewSearchProvider()
@@ -356,11 +359,33 @@ func detectSearchVaultCycles(cfg *config.Config) error {
 					return err
 				}
 			}
+			for _, src := range targetCfg.Sources {
+				trimmed := strings.TrimSpace(src)
+				if strings.Contains(trimmed, "://") {
+					scheme, _, err := utils.ParseURI(trimmed)
+					if err == nil && scheme != "search" {
+						if err := detectCycle(scheme, newPath); err != nil {
+							return err
+						}
+					}
+				}
+			}
 			return nil
 		}
 		for _, sv := range vCfg.SourceVaults {
 			if err := detectCycle(sv, []string{vName}); err != nil {
 				return err
+			}
+		}
+		for _, src := range vCfg.Sources {
+			trimmed := strings.TrimSpace(src)
+			if strings.Contains(trimmed, "://") {
+				scheme, _, err := utils.ParseURI(trimmed)
+				if err == nil && scheme != "search" {
+					if err := detectCycle(scheme, []string{vName}); err != nil {
+						return err
+					}
+				}
 			}
 		}
 	}

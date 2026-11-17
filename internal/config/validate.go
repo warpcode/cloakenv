@@ -68,24 +68,22 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 
 	// 2. Validate Vaults
 	validProviders := map[string]bool{
-		"keepass":      true,
-		"yaml":         true,
-		"json":         true,
-		"custom_vault": true,
-		"env":          true,
-		"pass":         true,
-		"search":       true,
+		"keepass": true,
+		"env":     true,
+		"pass":    true,
+		"search":  true,
+		"vault":   true,
 	}
 
 	for vaultName, vault := range cfg.Vaults {
 		if vault.Provider == "" {
 			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: missing required field 'provider'", vaultName))
 		} else if !validProviders[vault.Provider] {
-			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: unknown provider %q (must be one of: keepass, yaml, json, custom_vault, env, pass, search)", vaultName, vault.Provider))
+			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: unsupported provider %q (must be one of: keepass, env, pass, search, vault)", vaultName, vault.Provider))
 		}
 
 		// File path existence check for file-backed providers
-		if vault.Provider == "keepass" || vault.Provider == "yaml" || vault.Provider == "json" {
+		if vault.Provider == "keepass" {
 			if vault.VaultPath == "" {
 				res.Errors = append(res.Errors, fmt.Sprintf("vault %q: provider %q requires 'vault_path'", vaultName, vault.Provider))
 			} else {
@@ -101,8 +99,8 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 
 		// Search provider validation
 		if vault.Provider == "search" {
-			if len(vault.SourceVaults) == 0 {
-				res.Warnings = append(res.Warnings, fmt.Sprintf("vault %q: search provider has no 'source_vaults' configured", vaultName))
+			if len(vault.SourceVaults) == 0 && len(vault.Sources) == 0 {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("vault %q: search provider has no 'source_vaults' or 'sources' configured", vaultName))
 			}
 		}
 
@@ -145,49 +143,6 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 				tmpl := texttemplate.New("mapping").Funcs(StandardTemplateFuncs())
 				if _, err := tmpl.Parse(rule.Key); err != nil {
 					res.Errors = append(res.Errors, fmt.Sprintf("vault %q: mapping rule #%d invalid template syntax: %v", vaultName, i+1, err))
-				}
-			}
-		}
-
-		// Validate custom_vault entities
-		for entityName, entity := range vault.Entities {
-			for _, pattern := range entity.IncludeFields {
-				if _, err := pathpkg.Match(pattern, ""); err != nil {
-					res.Errors = append(res.Errors, fmt.Sprintf("vault %q entity %q: invalid include_fields pattern %q: %v", vaultName, entityName, pattern, err))
-				}
-			}
-			for _, pattern := range entity.ExcludeFields {
-				if _, err := pathpkg.Match(pattern, ""); err != nil {
-					res.Errors = append(res.Errors, fmt.Sprintf("vault %q entity %q: invalid exclude_fields pattern %q: %v", vaultName, entityName, pattern, err))
-				}
-			}
-			for i, rule := range entity.Mapping {
-				if rule.Match == "" {
-					res.Errors = append(res.Errors, fmt.Sprintf("vault %q entity %q: mapping rule #%d missing 'match' regex", vaultName, entityName, i+1))
-				} else if _, err := regexp.Compile(rule.Match); err != nil {
-					res.Errors = append(res.Errors, fmt.Sprintf("vault %q entity %q: invalid mapping regex %q: %v", vaultName, entityName, rule.Match, err))
-				}
-				if strings.Contains(rule.Key, "{{") {
-					tmpl := texttemplate.New("mapping").Funcs(StandardTemplateFuncs())
-					if _, err := tmpl.Parse(rule.Key); err != nil {
-						res.Errors = append(res.Errors, fmt.Sprintf("vault %q entity %q: mapping rule #%d invalid template syntax: %v", vaultName, entityName, i+1, err))
-					}
-				}
-			}
-
-			switch entity.KeyFormat {
-			case "", "none", "env", "snake", "kebab":
-			default:
-				res.Errors = append(res.Errors, fmt.Sprintf("vault %q entity %q: invalid key_format %q (must be one of: none, env, snake, kebab)", vaultName, entityName, entity.KeyFormat))
-			}
-
-			// Validate entity templates in attributes
-			for attrKey, attrVal := range entity.Attributes {
-				if strVal, ok := attrVal.(string); ok && strings.Contains(strVal, "{{") {
-					tmpl := texttemplate.New(attrKey).Funcs(StandardTemplateFuncs())
-					if _, err := tmpl.Parse(strVal); err != nil {
-						res.Errors = append(res.Errors, fmt.Sprintf("vault %q entity %q attribute %q: template syntax error: %v", vaultName, entityName, attrKey, err))
-					}
 				}
 			}
 		}

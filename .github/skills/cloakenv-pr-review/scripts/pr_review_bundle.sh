@@ -161,10 +161,10 @@ MISSING_CASES=()
 
 if grep -q "diff --git a/internal/engine/provider_manager\.go" "$COMBINED_DIFF"; then
     SWITCH_MODIFIED="true"
-    # Verify all 7 cases are still present in provider_manager.go
+    # Verify all 4 active cases are still present in provider_manager.go
     PM_FILE="internal/engine/provider_manager.go"
     if [[ -f "$PM_FILE" ]]; then
-        for provider_case in "keepass" "yaml" "json" "custom_vault" "env" "pass" "search"; do
+        for provider_case in "keepass" "env" "pass" "search"; do
             if ! grep -qE "case\s+[\"']${provider_case}[\"']:" "$PM_FILE"; then
                 MISSING_CASES+=("\"${provider_case}\"")
                 SWITCH_PASSED="false"

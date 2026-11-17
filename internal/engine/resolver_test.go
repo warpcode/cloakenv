@@ -18,36 +18,40 @@ func TestResolveValues(t *testing.T) {
 	// vault_a holds an attribute whose value is a URI pointing into vault_b.
 	boolPtr := func(b bool) *bool { return &b }
 
-	makeConfig := func(resolveValues bool) *config.Config {
-		return &config.Config{
+	makeOrch := func(t *testing.T, resolveValues bool) *Orchestrator {
+		t.Helper()
+		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"vault_a": {
-					Provider:      "custom_vault",
+					Provider:      "search",
+					Sources:       []string{"env://"},
 					ResolveValues: resolveValues,
-					Entities: config.ToCustomEntityMap(map[string]map[string]any{
-						"entity1": {
-							"Password": `{{ get "vault_b://entry1:secret" }}`,
-						},
-					}),
 				},
 				"vault_b": {
-					Provider:   "custom_vault",
+					Provider:   "env",
 					Searchable: boolPtr(true),
-					Entities: config.ToCustomEntityMap(map[string]map[string]any{
-						"entry1": {
-							"secret": "resolved_value",
-						},
-					}),
 				},
 			},
 		}
-	}
-
-	t.Run("ResolveValues_On", func(t *testing.T) {
-		orch, err := NewOrchestrator(makeConfig(true))
+		orch, err := NewOrchestrator(cfg)
 		if err != nil {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
+		if err := injectMockVault(orch, "vault_a", []provider.SearchResult{
+			{Provider: "search", Vault: "vault_a", Path: "entity1", Entry: provider.Entry{Title: "entity1", Attributes: map[string]any{"Password": `{{ get "vault_b://entry1:secret" }}`}}},
+		}); err != nil {
+			t.Fatalf("injectMockVault(vault_a) failed: %v", err)
+		}
+		if err := injectMockVault(orch, "vault_b", []provider.SearchResult{
+			{Provider: "search", Vault: "vault_b", Path: "entry1", Entry: provider.Entry{Title: "entry1", Attributes: map[string]any{"secret": "resolved_value"}}},
+		}); err != nil {
+			t.Fatalf("injectMockVault(vault_b) failed: %v", err)
+		}
+		return orch
+	}
+
+	t.Run("ResolveValues_On", func(t *testing.T) {
+		orch := makeOrch(t, true)
 
 		val, err := orch.Resolve(ctx, `{{ get "vault_a://entity1:Password" }}`)
 		if err != nil {
@@ -59,10 +63,7 @@ func TestResolveValues(t *testing.T) {
 	})
 
 	t.Run("ResolveValues_Off", func(t *testing.T) {
-		orch, err := NewOrchestrator(makeConfig(false))
-		if err != nil {
-			t.Fatalf("failed to create orchestrator: %v", err)
-		}
+		orch := makeOrch(t, false)
 
 		val, err := orch.Resolve(ctx, `{{ get "vault_a://entity1:Password" }}`)
 		if err != nil {
@@ -77,10 +78,7 @@ func TestResolveValues(t *testing.T) {
 	t.Run("ResolveValues_Off_GetEntry", func(t *testing.T) {
 		// GetEntry must also honour resolve_values: false — attribute values
 		// that are URIs must be returned raw without being resolved.
-		orch, err := NewOrchestrator(makeConfig(false))
-		if err != nil {
-			t.Fatalf("failed to create orchestrator: %v", err)
-		}
+		orch := makeOrch(t, false)
 
 		entry, err := orch.GetEntry(ctx, "vault_a://entity1")
 		if err != nil {
@@ -98,10 +96,7 @@ func TestResolveValues(t *testing.T) {
 	t.Run("ResolveValues_FalseReturn_HonoredByInterfacePresence", func(t *testing.T) {
 		// A provider implementing ValueResolvableProvider whose SupportsValueResolution returns false
 		// must still have resolve_values: false honored by the engine based on interface presence.
-		orch, err := NewOrchestrator(makeConfig(false))
-		if err != nil {
-			t.Fatalf("failed to create orchestrator: %v", err)
-		}
+		orch := makeOrch(t, false)
 
 		underlying, _, err := orch.providerManager.GetProvider(ctx, "vault_a")
 		if err != nil {
@@ -131,13 +126,9 @@ func TestResolveValues(t *testing.T) {
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"vault_c": {
-					Provider:      "custom_vault",
+					Provider:      "search",
+					Sources:       []string{"env://"},
 					ResolveValues: true,
-					Entities: config.ToCustomEntityMap(map[string]map[string]any{
-						"entry": {
-							"Password": `{{ get "vault_c://entry:Password" }}`,
-						},
-					}),
 				},
 			},
 		}
@@ -145,6 +136,11 @@ func TestResolveValues(t *testing.T) {
 		orch, err := NewOrchestrator(cfg)
 		if err != nil {
 			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+		if err := injectMockVault(orch, "vault_c", []provider.SearchResult{
+			{Provider: "search", Vault: "vault_c", Path: "entry", Entry: provider.Entry{Title: "entry", Attributes: map[string]any{"Password": `{{ get "vault_c://entry:Password" }}`}}},
+		}); err != nil {
+			t.Fatalf("injectMockVault(vault_c) failed: %v", err)
 		}
 
 		_, err = orch.Resolve(ctx, `{{ get "vault_c://entry:Password" }}`)
@@ -156,13 +152,12 @@ func TestResolveValues(t *testing.T) {
 		}
 	})
 
-	t.Run("ResolveValues_RejectedOnNonCustomVault", func(t *testing.T) {
-		// resolve_values must be rejected at startup for non-custom_vault providers.
+	t.Run("ResolveValues_RejectedOnUnsupportedProvider", func(t *testing.T) {
+		// resolve_values must be rejected at startup for providers that do not implement ValueResolvableProvider.
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
-				"bad_yaml": {
-					Provider:      "yaml",
-					VaultPath:     "/tmp/irrelevant.yaml",
+				"bad_env": {
+					Provider:      "env",
 					ResolveValues: true,
 				},
 			},
@@ -170,7 +165,7 @@ func TestResolveValues(t *testing.T) {
 
 		_, err := NewOrchestrator(cfg)
 		if err == nil {
-			t.Fatal("expected error for resolve_values on yaml provider, got nil")
+			t.Fatal("expected error for resolve_values on env provider, got nil")
 		}
 		if !strings.Contains(err.Error(), "resolve_values") {
 			t.Errorf("expected resolve_values error, got: %v", err)
@@ -183,22 +178,18 @@ func TestGetEntry_AttributeSelector(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"vault_x": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"myentity": {
-						"Password": "s3cr3t",
-						"UserName": "alice",
-						"Notes":    "some notes",
-					},
-				}),
-			},
+			"vault_x": {Provider: "env"},
 		},
 	}
 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "vault_x", []provider.SearchResult{
+		{Provider: "search", Vault: "vault_x", Path: "myentity", Entry: provider.Entry{Title: "myentity", Attributes: map[string]any{"Password": "s3cr3t", "UserName": "alice", "Notes": "some notes"}}},
+	}); err != nil {
+		t.Fatalf("injectMockVault(vault_x) failed: %v", err)
 	}
 
 	t.Run("single_attr_only", func(t *testing.T) {
@@ -267,20 +258,18 @@ func TestOrchestratorExpansion(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"vault_exp": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"database": {
-						"password": "supersecretpassword",
-					},
-				}),
-			},
+			"vault_exp": {Provider: "env"},
 		},
 	}
 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "vault_exp", []provider.SearchResult{
+		{Provider: "search", Vault: "vault_exp", Path: "database", Entry: provider.Entry{Title: "database", Attributes: map[string]any{"password": "supersecretpassword"}}},
+	}); err != nil {
+		t.Fatalf("injectMockVault(vault_exp) failed: %v", err)
 	}
 
 	t.Run("Single expansion in a value", func(t *testing.T) {
@@ -362,31 +351,13 @@ func TestGetEntry(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"vault_x": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"myentity": {
-						"Password":  "s3cr3t",
-						"recursive": "vault_x://myentity",
-					},
-					"error_attr": {
-						"Password": `{{ get "vault_missing://nonexistent" }}`,
-					},
-					"recursive_attr": {
-						"Password": `{{ get "vault_x://recursive_attr:Password" }}`,
-					},
-				}),
+				Provider:      "search",
+				Sources:       []string{"env://"},
 				ResolveValues: true,
 			},
 			"vault_y": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"target": {
-						"Password": "pass",
-					},
-					"no_resolve": {
-						"Password": "vault_y://target",
-					},
-				}),
+				Provider:      "search",
+				Sources:       []string{"env://"},
 				ResolveValues: false,
 			},
 		},
@@ -395,6 +366,19 @@ func TestGetEntry(t *testing.T) {
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "vault_x", []provider.SearchResult{
+		{Provider: "search", Vault: "vault_x", Path: "myentity", Entry: provider.Entry{Title: "myentity", Attributes: map[string]any{"Password": "s3cr3t", "recursive": "vault_x://myentity"}}},
+		{Provider: "search", Vault: "vault_x", Path: "error_attr", Entry: provider.Entry{Title: "error_attr", Attributes: map[string]any{"Password": `{{ get "vault_missing://nonexistent" }}`}}},
+		{Provider: "search", Vault: "vault_x", Path: "recursive_attr", Entry: provider.Entry{Title: "recursive_attr", Attributes: map[string]any{"Password": `{{ get "vault_x://recursive_attr:Password" }}`}}},
+	}); err != nil {
+		t.Fatalf("injectMockVault(vault_x) failed: %v", err)
+	}
+	if err := injectMockVault(orch, "vault_y", []provider.SearchResult{
+		{Provider: "search", Vault: "vault_y", Path: "target", Entry: provider.Entry{Title: "target", Attributes: map[string]any{"Password": "pass"}}},
+		{Provider: "search", Vault: "vault_y", Path: "no_resolve", Entry: provider.Entry{Title: "no_resolve", Attributes: map[string]any{"Password": "vault_y://target"}}},
+	}); err != nil {
+		t.Fatalf("injectMockVault(vault_y) failed: %v", err)
 	}
 
 	orch.providerManager.builtins["failinit"] = &failInitProvider{}
@@ -658,25 +642,23 @@ func TestResolver_GetEntries_And_GetEntriesRecursive(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"custom_v": {
-				Provider: "custom_vault",
-				Entities: map[string]config.CustomEntityConfig{
-					"app": {
-						Title: "App Entry",
-						Tags:  []string{"prod"},
-						Attributes: map[string]any{
-							"apiKey": "12345",
-							"secret": "s3cr3t",
-						},
-					},
-				},
-			},
+			"custom_v": {Provider: "env"},
 		},
 	}
 
-	pm := NewProviderManager(cfg, nil, nil)
-	sem := make(chan struct{}, 10)
-	res := NewResolver(pm, sem)
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("NewOrchestrator failed: %v", err)
+	}
+	if err := injectMockVault(orch, "custom_v", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "custom_v", Path: "app",
+			Entry: provider.Entry{Title: "App Entry", Tags: []string{"prod"}, Attributes: map[string]any{"apiKey": "12345", "secret": "s3cr3t"}},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
+	}
+	res := orch.resolver
 
 	tests := []struct {
 		name       string

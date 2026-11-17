@@ -530,21 +530,6 @@ func (m *MappingProvider) GetSecret(ctx context.Context, location string) (strin
 					sVal, err := serializeVal(val)
 					return sVal, true, err
 				}
-				// Whole-entity container resolution for static providers (yaml, json) when !hasColon
-				scheme := m.underlying.Scheme()
-				if scheme == "yaml" || scheme == "json" {
-					if val, err := resolveDotPath(mappedAttrs, entityLoc); err == nil {
-						sVal, sErr := serializeVal(val)
-						return sVal, true, sErr
-					}
-					if len(mappedAttrs) > 0 {
-						sVal, err := serializeVal(mappedAttrs)
-						if err == nil {
-							return sVal, true, nil
-						}
-						return "", true, err
-					}
-				}
 			}
 			return "", false, nil
 		}

@@ -142,7 +142,7 @@ func TestAuth_Login(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"dummy": {
-				Provider:  "json",
+				Provider:  "env",
 				VaultPath: "/fake/path",
 			},
 			"mykp": {
@@ -174,7 +174,7 @@ func TestAuth_Login(t *testing.T) {
 		{
 			name:          "unsupported scheme",
 			args:          []string{"login", "dummy"},
-			expectedError: "Authentication failed: vault/scheme \"dummy\" of type \"json\" does not support authentication",
+			expectedError: "Authentication failed: vault/scheme \"dummy\" of type \"env\" does not support authentication",
 			expectedCode:  1,
 		},
 		{
@@ -189,7 +189,7 @@ func TestAuth_Login(t *testing.T) {
 			customCfg: &config.Config{
 				Vaults: map[string]config.VaultConfig{
 					"env": {
-						Provider: "json",
+						Provider: "keepass",
 					},
 				},
 			},
@@ -232,7 +232,7 @@ func TestAuth_Forget(t *testing.T) {
 				VaultPath: "/fake/path.kdbx",
 			},
 			"dummy": {
-				Provider:  "json",
+				Provider:  "env",
 				VaultPath: "/fake/path",
 			},
 			"mykp_forgotten": {
@@ -266,7 +266,7 @@ func TestAuth_Forget(t *testing.T) {
 		{
 			name:          "unsupported scheme",
 			args:          []string{"forget", "dummy"},
-			expectedError: "Failed to clear credentials: vault/scheme \"dummy\" of type \"json\" does not support authentication",
+			expectedError: "Failed to clear credentials: vault/scheme \"dummy\" of type \"env\" does not support authentication",
 			expectedCode:  1,
 		},
 		{
@@ -330,8 +330,8 @@ func TestAuth_Status(t *testing.T) {
 				VaultPath: "/fake/path2.kdbx",
 			},
 			"dummy": {
-				Provider:  "json",
-				VaultPath: "/fake/path3.json",
+				Provider:  "env",
+				VaultPath: "/fake/path3",
 			},
 		},
 	}
@@ -400,8 +400,8 @@ func TestAuth_Status_StructuredOutput(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"dummy": {
-				Provider:  "json",
-				VaultPath: "/fake/path3.json",
+				Provider:  "env",
+				VaultPath: "/fake/path3",
 			},
 			"mykp_noauth": {
 				Provider:  "keepass",
@@ -436,8 +436,8 @@ func TestAuth_Status_StructuredOutput(t *testing.T) {
 		if rec.Status != "ACTIVE" {
 			t.Errorf("expected status 'ACTIVE', got %q", rec.Status)
 		}
-		if rec.VaultPath != "/fake/path3.json" {
-			t.Errorf("expected vault_path '/fake/path3.json', got %q", rec.VaultPath)
+		if rec.VaultPath != "/fake/path3" {
+			t.Errorf("expected vault_path '/fake/path3', got %q", rec.VaultPath)
 		}
 		if rec.Latency == "" {
 			t.Errorf("expected non-empty latency")

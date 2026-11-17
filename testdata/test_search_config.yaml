@@ -8,6 +8,8 @@ vaults:
   testdb:
     provider: "keepass"
     vault_path: "./testdata/testDB.kdbx"
-  my_yaml:
-    provider: "yaml"
-    vault_path: "./testdata/test_entries.yaml"
+  website_entries:
+    provider: "search"
+    source_vaults:
+      - "testdb"
+    query: 'title contains "Test"'

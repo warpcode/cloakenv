@@ -73,32 +73,6 @@ func (o *Orchestrator) ExplainEntry(ctx context.Context, uri string) (*PipelineE
 	if o.config != nil && o.config.Vaults != nil {
 		vCfg = o.config.Vaults[scheme]
 	}
-	if vCfg.Entities != nil {
-		if entityCfg, ok := vCfg.Entities[location]; ok {
-			if len(entityCfg.IncludeFields) > 0 {
-				vCfg.IncludeFields = entityCfg.IncludeFields
-			}
-			if len(entityCfg.ExcludeFields) > 0 {
-				vCfg.ExcludeFields = entityCfg.ExcludeFields
-			}
-			if len(entityCfg.Mapping) > 0 {
-				vCfg.Mapping = entityCfg.Mapping
-			}
-			if entityCfg.KeyFormat != "" {
-				vCfg.KeyFormat = entityCfg.KeyFormat
-			}
-			if len(entityCfg.Attributes) > 0 {
-				mergedAttrs := make(map[string]any, len(vCfg.Attributes)+len(entityCfg.Attributes))
-				for ak, av := range vCfg.Attributes {
-					mergedAttrs[ak] = av
-				}
-				for ak, av := range entityCfg.Attributes {
-					mergedAttrs[ak] = av
-				}
-				vCfg.Attributes = mergedAttrs
-			}
-		}
-	}
 
 	var rootPrefixes []string
 	if p, _, err := o.providerManager.GetProvider(ctx, scheme); err == nil {

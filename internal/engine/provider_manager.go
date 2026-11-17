@@ -52,14 +52,45 @@ func (pm *ProviderManager) SetSearchExecutor(exec provider.SearchExecutor) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	pm.searchExecutor = exec
+	for _, p := range pm.vaultCache {
+		for curr := p; curr != nil; {
+			if sp, ok := curr.(interface {
+				SetSearchExecutor(provider.SearchExecutor)
+			}); ok {
+				sp.SetSearchExecutor(exec)
+			}
+			if u, ok := curr.(interface {
+				Underlying() provider.SecretProvider
+			}); ok {
+				curr = u.Underlying()
+			} else {
+				break
+			}
+		}
+	}
 }
 
-// HasBuiltin reports whether the given scheme is a registered built-in provider.
-// SetGetEntriesFunc sets the callback for resolving multi-entry vaults.
+// SetGetEntriesFunc sets the callback for resolving entry/vault URIs.
 func (pm *ProviderManager) SetGetEntriesFunc(exec provider.GetEntriesFunc) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	pm.getEntriesFunc = exec
+	for _, p := range pm.vaultCache {
+		for curr := p; curr != nil; {
+			if gp, ok := curr.(interface {
+				SetGetEntriesFunc(provider.GetEntriesFunc)
+			}); ok {
+				gp.SetGetEntriesFunc(exec)
+			}
+			if u, ok := curr.(interface {
+				Underlying() provider.SecretProvider
+			}); ok {
+				curr = u.Underlying()
+			} else {
+				break
+			}
+		}
+	}
 }
 
 // SetRenderTemplateFunc sets the callback for template evaluation.
@@ -68,10 +99,19 @@ func (pm *ProviderManager) SetRenderTemplateFunc(exec provider.TemplateRenderFun
 	defer pm.mu.Unlock()
 	pm.renderTemplateFunc = exec
 	for _, p := range pm.vaultCache {
-		if tr, ok := p.(interface {
-			SetRenderTemplateFunc(provider.TemplateRenderFunc)
-		}); ok {
-			tr.SetRenderTemplateFunc(exec)
+		for curr := p; curr != nil; {
+			if tr, ok := curr.(interface {
+				SetRenderTemplateFunc(provider.TemplateRenderFunc)
+			}); ok {
+				tr.SetRenderTemplateFunc(exec)
+			}
+			if u, ok := curr.(interface {
+				Underlying() provider.SecretProvider
+			}); ok {
+				curr = u.Underlying()
+			} else {
+				break
+			}
 		}
 	}
 }
@@ -187,12 +227,6 @@ func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName stri
 	switch vault.Provider {
 	case "keepass":
 		p, err = pm.initKeePass(ctx, vaultName, vault)
-	case "yaml":
-		p, err = pm.initYaml(ctx, vaultName, vault)
-	case "json":
-		p, err = pm.initJson(ctx, vaultName, vault)
-	case "custom_vault":
-		p, err = pm.initCustomVault(ctx, vaultName, vault)
 	case "env":
 		p, err = pm.initEnv(ctx, vaultName, vault)
 	case "pass":
@@ -306,48 +340,6 @@ func (pm *ProviderManager) initKeePass(ctx context.Context, vaultName string, va
 	return kp, nil
 }
 
-// initYaml bootstraps a YAML provider using settings.
-func (pm *ProviderManager) initYaml(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
-	yp := provider.NewYamlProvider()
-	err := yp.Initialize(ctx, provider.ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": vault.VaultPath,
-			"vault_name": vaultName,
-		},
-		SingleEntity:    vault.SingleEntity,
-		EntityName:      vault.EntityName,
-		Searchable:      vault.Searchable == nil || *vault.Searchable,
-		Tags:            vault.Tags,
-		EntitiesRootKey: vault.EntitiesRootKey,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return yp, nil
-}
-
-// initJson bootstraps a JSON provider using settings.
-func (pm *ProviderManager) initJson(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
-	jp := provider.NewJsonProvider()
-	err := jp.Initialize(ctx, provider.ProviderConfig{
-		Settings: map[string]string{
-			"vault_path": vault.VaultPath,
-			"vault_name": vaultName,
-		},
-		SingleEntity:    vault.SingleEntity,
-		EntityName:      vault.EntityName,
-		Searchable:      vault.Searchable == nil || *vault.Searchable,
-		Tags:            vault.Tags,
-		EntitiesRootKey: vault.EntitiesRootKey,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return jp, nil
-}
-
 // initEnv bootstraps an Env provider.
 func (pm *ProviderManager) initEnv(ctx context.Context, _ string, _ config.VaultConfig) (provider.SecretProvider, error) {
 	ep := provider.NewEnvProvider()
@@ -375,53 +367,6 @@ func (pm *ProviderManager) initPass(ctx context.Context, vaultName string, vault
 	return pp, nil
 }
 
-// initCustomVault bootstraps a CustomVault provider using config settings.
-func (pm *ProviderManager) initCustomVault(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
-	cp := provider.NewCustomVaultProvider()
-	entities := make(map[string]config.CustomEntityConfig)
-	for name, entityCfg := range vault.Entities {
-		entities[name] = entityCfg
-	}
-	if (vault.SingleEntity != nil && *vault.SingleEntity) || len(vault.Attributes) > 0 {
-		entityName := vault.EntityName
-		if entityName == "" {
-			entityName = vaultName
-		}
-		singleEntity := config.CustomEntityConfig{
-			Title:      entityName,
-			Tags:       vault.Tags,
-			Attributes: vault.Attributes,
-			IsComposed: false,
-		}
-		entities[""] = singleEntity
-		entities[entityName] = singleEntity
-		entities["default"] = singleEntity
-	}
-
-	err := cp.Initialize(ctx, provider.ProviderConfig{
-		Settings: map[string]string{
-			"vault_name": vaultName,
-		},
-		Entities: entities,
-	})
-
-	pm.mu.Lock()
-	getEntries := pm.getEntriesFunc
-	renderTemplate := pm.renderTemplateFunc
-	pm.mu.Unlock()
-
-	if getEntries != nil {
-		cp.SetGetEntriesFunc(getEntries)
-	}
-	if renderTemplate != nil {
-		cp.SetRenderTemplateFunc(renderTemplate)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return cp, nil
-}
-
 // initSearch bootstraps a Search provider using config settings.
 func (pm *ProviderManager) initSearch(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
 	if vault.Searchable != nil {
@@ -432,10 +377,14 @@ func (pm *ProviderManager) initSearch(ctx context.Context, vaultName string, vau
 
 	pm.mu.Lock()
 	exec := pm.searchExecutor
+	getEntries := pm.getEntriesFunc
 	pm.mu.Unlock()
 
 	if exec != nil {
 		sp.SetSearchExecutor(exec)
+	}
+	if getEntries != nil {
+		sp.SetGetEntriesFunc(getEntries)
 	}
 
 	err := sp.Initialize(ctx, provider.ProviderConfig{
@@ -444,6 +393,7 @@ func (pm *ProviderManager) initSearch(ctx context.Context, vaultName string, vau
 			"query":      vault.Query,
 		},
 		SourceVaults:  vault.SourceVaults,
+		Sources:       vault.Sources,
 		Query:         vault.Query,
 		IncludeFields: vault.IncludeFields,
 		ExcludeFields: vault.ExcludeFields,
@@ -693,12 +643,6 @@ func newBareProvider(providerType string) (provider.SecretProvider, error) {
 	switch providerType {
 	case "keepass":
 		return provider.NewKeePassProvider(), nil
-	case "yaml":
-		return provider.NewYamlProvider(), nil
-	case "json":
-		return provider.NewJsonProvider(), nil
-	case "custom_vault":
-		return provider.NewCustomVaultProvider(), nil
 	case "env":
 		return provider.NewEnvProvider(), nil
 	case "pass":

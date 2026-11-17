@@ -85,7 +85,7 @@ func TestSearchProvider_GetSecretAndGetEntry(t *testing.T) {
 
 	mockResults := []provider.SearchResult{
 		{
-			Provider: "yaml",
+			Provider: "keepass",
 			Vault:    "work",
 			Path:     "openrouter_key",
 			Entry: provider.Entry{
@@ -98,7 +98,7 @@ func TestSearchProvider_GetSecretAndGetEntry(t *testing.T) {
 			},
 		},
 		{
-			Provider: "yaml",
+			Provider: "keepass",
 			Vault:    "work",
 			Path:     "backup_key",
 			Entry: provider.Entry{
@@ -216,7 +216,7 @@ func TestSearchProvider_SingleResultShortcut(t *testing.T) {
 
 	singleResult := []provider.SearchResult{
 		{
-			Provider: "custom_vault",
+			Provider: "mock",
 			Vault:    "work",
 			Path:     "solo_path",
 			Entry: provider.Entry{
@@ -297,7 +297,7 @@ func TestSearchProvider_CaseInsensitiveAttributesAndFallthrough(t *testing.T) {
 
 	mockResults := []provider.SearchResult{
 		{
-			Provider: "yaml",
+			Provider: "keepass",
 			Vault:    "vault_a",
 			Path:     "app",
 			Entry: provider.Entry{
@@ -310,7 +310,7 @@ func TestSearchProvider_CaseInsensitiveAttributesAndFallthrough(t *testing.T) {
 			},
 		},
 		{
-			Provider: "yaml",
+			Provider: "keepass",
 			Vault:    "vault_b",
 			Path:     "app",
 			Entry: provider.Entry{
@@ -550,4 +550,267 @@ func TestSearchProvider_GetSecretWithRaw(t *testing.T) {
 	if title != "api_service" {
 		t.Errorf("expected title 'api_service', got %q", title)
 	}
+}
+
+func TestSearchProvider_Sources(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("merges entry URIs, whole-vault URIs, search URIs, and plain queries with deduplication", func(t *testing.T) {
+		p := provider.NewSearchProvider()
+		err := p.Initialize(ctx, provider.ProviderConfig{
+			Settings:     map[string]string{"vault_name": "grouped_view"},
+			SourceVaults: []string{"kp"},
+			Sources: []string{
+				"kp://infra/db",
+				"env://",
+				`search://"api" in tags`,
+				`"web" in tags`,
+				"kp://infra/db", // duplicate URI should be deduplicated
+			},
+		})
+		if err != nil {
+			t.Fatalf("Initialize failed: %v", err)
+		}
+
+		p.SetGetEntriesFunc(func(_ context.Context, uri string) ([]provider.Entry, error) {
+			if uri == "kp://infra/db" {
+				return []provider.Entry{
+					{
+						Title:      "DB",
+						Tags:       []string{"db"},
+						Attributes: map[string]any{"Password": "db_pass"},
+					},
+				}, nil
+			}
+			return nil, errors.New("unexpected getEntriesFunc call for URI: " + uri)
+		})
+
+		p.SetSearchExecutor(func(_ context.Context, query string, sourceVaults []string, _ int) ([]provider.SearchResult, error) {
+			switch {
+			case len(sourceVaults) == 1 && sourceVaults[0] == "env" && query == "":
+				return []provider.SearchResult{
+					{
+						Provider: "env",
+						Vault:    "env",
+						Path:     "env",
+						Entry: provider.Entry{
+							Title:      "Environment Variables",
+							Attributes: map[string]any{"ENV_TOKEN": "tok123"},
+						},
+					},
+				}, nil
+			case query == `"api" in tags`:
+				return []provider.SearchResult{
+					{
+						Provider: "kp",
+						Vault:    "kp",
+						Path:     "services/api",
+						Entry: provider.Entry{
+							Title:      "API",
+							Tags:       []string{"api"},
+							Attributes: map[string]any{"API_KEY": "api_secret"},
+						},
+					},
+				}, nil
+			case query == `"web" in tags`:
+				return []provider.SearchResult{
+					{
+						Provider: "kp",
+						Vault:    "kp",
+						Path:     "services/api", // duplicates search:// result
+						Entry: provider.Entry{
+							Title:      "API",
+							Tags:       []string{"api", "web"},
+							Attributes: map[string]any{"API_KEY": "api_secret"},
+						},
+					},
+					{
+						Provider: "kp",
+						Vault:    "kp",
+						Path:     "services/web",
+						Entry: provider.Entry{
+							Title:      "Web",
+							Tags:       []string{"web"},
+							Attributes: map[string]any{"WEB_KEY": "web_secret"},
+						},
+					},
+				}, nil
+			default:
+				return nil, nil
+			}
+		})
+
+		results, err := p.Search(ctx, provider.SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 4 {
+			t.Fatalf("expected 4 deduplicated results, got %d: %+v", len(results), results)
+		}
+
+		val, err := p.GetSecret(ctx, "infra/db:Password")
+		if err != nil || val != "db_pass" {
+			t.Fatalf("GetSecret(infra/db:Password) = (%q, %v), want db_pass", val, err)
+		}
+		apiVal, err := p.GetSecret(ctx, "services/api:API_KEY")
+		if err != nil || apiVal != "api_secret" {
+			t.Fatalf("GetSecret(services/api:API_KEY) = (%q, %v), want api_secret", apiVal, err)
+		}
+	})
+
+	t.Run("returns error when entry URI lacks getEntriesFunc", func(t *testing.T) {
+		p := provider.NewSearchProvider()
+		_ = p.Initialize(ctx, provider.ProviderConfig{
+			Settings: map[string]string{"vault_name": "no_entries_fn"},
+			Sources:  []string{"kp://infra/db"},
+		})
+		_, err := p.GetEntry(ctx, "infra/db")
+		if err == nil || !strings.Contains(err.Error(), "entry retrieval function not configured") {
+			t.Fatalf("expected entry retrieval function error, got: %v", err)
+		}
+	})
+
+	t.Run("search:// source preserves origin Vault and Path for deduplication and lookup", func(t *testing.T) {
+		p := provider.NewSearchProvider()
+		err := p.Initialize(ctx, provider.ProviderConfig{
+			Settings:     map[string]string{"vault_name": "grouped_edge"},
+			SourceVaults: []string{"vault_b"},
+			Sources: []string{
+				`search://"tier:edge" in tags`,
+				`"tier:edge" in tags`,
+			},
+		})
+		if err != nil {
+			t.Fatalf("Initialize failed: %v", err)
+		}
+
+		p.SetGetEntriesFunc(func(_ context.Context, uri string) ([]provider.Entry, error) {
+			return nil, errors.New("unexpected getEntriesFunc call for URI: " + uri)
+		})
+
+		p.SetSearchExecutor(func(_ context.Context, query string, sourceVaults []string, _ int) ([]provider.SearchResult, error) {
+			if query != `"tier:edge" in tags` {
+				return nil, errors.New("unexpected query: " + query)
+			}
+			// search:// passes nil sourceVaults; plain query passes configured SourceVaults.
+			if len(sourceVaults) != 0 && (len(sourceVaults) != 1 || sourceVaults[0] != "vault_b") {
+				return nil, errors.New("unexpected sourceVaults")
+			}
+			return []provider.SearchResult{
+				{
+					Provider: "env",
+					Vault:    "vault_b",
+					Path:     "edge_svc",
+					Entry: provider.Entry{
+						Title:      "Edge Service",
+						Tags:       []string{"tier:edge"},
+						Attributes: map[string]any{"TOKEN": "beta"},
+					},
+				},
+			}, nil
+		})
+
+		results, err := p.Search(ctx, provider.SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("expected 1 deduplicated result, got %d: %+v", len(results), results)
+		}
+		if results[0].Path != "edge_svc" {
+			t.Errorf("expected canonical path edge_svc, got %q", results[0].Path)
+		}
+
+		val, err := p.GetSecret(ctx, "edge_svc:TOKEN")
+		if err != nil || val != "beta" {
+			t.Fatalf("GetSecret(edge_svc:TOKEN) = (%q, %v), want beta", val, err)
+		}
+		qualifiedVal, err := p.GetSecret(ctx, "vault_b/edge_svc:TOKEN")
+		if err != nil || qualifiedVal != "beta" {
+			t.Fatalf("GetSecret(vault_b/edge_svc:TOKEN) = (%q, %v), want beta", qualifiedVal, err)
+		}
+	})
+
+	t.Run("search:// source strips optional attribute suffix outside quotes", func(t *testing.T) {
+		tests := []struct {
+			source    string
+			wantQuery string
+		}{
+			{
+				source:    `search://"api" in tags/API_KEY`,
+				wantQuery: `"api" in tags`,
+			},
+			{
+				source:    `search://path == "servers/ssh"`,
+				wantQuery: `path == "servers/ssh"`,
+			},
+			{
+				source:    `search://path == "servers/ssh"/Password`,
+				wantQuery: `path == "servers/ssh"`,
+			},
+			{
+				source:    "search://tags=prod&title=db/Password",
+				wantQuery: "tags=prod&title=db",
+			},
+		}
+
+		for _, tt := range tests {
+			p := provider.NewSearchProvider()
+			if err := p.Initialize(ctx, provider.ProviderConfig{
+				Settings: map[string]string{"vault_name": "attr_strip"},
+				Sources:  []string{tt.source},
+			}); err != nil {
+				t.Fatalf("Initialize failed: %v", err)
+			}
+			var gotQuery string
+			p.SetSearchExecutor(func(_ context.Context, query string, _ []string, _ int) ([]provider.SearchResult, error) {
+				gotQuery = query
+				return []provider.SearchResult{
+					{
+						Provider: "kp",
+						Vault:    "kp",
+						Path:     "servers/ssh",
+						Entry:    provider.Entry{Title: "SSH", Attributes: map[string]any{"Password": "pw"}},
+					},
+				}, nil
+			})
+			results, err := p.Search(ctx, provider.SearchQuery{})
+			if err != nil {
+				t.Fatalf("Search(%q) failed: %v", tt.source, err)
+			}
+			if gotQuery != tt.wantQuery {
+				t.Errorf("Search(%q) passed query %q, want %q", tt.source, gotQuery, tt.wantQuery)
+			}
+			if len(results) != 1 || results[0].Path != "servers/ssh" {
+				t.Errorf("Search(%q) got unexpected results: %+v", tt.source, results)
+			}
+		}
+	})
+
+	t.Run("search:// source validation and missing searchExecutor errors", func(t *testing.T) {
+		for _, src := range []string{"search://", "search:///Password"} {
+			p := provider.NewSearchProvider()
+			_ = p.Initialize(ctx, provider.ProviderConfig{
+				Settings: map[string]string{"vault_name": "empty_search_src"},
+				Sources:  []string{src},
+			})
+			p.SetSearchExecutor(func(_ context.Context, _ string, _ []string, _ int) ([]provider.SearchResult, error) {
+				return nil, nil
+			})
+			_, err := p.Search(ctx, provider.SearchQuery{})
+			if err == nil || !strings.Contains(err.Error(), "no query conditions specified") {
+				t.Fatalf("expected empty query error for %q, got: %v", src, err)
+			}
+		}
+
+		pNoExec := provider.NewSearchProvider()
+		_ = pNoExec.Initialize(ctx, provider.ProviderConfig{
+			Settings: map[string]string{"vault_name": "no_exec"},
+			Sources:  []string{`search://"api" in tags`},
+		})
+		_, err := pNoExec.Search(ctx, provider.SearchQuery{})
+		if err == nil || !strings.Contains(err.Error(), "search executor not configured") {
+			t.Fatalf("expected missing search executor error, got: %v", err)
+		}
+	})
 }

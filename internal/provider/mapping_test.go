@@ -391,20 +391,31 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 	})
 }
 
-func TestMappingProvider_CustomVault(t *testing.T) {
+func newMappingTestSearchProvider(results ...SearchResult) *SearchProvider {
+	sp := NewSearchProvider()
+	sp.SetSearchExecutor(func(_ context.Context, _ string, _ []string, _ int) ([]SearchResult, error) {
+		return results, nil
+	})
+	return sp
+}
+
+func TestMappingProvider_SearchProvider(t *testing.T) {
 	ctx := context.Background()
 
-	cp := NewCustomVaultProvider()
-	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"app1": {
+	sp := newMappingTestSearchProvider(SearchResult{
+		Provider: "mock",
+		Vault:    "work",
+		Path:     "app1",
+		Entry: Entry{
+			Title: "app1",
+			Attributes: map[string]any{
 				"env:OPENROUTER_API_KEY": "sk-or-12345",
 				"env:test:foo":           "bar",
 				"UNMAPPED_FIELD":         "unmapped_val",
 				"EXCLUDED_FIELD":         "excluded_val",
 				"Password":               "default_app1_pass",
 			},
-		}),
+		},
 	})
 
 	rule := config.MappingRule{Match: "env:(.*)", Key: "\\1"}
@@ -412,7 +423,7 @@ func TestMappingProvider_CustomVault(t *testing.T) {
 		t.Fatalf("rule.Compile failed: %v", err)
 	}
 
-	fp := NewFilteringProvider(cp, []string{"OPENROUTER_API_KEY", "test:foo", "Password"}, []string{"EXCLUDED_FIELD"})
+	fp := NewFilteringProvider(sp, []string{"OPENROUTER_API_KEY", "test:foo", "Password"}, []string{"EXCLUDED_FIELD"})
 	mp, err := NewMappingProvider(fp, []config.MappingRule{rule})
 	if err != nil {
 		t.Fatalf("NewMappingProvider failed: %v", err)
@@ -487,26 +498,27 @@ func TestMappingProvider_CustomVault(t *testing.T) {
 	})
 
 	t.Run("GetSecret bare location with excluded Password returns error", func(t *testing.T) {
-		cp2 := NewCustomVaultProvider()
-		_ = cp2.Initialize(ctx, ProviderConfig{
-			Entities: config.ToCustomEntityMap(map[string]map[string]any{
-				"app1": {
+		sp2 := newMappingTestSearchProvider(SearchResult{
+			Provider: "mock",
+			Vault:    "work",
+			Path:     "app1",
+			Entry: Entry{
+				Title: "app1",
+				Attributes: map[string]any{
 					"Password": "secret_password",
 					"UserName": "test_user",
 				},
-			}),
+			},
 		})
 
 		excludeFields := []string{"Password"}
-		fp2 := NewFilteringProvider(cp2, nil, excludeFields)
+		fp2 := NewFilteringProvider(sp2, nil, excludeFields)
 
-		// Unmapped chain check
 		_, errUnmapped := fp2.GetSecret(ctx, "app1")
 		if errUnmapped == nil {
 			t.Fatal("expected GetSecret bare location on FilteringProvider to error when Password is excluded, got nil")
 		}
 
-		// Mapped chain check
 		mp2, errNew := NewMappingProvider(fp2, []config.MappingRule{rule})
 		if errNew != nil {
 			t.Fatalf("NewMappingProvider failed: %v", errNew)
@@ -536,21 +548,24 @@ func TestMappingProvider_CustomVault(t *testing.T) {
 func TestMappingProvider_ColonQualifiedExcludeFields(t *testing.T) {
 	ctx := context.Background()
 
-	cp := NewCustomVaultProvider()
-	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"website/Test Website": {
+	sp := newMappingTestSearchProvider(SearchResult{
+		Provider: "mock",
+		Vault:    "work",
+		Path:     "website/Test Website",
+		Entry: Entry{
+			Title: "Test Website",
+			Attributes: map[string]any{
 				"Password": "secret_pass_123",
 				"UserName": "test_user",
 			},
-		}),
+		},
 	})
 
 	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
 	_ = rule.Compile()
 
 	excludeFields := []string{"website/Test Website:*"}
-	fp := NewFilteringProvider(cp, nil, excludeFields)
+	fp := NewFilteringProvider(sp, nil, excludeFields)
 	mp, err := NewMappingProvider(fp, []config.MappingRule{rule})
 	if err != nil {
 		t.Fatalf("NewMappingProvider failed: %v", err)
@@ -559,44 +574,6 @@ func TestMappingProvider_ColonQualifiedExcludeFields(t *testing.T) {
 	_, err = mp.GetSecret(ctx, "website/Test Website:Password")
 	if err == nil {
 		t.Fatal("expected colon-qualified exclude_fields pattern 'website/Test Website:*' to block GetSecret, got nil error")
-	}
-}
-
-func TestMappingProvider_MultiEntityYamlJsonDotPathResolution(t *testing.T) {
-	ctx := context.Background()
-
-	yp := NewYamlProvider()
-	_ = yp.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"vault_path":        "../../testdata/test_hosts.yaml",
-			"entities_root_key": "hosts",
-		},
-		EntitiesRootKey: "hosts",
-	})
-
-	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
-	_ = rule.Compile()
-
-	mp, err := NewMappingProvider(yp, []config.MappingRule{rule})
-	if err != nil {
-		t.Fatalf("NewMappingProvider failed: %v", err)
-	}
-
-	val, err := mp.GetSecret(ctx, "hosts.ssh_host.hostname")
-	if err != nil {
-		t.Fatalf("multi-entity YAML/JSON dot-path GetSecret failed: %v", err)
-	}
-	if val == "" {
-		t.Error("expected non-empty hostname")
-	}
-
-	// Whole-entity container resolution
-	containerVal, err := mp.GetSecret(ctx, "hosts.ssh_host")
-	if err != nil {
-		t.Fatalf("whole-entity GetSecret failed: %v", err)
-	}
-	if containerVal == "" {
-		t.Error("expected non-empty container value")
 	}
 }
 
@@ -658,10 +635,13 @@ func TestMappingProvider_SearchVaultMappedKeyLookupAndRawKeyRejection(t *testing
 func TestMappingProvider_FilteringParityForNestedAndArrayPaths(t *testing.T) {
 	ctx := context.Background()
 
-	cp := NewCustomVaultProvider()
-	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"app1": {
+	sp := newMappingTestSearchProvider(SearchResult{
+		Provider: "mock",
+		Vault:    "work",
+		Path:     "app1",
+		Entry: Entry{
+			Title: "app1",
+			Attributes: map[string]any{
 				"env:API_KEY": "sk-123",
 				"db": map[string]any{
 					"host": "localhost",
@@ -669,7 +649,7 @@ func TestMappingProvider_FilteringParityForNestedAndArrayPaths(t *testing.T) {
 				},
 				"tokens": []any{"tok1", "tok2_secret"},
 			},
-		}),
+		},
 	})
 
 	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
@@ -678,7 +658,7 @@ func TestMappingProvider_FilteringParityForNestedAndArrayPaths(t *testing.T) {
 	}
 
 	excludeFields := []string{"db.pass", "tokens.1"}
-	fp := NewFilteringProvider(cp, nil, excludeFields)
+	fp := NewFilteringProvider(sp, nil, excludeFields)
 	mp, err := NewMappingProvider(fp, []config.MappingRule{rule})
 	if err != nil {
 		t.Fatalf("NewMappingProvider failed: %v", err)
@@ -717,21 +697,24 @@ func TestMappingProvider_FilteringParityForNestedAndArrayPaths(t *testing.T) {
 func TestMappingProvider_SerializationErrorPropagated(t *testing.T) {
 	ctx := context.Background()
 
-	cp := NewCustomVaultProvider()
-	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"app1": {
+	sp := newMappingTestSearchProvider(SearchResult{
+		Provider: "mock",
+		Vault:    "work",
+		Path:     "app1",
+		Entry: Entry{
+			Title: "app1",
+			Attributes: map[string]any{
 				"bad": map[string]any{
 					"invalid": badMarshaler{},
 				},
 			},
-		}),
+		},
 	})
 
 	rule := config.MappingRule{Match: "(.*)", Key: "$1"}
 	_ = rule.Compile()
 
-	mp, err := NewMappingProvider(cp, []config.MappingRule{rule})
+	mp, err := NewMappingProvider(sp, []config.MappingRule{rule})
 	if err != nil {
 		t.Fatalf("NewMappingProvider failed: %v", err)
 	}
@@ -743,34 +726,34 @@ func TestMappingProvider_SerializationErrorPropagated(t *testing.T) {
 }
 
 func TestMappingProvider_InterfaceCapabilities(t *testing.T) {
-	cp := NewCustomVaultProvider()
+	sp := NewSearchProvider()
 	rule := config.MappingRule{Match: "(.*)", Key: "$1"}
 	if err := rule.Compile(); err != nil {
 		t.Fatalf("rule.Compile failed: %v", err)
 	}
 
-	p, err := NewMappingProvider(cp, []config.MappingRule{rule})
+	p, err := NewMappingProvider(sp, []config.MappingRule{rule})
 	if err != nil {
 		t.Fatalf("NewMappingProvider failed: %v", err)
 	}
 
 	if _, ok := p.(SearchableProvider); !ok {
-		t.Error("expected MappingProvider around CustomVaultProvider to implement SearchableProvider")
+		t.Error("expected MappingProvider around SearchProvider to implement SearchableProvider")
 	}
 	if vr, ok := p.(ValueResolvableProvider); !ok || !vr.SupportsValueResolution() {
-		t.Error("expected MappingProvider around CustomVaultProvider to implement ValueResolvableProvider")
+		t.Error("expected MappingProvider around SearchProvider to implement ValueResolvableProvider")
 	}
 
-	if unwrap, ok := p.(interface{ Underlying() SecretProvider }); !ok || unwrap.Underlying() != cp {
-		t.Error("expected Underlying() to return wrapped CustomVaultProvider")
+	if unwrap, ok := p.(interface{ Underlying() SecretProvider }); !ok || unwrap.Underlying() != sp {
+		t.Error("expected Underlying() to return wrapped SearchProvider")
 	}
 }
 
 func TestMappingProvider_NewMappingProvider_CompileError(t *testing.T) {
-	cp := NewCustomVaultProvider()
+	sp := NewSearchProvider()
 	invalidRule := config.MappingRule{Match: "[invalid_regex"}
 
-	_, err := NewMappingProvider(cp, []config.MappingRule{invalidRule})
+	_, err := NewMappingProvider(sp, []config.MappingRule{invalidRule})
 	if err == nil {
 		t.Fatal("expected NewMappingProvider to return error for invalid regex, got nil")
 	}
@@ -1011,17 +994,20 @@ func TestMappingIsolationForDefaultFields(t *testing.T) {
 func TestMappingProvider_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T) {
 	ctx := context.Background()
 
-	cp := NewCustomVaultProvider()
-	_ = cp.Initialize(ctx, ProviderConfig{
-		Entities: config.ToCustomEntityMap(map[string]map[string]any{
-			"app1": {
+	cp := newMappingTestSearchProvider(SearchResult{
+		Provider: "mock",
+		Vault:    "work",
+		Path:     "app1",
+		Entry: Entry{
+			Title: "app1",
+			Attributes: map[string]any{
 				"env:API_KEY":       "sk-test-secret-123",
 				"env:DATABASE_URL":  "postgres://user:pass@localhost:5432/db",
 				"UNMAPPED_ALLOWED":  "allowed_val",
 				"UNMAPPED_EXCLUDED": "excluded_val",
 				"UNMAPPED_NOT_INCL": "not_included_val",
 			},
-		}),
+		},
 	})
 
 	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
@@ -1477,13 +1463,16 @@ func TestMappingProvider_MetadataTemplate(t *testing.T) {
 			t.Fatalf("rule.Compile failed: %v", err)
 		}
 
-		cp := NewCustomVaultProvider()
-		_ = cp.Initialize(ctx, ProviderConfig{
-			Entities: config.ToCustomEntityMap(map[string]map[string]any{
-				"app1": {
+		cp := newMappingTestSearchProvider(SearchResult{
+			Provider: "mock",
+			Vault:    "work",
+			Path:     "app1",
+			Entry: Entry{
+				Title: "app1",
+				Attributes: map[string]any{
 					"env:API_KEY": "secret_value",
 				},
-			}),
+			},
 		})
 
 		provider, err := NewMappingProvider(cp, []config.MappingRule{rule})
@@ -1512,13 +1501,16 @@ func TestMappingProvider_MetadataTemplate(t *testing.T) {
 			t.Fatalf("rule.Compile failed: %v", err)
 		}
 
-		cp := NewCustomVaultProvider()
-		_ = cp.Initialize(ctx, ProviderConfig{
-			Entities: config.ToCustomEntityMap(map[string]map[string]any{
-				"app1": {
+		cp := newMappingTestSearchProvider(SearchResult{
+			Provider: "mock",
+			Vault:    "work",
+			Path:     "app1",
+			Entry: Entry{
+				Title: "app1",
+				Attributes: map[string]any{
 					"env:API_KEY": "secret_value",
 				},
-			}),
+			},
 		})
 
 		provider, err := NewMappingProvider(cp, []config.MappingRule{rule})
@@ -1593,7 +1585,7 @@ func TestMappingProvider_MetadataTemplate(t *testing.T) {
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
-					Provider: "custom_vault",
+					Provider: "mock",
 					Vault:    "main",
 					Path:     "infra/cluster",
 					Entry: Entry{

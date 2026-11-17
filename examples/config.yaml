@@ -3,7 +3,7 @@
 
 # Reusable Go text/template definitions available to `include "name" .`
 templates:
-  # Inline template definition (also accepts scalar shorthand: `dotenv: "{{ .attributes | toEnv }}"`):
+  # Inline template definition:
   dotenv:
     template: "{{ .attributes | toEnv }}"
   # External file template definition (resolves relative to config.yaml or expands ~/):
@@ -36,19 +36,13 @@ audit:
   format: "jsonl"
 
 # Custom vault definitions. Each mapping key becomes a custom URI scheme (ref).
-# Supported provider types: keepass, json, yaml, custom_vault, env, search, pass
+# Supported provider types: keepass, pass, env, search, vault
 vaults:
   # Defines the keepass_dev:// URI scheme (KeePass provider example using the provided database.kdbx)
   keepass_dev:
     provider: "keepass"
     vault_path: "./examples/providers/keepass/database.kdbx"
-    # key_file: "~/secrets/work.keyx"       # Optional KeePass key file (.key / .keyx / raw key)
-    # key_file_env: "CLOAKENV_KEY_FILE"     # Optional env var specifying key file path (overrides key_file when set)
     # resolve_references: true  # Enables KeePass entry placeholder and cross-entry reference resolution ({TITLE}, {REF:...}, {T-CONV:...}, {URL:...})
-    # cache:                    # Optional transparent per-vault retrieval caching (also accepts `cache: true` or `cache: "15m"`)
-    #   enabled: true
-    #   ttl: "15m"
-    #   mode: "keyring"         # "keyring" (default, zero disk I/O) or "encrypted_disk" (AES-256-GCM)
 
   # Defines the pass_store:// URI scheme (Standard Unix Password Store / pass)
   pass_store:
@@ -68,84 +62,32 @@ vaults:
     vault_path: "~/.keepass/Accounts.kdbx"
     searchable: false
 
-  # Defines the json_dev:// URI scheme (JSON static file provider)
-  json_dev:
-    provider: "json"
-    vault_path: "./examples/providers/json/database.json"
-    # entities_root_key defaults to "entities" or "entries". Use "." to map directly to the root of the file.
-    entities_root_key: "entries"
-
-  # Defines the yaml_dev:// URI scheme (YAML static file provider)
-  yaml_dev:
-    provider: "yaml"
-    vault_path: "./examples/providers/yaml/database.yaml"
-    entities_root_key: "entries"
-
-  # Defines the dotenv_dev:// URI scheme (flat single-entity YAML database example)
-  # Defaults to single_entity: true when no entities_root_key and no top-level 'entities'/'entries' key are present
-  dotenv_dev:
-    provider: "yaml"
-    vault_path: "./examples/providers/yaml/dotenv.yaml"
-    entity_name: "Local Dotenv File"
-    tags: [env:dev, local]
-
-  # Defines the custom_static:// URI scheme using inline config values.
-  # Useful for testing or statically configured fallback lists.
-  # resolve_values: true enables recursive {{ ... }} template resolution of attribute values.
-  # Example: Password below is resolved from custom_single://my_static_vault:secret_key using {{ get "..." }}
-  custom_static:
-    provider: "custom_vault"
-    resolve_values: true
-    entities:
-      custom1:
-        username: "custom_user"
-        Password: '{{ get "custom_single://my_static_vault:secret_key" }}'
-        tags: [testing, static]
-
-  # Defines the composed_vault:// URI scheme using composed entities.
-  # Expands merge: sources, applies include/exclude filtering and mapping,
-  # and renders post-merge attributes: templates against .meta, .attributes, and .entries.
-  composed_vault:
-    provider: "custom_vault"
-    resolve_values: true
-    entities:
-      app_stack:
-        title: "Application Stack"
-        tags: [composed, production]
-        merge:
-          - "work://infra/db"
-          - 'search://"api" in tags'
-        include_fields:
-          - "DB_*"
-          - "API_*"
-        exclude_fields:
-          - "DB_SECRET_KEY"
-        mapping:
-          - match: "^API_(.*)"
-            key: "{{ .meta.Title | env }}_API_$1"
-        key_format: "env"
-        attributes:
-          DATABASE_URL: "postgres://{{ .attributes.DB_USER }}:{{ .attributes.DB_PASSWORD }}@{{ .attributes.DB_HOST }}:5432/app"
-          DOTENV: "{{ .attributes | toEnv }}"
-          SUMMARY: "{{ .meta.Title }} contains {{ len .entries }} upstream services"
-
-  # Defines the custom_single:// URI scheme using a single named entity
-  # Access: get custom_single://my_static_vault:secret_key
-  #         show "custom_single://my_static_vault"
-  custom_single:
-    provider: "custom_vault"
-    searchable: true
-    entities:
-      my_static_vault:
-        secret_key: "secret_value"
-        tags: [static, local]
-
-  # Defines the openrouter:// URI scheme (Stored Search vault provider example)
+  # Defines the openrouter:// URI scheme (Stored Search vault provider using source_vaults + query)
   # Acts as a stored search definition returning a filtered synthetic view over source vaults.
   openrouter:
     provider: "search"
     source_vaults: ["work"]
     query: '"service:openrouter" in tags'
+
+  # Defines the app_stack:// URI scheme (Stored Search vault grouping multiple entry URIs and queries)
+  app_stack:
+    provider: "search"
+    resolve_values: true
+    sources:
+      - "work://infra/db"
+      - 'search://"api" in tags'
+    include_fields:
+      - "DB_*"
+      - "API_*"
+    exclude_fields:
+      - "DB_SECRET_KEY"
+    mapping:
+      - match: "^API_(.*)"
+        key: "{{ .meta.Title | env }}_API_$1"
+    key_format: "env"
+    attributes:
+      DATABASE_URL: "postgres://{{ .attributes.DB_USER }}:{{ .attributes.DB_PASSWORD }}@{{ .attributes.DB_HOST }}:5432/app"
+      DOTENV: "{{ .attributes | toEnv }}"
 
   # Example of generic field filtering on any vault provider using include_fields and exclude_fields:
   # include_fields: limits returned entry attributes to field names matching glob patterns
@@ -169,7 +111,7 @@ vaults:
   #   vault_path: "~/secrets/work_vault.kdbx"
   #   mapping:
   #     - match: "env:(.*)"
-  #       key: "\\1"
+  #       key: "\1"
 
   # Example of per-vault key formatting:
   # key_format: transforms entry attribute names. Available options:
@@ -217,7 +159,7 @@ autoload:
 
   - match: "kubectl*"
     merge:
-      - "yaml_dev://clusters/staging"
+      - "work://clusters/staging"
     env:
       KUBECONFIG_TOKEN: "keyring://k8s/token"
 

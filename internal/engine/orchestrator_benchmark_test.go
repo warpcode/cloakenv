@@ -3,8 +3,6 @@ package engine
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -67,33 +65,28 @@ func BenchmarkBuildEnv(b *testing.B) {
 }
 
 func BenchmarkSearch(b *testing.B) {
-	// Create temp dir
-	tempDir := b.TempDir()
-
-	// Create a large entries.yaml
 	entriesCount := 1000
-	yamlContent := "entries:\n"
+	results := make([]provider.SearchResult, 0, entriesCount)
 	for i := range entriesCount {
-		yamlContent += fmt.Sprintf(`  entry_%d:
-    tags:
-      - tag_%d
-      - common
-    title: "Title %d"
-    attr1: "val1_%d"
-    attr2: %d
-`, i, i%10, i, i, i)
-	}
-
-	yamlPath := filepath.Join(tempDir, "entries.yaml")
-	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0644); err != nil {
-		b.Fatalf("failed to write temp yaml file: %v", err)
+		results = append(results, provider.SearchResult{
+			Provider: "search",
+			Vault:    "bench",
+			Path:     fmt.Sprintf("entry_%d", i),
+			Entry: provider.Entry{
+				Title: fmt.Sprintf("Title %d", i),
+				Tags:  []string{fmt.Sprintf("tag_%d", i%10), "common"},
+				Attributes: map[string]any{
+					"attr1": fmt.Sprintf("val1_%d", i),
+					"attr2": i,
+				},
+			},
+		})
 	}
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"bench": {
-				Provider:  "yaml",
-				VaultPath: yamlPath,
+				Provider: "env",
 			},
 		},
 	}
@@ -101,6 +94,9 @@ func BenchmarkSearch(b *testing.B) {
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		b.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "bench", results); err != nil {
+		b.Fatalf("injectMockVault failed: %v", err)
 	}
 
 	ctx := context.Background()

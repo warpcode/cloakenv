@@ -3,8 +3,6 @@ package engine
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -29,10 +27,6 @@ func (f *failInitProvider) Search(_ context.Context, _ provider.SearchQuery) ([]
 }
 func (f *failInitProvider) GetEntry(_ context.Context, _ string) (provider.Entry, error) {
 	return provider.Entry{}, nil
-}
-
-func boolPtr(b bool) *bool {
-	return &b
 }
 
 type mockCacheProvider struct {
@@ -69,16 +63,7 @@ func TestOrchestratorFacade(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"test_vault": {
-				Provider: "custom_vault",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"service_a": {
-						"API_KEY": "secret-api-key",
-						"tags":    []string{"prod", "api"},
-						"title":   "Service A",
-					},
-				}),
-			},
+			"test_vault": {Provider: "env"},
 		},
 		Autoload: []config.AutoloadRule{
 			{
@@ -91,6 +76,18 @@ func TestOrchestratorFacade(t *testing.T) {
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "test_vault", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "test_vault", Path: "service_a",
+			Entry: provider.Entry{
+				Title:      "Service A",
+				Tags:       []string{"prod", "api"},
+				Attributes: map[string]any{"API_KEY": "secret-api-key"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
 	}
 
 	t.Run("Resolve and ResolveWithKey", func(t *testing.T) {
@@ -254,7 +251,7 @@ func TestOrchestrator_FieldFiltering(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"filtered_vault": {
-				Provider: "custom_vault",
+				Provider: "env",
 				IncludeFields: []string{
 					"env:*",
 					"UserName",
@@ -263,17 +260,6 @@ func TestOrchestrator_FieldFiltering(t *testing.T) {
 					"*.notes",
 					"secret:*",
 				},
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"app_config": {
-						"UserName":        "app_admin",
-						"Password":        "super_secret_pw",
-						"env:PORT":        "8080",
-						"env:HOST":        "127.0.0.1",
-						"env:notes.notes": "internal notes",
-						"secret:token":    "bearer_12345",
-						"db.notes":        "production database notes",
-					},
-				}),
 			},
 		},
 	}
@@ -281,6 +267,25 @@ func TestOrchestrator_FieldFiltering(t *testing.T) {
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "filtered_vault", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "filtered_vault", Path: "app_config",
+			Entry: provider.Entry{
+				Title: "app_config",
+				Attributes: map[string]any{
+					"UserName":        "app_admin",
+					"Password":        "super_secret_pw",
+					"env:PORT":        "8080",
+					"env:HOST":        "127.0.0.1",
+					"env:notes.notes": "internal notes",
+					"secret:token":    "bearer_12345",
+					"db.notes":        "production database notes",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
 	}
 
 	t.Run("GetEntry_FilteredAttributes", func(t *testing.T) {
@@ -358,23 +363,12 @@ func TestOrchestrator_FieldFiltering_WrappedDirectProviderResolution(t *testing.
 	t.Setenv("MY_APP_SECRET", "super_secret_from_env")
 
 	ctx := context.Background()
-	tmpDir := t.TempDir()
-	yamlFile := filepath.Join(tmpDir, "vault.yaml")
-	yamlContent := `
-api_key: '{{ get "env://MY_APP_SECRET" }}'
-excluded_key: '{{ get "env://MY_APP_SECRET" }}'
-`
-	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
-		t.Fatalf("failed to write yaml fixture: %v", err)
-	}
-
-	isSingle := true
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"filtered_yaml": {
-				Provider:      "yaml",
-				VaultPath:     yamlFile,
-				SingleEntity:  &isSingle,
+			"filtered_src": {
+				Provider:      "search",
+				Sources:       []string{"env://"},
+				ResolveValues: true,
 				IncludeFields: []string{"api_key"},
 			},
 		},
@@ -384,18 +378,32 @@ excluded_key: '{{ get "env://MY_APP_SECRET" }}'
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
+	if err := injectMockVault(orch, "filtered_src", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "filtered_src", Path: "app",
+			Entry: provider.Entry{
+				Title: "app",
+				Attributes: map[string]any{
+					"api_key":      `{{ get "env://MY_APP_SECRET" }}`,
+					"excluded_key": `{{ get "env://MY_APP_SECRET" }}`,
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
+	}
 
 	// 1. Allowed field with nested URI should resolve through to the env provider value
-	val, err := orch.Resolve(ctx, `{{ get "filtered_yaml://api_key" }}`)
+	val, err := orch.Resolve(ctx, `{{ get "filtered_src://api_key" }}`)
 	if err != nil {
-		t.Fatalf("failed to resolve filtered_yaml://api_key: %v", err)
+		t.Fatalf("failed to resolve filtered_src://api_key: %v", err)
 	}
 	if val != "super_secret_from_env" {
 		t.Errorf("Resolve = %q, want 'super_secret_from_env'", val)
 	}
 
 	// 2. Also check GetEntry has the resolved attribute value
-	entry, err := orch.GetEntry(ctx, "filtered_yaml://")
+	entry, err := orch.GetEntry(ctx, "filtered_src://")
 	if err != nil {
 		t.Fatalf("GetEntry failed: %v", err)
 	}
@@ -407,7 +415,7 @@ excluded_key: '{{ get "env://MY_APP_SECRET" }}'
 	}
 
 	// 3. Excluded key must not be resolvable
-	_, errExcluded := orch.Resolve(ctx, `{{ get "filtered_yaml://excluded_key" }}`)
+	_, errExcluded := orch.Resolve(ctx, `{{ get "filtered_src://excluded_key" }}`)
 	if errExcluded == nil {
 		t.Fatalf("expected error resolving excluded_key, got nil")
 	}
@@ -433,16 +441,10 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"source_vault": {
-				Provider:        "custom_vault",
+				Provider:        "search",
+				Sources:         []string{"env://"},
 				ResolveValues:   true,
 				EntitiesRootKey: "entities",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"entry1": {
-						"safe_field":            "safe_value",
-						"excluded_field":        `{{ get "tripwire://must_not_be_called" }}`,
-						"rooted_excluded_field": `{{ get "tripwire://must_not_be_called_rooted" }}`,
-					},
-				}),
 			},
 			"virtual_search": {
 				Provider:      "search",
@@ -456,6 +458,21 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "source_vault", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "source_vault", Path: "entry1",
+			Entry: provider.Entry{
+				Title: "entry1",
+				Attributes: map[string]any{
+					"safe_field":            "safe_value",
+					"excluded_field":        `{{ get "tripwire://must_not_be_called" }}`,
+					"rooted_excluded_field": `{{ get "tripwire://must_not_be_called_rooted" }}`,
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault(source_vault) failed: %v", err)
 	}
 
 	tw := &tripwireProvider{}
@@ -479,15 +496,10 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 	cfgQueryLeak := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"source_vault": {
-				Provider:        "custom_vault",
+				Provider:        "search",
+				Sources:         []string{"env://"},
 				ResolveValues:   true,
 				EntitiesRootKey: "entities",
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"entry1": {
-						"safe_field":     "safe_value",
-						"excluded_field": `{{ get "tripwire://must_not_be_called" }}`,
-					},
-				}),
 			},
 			"query_leak_search": {
 				Provider:      "search",
@@ -501,6 +513,20 @@ func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) 
 	orchLeak, err := NewOrchestrator(cfgQueryLeak)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orchLeak, "source_vault", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "source_vault", Path: "entry1",
+			Entry: provider.Entry{
+				Title: "entry1",
+				Attributes: map[string]any{
+					"safe_field":     "safe_value",
+					"excluded_field": `{{ get "tripwire://must_not_be_called" }}`,
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault(source_vault) failed: %v", err)
 	}
 	orchLeak.providerManager.vaultCache["tripwire"] = tw
 
@@ -520,15 +546,9 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"source_vault": {
-				Provider:      "custom_vault",
+				Provider:      "search",
+				Sources:       []string{"env://"},
 				ResolveValues: true,
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"entry1": {
-						"safe_field":     "safe_value",
-						"outer_excluded": `{{ get "tripwire://outer_leak" }}`,
-						"inner_excluded": `{{ get "tripwire://inner_leak" }}`,
-					},
-				}),
 			},
 			"inner_search": {
 				Provider:      "search",
@@ -548,6 +568,21 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "source_vault", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "source_vault", Path: "entry1",
+			Entry: provider.Entry{
+				Title: "entry1",
+				Attributes: map[string]any{
+					"safe_field":     "safe_value",
+					"outer_excluded": `{{ get "tripwire://outer_leak" }}`,
+					"inner_excluded": `{{ get "tripwire://inner_leak" }}`,
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault(source_vault) failed: %v", err)
 	}
 
 	tw := &tripwireProvider{}
@@ -572,14 +607,9 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 	cfgQueryLeak := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"source_vault": {
-				Provider:      "custom_vault",
+				Provider:      "search",
+				Sources:       []string{"env://"},
 				ResolveValues: true,
-				Entities: config.ToCustomEntityMap(map[string]map[string]any{
-					"entry1": {
-						"safe_field":     "safe_value",
-						"outer_excluded": `{{ get "tripwire://outer_leak" }}`,
-					},
-				}),
 			},
 			"inner_search_leak": {
 				Provider:     "search",
@@ -599,6 +629,20 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
+	if err := injectMockVault(orchLeak, "source_vault", []provider.SearchResult{
+		{
+			Provider: "search", Vault: "source_vault", Path: "entry1",
+			Entry: provider.Entry{
+				Title: "entry1",
+				Attributes: map[string]any{
+					"safe_field":     "safe_value",
+					"outer_excluded": `{{ get "tripwire://outer_leak" }}`,
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault(source_vault) failed: %v", err)
+	}
 	orchLeak.providerManager.vaultCache["tripwire"] = tw
 
 	_, errMatch := orchLeak.Resolve(ctx, `{{ get "outer_search_leak://entry1:safe_field" }}`)
@@ -607,80 +651,6 @@ func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) 
 	}
 	if tw.called {
 		t.Errorf("outer-excluded URI was dereferenced during inner query evaluation")
-	}
-}
-
-func TestOrchestrator_CyclicMergeDepthError(t *testing.T) {
-	keyring.MockInit()
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("LocalAppData", t.TempDir())
-
-	ctx := context.Background()
-
-	tests := []struct {
-		name       string
-		vaults     map[string]config.VaultConfig
-		targetURI  string
-		wantErrSub string
-	}{
-		{
-			name: "two entities mutually merging cause max depth error",
-			vaults: map[string]config.VaultConfig{
-				"loop_vault": {
-					Provider: "custom_vault",
-					Entities: map[string]config.CustomEntityConfig{
-						"entity_a": {
-							Title:      "Entity A",
-							IsComposed: true,
-							Merge:      []string{"loop_vault://entity_b"},
-						},
-						"entity_b": {
-							Title:      "Entity B",
-							IsComposed: true,
-							Merge:      []string{"loop_vault://entity_a"},
-						},
-					},
-				},
-			},
-			targetURI:  "loop_vault://entity_a",
-			wantErrSub: "reached max depth 5",
-		},
-		{
-			name: "self-merging composed entity causes max depth error",
-			vaults: map[string]config.VaultConfig{
-				"self_vault": {
-					Provider: "custom_vault",
-					Entities: map[string]config.CustomEntityConfig{
-						"self_loop": {
-							Title:      "Self Loop",
-							IsComposed: true,
-							Merge:      []string{"self_vault://self_loop"},
-						},
-					},
-				},
-			},
-			targetURI:  "self_vault://self_loop",
-			wantErrSub: "reached max depth 5",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{Vaults: tt.vaults}
-			orch, err := NewOrchestrator(cfg)
-			if err != nil {
-				t.Fatalf("failed to create orchestrator: %v", err)
-			}
-
-			_, err = orch.GetEntries(ctx, tt.targetURI)
-			if err == nil {
-				t.Fatalf("expected max depth error for cyclic merge %s, got nil", tt.targetURI)
-			}
-			if !strings.Contains(err.Error(), tt.wantErrSub) {
-				t.Errorf("error %q does not contain expected substring %q", err.Error(), tt.wantErrSub)
-			}
-		})
 	}
 }
 
@@ -694,48 +664,16 @@ func TestOrchestrator_GetEntries(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"test_vault": {
-				Provider: "custom_vault",
-				Entities: map[string]config.CustomEntityConfig{
-					"flat_entry": {
-						Title: "Flat Entry",
-						Tags:  []string{"tag1"},
-						Attributes: map[string]any{
-							"KEY1": "val1",
-						},
-					},
-					"composed_entry": {
-						Title:      "Composed Entry",
-						IsComposed: true,
-						Merge:      []string{"test_vault://flat_entry"},
-						Attributes: map[string]any{
-							"EXTRA": "extra_val",
-						},
-					},
-					"composed_url_search": {
-						Title:      "Composed URL Search",
-						IsComposed: true,
-						Merge:      []string{"search://tags=tag1"},
-						Attributes: map[string]any{
-							"SOURCE": "url_search",
-						},
-					},
-					"composed_expr_search": {
-						Title:      "Composed Expr Search",
-						IsComposed: true,
-						Merge:      []string{`search://"tag1" in tags`},
-						Attributes: map[string]any{
-							"SOURCE": "expr_search",
-						},
-					},
-					"composed_expr_equality": {
-						Title:      "Composed Expr Equality Search",
-						IsComposed: true,
-						Merge:      []string{`search://title == "Flat Entry"`},
-						Attributes: map[string]any{
-							"SOURCE": "expr_equality",
-						},
-					},
+			"test_vault": {Provider: "env"},
+			"grouped_search": {
+				Provider:     "search",
+				SourceVaults: []string{"test_vault"},
+				Sources: []string{
+					"test_vault://flat_entry",
+					`"tag1" in tags`,
+				},
+				Attributes: map[string]any{
+					"EXTRA": "extra_val",
 				},
 			},
 		},
@@ -744,6 +682,22 @@ func TestOrchestrator_GetEntries(t *testing.T) {
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
+	}
+	if err := injectMockVault(orch, "test_vault", []provider.SearchResult{
+		{
+			Provider: "search",
+			Vault:    "test_vault",
+			Path:     "flat_entry",
+			Entry: provider.Entry{
+				Title: "Flat Entry",
+				Tags:  []string{"tag1"},
+				Attributes: map[string]any{
+					"KEY1": "val1",
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("injectMockVault failed: %v", err)
 	}
 
 	tests := []struct {
@@ -768,61 +722,16 @@ func TestOrchestrator_GetEntries(t *testing.T) {
 			},
 		},
 		{
-			name:      "composed entry lookup returns resolved entry",
-			uri:       "test_vault://composed_entry",
+			name:      "search sources entry lookup returns grouped entry with attributes",
+			uri:       "grouped_search://flat_entry",
 			wantCount: 1,
 			wantErr:   false,
 			checkFn: func(t *testing.T, entries []provider.Entry) {
-				if entries[0].Title != "Composed Entry" {
-					t.Errorf("Title = %q, want 'Composed Entry'", entries[0].Title)
-				}
 				if entries[0].Attributes["KEY1"] != "val1" {
 					t.Errorf("KEY1 = %v, want 'val1'", entries[0].Attributes["KEY1"])
 				}
 				if entries[0].Attributes["EXTRA"] != "extra_val" {
 					t.Errorf("EXTRA = %v, want 'extra_val'", entries[0].Attributes["EXTRA"])
-				}
-			},
-		},
-		{
-			name:      "custom_vault merge with search URL parameters",
-			uri:       "test_vault://composed_url_search",
-			wantCount: 1,
-			wantErr:   false,
-			checkFn: func(t *testing.T, entries []provider.Entry) {
-				if entries[0].Attributes["KEY1"] != "val1" {
-					t.Errorf("KEY1 = %v, want 'val1'", entries[0].Attributes["KEY1"])
-				}
-				if entries[0].Attributes["SOURCE"] != "url_search" {
-					t.Errorf("SOURCE = %v, want 'url_search'", entries[0].Attributes["SOURCE"])
-				}
-			},
-		},
-		{
-			name:      "custom_vault merge with search Expr 'in' expression",
-			uri:       "test_vault://composed_expr_search",
-			wantCount: 1,
-			wantErr:   false,
-			checkFn: func(t *testing.T, entries []provider.Entry) {
-				if entries[0].Attributes["KEY1"] != "val1" {
-					t.Errorf("KEY1 = %v, want 'val1'", entries[0].Attributes["KEY1"])
-				}
-				if entries[0].Attributes["SOURCE"] != "expr_search" {
-					t.Errorf("SOURCE = %v, want 'expr_search'", entries[0].Attributes["SOURCE"])
-				}
-			},
-		},
-		{
-			name:      "custom_vault merge with search Expr '==' equality expression",
-			uri:       "test_vault://composed_expr_equality",
-			wantCount: 1,
-			wantErr:   false,
-			checkFn: func(t *testing.T, entries []provider.Entry) {
-				if entries[0].Attributes["KEY1"] != "val1" {
-					t.Errorf("KEY1 = %v, want 'val1'", entries[0].Attributes["KEY1"])
-				}
-				if entries[0].Attributes["SOURCE"] != "expr_equality" {
-					t.Errorf("SOURCE = %v, want 'expr_equality'", entries[0].Attributes["SOURCE"])
 				}
 			},
 		},
@@ -849,12 +758,6 @@ func TestOrchestrator_GetEntries(t *testing.T) {
 			},
 		},
 		{
-			name:      "non-existent entity returns error",
-			uri:       "test_vault://nonexistent",
-			wantCount: 0,
-			wantErr:   true,
-		},
-		{
 			name:      "invalid uri scheme returns error",
 			uri:       "invalid_uri",
 			wantCount: 0,
@@ -866,15 +769,112 @@ func TestOrchestrator_GetEntries(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			entries, err := orch.GetEntries(ctx, tt.uri)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("GetEntries() error = %v, wantErr = %v", err, tt.wantErr)
+				t.Fatalf("GetEntries(%q) error = %v, wantErr = %v", tt.uri, err, tt.wantErr)
 			}
-			if !tt.wantErr {
-				if len(entries) != tt.wantCount {
-					t.Fatalf("GetEntries() count = %d, want %d", len(entries), tt.wantCount)
-				}
-				if tt.checkFn != nil {
-					tt.checkFn(t, entries)
-				}
+			if tt.wantErr {
+				return
+			}
+			if len(entries) != tt.wantCount {
+				t.Fatalf("GetEntries(%q) count = %d, want %d", tt.uri, len(entries), tt.wantCount)
+			}
+			if tt.checkFn != nil {
+				tt.checkFn(t, entries)
+			}
+		})
+	}
+}
+
+func TestOrchestrator_CyclicMergeDepthError(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LocalAppData", t.TempDir())
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name       string
+		vaults     map[string]config.VaultConfig
+		mockVault  string
+		entries    []provider.SearchResult
+		targetURI  string
+		wantErrSub string
+	}{
+		{
+			name: "two entities mutually merging cause max depth error",
+			vaults: map[string]config.VaultConfig{
+				"loop_vault": {
+					Provider:      "search",
+					Sources:       []string{"search://true"},
+					ResolveValues: true,
+				},
+			},
+			mockVault: "loop_vault",
+			entries: []provider.SearchResult{
+				{
+					Provider: "search", Vault: "loop_vault", Path: "entity_a",
+					Entry: provider.Entry{
+						Title: "Entity A",
+						Attributes: map[string]any{
+							"attr": `{{ get "loop_vault://entity_b:attr" }}`,
+						},
+					},
+				},
+				{
+					Provider: "search", Vault: "loop_vault", Path: "entity_b",
+					Entry: provider.Entry{
+						Title: "Entity B",
+						Attributes: map[string]any{
+							"attr": `{{ get "loop_vault://entity_a:attr" }}`,
+						},
+					},
+				},
+			},
+			targetURI:  "loop_vault://entity_a",
+			wantErrSub: "reached max depth 5",
+		},
+		{
+			name: "self-merging composed entity causes max depth error",
+			vaults: map[string]config.VaultConfig{
+				"self_vault": {
+					Provider:      "search",
+					Sources:       []string{"search://true"},
+					ResolveValues: true,
+				},
+			},
+			mockVault: "self_vault",
+			entries: []provider.SearchResult{
+				{
+					Provider: "search", Vault: "self_vault", Path: "self_loop",
+					Entry: provider.Entry{
+						Title: "Self Loop",
+						Attributes: map[string]any{
+							"attr": `{{ get "self_vault://self_loop:attr" }}`,
+						},
+					},
+				},
+			},
+			targetURI:  "self_vault://self_loop",
+			wantErrSub: "reached max depth 5",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{Vaults: tt.vaults}
+			orch, err := NewOrchestrator(cfg)
+			if err != nil {
+				t.Fatalf("failed to create orchestrator: %v", err)
+			}
+			if err := orch.InjectMockVaultForTest(tt.mockVault, tt.entries); err != nil {
+				t.Fatalf("failed to inject mock vault: %v", err)
+			}
+			_, err = orch.GetEntry(ctx, tt.targetURI)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tt.wantErrSub)
+			}
+			if !strings.Contains(err.Error(), tt.wantErrSub) {
+				t.Errorf("error %q does not contain %q", err.Error(), tt.wantErrSub)
 			}
 		})
 	}

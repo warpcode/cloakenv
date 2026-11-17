@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -189,21 +188,22 @@ func TestShow_VaultKeyFormat(t *testing.T) {
 	}
 	os.Stdout = w
 
-	// Custom vault with key_format: "env"
+	// KeePass vault with key_format: "env"
+	dbPath := writeTestKDBX(t, "env_vault", "password123", testKDBXEntry{
+		Title: "item",
+		Attributes: map[string]string{
+			"api-key":                "val1",
+			"database.user_name":     "val2",
+			"multiple___underscores": "val3",
+		},
+	})
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"env_vault": {
-				Provider:  "custom_vault",
-				KeyFormat: "env",
-				Entities: map[string]config.CustomEntityConfig{
-					"item": {
-						Attributes: map[string]any{
-							"api-key":                "val1",
-							"database.user_name":     "val2",
-							"multiple___underscores": "val3",
-						},
-					},
-				},
+				Provider:      "keepass",
+				VaultPath:     dbPath,
+				KeyFormat:     "env",
+				IncludeFields: []string{"api-key", "database.user_name", "multiple___underscores"},
 			},
 		},
 	}
@@ -351,31 +351,34 @@ func TestShouldQuoteDotenvValue(t *testing.T) {
 func TestBuildMergedEntry(t *testing.T) {
 	t.Setenv("TEST_SHOW_ENV_VAL", "resolved_env_val")
 
+	dbPathA := writeTestKDBX(t, "vaultA", "password123", testKDBXEntry{
+		Title: "entry1",
+		Tags:  "tagA, commonTag",
+		Attributes: map[string]string{
+			"user": "userA",
+			"pass": "passA",
+		},
+	})
+	dbPathB := writeTestKDBX(t, "vaultB", "password123", testKDBXEntry{
+		Title: "entry2",
+		Tags:  "tagB, commonTag",
+		Attributes: map[string]string{
+			"host": "hostB",
+			"user": "userB_overridden",
+		},
+	})
+	if err := keyring.Set("cloakenv", "provider/vaultA", "password123"); err != nil {
+		t.Fatalf("failed to set keyring password for vaultA: %v", err)
+	}
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"vaultA": {
-				Provider: "custom_vault",
-				Entities: map[string]config.CustomEntityConfig{
-					"entry1": {
-						Attributes: map[string]any{
-							"user": "userA",
-							"pass": "passA",
-							"tags": []any{"tagA", "commonTag"},
-						},
-					},
-				},
+				Provider:  "keepass",
+				VaultPath: dbPathA,
 			},
 			"vaultB": {
-				Provider: "custom_vault",
-				Entities: map[string]config.CustomEntityConfig{
-					"entry2": {
-						Attributes: map[string]any{
-							"host": "hostB",
-							"user": "userB_overridden",
-							"tags": []any{"tagB", "commonTag"},
-						},
-					},
-				},
+				Provider:  "keepass",
+				VaultPath: dbPathB,
 			},
 		},
 	}
@@ -562,18 +565,23 @@ func TestShow_RuntimeKeyFormatOverride(t *testing.T) {
 	}
 	os.Stdout = w
 
+	dbPath := writeTestKDBX(t, "work", "password123", testKDBXEntry{
+		Title: "ssh_key_staging",
+		Tags:  "auth:ssh, env:staging",
+		Attributes: map[string]string{
+			"USERNAME": "stage_user",
+		},
+	})
 	args := []string{"-f", "snake", "work://ssh_key_staging"}
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"work": {
-				Provider:  "yaml",
-				VaultPath: "../../testdata/test_entries.yaml",
+				Provider:  "keepass",
+				VaultPath: dbPath,
 				KeyFormat: "env", // overridden by snake
 			},
 		},
 	}
-
-	t.Setenv("CLOAKENV_MASTER_PASSWORD", "password123")
 	exitCode := Show(args, cfg)
 	if exitCode != 0 {
 		t.Errorf("expected exit code 0, got %d", exitCode)
@@ -586,7 +594,7 @@ func TestShow_RuntimeKeyFormatOverride(t *testing.T) {
 	}
 	output := buf.String()
 
-	// test_entries.yaml has USERNAME
+	// KeePass entry has USERNAME
 	if !strings.Contains(output, "username:") {
 		t.Errorf("expected output to contain snake_case formatted keys 'username:', got %s", output)
 	}
@@ -711,25 +719,33 @@ func TestShow_ShowMeta(t *testing.T) {
 }
 
 func TestShow_TagsInMetaAndUnshadowed(t *testing.T) {
+	dbPathMeta := writeTestKDBX(t, "meta_vault", "password123", testKDBXEntry{
+		Title: "ssh_key_prod",
+		Tags:  "auth:ssh, env:prod",
+		Attributes: map[string]string{
+			"USERNAME": "prod_user",
+		},
+	})
+	dbPathApp := writeTestKDBX(t, "tags_vault", "password123", testKDBXEntry{
+		Title: "app",
+		Tags:  "meta_tag1, meta_tag2",
+		Attributes: map[string]string{
+			"tags":     "custom_tag_value",
+			"password": "secret",
+		},
+	})
+	if err := keyring.Set("cloakenv", "provider/meta_vault", "password123"); err != nil {
+		t.Fatalf("failed to set keyring password for meta_vault: %v", err)
+	}
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"my_yaml": {
-				Provider:  "yaml",
-				VaultPath: "../../testdata/test_entries.yaml",
+			"meta_vault": {
+				Provider:  "keepass",
+				VaultPath: dbPathMeta,
 			},
-			"custom_vault": {
-				Provider: "custom_vault",
-				Entities: map[string]config.CustomEntityConfig{
-					"app": {
-						Title:      "App Title",
-						Tags:       []string{"meta_tag1", "meta_tag2"},
-						IsComposed: true,
-						Attributes: map[string]any{
-							"tags":     "custom_tag_value",
-							"password": "secret",
-						},
-					},
-				},
+			"tags_vault": {
+				Provider:  "keepass",
+				VaultPath: dbPathApp,
 			},
 		},
 	}
@@ -742,7 +758,7 @@ func TestShow_TagsInMetaAndUnshadowed(t *testing.T) {
 		}
 		os.Stdout = w
 
-		exitCode := Show([]string{"my_yaml://ssh_key_prod", "-o", "json", "--show-meta"}, cfg)
+		exitCode := Show([]string{"meta_vault://ssh_key_prod", "-o", "json", "--show-meta"}, cfg)
 		_ = w.Close()
 		os.Stdout = oldStdout
 
@@ -770,7 +786,7 @@ func TestShow_TagsInMetaAndUnshadowed(t *testing.T) {
 		}
 		os.Stdout = w
 
-		exitCode := Show([]string{"my_yaml://ssh_key_prod", "-o", "json"}, cfg)
+		exitCode := Show([]string{"meta_vault://ssh_key_prod", "-o", "json"}, cfg)
 		_ = w.Close()
 		os.Stdout = oldStdout
 
@@ -798,7 +814,7 @@ func TestShow_TagsInMetaAndUnshadowed(t *testing.T) {
 		}
 		os.Stdout = w
 
-		exitCode := Show([]string{"my_yaml://ssh_key_prod", "-i", "tags", "-o", "json"}, cfg)
+		exitCode := Show([]string{"meta_vault://ssh_key_prod", "-i", "tags", "-o", "json"}, cfg)
 		_ = w.Close()
 		os.Stdout = oldStdout
 
@@ -823,7 +839,7 @@ func TestShow_TagsInMetaAndUnshadowed(t *testing.T) {
 		}
 		os.Stdout = w
 
-		exitCode := Show([]string{"my_yaml://ssh_key_prod", "-i", "_meta_.tags", "-o", "json"}, cfg)
+		exitCode := Show([]string{"meta_vault://ssh_key_prod", "-i", "_meta_.tags", "-o", "json"}, cfg)
 		_ = w.Close()
 		os.Stdout = oldStdout
 
@@ -848,7 +864,7 @@ func TestShow_TagsInMetaAndUnshadowed(t *testing.T) {
 		}
 		os.Stdout = w
 
-		exitCode := Show([]string{"custom_vault://app", "-o", "json"}, cfg)
+		exitCode := Show([]string{"tags_vault://app", "-o", "json"}, cfg)
 		_ = w.Close()
 		os.Stdout = oldStdout
 
@@ -876,7 +892,7 @@ func TestShow_TagsInMetaAndUnshadowed(t *testing.T) {
 		}
 		os.Stdout = w
 
-		exitCode := Show([]string{"custom_vault://app", "-o", "json", "--show-meta"}, cfg)
+		exitCode := Show([]string{"tags_vault://app", "-o", "json", "--show-meta"}, cfg)
 		_ = w.Close()
 		os.Stdout = oldStdout
 
@@ -901,24 +917,21 @@ func TestShow_TagsInMetaAndUnshadowed(t *testing.T) {
 }
 
 func TestShow_RawFlag(t *testing.T) {
-	tempDir := t.TempDir()
-	yamlFile := filepath.Join(tempDir, "vault.yaml")
-	yamlContent := `entries:
-  app:
-    user_name: Alice
-    secret_key: s3cr3t
-    secret_old: deprecated
-    notes: Some notes
-`
-	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
-		t.Fatalf("failed to write test yaml: %v", err)
-	}
+	dbPath := writeTestKDBX(t, "test_vault", "password123", testKDBXEntry{
+		Title: "app",
+		Attributes: map[string]string{
+			"user_name":  "Alice",
+			"secret_key": "s3cr3t",
+			"secret_old": "deprecated",
+			"notes":      "Some notes",
+		},
+	})
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"test_vault": {
-				Provider:      "yaml",
-				VaultPath:     yamlFile,
+				Provider:      "keepass",
+				VaultPath:     dbPath,
 				IncludeFields: []string{"user*", "secret*"},
 				ExcludeFields: []string{"secret_old"},
 				Mapping: []config.MappingRule{
@@ -1159,24 +1172,21 @@ func TestShow_RawFlag(t *testing.T) {
 }
 
 func TestShow_ExplainFlag(t *testing.T) {
-	tempDir := t.TempDir()
-	yamlFile := filepath.Join(tempDir, "vault.yaml")
-	yamlContent := `entries:
-  app:
-    user_name: Alice
-    secret_key: s3cr3t
-    secret_old: deprecated
-    notes: Some notes
-`
-	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
-		t.Fatalf("failed to write test yaml: %v", err)
-	}
+	dbPath := writeTestKDBX(t, "test_vault", "password123", testKDBXEntry{
+		Title: "app",
+		Attributes: map[string]string{
+			"user_name":  "Alice",
+			"secret_key": "s3cr3t",
+			"secret_old": "deprecated",
+			"notes":      "Some notes",
+		},
+	})
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"test_vault": {
-				Provider:      "yaml",
-				VaultPath:     yamlFile,
+				Provider:      "keepass",
+				VaultPath:     dbPath,
 				IncludeFields: []string{"user*", "secret*"},
 				ExcludeFields: []string{"secret_old"},
 				Mapping: []config.MappingRule{
@@ -1457,23 +1467,20 @@ func TestShow_RawAndExplainErrors(t *testing.T) {
 }
 
 func TestShow_RawFlag_ColonAttributeSelector(t *testing.T) {
-	tempDir := t.TempDir()
-	yamlFile := filepath.Join(tempDir, "vault.yaml")
-	yamlContent := `entries:
-  app:
-    user_name: Alice
-    secret_key: s3cr3t
-    secret_old: deprecated
-`
-	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
-		t.Fatalf("failed to write test yaml: %v", err)
-	}
+	dbPath := writeTestKDBX(t, "test_vault", "password123", testKDBXEntry{
+		Title: "app",
+		Attributes: map[string]string{
+			"user_name":  "Alice",
+			"secret_key": "s3cr3t",
+			"secret_old": "deprecated",
+		},
+	})
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"test_vault": {
-				Provider:      "yaml",
-				VaultPath:     yamlFile,
+				Provider:      "keepass",
+				VaultPath:     dbPath,
 				ExcludeFields: []string{"secret_old"},
 				KeyFormat:     "env",
 			},
@@ -1539,23 +1546,20 @@ func TestShow_RawFlag_ColonAttributeSelector(t *testing.T) {
 }
 
 func TestShow_RawFlag_WithMergeFlag(t *testing.T) {
-	tempDir := t.TempDir()
-	yamlFile := filepath.Join(tempDir, "vault.yaml")
-	yamlContent := `entries:
-  app:
-    user_name: Alice
-    secret_key: s3cr3t
-    secret_old: deprecated
-`
-	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
-		t.Fatalf("failed to write test yaml: %v", err)
-	}
+	dbPath := writeTestKDBX(t, "test_vault", "password123", testKDBXEntry{
+		Title: "app",
+		Attributes: map[string]string{
+			"user_name":  "Alice",
+			"secret_key": "s3cr3t",
+			"secret_old": "deprecated",
+		},
+	})
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"test_vault": {
-				Provider:      "yaml",
-				VaultPath:     yamlFile,
+				Provider:      "keepass",
+				VaultPath:     dbPath,
 				ExcludeFields: []string{"secret_old"},
 				Mapping: []config.MappingRule{
 					{Match: "^user_(.*)$", Key: "account_$1"},
@@ -1606,23 +1610,24 @@ func TestShow_RawFlag_WithMergeFlag(t *testing.T) {
 	}
 }
 
-func TestShow_RawFlag_ComposedCustomVault_UnwrapsOriginal(t *testing.T) {
+func TestShow_RawFlag_SearchComposedVault_UnwrapsOriginal(t *testing.T) {
+	dbPath := writeTestKDBX(t, "backend", "password123", testKDBXEntry{
+		Title: "db",
+		Attributes: map[string]string{
+			"db_user":      "postgres",
+			"db_pass":      "secret123",
+			"secret_token": "raw_tok",
+		},
+	})
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"backend": {
-				Provider: "custom_vault",
-				Entities: map[string]config.CustomEntityConfig{
-					"db": {
-						Attributes: map[string]any{
-							"db_user":      "postgres",
-							"db_pass":      "secret123",
-							"secret_token": "raw_tok",
-						},
-					},
-				},
+				Provider:  "keepass",
+				VaultPath: dbPath,
 			},
 			"app": {
-				Provider:      "custom_vault",
+				Provider:      "search",
+				Sources:       []string{"backend://db"},
 				ExcludeFields: []string{"secret_token"},
 				Mapping: []config.MappingRule{
 					{Match: "^db_(.*)$", Key: "database_$1"},
@@ -1630,12 +1635,6 @@ func TestShow_RawFlag_ComposedCustomVault_UnwrapsOriginal(t *testing.T) {
 				KeyFormat: "env",
 				Attributes: map[string]any{
 					"INJECTED_ATTR": "val",
-				},
-				Entities: map[string]config.CustomEntityConfig{
-					"service": {
-						IsComposed: true,
-						Merge:      []string{"backend://db"},
-					},
 				},
 			},
 		},
@@ -1650,7 +1649,7 @@ func TestShow_RawFlag_ComposedCustomVault_UnwrapsOriginal(t *testing.T) {
 	}
 	os.Stdout = w
 
-	exitCode := Show([]string{"app://service", "--raw", "-o", "json"}, cfg)
+	exitCode := Show([]string{"app://db", "--raw", "-o", "json"}, cfg)
 	_ = w.Close()
 
 	var buf bytes.Buffer
@@ -1678,21 +1677,18 @@ func TestShow_RawFlag_ComposedCustomVault_UnwrapsOriginal(t *testing.T) {
 }
 
 func TestShow_ExplainFlag_MultipleMappingRules_FirstWins(t *testing.T) {
-	tempDir := t.TempDir()
-	yamlFile := filepath.Join(tempDir, "vault.yaml")
-	yamlContent := `entries:
-  app:
-    user_name: Alice
-`
-	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
-		t.Fatalf("failed to write test yaml: %v", err)
-	}
+	dbPath := writeTestKDBX(t, "test_vault", "password123", testKDBXEntry{
+		Title: "app",
+		Attributes: map[string]string{
+			"user_name": "Alice",
+		},
+	})
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"test_vault": {
-				Provider:  "yaml",
-				VaultPath: yamlFile,
+				Provider:  "keepass",
+				VaultPath: dbPath,
 				Mapping: []config.MappingRule{
 					{Match: "^user_(.*)$", Key: "first_$1"},
 					{Match: "^user_.*$", Key: "second_name"},
@@ -1739,21 +1735,20 @@ func TestShow_ExplainFlag_MultipleMappingRules_FirstWins(t *testing.T) {
 	}
 }
 
-func TestShow_ExplainFlag_NestedKeyFormatting(t *testing.T) {
+func TestShow_ExplainFlag_KeyFormatting(t *testing.T) {
+	dbPath := writeTestKDBX(t, "kp_kebab", "password123", testKDBXEntry{
+		Title: "item",
+		Attributes: map[string]string{
+			"server_config": "enabled",
+			"port_number":   "8080",
+		},
+	})
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"custom": {
-				Provider:  "custom_vault",
+			"kp_kebab": {
+				Provider:  "keepass",
+				VaultPath: dbPath,
 				KeyFormat: "kebab",
-				Entities: map[string]config.CustomEntityConfig{
-					"item": {
-						Attributes: map[string]any{
-							"server_config": map[string]any{
-								"port_number": 8080,
-							},
-						},
-					},
-				},
 			},
 		},
 	}
@@ -1767,7 +1762,7 @@ func TestShow_ExplainFlag_NestedKeyFormatting(t *testing.T) {
 	}
 	os.Stdout = w
 
-	exitCode := Show([]string{"custom://item", "--explain", "-o", "json"}, cfg)
+	exitCode := Show([]string{"kp_kebab://item", "--explain", "-o", "json"}, cfg)
 	_ = w.Close()
 
 	var buf bytes.Buffer
@@ -1788,41 +1783,40 @@ func TestShow_ExplainFlag_NestedKeyFormatting(t *testing.T) {
 		t.Fatalf("failed to unmarshal JSON: %v", err)
 	}
 
-	// Verify formatted_keys contains unformatted source dot-path "server_config.port_number"
 	if explanation.KeyFormatted.FormattedKeys["server_config"] != "server-config" {
 		t.Errorf("expected server_config -> server-config, got %q", explanation.KeyFormatted.FormattedKeys["server_config"])
 	}
-	if explanation.KeyFormatted.FormattedKeys["server_config.port_number"] != "server-config.port-number" {
-		t.Errorf("expected server_config.port_number -> server-config.port-number, got %q", explanation.KeyFormatted.FormattedKeys["server_config.port_number"])
+	if explanation.KeyFormatted.FormattedKeys["port_number"] != "port-number" {
+		t.Errorf("expected port_number -> port-number, got %q", explanation.KeyFormatted.FormattedKeys["port_number"])
 	}
 }
 
-func TestShow_ExplainFlag_ComposedCustomVault_EntityLevelConfig(t *testing.T) {
+func TestShow_ExplainFlag_SearchComposedVault(t *testing.T) {
+	dbPath := writeTestKDBX(t, "base_vault", "password123", testKDBXEntry{
+		Title: "base",
+		Attributes: map[string]string{
+			"api_key":   "secret",
+			"user_id":   "123",
+			"old_token": "discard",
+		},
+	})
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
+			"base_vault": {
+				Provider:  "keepass",
+				VaultPath: dbPath,
+			},
 			"composed_vault": {
-				Provider: "custom_vault",
-				Entities: map[string]config.CustomEntityConfig{
-					"base": {
-						Attributes: map[string]any{
-							"api_key":   "secret",
-							"user_id":   "123",
-							"old_token": "discard",
-						},
-					},
-					"entity_override": {
-						IsComposed:    true,
-						Merge:         []string{"composed_vault://base"},
-						IncludeFields: []string{"api_*", "user_*"},
-						ExcludeFields: []string{"old_*"},
-						Mapping: []config.MappingRule{
-							{Match: "^api_(.*)$", Key: "auth_$1"},
-						},
-						KeyFormat: "env",
-						Attributes: map[string]any{
-							"ENTITY_ATTR": "custom",
-						},
-					},
+				Provider:      "search",
+				Sources:       []string{"base_vault://base"},
+				IncludeFields: []string{"api_*", "user_*"},
+				ExcludeFields: []string{"old_*"},
+				Mapping: []config.MappingRule{
+					{Match: "^api_(.*)$", Key: "auth_$1"},
+				},
+				KeyFormat: "env",
+				Attributes: map[string]any{
+					"ENTITY_ATTR": "custom",
 				},
 			},
 		},
@@ -1837,7 +1831,7 @@ func TestShow_ExplainFlag_ComposedCustomVault_EntityLevelConfig(t *testing.T) {
 	}
 	os.Stdout = w
 
-	exitCode := Show([]string{"composed_vault://entity_override", "--explain", "-o", "json"}, cfg)
+	exitCode := Show([]string{"composed_vault://base", "--explain", "-o", "json"}, cfg)
 	_ = w.Close()
 
 	var buf bytes.Buffer
@@ -1986,25 +1980,22 @@ func TestShow_RawEnvKeysFormat_KeepsTitleAndTags(t *testing.T) {
 }
 
 func TestShow_ExplainFlag_Stage1PristineSnapshot(t *testing.T) {
-	tempDir := t.TempDir()
-	yamlFile := filepath.Join(tempDir, "vault.yaml")
-	yamlContent := `entries:
-  app:
-    user_name: Alice
-    secret_key: s3cr3t
-    nested_ref: '{{ get "env://SHOW_TEST_PRISTINE_VAR" }}'
-`
-	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
-		t.Fatalf("failed to write test yaml: %v", err)
-	}
+	dbPath := writeTestKDBX(t, "test_vault", "password123", testKDBXEntry{
+		Title: "app",
+		Attributes: map[string]string{
+			"user_name":  "Alice",
+			"secret_key": "s3cr3t",
+			"nested_ref": `{{ get "env://SHOW_TEST_PRISTINE_VAR" }}`,
+		},
+	})
 
 	t.Setenv("SHOW_TEST_PRISTINE_VAR", "resolved_val")
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"test_vault": {
-				Provider:  "yaml",
-				VaultPath: yamlFile,
+				Provider:  "keepass",
+				VaultPath: dbPath,
 			},
 		},
 	}
@@ -2055,23 +2046,20 @@ func TestShow_ExplainFlag_Stage1PristineSnapshot(t *testing.T) {
 }
 
 func TestShow_ExplainFlag_ParityWithShowOutput(t *testing.T) {
-	tempDir := t.TempDir()
-	yamlFile := filepath.Join(tempDir, "vault.yaml")
-	yamlContent := `entries:
-  app:
-    user_name: Alice
-    secret_key: s3cr3t
-    notes: Some notes
-`
-	if err := os.WriteFile(yamlFile, []byte(yamlContent), 0600); err != nil {
-		t.Fatalf("failed to write test yaml: %v", err)
-	}
+	dbPath := writeTestKDBX(t, "test_vault", "password123", testKDBXEntry{
+		Title: "app",
+		Attributes: map[string]string{
+			"user_name":  "Alice",
+			"secret_key": "s3cr3t",
+			"notes":      "Some notes",
+		},
+	})
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"test_vault": {
-				Provider:      "yaml",
-				VaultPath:     yamlFile,
+				Provider:      "keepass",
+				VaultPath:     dbPath,
 				IncludeFields: []string{"user*", "secret*"},
 				ExcludeFields: []string{"user_name"},
 				Mapping: []config.MappingRule{
