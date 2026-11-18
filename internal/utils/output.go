@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-
-	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 // RenderOutput serializes the data to YAML or JSON and writes it to stdout.
@@ -23,7 +21,7 @@ func RenderOutputTo(w io.Writer, data any, asJSON bool, errorLabel string) error
 			return fmt.Errorf("failed to serialize %s to JSON: %w", errorLabel, err)
 		}
 	} else {
-		enc := yaml.NewEncoder(w)
+		enc := NewYAMLEncoder(w)
 		enc.SetIndent(2)
 		if err := enc.Encode(data); err != nil {
 			if closeErr := enc.Close(); closeErr != nil {
@@ -134,5 +132,5 @@ func FormatKey(key string) string {
 // SerializeAttrValue converts an attribute value into a string representation for environment usage.
 // Strings are returned as-is, slices and maps are serialized as YAML, and other types are formatted using fast-path conversions or %v.
 func SerializeAttrValue(val any) (string, error) {
-	return yaml.SerializeValue(val)
+	return SerializeYAMLValue(val)
 }

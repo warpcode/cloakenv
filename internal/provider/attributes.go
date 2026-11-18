@@ -9,7 +9,6 @@ import (
 	"text/template"
 
 	"github.com/warpcode/cloakenv/internal/utils"
-	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 // AttributesProvider wraps a SecretProvider and injects configured attributes
@@ -201,13 +200,13 @@ func fromJSON(str string) (any, error) {
 }
 
 func toYAML(v any) (string, error) {
-	b, err := yaml.Marshal(v)
+	b, err := utils.MarshalYAML(v)
 	return strings.TrimSpace(string(b)), err
 }
 
 func fromYAML(str string) (any, error) {
 	var out any
-	if err := yaml.Unmarshal([]byte(str), &out); err != nil {
+	if err := utils.UnmarshalYAML([]byte(str), &out); err != nil {
 		return nil, fmt.Errorf("fromYAML failed: %w", err)
 	}
 	return out, nil

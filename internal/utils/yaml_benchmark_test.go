@@ -1,8 +1,8 @@
-package yaml
+package utils
 
 import "testing"
 
-func BenchmarkSerializeValue(b *testing.B) {
+func BenchmarkSerializeYAMLValue(b *testing.B) {
 	strVal := "hello_world_secret"
 	intVal := 123456
 	boolVal := true
@@ -16,35 +16,35 @@ func BenchmarkSerializeValue(b *testing.B) {
 	b.Run("StringScalar", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			_, _ = SerializeValue(strVal)
+			_, _ = SerializeYAMLValue(strVal)
 		}
 	})
 
 	b.Run("IntScalar", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			_, _ = SerializeValue(intVal)
+			_, _ = SerializeYAMLValue(intVal)
 		}
 	})
 
 	b.Run("BoolScalar", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			_, _ = SerializeValue(boolVal)
+			_, _ = SerializeYAMLValue(boolVal)
 		}
 	})
 
 	b.Run("SliceValue", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			_, _ = SerializeValue(sliceVal)
+			_, _ = SerializeYAMLValue(sliceVal)
 		}
 	})
 
 	b.Run("MapValue", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			_, _ = SerializeValue(mapVal)
+			_, _ = SerializeYAMLValue(mapVal)
 		}
 	})
 }
