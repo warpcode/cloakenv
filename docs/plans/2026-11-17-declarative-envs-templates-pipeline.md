@@ -3,7 +3,7 @@
 > **Status**: Active
 > **Created**: 2026-11-17 · **Parent**: none
 > **Charter**: Decouple secret retrieval (`vaults:`) from flat environment injection (`envs:`) and artifact/file rendering (`templates:`), eliminate `expr-lang/expr` and multi-layer provider wrappers in favor of an ordered `RuleEngine` (`pass`, `match`, `set`), support ephemeral `0600` file delivery with zero-on-exit cleanup in `autoload`, and lock down the CLI surface (`config.yaml` as the strict security policy boundary) by removing plaintext-exposing commands (`get`, `show`, `search`, `set`, `delete`, `sync`).
-> **Sources**: [ADR-0003](../adr/0003-declarative-envs-templates-and-zero-leak-cli.md) · [Epic #467](https://github.com/warpcode/cloakenv/issues/467) · Branch: `epic468_refactor_secret_pipeline`
+> **Sources**: [ADR-0003](../adr/0003-declarative-envs-templates-and-zero-leak-cli.md) · [Epic #467](https://github.com/warpcode/cloakenv/issues/467) · Branch: `epic467_refactor_secret_pipeline`
 
 ---
 
