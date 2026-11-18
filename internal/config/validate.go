@@ -261,10 +261,56 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 
 	// 5. Validate Autoload Rules
 	for i, rule := range cfg.Autoload {
+		ruleLabel := fmt.Sprintf("autoload rule #%d", i+1)
 		if strings.TrimSpace(rule.Match) == "" {
-			res.Errors = append(res.Errors, fmt.Sprintf("autoload rule #%d: missing 'match' pattern", i+1))
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: missing 'match' pattern", ruleLabel))
 		} else if _, err := regexp.Compile(rule.Match); err != nil && !isWildcardAutoloadPattern(rule.Match) {
-			res.Errors = append(res.Errors, fmt.Sprintf("autoload rule #%d: invalid regex pattern %q: %v", i+1, rule.Match, err))
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: invalid regex pattern %q: %v", ruleLabel, rule.Match, err))
+		}
+
+		for j, item := range rule.Envs {
+			if item.Name != "" {
+				if _, exists := cfg.Envs[item.Name]; !exists {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s env #%d: references unknown env %q", ruleLabel, j+1, item.Name))
+				}
+			} else if len(item.Inline) > 0 {
+				inlineKeys := make([]string, 0, len(item.Inline))
+				for k := range item.Inline {
+					inlineKeys = append(inlineKeys, k)
+				}
+				slices.Sort(inlineKeys)
+				for _, k := range inlineKeys {
+					v := item.Inline[k]
+					if strings.Contains(v, "{{") {
+						if err := validateTemplateSyntax(fmt.Sprintf("%s env #%d key %q", ruleLabel, j+1, k), v); err != nil {
+							res.Errors = append(res.Errors, err.Error())
+						}
+					}
+				}
+			} else {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s env #%d: env item cannot be empty", ruleLabel, j+1))
+			}
+		}
+
+		for j, tmplAtt := range rule.Templates {
+			attLabel := fmt.Sprintf("%s template #%d", ruleLabel, j+1)
+			if tmplAtt.Template == "" {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: missing required field 'template'", attLabel))
+			} else if _, exists := cfg.Templates[tmplAtt.Template]; !exists {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: references unknown template %q", attLabel, tmplAtt.Template))
+			}
+			hasTarget := tmplAtt.Env != "" || tmplAtt.EnvPath != "" || tmplAtt.Path != ""
+			if !hasTarget {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: must set at least one of 'env', 'env_path', or 'path'", attLabel))
+			}
+			if tmplAtt.Env != "" && (tmplAtt.EnvPath != "" || tmplAtt.Path != "") {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: cannot combine 'env' with 'env_path' or 'path'", attLabel))
+			}
+			if tmplAtt.Path != "" && strings.Contains(tmplAtt.Path, "{{") {
+				if err := validateTemplateSyntax(fmt.Sprintf("%s path", attLabel), tmplAtt.Path); err != nil {
+					res.Errors = append(res.Errors, err.Error())
+				}
+			}
 		}
 	}
 

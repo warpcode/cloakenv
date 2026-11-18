@@ -292,24 +292,15 @@ func TestRun_Autoload(t *testing.T) {
 			os.Exit(1)
 		}
 
-		dbPath := writeTestKDBX(t, "mock_vault", "testpass", testKDBXEntry{
-			Title: "app",
-			Attributes: map[string]string{
-				"CLOAKENV_TEST_AUTOLOAD_VAR": "autoloaded_secret_value",
-			},
-		})
 		cfg := &config.Config{
-			Vaults: map[string]config.VaultConfig{
-				"mock_vault": {
-					Provider:      "keepass",
-					VaultPath:     dbPath,
-					IncludeFields: []string{"CLOAKENV_TEST_AUTOLOAD_VAR"},
-				},
-			},
 			Autoload: []config.AutoloadRule{
 				{
-					Match:  "*TestHelperProcess*",
-					Vaults: []string{"mock_vault://app"},
+					Match: "*TestHelperProcess*",
+					Envs: []config.AutoloadEnvItem{
+						config.InlineEnvItem(map[string]string{
+							"CLOAKENV_TEST_AUTOLOAD_VAR": "autoloaded_secret_value",
+						}),
+					},
 				},
 			},
 		}
@@ -323,25 +314,16 @@ func TestRun_Autoload(t *testing.T) {
 		if err := json.Unmarshal([]byte(os.Getenv("RUN_ARGS")), &args); err != nil {
 			os.Exit(1)
 		}
-		dbPath := writeTestKDBX(t, "mock_vault", "testpass", testKDBXEntry{
-			Title: "app",
-			Attributes: map[string]string{
-				"CLOAKENV_TEST_REGEX_SECRET": "transformed_secret_val",
-			},
-		})
 		cfg := &config.Config{
-			Vaults: map[string]config.VaultConfig{
-				"mock_vault": {
-					Provider:      "keepass",
-					VaultPath:     dbPath,
-					IncludeFields: []string{"CLOAKENV_TEST_REGEX_SECRET"},
-				},
-			},
 			Autoload: []config.AutoloadRule{
 				{
 					Match:   `^my-alias\s+(.*)$`,
 					Command: fmt.Sprintf("%q $1", os.Args[0]),
-					Vaults:  []string{"mock_vault://app"},
+					Envs: []config.AutoloadEnvItem{
+						config.InlineEnvItem(map[string]string{
+							"CLOAKENV_TEST_REGEX_SECRET": "transformed_secret_val",
+						}),
+					},
 				},
 			},
 		}
@@ -461,27 +443,30 @@ func TestRun_DryRun(t *testing.T) {
 			os.Exit(1)
 		}
 
-		dbPath := writeTestKDBX(t, "mock_vault", "testpass", testKDBXEntry{
-			Title: "app",
+		dbPath := writeTestKDBX(t, "merge_vault", "testpass", testKDBXEntry{
+			Title: "entry",
 			Attributes: map[string]string{
-				"CLOAKENV_TEST_USER":   "secret_admin_user",
-				"CLOAKENV_TEST_PASS":   "super_secret_password_12345",
-				"CLOAKENV_TEST_FILTER": "unwanted_secret_value",
+				"CLOAKENV_TEST_ALLOWED": "secret_allowed_val",
+				"CLOAKENV_TEST_FILTER":  "secret_filter_val",
 			},
 		})
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
-				"mock_vault": {
-					Provider:      "keepass",
-					VaultPath:     dbPath,
-					IncludeFields: []string{"CLOAKENV_TEST_*"},
+				"merge_vault": {
+					Provider:  "keepass",
+					VaultPath: dbPath,
 				},
 			},
 			Autoload: []config.AutoloadRule{
 				{
 					Match:   `^my-alias\s+(.*)$`,
 					Command: "expanded-tool $1",
-					Vaults:  []string{"mock_vault://app"},
+					Envs: []config.AutoloadEnvItem{
+						config.InlineEnvItem(map[string]string{
+							"CLOAKENV_TEST_USER": "secret_admin_user",
+							"CLOAKENV_TEST_PASS": "super_secret_password_12345",
+						}),
+					},
 				},
 			},
 		}
@@ -545,7 +530,8 @@ func TestRun_DryRun(t *testing.T) {
 	t.Run("Previews autoloaded transformations and merges with whitelist", func(t *testing.T) {
 		runArgs := []string{
 			"--dry-run",
-			"-i", "CLOAKENV_TEST_USER",
+			"-m", "merge_vault://entry",
+			"-i", "CLOAKENV_TEST_ALLOWED",
 			"--",
 			"my-alias", "subcommand", "--verbose",
 		}
@@ -570,21 +556,20 @@ func TestRun_DryRun(t *testing.T) {
 			t.Errorf("Expected transformed command line, got:\n%s", output)
 		}
 
-		// Whitelisted key must be shown
-		if !strings.Contains(output, "CLOAKENV_TEST_USER") {
-			t.Errorf("Expected whitelisted key CLOAKENV_TEST_USER, got:\n%s", output)
+		// Autoload envs and whitelisted merge key must be shown
+		for _, wantKey := range []string{"CLOAKENV_TEST_USER", "CLOAKENV_TEST_PASS", "CLOAKENV_TEST_ALLOWED"} {
+			if !strings.Contains(output, wantKey) {
+				t.Errorf("Expected key %s, got:\n%s", wantKey, output)
+			}
 		}
 
-		// Filtered keys must NOT be shown
-		if strings.Contains(output, "CLOAKENV_TEST_PASS") {
-			t.Errorf("Expected CLOAKENV_TEST_PASS to be filtered out by -i, but found in:\n%s", output)
-		}
+		// Filtered merge key must NOT be shown
 		if strings.Contains(output, "CLOAKENV_TEST_FILTER") {
 			t.Errorf("Expected CLOAKENV_TEST_FILTER to be filtered out by -i, but found in:\n%s", output)
 		}
 
 		// Secret values must NEVER be displayed
-		if strings.Contains(output, "secret_admin_user") || strings.Contains(output, "super_secret_password_12345") {
+		if strings.Contains(output, "secret_admin_user") || strings.Contains(output, "super_secret_password_12345") || strings.Contains(output, "secret_allowed_val") || strings.Contains(output, "secret_filter_val") {
 			t.Errorf("SECURITY LEAK: secret values displayed in dry-run output:\n%s", output)
 		}
 	})

@@ -329,11 +329,11 @@ vaults:
 	t.Run("autoload wildcard glob pattern passes validation while broken regex fails", func(t *testing.T) {
 		validGlobYAML := `autoload:
   - match: "*.sh"
-    env:
-      FOO: "env://FOO"
+    envs:
+      - FOO: "bar"
   - match: "npm run *"
-    env:
-      BAR: "env://BAR"`
+    envs:
+      - BAR: "baz"`
 		cfgPath := filepath.Join(tempDir, "autoload_glob.yaml")
 		if err := os.WriteFile(cfgPath, []byte(validGlobYAML), 0600); err != nil {
 			t.Fatalf("failed to write autoload glob config: %v", err)
@@ -348,8 +348,8 @@ vaults:
 
 		invalidRegexYAML := `autoload:
   - match: "^(aws"
-    env:
-      FOO: "env://FOO"`
+    envs:
+      - FOO: "bar"`
 		badPath := filepath.Join(tempDir, "autoload_bad_regex.yaml")
 		if err := os.WriteFile(badPath, []byte(invalidRegexYAML), 0600); err != nil {
 			t.Fatalf("failed to write invalid regex config: %v", err)
@@ -780,4 +780,92 @@ envs:
 			t.Errorf("expected template syntax error, got:\n%s", joined)
 		}
 	})
+}
+
+func TestValidate_AutoloadEnvsAndTemplates(t *testing.T) {
+	tempDir := t.TempDir()
+
+	validYAML := `envs:
+  my_env:
+    - vault: env
+      rules:
+        - type: pass
+          include: ["FOO"]
+
+templates:
+  my_tmpl:
+    driver: json
+    vaults:
+      - vault: env
+        rules:
+          - type: pass
+            include: ["FOO"]
+
+autoload:
+  - match: "^app"
+    envs:
+      - "my_env"
+      - LOG_LEVEL: "INFO"
+        COMBINED: "{{ .FOO }}-ok"
+    templates:
+      - template: "my_tmpl"
+        env_path: "APP_CFG"
+        path: "/tmp/{{ .LOG_LEVEL }}.json"`
+	validPath := filepath.Join(tempDir, "valid_autoload.yaml")
+	_ = os.WriteFile(validPath, []byte(validYAML), 0600)
+	res, err := Validate(validPath, true)
+	if err != nil {
+		t.Fatalf("Validate error: %v", err)
+	}
+	if !res.IsValid() {
+		t.Fatalf("expected valid autoload config, got errors: %v", res.Errors)
+	}
+
+	invalidYAML := `envs:
+  my_env:
+    - vault: env
+      rules:
+        - type: pass
+          include: ["FOO"]
+templates:
+  my_tmpl:
+    driver: json
+    vaults:
+      - vault: env
+        rules:
+          - type: pass
+            include: ["FOO"]
+autoload:
+  - match: "^app"
+    envs:
+      - "missing_env"
+      - BAD: "{{ .bad | missingFunc }}"
+    templates:
+      - template: "missing_tmpl"
+        env: "RAW"
+        env_path: "CONFLICT"
+      - template: "my_tmpl"
+      - template: "my_tmpl"
+        path: "{{ .bad | missingFunc }}"`
+	badPath := filepath.Join(tempDir, "bad_autoload.yaml")
+	_ = os.WriteFile(badPath, []byte(invalidYAML), 0600)
+	badRes, err := Validate(badPath, true)
+	if err != nil {
+		t.Fatalf("Validate error: %v", err)
+	}
+	if badRes.IsValid() {
+		t.Fatal("expected autoload validation errors, got none")
+	}
+	joined := strings.Join(badRes.Errors, "\n")
+	for _, want := range []string{
+		`unknown env "missing_env"`,
+		`unknown template "missing_tmpl"`,
+		`cannot combine 'env' with 'env_path' or 'path'`,
+		`must set at least one of 'env', 'env_path', or 'path'`,
+		`template syntax error`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected errors to contain %q, got:\n%s", want, joined)
+		}
+	}
 }

@@ -65,10 +65,19 @@ func TestOrchestratorFacade(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"test_vault": {Provider: "env"},
 		},
+		Envs: map[string][]config.VaultSourceConfig{
+			"deploy_env": {
+				{
+					Vault: "test_vault",
+					Query: `{{ eq .title "Service A" }}`,
+					Rules: []config.RuleConfig{{Type: "pass"}},
+				},
+			},
+		},
 		Autoload: []config.AutoloadRule{
 			{
-				Match:  "deploy",
-				Vaults: []string{"test_vault://service_a"},
+				Match: "deploy",
+				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("deploy_env")},
 			},
 		},
 	}

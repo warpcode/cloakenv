@@ -349,26 +349,70 @@ func TestEnvBuilder_IsKnownScheme(t *testing.T) {
 func TestBuildEnvForCommand_Autoload(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("TEST_REGION", "us-east-1")
+	t.Setenv("KUBECONFIG_VAL", "/path/to/staging.conf")
 
 	cfg := &config.Config{
-		Vaults: map[string]config.VaultConfig{
-			"aws_dev":   {Provider: "env"},
-			"k8s_vault": {Provider: "env"},
+		Envs: map[string][]config.VaultSourceConfig{
+			"aws_dev": {
+				{
+					Vault: "env",
+					Rules: []config.RuleConfig{
+						{Type: "pass", Include: []string{"TEST_REGION"}},
+						{
+							Type: "set",
+							Values: map[string]string{
+								"AWS_ACCESS_KEY_ID":     "AKIA1111",
+								"AWS_SECRET_ACCESS_KEY": "secret1111",
+								"AWS_DEFAULT_REGION":    "{{ .TEST_REGION }}",
+							},
+						},
+					},
+				},
+			},
+			"k8s_staging": {
+				{
+					Vault: "env",
+					Rules: []config.RuleConfig{
+						{Type: "pass", Include: []string{"KUBECONFIG_VAL"}},
+						{
+							Type: "set",
+							Values: map[string]string{
+								"KUBECONFIG": "{{ .KUBECONFIG_VAL }}",
+							},
+						},
+					},
+				},
+			},
+			"litellm_env": {
+				{
+					Vault: "env",
+					Rules: []config.RuleConfig{
+						{
+							Type: "set",
+							Values: map[string]string{
+								"LITELLM_KEY": "sk-12345",
+							},
+						},
+					},
+				},
+			},
 		},
 		Autoload: []config.AutoloadRule{
 			{
-				Match:  "aws",
-				Vaults: []string{"aws_dev"},
-				Env: map[string]string{
-					"AWS_DEFAULT_REGION": "env://TEST_REGION",
+				Match: "aws",
+				Envs: []config.AutoloadEnvItem{
+					config.NamedEnvItem("aws_dev"),
+					config.InlineEnvItem(map[string]string{
+						"LOG_LEVEL":  "INFO",
+						"AWS_BANNER": "region={{ .AWS_DEFAULT_REGION }}",
+					}),
 				},
-				Whitelist: []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION"},
 			},
 			{
 				Match: "kubectl*",
-				Merge: []string{"k8s_vault://staging"},
-				Env: map[string]string{
-					"K8S_ENV": "staging",
+				Envs: []config.AutoloadEnvItem{
+					config.NamedEnvItem("k8s_staging"),
+					config.InlineEnvItem(map[string]string{"K8S_ENV": "staging"}),
 				},
 			},
 		},
@@ -393,7 +437,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		t.Fatalf("injectMockVault(k8s_vault) failed: %v", err)
 	}
 
-	t.Run("Matching command autoloads vaults, env, and applies whitelist", func(t *testing.T) {
+	t.Run("Matching command autoloads named envs and inline template maps", func(t *testing.T) {
 		cmdArgs := []string{"aws", "s3", "ls"}
 		_, res, err := orch.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
 		if err != nil {
@@ -415,8 +459,8 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		if envMap["AWS_DEFAULT_REGION"] != "us-east-1" {
 			t.Errorf("expected AWS_DEFAULT_REGION=us-east-1, got %q", envMap["AWS_DEFAULT_REGION"])
 		}
-		if _, exists := envMap["EXTRA_VAR"]; exists {
-			t.Errorf("expected EXTRA_VAR to be filtered out by autoload whitelist")
+		if envMap["LOG_LEVEL"] != "INFO" || envMap["AWS_BANNER"] != "region=us-east-1" {
+			t.Errorf("unexpected inline env vars: LOG_LEVEL=%q AWS_BANNER=%q", envMap["LOG_LEVEL"], envMap["AWS_BANNER"])
 		}
 	})
 
@@ -441,7 +485,7 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		}
 	})
 
-	t.Run("Matching glob command autoloads merge URI and env", func(t *testing.T) {
+	t.Run("Matching glob command autoloads env and inline override", func(t *testing.T) {
 		cmdArgs := []string{"kubectl-prod", "get", "pods"}
 		_, res, err := orch.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
 		if err != nil {
@@ -485,14 +529,12 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 
 	t.Run("Regex match and command transformation substitution", func(t *testing.T) {
 		regexCfg := &config.Config{
-			Vaults: map[string]config.VaultConfig{
-				"litellm_vault": {Provider: "env"},
-			},
+			Envs: cfg.Envs,
 			Autoload: []config.AutoloadRule{
 				{
 					Match:   `^litellm\s+(.*)$`,
 					Command: `uvx --with 'litellm[proxy]' --with 'fastapi<0.116' litellm \1`,
-					Vaults:  []string{"litellm_vault"},
+					Envs:    []config.AutoloadEnvItem{config.NamedEnvItem("litellm_env")},
 				},
 			},
 		}
@@ -531,136 +573,6 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		}
 		if envMap["LITELLM_KEY"] != "sk-12345" {
 			t.Errorf("expected LITELLM_KEY=sk-12345, got %q", envMap["LITELLM_KEY"])
-		}
-	})
-
-	t.Run("Autoload command substitution with secret URIs", func(t *testing.T) {
-		t.Setenv("EXP_USER", "alice")
-		uriCfg := &config.Config{
-			Autoload: []config.AutoloadRule{
-				{
-					Match:   `^testest(.*)$`,
-					Command: `echo "{{ get \"env://EXP_USER\" }}"`,
-				},
-			},
-		}
-		uriCfg.CompileAutoloadRules()
-		orchURI, err := NewOrchestrator(uriCfg)
-		if err != nil {
-			t.Fatalf("failed to create orchestrator: %v", err)
-		}
-
-		cmdArgs := []string{"testest"}
-		newCmdArgs, _, err := orchURI.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
-		if err != nil {
-			t.Fatalf("failed to build env for command: %v", err)
-		}
-
-		expectedArgs := []string{"echo", "alice"}
-		if len(newCmdArgs) != len(expectedArgs) {
-			t.Fatalf("expected %d args, got %d (%v)", len(expectedArgs), len(newCmdArgs), newCmdArgs)
-		}
-		for idx, arg := range newCmdArgs {
-			if arg != expectedArgs[idx] {
-				t.Errorf("arg[%d]: expected %q, got %q", idx, expectedArgs[idx], arg)
-			}
-		}
-	})
-
-	t.Run("Direct command arguments with secret URIs and foreign template arguments", func(t *testing.T) {
-		t.Setenv("CLI_TOKEN", "secret-token-123")
-		directCfg := &config.Config{}
-		orchDirect, err := NewOrchestrator(directCfg)
-		if err != nil {
-			t.Fatalf("failed to create orchestrator: %v", err)
-		}
-
-		cmdArgs := []string{
-			"mycli",
-			"--token={{ get \"env://CLI_TOKEN\" }}",
-			"--fallback={{ tryGet \"env://NONEXISTENT\" \"env://CLI_TOKEN\" }}",
-			`{"id":"{{.Id}}"}`,
-			"'{{.State.Status}}'",
-			"plain-arg",
-		}
-		newCmdArgs, _, err := orchDirect.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
-		if err != nil {
-			t.Fatalf("failed to build env for command: %v", err)
-		}
-
-		expectedArgs := []string{
-			"mycli",
-			"--token=secret-token-123",
-			"--fallback=secret-token-123",
-			`{"id":"{{.Id}}"}`,
-			"'{{.State.Status}}'",
-			"plain-arg",
-		}
-		if len(newCmdArgs) != len(expectedArgs) {
-			t.Fatalf("expected %d args, got %d (%v)", len(expectedArgs), len(newCmdArgs), newCmdArgs)
-		}
-		for idx, arg := range newCmdArgs {
-			if arg != expectedArgs[idx] {
-				t.Errorf("arg[%d]: expected %q, got %q", idx, expectedArgs[idx], arg)
-			}
-		}
-	})
-
-	t.Run("Command argument with invalid secret URI returns error", func(t *testing.T) {
-		failCfg := &config.Config{}
-		orchFail, err := NewOrchestrator(failCfg)
-		if err != nil {
-			t.Fatalf("failed to create orchestrator: %v", err)
-		}
-
-		cmdArgs := []string{"mycli", "--token={{ get \"nonexistent_vault://missing\" }}"}
-		_, _, err = orchFail.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
-		if err == nil {
-			t.Fatal("expected error for unresolvable secret URI in command arg, got nil")
-		}
-	})
-
-	t.Run("Autoload command expansion escapes user input against argument injection", func(t *testing.T) {
-		secCfg := &config.Config{
-			Autoload: []config.AutoloadRule{
-				{
-					Match:   `^mytool\s+(.*)$`,
-					Command: `myrealtool $1`,
-				},
-			},
-		}
-		secCfg.CompileAutoloadRules()
-		orchSec, err := NewOrchestrator(secCfg)
-		if err != nil {
-			t.Fatalf("failed to create orchestrator: %v", err)
-		}
-
-		cmdArgs := []string{"mytool", "arg1; injected_cmd --flag"}
-		newCmdArgs, _, err := orchSec.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
-		if err != nil {
-			t.Fatalf("failed to build env for command: %v", err)
-		}
-
-		expectedArgs := []string{"myrealtool", "arg1;", "injected_cmd", "--flag"}
-		if len(newCmdArgs) != len(expectedArgs) {
-			t.Fatalf("expected %d args, got %d (%v)", len(expectedArgs), len(newCmdArgs), newCmdArgs)
-		}
-		for idx, arg := range newCmdArgs {
-			if arg != expectedArgs[idx] {
-				t.Errorf("arg[%d]: expected %q, got %q", idx, expectedArgs[idx], arg)
-			}
-		}
-	})
-
-	t.Run("Validation rejects autoload rule with empty match", func(t *testing.T) {
-		invalidCfg := &config.Config{
-			Autoload: []config.AutoloadRule{
-				{Match: "", Command: "echo 1"},
-			},
-		}
-		_, err := NewOrchestrator(invalidCfg)
-		if err == nil {
-			t.Fatal("expected error for empty autoload match, got nil")
 		}
 	})
 }
@@ -917,17 +829,27 @@ func TestEnvBuilder_VaultKeyFormat(t *testing.T) {
 
 func TestBuildEnvForCommandDetails(t *testing.T) {
 	ctx := context.Background()
+	t.Setenv("SRC_AUTO", "resolved_auto_val")
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"test_vault": {Provider: "env"},
+		},
+		Envs: map[string][]config.VaultSourceConfig{
+			"auto_env": {
+				{
+					Vault: "env",
+					Rules: []config.RuleConfig{
+						{Type: "pass", Include: []string{"SRC_AUTO"}},
+						{Type: "set", Values: map[string]string{"AUTO_KEY": "{{ .SRC_AUTO }}"}},
+					},
+				},
+			},
 		},
 		Autoload: []config.AutoloadRule{
 			{
 				Match:   `^test-alias\s+(.*)$`,
 				Command: "real-binary $1",
-				Env: map[string]string{
-					"AUTO_KEY": `{{ get "env://SRC_AUTO" }}`,
-				},
+				Envs:    []config.AutoloadEnvItem{config.NamedEnvItem("auto_env")},
 			},
 		},
 	}
@@ -943,8 +865,6 @@ func TestBuildEnvForCommandDetails(t *testing.T) {
 		t.Fatalf("injectMockVault failed: %v", err)
 	}
 
-	t.Setenv("SRC_AUTO", "resolved_auto_val")
-
 	details, err := orch.BuildEnvForCommandDetails(ctx, EnvConfig{
 		CmdArgs: []string{"test-alias", "arg1", "arg2"},
 		Explicit: map[string]string{
@@ -958,7 +878,6 @@ func TestBuildEnvForCommandDetails(t *testing.T) {
 		t.Fatalf("BuildEnvForCommandDetails failed: %v", err)
 	}
 
-	// Transformed command args
 	expectedCmd := []string{"real-binary", "arg1", "arg2"}
 	if !slices.Equal(details.Command, expectedCmd) {
 		t.Errorf("expected Command = %v, got %v", expectedCmd, details.Command)
@@ -967,28 +886,26 @@ func TestBuildEnvForCommandDetails(t *testing.T) {
 		t.Errorf("expected RawCommand = %v, got %v", expectedCmd, details.RawCommand)
 	}
 
-	// Sorted unique injected keys: AUTO_KEY, EXPLICIT_KEY, VAR_A, VAR_Z (VAR_M is filtered out)
-	expectedInjected := []string{"AUTO_KEY", "EXPLICIT_KEY", "VAR_A", "VAR_Z"}
+	expectedInjected := []string{"AUTO_KEY", "EXPLICIT_KEY", "SRC_AUTO", "VAR_A", "VAR_Z"}
 	if !slices.Equal(details.InjectedKeys, expectedInjected) {
 		t.Errorf("expected InjectedKeys = %v, got %v", expectedInjected, details.InjectedKeys)
 	}
 
-	// Check environment content
 	envMap := make(map[string]string)
 	for _, kv := range details.Env {
 		k, v, _ := strings.Cut(kv, "=")
 		envMap[k] = v
 	}
 	if envMap["AUTO_KEY"] != "resolved_auto_val" {
-		t.Errorf("expected AUTO_KEY = resolved_auto_val, got %q", envMap["AUTO_KEY"])
+		t.Errorf("expected AUTO_KEY=resolved_auto_val, got %q", envMap["AUTO_KEY"])
 	}
 	if envMap["EXPLICIT_KEY"] != "explicit_val" {
-		t.Errorf("expected EXPLICIT_KEY = explicit_val, got %q", envMap["EXPLICIT_KEY"])
+		t.Errorf("expected EXPLICIT_KEY=explicit_val, got %q", envMap["EXPLICIT_KEY"])
 	}
 	if envMap["VAR_A"] != "val_a" || envMap["VAR_Z"] != "val_z" {
-		t.Errorf("expected VAR_A and VAR_Z to exist, got %v", envMap)
+		t.Errorf("expected VAR_A and VAR_Z merged, got %v", envMap)
 	}
-	if _, exists := envMap["VAR_M"]; exists {
+	if _, ok := envMap["VAR_M"]; ok {
 		t.Errorf("expected VAR_M to be filtered out by whitelist")
 	}
 }

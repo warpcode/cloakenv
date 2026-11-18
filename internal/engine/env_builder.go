@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -31,9 +32,25 @@ const maxResolveConcurrency = 16
 
 // EnvBuilder handles the construction of the environment block.
 type EnvBuilder struct {
-	config   *config.Config
-	resolver EnvResolver
-	sem      chan struct{}
+	config      *config.Config
+	resolver    EnvResolver
+	envsBuilder *EnvsBuilder
+	ruleEngine  *RuleEngine
+	sem         chan struct{}
+}
+
+// SetEnvsBuilder attaches the declarative EnvsBuilder used to resolve `autoload[].envs[]` items.
+func (eb *EnvBuilder) SetEnvsBuilder(b *EnvsBuilder) {
+	if eb != nil {
+		eb.envsBuilder = b
+	}
+}
+
+// SetRuleEngine attaches a RuleEngine used for inline autoload env templates.
+func (eb *EnvBuilder) SetRuleEngine(re *RuleEngine) {
+	if eb != nil {
+		eb.ruleEngine = re
+	}
 }
 
 // NewEnvBuilder creates a new EnvBuilder.
@@ -315,43 +332,59 @@ func normalizeURIs(uris []string) []string {
 	return result
 }
 
-// evalAutoloadRules evaluates configured autoload rules against command arguments.
-func (eb *EnvBuilder) evalAutoloadRules(cmdArgs []string) ([]string, map[string]string, []string, []string, error) {
-	var autoMerges []string
-	autoExplicit := make(map[string]string)
-	var autoWhitelist []string
-	currentCmdArgs := cmdArgs
-
-	if len(cmdArgs) == 0 || eb.config == nil {
-		return autoMerges, autoExplicit, autoWhitelist, currentCmdArgs, nil
+// resolveAutoloadEnvs resolves an ordered slice of AutoloadEnvItem (named envs and inline maps)
+// into a flat map[string]string where later items override earlier items and inline template
+// values can reference previously resolved variables.
+func (eb *EnvBuilder) resolveAutoloadEnvs(ctx context.Context, items []config.AutoloadEnvItem) (map[string]string, error) {
+	resolved := make(map[string]string)
+	if len(items) == 0 {
+		return resolved, nil
 	}
-
-	parsed := parseCommandArgs(currentCmdArgs)
-	for _, rule := range eb.config.Autoload {
-		matched, newCmdArgs, err := matchPreparedCommandRule(rule, currentCmdArgs, parsed)
-		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("autoload rule %q: %w", rule.Match, err)
-		}
-		if matched {
-			currentCmdArgs = newCmdArgs
-			parsed = parseCommandArgs(currentCmdArgs)
-			autoMerges = append(autoMerges, normalizeURIs(rule.Vaults)...)
-			autoMerges = append(autoMerges, normalizeURIs(rule.Merge)...)
-			for k, uri := range rule.Env {
-				if k != "" && uri != "" {
-					autoExplicit[k] = uri
-				}
+	re := eb.ruleEngine
+	if re == nil {
+		re = NewRuleEngine()
+	}
+	for idx, item := range items {
+		if item.Name != "" {
+			if eb.envsBuilder == nil {
+				return nil, fmt.Errorf("autoload env #%d (%q): envs builder is not configured", idx+1, item.Name)
 			}
-			for _, w := range rule.Whitelist {
-				w = strings.TrimSpace(w)
-				if w != "" {
-					autoWhitelist = append(autoWhitelist, w)
+			built, err := eb.envsBuilder.Build(ctx, item.Name)
+			if err != nil {
+				return nil, fmt.Errorf("autoload env #%d (%q): %w", idx+1, item.Name, err)
+			}
+			maps.Copy(resolved, built)
+			continue
+		}
+		if len(item.Inline) > 0 {
+			keys := make([]string, 0, len(item.Inline))
+			for k := range item.Inline {
+				keys = append(keys, k)
+			}
+			slices.Sort(keys)
+			tmplCtx := make(map[string]any, len(resolved))
+			for k, v := range resolved {
+				tmplCtx[k] = v
+			}
+			for _, k := range keys {
+				if k == "" {
+					continue
 				}
+				rawVal := item.Inline[k]
+				val := rawVal
+				if strings.Contains(rawVal, "{{") {
+					var err error
+					val, err = re.evalTemplate(fmt.Sprintf("autoload.env.%s", k), rawVal, tmplCtx)
+					if err != nil {
+						return nil, fmt.Errorf("autoload env #%d key %q: %w", idx+1, k, err)
+					}
+				}
+				resolved[k] = val
+				tmplCtx[k] = val
 			}
 		}
 	}
-
-	return autoMerges, autoExplicit, autoWhitelist, currentCmdArgs, nil
+	return resolved, nil
 }
 
 // cloakenvFnPrefixes contains candidate function invocation prefixes for detecting cloakenv template calls.
@@ -451,25 +484,22 @@ type CommandEnvDetails struct {
 	RawCommand   []string
 	Env          []string
 	InjectedKeys []string
+	ResolvedEnvs map[string]string
+	Templates    []config.AutoloadTemplateConfig
 }
 
 // BuildEnvForCommandDetails constructs the full environment block, evaluates autoload rules,
 // and returns execution details including the sorted list of injected variable keys.
 func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConfig) (*CommandEnvDetails, error) {
-	autoMerges, autoExplicit, autoWhitelist, currentCmdArgs, err := eb.evalAutoloadRules(cfg.CmdArgs)
+	autoEval, err := EvaluateAutoload(eb.config, cfg.CmdArgs)
 	if err != nil {
 		return nil, err
 	}
+	currentCmdArgs := autoEval.Command
 
-	combinedMerges := append(autoMerges, cfg.Merges...)
-	combinedWhitelist := append(autoWhitelist, cfg.Whitelist...)
-
-	combinedExplicit := make(map[string]string)
-	for k, v := range autoExplicit {
-		combinedExplicit[k] = v
-	}
-	for k, v := range cfg.Explicit {
-		combinedExplicit[k] = v // CLI explicit flags -e override autoload env
+	autoEnvs, err := eb.resolveAutoloadEnvs(ctx, autoEval.Envs)
+	if err != nil {
+		return nil, err
 	}
 
 	var finalEnv map[string]string
@@ -479,12 +509,16 @@ func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConf
 		finalEnv = make(map[string]string)
 	}
 
-	mergedSources, err := eb.resolveMergeSources(ctx, combinedMerges, combinedWhitelist)
+	injectedKeysSet := make(map[string]bool)
+	for k, v := range autoEnvs {
+		finalEnv[k] = v
+		injectedKeysSet[k] = true
+	}
+
+	mergedSources, err := eb.resolveMergeSources(ctx, cfg.Merges, cfg.Whitelist)
 	if err != nil {
 		return nil, err
 	}
-
-	injectedKeysSet := make(map[string]bool)
 	for _, src := range mergedSources {
 		for _, kv := range src {
 			finalEnv[kv.k] = kv.v
@@ -492,11 +526,10 @@ func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConf
 		}
 	}
 
-	explicitResolved, err := eb.resolveExplicitMappings(ctx, combinedExplicit)
+	explicitResolved, err := eb.resolveExplicitMappings(ctx, cfg.Explicit)
 	if err != nil {
 		return nil, err
 	}
-
 	for k, v := range explicitResolved {
 		finalEnv[k] = v
 		injectedKeysSet[k] = true
@@ -513,9 +546,7 @@ func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConf
 	if len(currentCmdArgs) == 0 {
 		currentCmdArgs = cfg.CmdArgs
 	}
-
 	rawCmdArgs := slices.Clone(currentCmdArgs)
-
 	resolvedCmdArgs, err := eb.resolveCmdArgs(ctx, currentCmdArgs)
 	if err != nil {
 		return nil, err
@@ -526,6 +557,8 @@ func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConf
 		RawCommand:   rawCmdArgs,
 		Env:          result,
 		InjectedKeys: injectedKeys,
+		ResolvedEnvs: autoEnvs,
+		Templates:    autoEval.Templates,
 	}, nil
 }
 
