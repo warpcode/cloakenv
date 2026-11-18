@@ -5,6 +5,7 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -128,27 +129,101 @@ type Config struct {
 	KeyFormatOverride string                         `yaml:"-"`
 }
 
-// AutoloadRule defines rules for matching, masking, and autoloading secret vaults/URIs/env vars
-// based on matching commands executed via `cloakenv run -- <command>`.
+// AutoloadEnvItem represents an entry in `autoload[].envs[]`, which may be either
+// a named env string reference (e.g. "litellm_env") or an inline key-value map.
+type AutoloadEnvItem struct {
+	Name   string
+	Inline map[string]string
+}
+
+// NamedEnvItem constructs an AutoloadEnvItem referencing a named top-level env.
+func NamedEnvItem(name string) AutoloadEnvItem {
+	return AutoloadEnvItem{Name: name}
+}
+
+// InlineEnvItem constructs an AutoloadEnvItem holding an inline key-value map.
+func InlineEnvItem(m map[string]string) AutoloadEnvItem {
+	return AutoloadEnvItem{Inline: m}
+}
+
+// UnmarshalYAML unmarshals an AutoloadEnvItem from either a YAML string scalar or a string map.
+func (a *AutoloadEnvItem) UnmarshalYAML(value *goyaml.Node) error {
+	if value.Kind == goyaml.ScalarNode {
+		if value.Tag != "!!str" && value.Tag != "" {
+			return fmt.Errorf("autoload env item must be an env name string or key-value map")
+		}
+		a.Name = value.Value
+		a.Inline = nil
+		return nil
+	}
+	if value.Kind == goyaml.MappingNode {
+		var m map[string]string
+		if err := value.Decode(&m); err != nil {
+			return err
+		}
+		a.Inline = m
+		a.Name = ""
+		return nil
+	}
+	return errors.New("autoload env item must be an env name string or key-value map")
+}
+
+// MarshalYAML marshals an AutoloadEnvItem back to YAML as a string or map.
+func (a AutoloadEnvItem) MarshalYAML() (any, error) {
+	if a.Name != "" {
+		return a.Name, nil
+	}
+	return a.Inline, nil
+}
+
+// MarshalJSON marshals an AutoloadEnvItem to JSON as a string or map.
+func (a AutoloadEnvItem) MarshalJSON() ([]byte, error) {
+	if a.Name != "" {
+		return json.Marshal(a.Name)
+	}
+	if a.Inline != nil {
+		return json.Marshal(a.Inline)
+	}
+	return json.Marshal("")
+}
+
+// UnmarshalJSON unmarshals an AutoloadEnvItem from JSON string or map.
+func (a *AutoloadEnvItem) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		a.Name = s
+		a.Inline = nil
+		return nil
+	}
+	var m map[string]string
+	if err := json.Unmarshal(data, &m); err == nil {
+		a.Inline = m
+		a.Name = ""
+		return nil
+	}
+	return errors.New("autoload env item must be a string or string map")
+}
+
+// AutoloadTemplateConfig attaches a named template generator to an autoload rule.
+type AutoloadTemplateConfig struct {
+	Template string `yaml:"template" json:"template"`
+	Env      string `yaml:"env,omitempty" json:"env,omitempty"`
+	EnvPath  string `yaml:"env_path,omitempty" json:"env_path,omitempty"`
+	Path     string `yaml:"path,omitempty" json:"path,omitempty"`
+	Persist  bool   `yaml:"persist,omitempty" json:"persist,omitempty"`
+}
+
+// AutoloadRule defines rules for matching commands executed via `cloakenv run -- <command>`,
+// transforming command arguments, injecting `envs:`, and attaching rendered `templates:`.
 type AutoloadRule struct {
 	// Match is a required regex pattern, glob, or command string to match against incoming CLI command arguments.
 	Match string `yaml:"match"`
-
 	// Command is an optional target command replacement template with \1 or $1 regex capture group expansions.
-	Command string `yaml:"command"`
-
-	// Vaults is a list of vault names or URIs to merge into environment variables.
-	Vaults []string `yaml:"vaults"`
-
-	// Merge is a list of entry URIs or vault URIs to merge into environment variables.
-	Merge []string `yaml:"merge"`
-
-	// Env is a map of environment variable names to secret URIs.
-	Env map[string]string `yaml:"env"`
-
-	// Whitelist is a list of key names to filter merged entries.
-	Whitelist []string `yaml:"whitelist"`
-
+	Command string `yaml:"command,omitempty"`
+	// Envs is an ordered list of named envs references and/or inline key-value overrides.
+	Envs []AutoloadEnvItem `yaml:"envs,omitempty"`
+	// Templates is a list of template artifact deliveries attached to matching commands.
+	Templates []AutoloadTemplateConfig `yaml:"templates,omitempty"`
 	// CompiledRegex holds the precompiled regular expression for Match.
 	CompiledRegex *regexp.Regexp `yaml:"-"`
 }

@@ -106,10 +106,12 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 		return NewTemplateEngine(resolver).Render(ctx, tmplStr, data, 0, "")
 	})
 
-	envBuilder := NewEnvBuilder(cfg, resolver)
 	ruleEngine := NewRuleEngine()
 	envsBuilder := NewEnvsBuilder(cfg, pm, ruleEngine)
 	templatesRenderer := NewTemplatesRenderer(cfg, pm, ruleEngine, envsBuilder)
+	envBuilder := NewEnvBuilder(cfg, resolver)
+	envBuilder.SetRuleEngine(ruleEngine)
+	envBuilder.SetEnvsBuilder(envsBuilder)
 	o := &Orchestrator{
 		config:            cfg,
 		providerManager:   pm,

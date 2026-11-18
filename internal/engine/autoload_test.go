@@ -162,14 +162,17 @@ func TestMatchRunAlias(t *testing.T) {
 			{
 				Match:   "^litellm\\s+(.*)$",
 				Command: "uvx --with 'litellm[proxy]' litellm \\1",
-				Vaults:  []string{"work_vault"},
-				Env: map[string]string{
-					"LITELLM_KEY": "keyring://litellm/master_key",
+				Envs: []config.AutoloadEnvItem{
+					config.NamedEnvItem("work_env"),
+					config.InlineEnvItem(map[string]string{"LITELLM_LOG": "INFO"}),
+				},
+				Templates: []config.AutoloadTemplateConfig{
+					{Template: "litellm_cfg", EnvPath: "LITELLM_CONFIG_PATH"},
 				},
 			},
 			{
-				Match:  "aws",
-				Vaults: []string{"aws_prod"},
+				Match: "aws",
+				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("aws_env")},
 			},
 		},
 	}
