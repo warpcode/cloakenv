@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -1011,4 +1013,143 @@ func TestHasCloakenvInvocation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildEnvForCommand_PR487ReviewRegressionCoverage(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("Autoload command expansion escapes user input against argument injection", func(t *testing.T) {
+		secCfg := &config.Config{
+			Autoload: []config.AutoloadRule{
+				{
+					Match:   `^mytool\s+(.*)$`,
+					Command: `myrealtool $1`,
+				},
+			},
+		}
+		secCfg.CompileAutoloadRules()
+		orchSec, err := NewOrchestrator(secCfg)
+		if err != nil {
+			t.Fatalf("failed to create orchestrator: %v", err)
+		}
+		cmdArgs := []string{"mytool", "arg1; injected_cmd --flag"}
+		newCmdArgs, _, err := orchSec.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
+		if err != nil {
+			t.Fatalf("failed to build env for command: %v", err)
+		}
+		expectedArgs := []string{"myrealtool", "arg1;", "injected_cmd", "--flag"}
+		if len(newCmdArgs) != len(expectedArgs) {
+			t.Fatalf("expected %d args, got %d (%v)", len(expectedArgs), len(newCmdArgs), newCmdArgs)
+		}
+		for idx, arg := range newCmdArgs {
+			if arg != expectedArgs[idx] {
+				t.Errorf("arg[%d]: expected %q, got %q", idx, expectedArgs[idx], arg)
+			}
+		}
+	})
+
+	t.Run("Validation rejects autoload rule with empty match", func(t *testing.T) {
+		invalidCfg := &config.Config{
+			Autoload: []config.AutoloadRule{
+				{Match: "", Command: "echo 1"},
+			},
+		}
+		if _, err := NewOrchestrator(invalidCfg); err == nil {
+			t.Fatal("expected error for empty autoload match from NewOrchestrator, got nil")
+		}
+		tmp := filepath.Join(t.TempDir(), "empty_match.yaml")
+		yamlData := "autoload:\n  - match: \"\"\n    envs:\n      - FOO: bar\n"
+		if err := os.WriteFile(tmp, []byte(yamlData), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := config.Validate(tmp, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.IsValid() {
+			t.Fatal("expected validation failure for empty match pattern")
+		}
+	})
+
+	t.Run("CommandEnvDetails exposes ResolvedEnvs, Templates, and resolveAutoloadEnvs precedence and error paths", func(t *testing.T) {
+		fetcher := &stubVaultFetcher{
+			vaults: map[string][]SourceEntry{
+				"work": {{
+					Vault: "work",
+					Path:  "app",
+					Title: "App",
+					Raw:   map[string]any{"title": "App", "tags": []string{}, "BASE_KEY": "from-vault", "SHARED": "vault-val"},
+				}},
+			},
+		}
+		cfg := &config.Config{
+			Envs: map[string][]config.VaultSourceConfig{
+				"base_env": {{Vault: "work"}},
+			},
+			Autoload: []config.AutoloadRule{
+				{
+					Match: `^deploy`,
+					Envs: []config.AutoloadEnvItem{
+						config.NamedEnvItem("base_env"),
+						config.InlineEnvItem(map[string]string{
+							"SHARED":   "inline-override",
+							"COMPUTED": `{{ .BASE_KEY }}-suffix`,
+						}),
+					},
+					Templates: []config.AutoloadTemplateConfig{
+						{Template: "app_cfg", EnvPath: "APP_CFG_PATH"},
+					},
+				},
+			},
+		}
+		cfg.CompileAutoloadRules()
+		re := NewRuleEngine()
+		eb := NewEnvBuilder(cfg, nil)
+		eb.SetEnvsBuilder(NewEnvsBuilderWithFetcher(cfg, fetcher, re))
+		eb.SetRuleEngine(re)
+		details, err := eb.BuildEnvForCommandDetails(ctx, EnvConfig{
+			CmdArgs:  []string{"deploy", "now"},
+			EmptyEnv: true,
+		})
+		if err != nil {
+			t.Fatalf("BuildEnvForCommandDetails failed: %v", err)
+		}
+		if details.ResolvedEnvs["BASE_KEY"] != "from-vault" || details.ResolvedEnvs["SHARED"] != "inline-override" || details.ResolvedEnvs["COMPUTED"] != "from-vault-suffix" {
+			t.Fatalf("unexpected ResolvedEnvs: %#v", details.ResolvedEnvs)
+		}
+		if len(details.Templates) != 1 || details.Templates[0].Template != "app_cfg" || details.Templates[0].EnvPath != "APP_CFG_PATH" {
+			t.Fatalf("unexpected Templates: %#v", details.Templates)
+		}
+
+		// Error path 1: envsBuilder == nil when named env referenced
+		ebNil := NewEnvBuilder(cfg, nil)
+		ebNil.SetRuleEngine(re)
+		if _, err := ebNil.BuildEnvForCommandDetails(ctx, EnvConfig{CmdArgs: []string{"deploy"}, EmptyEnv: true}); err == nil || !strings.Contains(err.Error(), "envs builder is not configured") {
+			t.Errorf("expected nil envsBuilder error, got: %v", err)
+		}
+
+		// Error path 2: unknown named env
+		cfgUnknown := &config.Config{
+			Autoload: []config.AutoloadRule{{Match: "^deploy", Envs: []config.AutoloadEnvItem{config.NamedEnvItem("missing_env")}}},
+		}
+		cfgUnknown.CompileAutoloadRules()
+		ebUnknown := NewEnvBuilder(cfgUnknown, nil)
+		ebUnknown.SetEnvsBuilder(NewEnvsBuilderWithFetcher(cfgUnknown, fetcher, re))
+		ebUnknown.SetRuleEngine(re)
+		if _, err := ebUnknown.BuildEnvForCommandDetails(ctx, EnvConfig{CmdArgs: []string{"deploy"}, EmptyEnv: true}); err == nil {
+			t.Error("expected error for unknown named env")
+		}
+
+		// Error path 3: inline template missingkey=error
+		cfgMissing := &config.Config{
+			Autoload: []config.AutoloadRule{{Match: "^deploy", Envs: []config.AutoloadEnvItem{config.InlineEnvItem(map[string]string{"BAD": "{{ .DOES_NOT_EXIST }}"})}}},
+		}
+		cfgMissing.CompileAutoloadRules()
+		ebMissing := NewEnvBuilder(cfgMissing, nil)
+		ebMissing.SetEnvsBuilder(NewEnvsBuilderWithFetcher(cfgMissing, fetcher, re))
+		ebMissing.SetRuleEngine(re)
+		if _, err := ebMissing.BuildEnvForCommandDetails(ctx, EnvConfig{CmdArgs: []string{"deploy"}, EmptyEnv: true}); err == nil {
+			t.Error("expected missingkey=error from inline env template")
+		}
+	})
 }
