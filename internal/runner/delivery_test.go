@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -247,5 +248,38 @@ func TestFindStaleEphemeralFilesInDirs(t *testing.T) {
 	found := FindStaleEphemeralFilesInDirs([]string{dir, dir})
 	if len(found) != 2 || found[0] != stale1 || found[1] != stale2 {
 		t.Errorf("FindStaleEphemeralFilesInDirs() = %v, want [%s %s]", found, stale1, stale2)
+	}
+}
+
+func TestWriteTemplateFile_RejectsSymlinkedAncestorWithExistingSubdir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires elevated privileges on Windows")
+	}
+	base := t.TempDir()
+	realTarget := filepath.Join(base, "real_target")
+	existingSub := filepath.Join(realTarget, "existing_subdir")
+	if err := os.MkdirAll(existingSub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	symlinkDir := filepath.Join(base, "symlink_dir")
+	if err := os.Symlink(realTarget, symlinkDir); err != nil {
+		t.Fatal(err)
+	}
+
+	target := filepath.Join(symlinkDir, "existing_subdir", "secret.yaml")
+	if _, err := WriteTemplateFile(target, []byte("SECRET=123")); err == nil {
+		t.Fatalf("expected WriteTemplateFile to refuse writing through symlinked ancestor %q", target)
+	}
+	if _, err := os.Lstat(filepath.Join(existingSub, "secret.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("secret file was written despite symlinked ancestor")
+	}
+}
+
+func TestMaterializeTemplates_RejectsEmptyDeliveryTargets(t *testing.T) {
+	_, _, err := MaterializeTemplates([]TemplateDelivery{
+		{TemplateName: "orphan", Content: "SECRET=1"},
+	})
+	if err == nil {
+		t.Fatal("expected error when env, env_path, and path are all empty")
 	}
 }

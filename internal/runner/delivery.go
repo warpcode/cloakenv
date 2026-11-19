@@ -50,6 +50,10 @@ func MaterializeTemplates(deliveries []TemplateDelivery) (map[string]string, fun
 	}
 
 	for _, d := range deliveries {
+		if strings.TrimSpace(d.EnvVar) == "" && strings.TrimSpace(d.EnvPathVar) == "" && strings.TrimSpace(d.Path) == "" {
+			cleanup()
+			return nil, func() {}, fmt.Errorf("failed to materialize template %q: delivery requires env, env_path, or path", d.TemplateName)
+		}
 		// Mode 1: raw env var in memory
 		if d.EnvVar != "" {
 			envOverrides[d.EnvVar] = d.Content
@@ -175,11 +179,9 @@ func WriteTemplateFile(targetPath string, content []byte) (string, error) {
 	if err := os.MkdirAll(parentDir, 0700); err != nil {
 		return "", fmt.Errorf("failed to create parent directory for %q: %w", absPath, err)
 	}
-	// Re-check parentDir after MkdirAll to guard against symlink races.
-	if info, lstatErr := os.Lstat(parentDir); lstatErr != nil {
-		return "", fmt.Errorf("failed to inspect parent directory %q: %w", parentDir, lstatErr)
-	} else if info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("refusing to write template through symlink directory %q", parentDir)
+	// Re-check every ancestor directory after MkdirAll to guard against symlink races.
+	if err := rejectSymlinkParent(parentDir); err != nil {
+		return "", err
 	}
 
 	f, err := openFileNoFollowExclusive(absPath, 0600)
@@ -204,32 +206,67 @@ func WriteTemplateFile(targetPath string, content []byte) (string, error) {
 	return absPath, nil
 }
 
-// rejectSymlinkParent walks upward from dir until it reaches the first existing
-// directory and rejects it if it is a symlink. This blocks attacks where a user
-// path points through a symlinked directory (e.g., linkdir/sub/secret.yaml)
-// without breaking OS-level root symlinks like /var -> /private/var on macOS.
-func rejectSymlinkParent(dir string) error {
-	cur := filepath.Clean(dir)
-	for {
-		info, err := os.Lstat(cur)
-		if err == nil {
-			if info.Mode()&os.ModeSymlink != 0 {
-				return fmt.Errorf("refusing to write template through symlink directory %q", cur)
-			}
-			if !info.IsDir() {
-				return fmt.Errorf("parent path %q exists and is not a directory", cur)
-			}
-			return nil
+// isTrustedOSSystemSymlink reports whether p is an OS-managed root symlink
+// (e.g., /var -> /private/var on macOS) that must remain traversable.
+func isTrustedOSSystemSymlink(p string) bool {
+	if runtime.GOOS == "darwin" {
+		switch p {
+		case "/var", "/tmp", "/etc":
+			return true
 		}
-		if !errors.Is(err, os.ErrNotExist) {
+	}
+	return false
+}
+
+// rejectSymlinkParent walks every ancestor component of dir from root downward
+// and refuses any symlinked directory component (including symlinked ancestors
+// above already-existing subdirectories such as <symlink_dir>/<existing_sub>/file).
+func rejectSymlinkParent(dir string) error {
+	clean := filepath.Clean(dir)
+	vol := filepath.VolumeName(clean)
+	rest := strings.TrimPrefix(clean, vol)
+	sep := string(filepath.Separator)
+
+	var cur string
+	if strings.HasPrefix(rest, sep) {
+		cur = vol + sep
+		rest = strings.TrimPrefix(rest, sep)
+	} else {
+		cur = vol
+	}
+
+	if rest == "" {
+		return nil
+	}
+	parts := strings.Split(rest, sep)
+	for _, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		if cur == "" || strings.HasSuffix(cur, sep) {
+			cur += part
+		} else {
+			cur = cur + sep + part
+		}
+		info, err := os.Lstat(cur)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// Remaining child directories do not exist yet and will be created with 0700.
+				return nil
+			}
 			return fmt.Errorf("cannot inspect parent directory %q: %w", cur, err)
 		}
-		next := filepath.Dir(cur)
-		if next == cur {
-			return nil
+		if info.Mode()&os.ModeSymlink != 0 {
+			if isTrustedOSSystemSymlink(cur) {
+				continue
+			}
+			return fmt.Errorf("refusing to write template through symlink directory %q", cur)
 		}
-		cur = next
+		if !info.IsDir() {
+			return fmt.Errorf("parent path %q exists and is not a directory", cur)
+		}
 	}
+	return nil
 }
 
 // SecureZeroAndRemove overwrites the file at path with zero bytes (0x00), syncs it,

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/engine"
 )
 
 // TestHelperProcess is a fake command used by TestRunCommandExecution
@@ -868,5 +869,46 @@ func TestRun_TemplateDeliveryAndMasking(t *testing.T) {
 	}
 	if string(data) != wantContent {
 		t.Errorf("persisted file content = %q, want %q", string(data), wantContent)
+	}
+}
+
+func TestPrintDryRunPreview_MasksSecretsInTemplatePath(t *testing.T) {
+	origStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = origStdout }()
+
+	printDryRunPreview(
+		[]string{"app", "--run"},
+		[]string{"API_TOKEN"},
+		[]engine.RenderedTemplateDelivery{
+			{
+				TemplateName: "cfg",
+				Driver:       "yaml",
+				EnvPathVar:   "CFG_PATH",
+				Path:         "/tmp/super-secret-token-xyz.yaml",
+			},
+			{
+				TemplateName: "direct",
+				Driver:       "dotenv",
+				Path:         "/tmp/direct-super-secret-token-xyz.env",
+			},
+		},
+		[]string{"super-secret-token-xyz"},
+	)
+
+	_ = w.Close()
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	out := buf.String()
+
+	if strings.Contains(out, "super-secret-token-xyz") {
+		t.Fatalf("dry-run preview leaked secret value in tpl.Path:\n%s", out)
+	}
+	if !strings.Contains(out, "/tmp/<REDACTED>.yaml") || !strings.Contains(out, "/tmp/direct-<REDACTED>.env") {
+		t.Fatalf("expected masked paths in dry-run preview, got:\n%s", out)
 	}
 }
