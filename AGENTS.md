@@ -37,7 +37,7 @@ Equivalently, run `make verify` to execute this pipeline. Run `make agents-check
 4. **No hardcoded credentials**:
    Never commit secrets, API keys, or passwords anywhere in source code or documentation.
 5. **Keyring isolation**:
-   Keyring operations go through `internal/provider/os_keyring.go`; tests must use `keyring.MockInit()` and temporary `HOME`/`XDG_CACHE_HOME`. Internal keyring keys (`cache_token`, `cache-master-key`, `cache/*`, `provider/*`) must never be exposed through the built-in `keyring` vault.
+   Keyring operations go through `internal/provider/os_keyring.go`; tests must use `keyring.MockInit()` and temporary `HOME`/`XDG_CACHE_HOME`. Internal keyring keys (`cache_token`, `cache_disk_token`, `cache-master-key`, `cache/*`, `cache_v2/*`, `provider/*`) must never be exposed through the built-in `keyring` vault.
 
 ## 🤖 AI Guardrails
 
@@ -61,7 +61,7 @@ Equivalently, run `make verify` to execute this pipeline. Run `make agents-check
 - **Unified Pure Go Templating**:
   Templates evaluate Go `text/template` with `.Option("missingkey=error")` and pure helper functions (`hasTag`, `default`, `coalesce`, `toEnv`, `toKv`, `toJSON`, `fromJSON`, `toYAML`, `fromYAML`, `upper`, `lower`, `env`, `snake`, `kebab`, `keys`, `values`, `join`, `shquote`). Legacy URI/exec/include template functions (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`, `exec`) and `${...}` interpolation are permanently removed.
 - **Zero-Leak CLI & Verbatim Child Command Pass-Through**:
-  The CLI exposes only `run`, `inspect` (unconditional `<REDACTED>`), `auth`, `doctor`, `cache`, and `version`. Child command arguments in `BuildEnvForCommand` pass through completely verbatim without template evaluation or secret expansion.
+  The CLI exposes only `run`, `inspect` (unconditional `<REDACTED>`), `auth`, `doctor`, `cache`, `completion`, `version`, and `internal`. Child command arguments in `BuildEnvForCommand` pass through completely verbatim without template evaluation or secret expansion.
 
 ## 🧭 Skills & Documentation Pointers
 

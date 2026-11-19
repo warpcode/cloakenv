@@ -39,9 +39,9 @@ func TestOSKeyringProvider(t *testing.T) {
 		t.Errorf("expected error getting unset secret")
 	}
 
-	// Set secret
-	if err := kp.SetSecret(ctx, location, secretVal); err != nil {
-		t.Fatalf("SetSecret failed: %v", err)
+	// Set raw secret
+	if err := kp.SetRawSecret("test-service", "test-account", secretVal); err != nil {
+		t.Fatalf("SetRawSecret failed: %v", err)
 	}
 
 	// Get secret should succeed
@@ -53,9 +53,9 @@ func TestOSKeyringProvider(t *testing.T) {
 		t.Errorf("expected %q, got %q", secretVal, got)
 	}
 
-	// Delete secret
-	if err := kp.DeleteSecret(ctx, location); err != nil {
-		t.Fatalf("DeleteSecret failed: %v", err)
+	// Delete raw secret
+	if err := kp.DeleteRawSecret("test-service", "test-account"); err != nil {
+		t.Fatalf("DeleteRawSecret failed: %v", err)
 	}
 
 	// Get secret should fail after delete
@@ -64,15 +64,15 @@ func TestOSKeyringProvider(t *testing.T) {
 		t.Errorf("expected error getting deleted secret")
 	}
 
-	// Test invalid location format
-	if err := kp.SetSecret(ctx, "invalid-no-slash", "val"); err == nil {
-		t.Errorf("expected error setting invalid location")
+	// Test invalid location format and raw keyring target validation
+	if err := kp.SetRawSecret("", "acc", "val"); err == nil {
+		t.Errorf("expected error setting empty service")
 	}
 	if _, err := kp.GetSecret(ctx, "invalid-no-slash"); err == nil {
 		t.Errorf("expected error getting invalid location")
 	}
-	if err := kp.DeleteSecret(ctx, "invalid-no-slash"); err == nil {
-		t.Errorf("expected error deleting invalid location")
+	if err := kp.DeleteRawSecret("svc", ""); err == nil {
+		t.Errorf("expected error deleting empty account")
 	}
 
 	// Test null bytes in location format
@@ -83,15 +83,15 @@ func TestOSKeyringProvider(t *testing.T) {
 		"\x00svc/account",
 	}
 	for _, badLoc := range nullByteLocations {
-		if err := kp.SetSecret(ctx, badLoc, "val"); err == nil {
-			t.Errorf("expected error setting location with null byte: %q", badLoc)
-		}
 		if _, err := kp.GetSecret(ctx, badLoc); err == nil {
 			t.Errorf("expected error getting location with null byte: %q", badLoc)
 		}
-		if err := kp.DeleteSecret(ctx, badLoc); err == nil {
-			t.Errorf("expected error deleting location with null byte: %q", badLoc)
-		}
+	}
+	if err := kp.SetRawSecret("test\x00svc", "account", "val"); err == nil {
+		t.Errorf("expected error setting raw secret with null byte in service")
+	}
+	if err := kp.DeleteRawSecret("service", "test\x00account"); err == nil {
+		t.Errorf("expected error deleting raw secret with null byte in account")
 	}
 }
 
@@ -288,7 +288,7 @@ func TestMockKeyringStore_Concurrency(t *testing.T) {
 
 			for j := range iterations {
 				val := fmt.Sprintf("val-%d-%d", workerID, j)
-				if err := kp.SetSecret(ctx, location, val); err != nil {
+				if err := kp.SetRawSecret(service, account, val); err != nil {
 					t.Errorf("worker %d set failed: %v", workerID, err)
 					return
 				}
@@ -303,7 +303,7 @@ func TestMockKeyringStore_Concurrency(t *testing.T) {
 					return
 				}
 
-				if err := kp.DeleteSecret(ctx, location); err != nil {
+				if err := kp.DeleteRawSecret(service, account); err != nil {
 					t.Errorf("worker %d delete failed: %v", workerID, err)
 					return
 				}

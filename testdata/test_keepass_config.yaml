@@ -1,4 +1,0 @@
-vaults:
-  testdb:
-    provider: "keepass"
-    vault_path: "./testdata/testDB.kdbx"

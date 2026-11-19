@@ -29,9 +29,7 @@ func (e *expensiveSimulatedProvider) GetSecret(_ context.Context, location strin
 	time.Sleep(e.delay)
 	return fmt.Sprintf("expensive_secret_%s", location), nil
 }
-func (e *expensiveSimulatedProvider) SetSecret(_ context.Context, _, _ string) error { return nil }
-func (e *expensiveSimulatedProvider) DeleteSecret(_ context.Context, _ string) error { return nil }
-func (e *expensiveSimulatedProvider) Validate(_ map[string]string) error             { return nil }
+func (e *expensiveSimulatedProvider) Validate(_ map[string]string) error { return nil }
 
 func BenchmarkCachingProvider(b *testing.B) {
 	keyring.MockInit()
