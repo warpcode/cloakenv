@@ -32,17 +32,25 @@ const maxResolveConcurrency = 16
 
 // EnvBuilder handles the construction of the environment block.
 type EnvBuilder struct {
-	config      *config.Config
-	resolver    EnvResolver
-	envsBuilder *EnvsBuilder
-	ruleEngine  *RuleEngine
-	sem         chan struct{}
+	config            *config.Config
+	resolver          EnvResolver
+	envsBuilder       *EnvsBuilder
+	templatesRenderer *TemplatesRenderer
+	ruleEngine        *RuleEngine
+	sem               chan struct{}
 }
 
 // SetEnvsBuilder attaches the declarative EnvsBuilder used to resolve `autoload[].envs[]` items.
 func (eb *EnvBuilder) SetEnvsBuilder(b *EnvsBuilder) {
 	if eb != nil {
 		eb.envsBuilder = b
+	}
+}
+
+// SetTemplatesRenderer attaches the declarative TemplatesRenderer used to render `autoload[].templates[]` items.
+func (eb *EnvBuilder) SetTemplatesRenderer(tr *TemplatesRenderer) {
+	if eb != nil {
+		eb.templatesRenderer = tr
 	}
 }
 
@@ -478,14 +486,88 @@ func (eb *EnvBuilder) resolveCmdArgs(ctx context.Context, cmdArgs []string) ([]s
 	return resolvedCmdArgs, nil
 }
 
+// RenderedTemplateDelivery holds a rendered autoload template along with its
+// evaluated target delivery metadata and extracted secret values for masking.
+type RenderedTemplateDelivery struct {
+	TemplateName string
+	Driver       string
+	EnvVar       string
+	EnvPathVar   string
+	Path         string
+	Persist      bool
+	Content      string
+	Secrets      []string
+}
+
+// resolveAutoloadTemplates renders each autoload template and evaluates any
+// templated target path against the resolved autoload envs map.
+func (eb *EnvBuilder) resolveAutoloadTemplates(ctx context.Context, templates []config.AutoloadTemplateConfig, resolvedEnvs map[string]string) ([]RenderedTemplateDelivery, error) {
+	if len(templates) == 0 {
+		return nil, nil
+	}
+	if eb.templatesRenderer == nil {
+		return nil, fmt.Errorf("autoload templates renderer is not configured")
+	}
+	re := eb.ruleEngine
+	if re == nil {
+		re = NewRuleEngine()
+	}
+	envCtx := make(map[string]any, len(resolvedEnvs))
+	for k, v := range resolvedEnvs {
+		envCtx[k] = v
+	}
+
+	out := make([]RenderedTemplateDelivery, 0, len(templates))
+	for idx, tpl := range templates {
+		res, err := eb.templatesRenderer.RenderDetailed(ctx, tpl.Template)
+		if err != nil {
+			return nil, fmt.Errorf("autoload template #%d (%q): %w", idx+1, tpl.Template, err)
+		}
+
+		resolvedPath := tpl.Path
+		if resolvedPath != "" && strings.Contains(resolvedPath, "{{") {
+			resolvedPath, err = re.evalTemplate(fmt.Sprintf("autoload.template.%s.path", tpl.Template), resolvedPath, envCtx)
+			if err != nil {
+				return nil, fmt.Errorf("autoload template #%d (%q) path evaluation failed: %w", idx+1, tpl.Template, err)
+			}
+		}
+
+		var secrets []string
+		if res.Content != "" {
+			secrets = append(secrets, res.Content)
+		}
+		for _, entry := range res.Entries {
+			for _, v := range entry {
+				if v != "" {
+					secrets = append(secrets, v)
+				}
+			}
+		}
+
+		out = append(out, RenderedTemplateDelivery{
+			TemplateName: tpl.Template,
+			Driver:       res.Driver,
+			EnvVar:       tpl.Env,
+			EnvPathVar:   tpl.EnvPath,
+			Path:         resolvedPath,
+			Persist:      tpl.Persist,
+			Content:      res.Content,
+			Secrets:      secrets,
+		})
+	}
+	return out, nil
+}
+
 // CommandEnvDetails contains the execution details for a command environment.
 type CommandEnvDetails struct {
-	Command      []string
-	RawCommand   []string
-	Env          []string
-	InjectedKeys []string
-	ResolvedEnvs map[string]string
-	Templates    []config.AutoloadTemplateConfig
+	Command           []string
+	RawCommand        []string
+	Env               []string
+	InjectedKeys      []string
+	ResolvedEnvs      map[string]string
+	Templates         []config.AutoloadTemplateConfig
+	RenderedTemplates []RenderedTemplateDelivery
+	MaskSecrets       []string
 }
 
 // BuildEnvForCommandDetails constructs the full environment block, evaluates autoload rules,
@@ -502,6 +584,11 @@ func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConf
 		return nil, err
 	}
 
+	renderedTemplates, err := eb.resolveAutoloadTemplates(ctx, autoEval.Templates, autoEnvs)
+	if err != nil {
+		return nil, err
+	}
+
 	var finalEnv map[string]string
 	if !cfg.EmptyEnv {
 		finalEnv = getParentEnv()
@@ -510,9 +597,24 @@ func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConf
 	}
 
 	injectedKeysSet := make(map[string]bool)
+	var maskSecrets []string
 	for k, v := range autoEnvs {
 		finalEnv[k] = v
 		injectedKeysSet[k] = true
+		if v != "" {
+			maskSecrets = append(maskSecrets, v)
+		}
+	}
+
+	for _, rt := range renderedTemplates {
+		if rt.EnvVar != "" {
+			finalEnv[rt.EnvVar] = rt.Content
+			injectedKeysSet[rt.EnvVar] = true
+		}
+		if rt.EnvPathVar != "" {
+			injectedKeysSet[rt.EnvPathVar] = true
+		}
+		maskSecrets = append(maskSecrets, rt.Secrets...)
 	}
 
 	mergedSources, err := eb.resolveMergeSources(ctx, cfg.Merges, cfg.Whitelist)
@@ -553,12 +655,14 @@ func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConf
 	}
 
 	return &CommandEnvDetails{
-		Command:      resolvedCmdArgs,
-		RawCommand:   rawCmdArgs,
-		Env:          result,
-		InjectedKeys: injectedKeys,
-		ResolvedEnvs: autoEnvs,
-		Templates:    autoEval.Templates,
+		Command:           resolvedCmdArgs,
+		RawCommand:        rawCmdArgs,
+		Env:               result,
+		InjectedKeys:      injectedKeys,
+		ResolvedEnvs:      autoEnvs,
+		Templates:         autoEval.Templates,
+		RenderedTemplates: renderedTemplates,
+		MaskSecrets:       maskSecrets,
 	}, nil
 }
 
