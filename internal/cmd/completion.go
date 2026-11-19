@@ -8,72 +8,64 @@ import (
 	"github.com/warpcode/cloakenv/internal/utils"
 )
 
-const bashCompletionScript = `#!/usr/bin/env bash
-# Bash completion script for cloakenv
-
+const bashCompletionScript = `# bash completion for cloakenv
 _cloakenv_complete() {
     local cur prev words cword
-    _init_completion || return
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    words=("${COMP_WORDS[@]}")
+    cword=$COMP_CWORD
 
-    local commands="run get set delete cache show search auth sync internal doctor completion version"
+    local subcommands="run inspect auth cache doctor completion version internal"
 
     if [[ $cword -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W "${commands} -c -h --help -v --version" -- "$cur") )
+        if [[ "$cur" == -* ]]; then
+            COMPREPLY=( $(compgen -W "-c -h --help -v --version" -- "$cur") )
+        else
+            COMPREPLY=( $(compgen -W "${subcommands}" -- "$cur") )
+        fi
         return 0
     fi
 
-    local cmd="${words[1]}"
+    if [[ "$prev" == "-c" ]]; then
+        COMPREPLY=( $(compgen -f -- "$cur") )
+        return 0
+    fi
+
+    local cmd=""
     local i=1
-    # Check if -c was used before subcommand
-    if [[ "${words[1]}" == "-c" ]]; then
-        if [[ $cword -eq 2 ]]; then
-            _filedir
-            return 0
+    while [[ $i -lt $cword ]]; do
+        if [[ "${words[$i]}" == "-c" ]]; then
+            i=$((i + 2))
+            continue
         fi
-        cmd="${words[3]}"
+        if [[ "${words[$i]}" != -* ]]; then
+            cmd="${words[$i]}"
+            break
+        fi
+        i=$((i + 1))
+    done
+
+    if [[ -z "$cmd" ]]; then
+        COMPREPLY=( $(compgen -W "${subcommands}" -- "$cur") )
+        return 0
     fi
 
     case "$cmd" in
         run)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "-E -e -t -m -i -f --key-format --no-autoload --dry-run --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "-E --no-autoload --dry-run --help -h" -- "$cur") )
             fi
             ;;
-        get)
+        inspect)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--help -h" -- "$cur") )
-            else
-                local schemes="keyring:// env:// cache:// pass:// search://"
-                local vaults=$(cloakenv internal list-vaults 2>/dev/null)
-                local vault_schemes=""
-                for v in $vaults; do
-                    vault_schemes+="${v}:// "
-                done
-                COMPREPLY=( $(compgen -W "${schemes} ${vault_schemes}" -- "$cur") )
-            fi
-            ;;
-        set|delete)
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--ttl --help -h" -- "$cur") )
-            else
-                local schemes="keyring:// cache://"
-                COMPREPLY=( $(compgen -W "${schemes}" -- "$cur") )
+                COMPREPLY=( $(compgen -W "-o --output --help -h" -- "$cur") )
+            elif [[ $cword -eq 2 || ($cword -eq 4 && "${words[1]}" == "-c") ]]; then
+                COMPREPLY=( $(compgen -W "env template run" -- "$cur") )
             fi
             ;;
         cache)
-            if [[ $cword -eq 2 || ($cword -eq 4 && "${words[1]}" == "-c") ]]; then
-                COMPREPLY=( $(compgen -W "clear prune --help -h" -- "$cur") )
-            fi
-            ;;
-        show)
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "-m -e -t -i -f --key-format --raw --explain --show-meta -o --output --help -h" -- "$cur") )
-            fi
-            ;;
-        search)
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--vault -i -f --key-format --show-meta -o --output --help -h" -- "$cur") )
-            fi
+            COMPREPLY=( $(compgen -W "clear prune --help -h" -- "$cur") )
             ;;
         auth)
             if [[ $cword -eq 2 || ($cword -eq 4 && "${words[1]}" == "-c") ]]; then
@@ -81,11 +73,6 @@ _cloakenv_complete() {
             elif [[ $cword -eq 3 || ($cword -eq 5 && "${words[1]}" == "-c") ]]; then
                 local vaults=$(cloakenv internal list-vaults 2>/dev/null)
                 COMPREPLY=( $(compgen -W "${vaults}" -- "$cur") )
-            fi
-            ;;
-        sync)
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--dry-run --tags --prefix -r --regex --help -h" -- "$cur") )
             fi
             ;;
         doctor)
@@ -104,7 +91,6 @@ _cloakenv_complete() {
     esac
     return 0
 }
-
 complete -F _cloakenv_complete cloakenv
 `
 
@@ -113,15 +99,10 @@ const zshCompletionScript = `#compdef cloakenv
 _cloakenv() {
     local -a commands
     commands=(
-        'run:Wrap a binary with injected environment variables'
-        'get:Retrieve and print a single secret value raw to stdout'
-        'set:Store a secret value at a writable URI'
-        'delete:Remove a secret from a writable URI'
-        'cache:Manage local encrypted cache'
-        'show:Retrieve and display a structured entry'
-        'search:Search for structured entries'
+        'run:Wrap a binary with config-governed injected environment variables and templates'
+        'inspect:Preview matched vaults, envs, templates, and autoload rules (always redacted)'
         'auth:Manage vault authentication'
-        'sync:Cross-vault secret synchronization'
+        'cache:Manage local encrypted cache'
         'doctor:Diagnose environment, validate config, and check vault reachability'
         'completion:Generate shell autocompletion script'
         'version:Print version information'
@@ -141,6 +122,9 @@ _cloakenv() {
             ;;
         args)
             case $words[1] in
+                inspect)
+                    _values 'target' env template run
+                    ;;
                 completion)
                     _values 'shell' bash zsh fish powershell
                     ;;
@@ -175,19 +159,23 @@ complete -c cloakenv -s h -l help -d "Display help information"
 complete -c cloakenv -s v -l version -d "Display version"
 
 # Subcommands
-complete -c cloakenv -n "__fish_use_subcommand" -a run -d "Wrap a binary with injected environment variables"
-complete -c cloakenv -n "__fish_use_subcommand" -a get -d "Retrieve and print a single secret value"
-complete -c cloakenv -n "__fish_use_subcommand" -a set -d "Store a secret value at a writable URI"
-complete -c cloakenv -n "__fish_use_subcommand" -a delete -d "Remove a secret from a writable URI"
-complete -c cloakenv -n "__fish_use_subcommand" -a cache -d "Manage local encrypted cache"
-complete -c cloakenv -n "__fish_use_subcommand" -a show -d "Retrieve and display a structured entry"
-complete -c cloakenv -n "__fish_use_subcommand" -a search -d "Search for structured entries"
+complete -c cloakenv -n "__fish_use_subcommand" -a run -d "Wrap a binary with config-governed injected environment variables"
+complete -c cloakenv -n "__fish_use_subcommand" -a inspect -d "Preview matched envs, templates, and autoload rules (redacted)"
 complete -c cloakenv -n "__fish_use_subcommand" -a auth -d "Manage vault authentication"
-complete -c cloakenv -n "__fish_use_subcommand" -a sync -d "Cross-vault secret synchronization"
+complete -c cloakenv -n "__fish_use_subcommand" -a cache -d "Manage local encrypted cache"
 complete -c cloakenv -n "__fish_use_subcommand" -a doctor -d "Diagnose environment, validate config, and check vault reachability"
 complete -c cloakenv -n "__fish_use_subcommand" -a completion -d "Generate shell completion script"
 complete -c cloakenv -n "__fish_use_subcommand" -a version -d "Print version information"
 complete -c cloakenv -n "__fish_use_subcommand" -a internal -d "Internal helper commands"
+
+# run flags
+complete -c cloakenv -n "__fish_seen_subcommand_from run" -s E -d "Start with an empty environment"
+complete -c cloakenv -n "__fish_seen_subcommand_from run" -l no-autoload -d "Disable config autoload rules"
+complete -c cloakenv -n "__fish_seen_subcommand_from run" -l dry-run -d "Preview execution without running"
+
+# inspect subcommands & flags
+complete -c cloakenv -n "__fish_seen_subcommand_from inspect" -a "env template run"
+complete -c cloakenv -n "__fish_seen_subcommand_from inspect" -s o -l output -d "Output format (text, json, yaml)" -r
 
 # completion arguments
 complete -c cloakenv -n "__fish_seen_subcommand_from completion" -a "bash zsh fish powershell"
@@ -207,7 +195,6 @@ complete -c cloakenv -n "__fish_seen_subcommand_from internal" -a "match-alias l
 
 const powershellCompletionScript = `Register-ArgumentCompleter -Native -CommandName cloakenv -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
-
     $commandElements = $commandAst.Elements
     $command = @(
         for ($i = 1; $i -lt $commandElements.Count; $i++) {
@@ -222,8 +209,7 @@ const powershellCompletionScript = `Register-ArgumentCompleter -Native -CommandN
     )[0]
 
     $subcommands = @(
-        'run', 'get', 'set', 'delete', 'cache',
-        'show', 'search', 'auth', 'sync',
+        'run', 'inspect', 'auth', 'cache',
         'doctor', 'completion', 'version', 'internal'
     )
 
@@ -235,6 +221,11 @@ const powershellCompletionScript = `Register-ArgumentCompleter -Native -CommandN
     }
 
     switch ($command) {
+        'inspect' {
+            @('env', 'template', 'run') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+            }
+        }
         'completion' {
             @('bash', 'zsh', 'fish', 'powershell') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
                 [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
