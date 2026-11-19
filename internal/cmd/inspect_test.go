@@ -79,6 +79,7 @@ func TestInspect_RedactionAndModes(t *testing.T) {
 		"sk-super-secret-openai-99999",
 		"org-secret-12345",
 		"inline-secret-value-8888",
+		"staging",
 	}
 
 	assertNoLeaks := func(t *testing.T, out string) {
@@ -164,6 +165,25 @@ func TestInspect_RedactionAndModes(t *testing.T) {
 		}
 		if len(rep.Templates) != 1 || rep.Templates[0].EnvPath != "LITELLM_CONFIG_PATH" || rep.Templates[0].Driver != "yaml" {
 			t.Errorf("unexpected template delivery report: %+v", rep.Templates)
+		}
+		wantPath := "/tmp/litellm-" + runner.RedactedPlaceholder + ".yaml"
+		if rep.Templates[0].Path != wantPath {
+			t.Errorf("Template Path = %q, want %q", rep.Templates[0].Path, wantPath)
+		}
+	})
+
+	t.Run("inspect -o json run without -- preserves child flags", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		if code := Inspect([]string{"-o", "json", "run", "litellm", "--port", "4000"}, cfg, &stdout, &stderr); code != 0 {
+			t.Fatalf("Inspect -o json run failed: %d stderr=%s", code, stderr.String())
+		}
+		assertNoLeaks(t, stdout.String())
+		var rep InspectRunReport
+		if err := json.Unmarshal(stdout.Bytes(), &rep); err != nil {
+			t.Fatalf("invalid json: %v\n%s", err, stdout.String())
+		}
+		if strings.Join(rep.Command, " ") != "litellm-bin --port 4000" {
+			t.Errorf("Command = %v, want [litellm-bin --port 4000]", rep.Command)
 		}
 	})
 

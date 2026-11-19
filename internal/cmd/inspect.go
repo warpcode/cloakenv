@@ -93,7 +93,7 @@ func Inspect(args []string, cfg *config.Config, stdout, stderr io.Writer) int {
 		preArgs = args[:dashDashIdx]
 		postArgs = args[dashDashIdx+1:]
 	} else {
-		preArgs = args
+		preArgs, postArgs = splitInspectRunArgs(args)
 	}
 
 	parser := NewFlagParser()
@@ -319,6 +319,32 @@ func runInspectCommand(ctx context.Context, orch *engine.Orchestrator, cmdArgs [
 		return 1
 	}
 	return 0
+}
+
+func splitInspectRunArgs(args []string) (preArgs, postArgs []string) {
+	seenRun := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "-o" || a == "--output" {
+			i++
+			continue
+		}
+		if strings.HasPrefix(a, "-o=") || strings.HasPrefix(a, "--output=") || a == "-h" || a == "--help" {
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			return args, nil
+		}
+		if !seenRun {
+			if a == "run" || a == "command" {
+				seenRun = true
+				continue
+			}
+			return args, nil
+		}
+		return args[:i], args[i:]
+	}
+	return args, nil
 }
 
 func buildOverviewReport(cfg *config.Config) InspectOverviewReport {

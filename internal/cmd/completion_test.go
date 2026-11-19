@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -92,9 +93,25 @@ func TestCompletion_ReflectsLockedDownCLI(t *testing.T) {
 			if !strings.Contains(out, "inspect") {
 				t.Errorf("%s completion missing 'inspect' subcommand", shell)
 			}
-			for _, removed := range []string{"--show-meta", "--ttl", "--raw"} {
+			for _, removed := range []string{"--show-meta", "--ttl", "--raw", "--key-format"} {
 				if strings.Contains(out, removed) {
 					t.Errorf("%s completion should not contain removed flag %q", shell, removed)
+				}
+			}
+			for _, removedCmd := range []string{"get", "show", "search", "set", "delete", "sync"} {
+				re := regexp.MustCompile(`\b` + removedCmd + `\b`)
+				if re.MatchString(out) {
+					t.Errorf("%s completion should not contain removed command %q", shell, removedCmd)
+				}
+			}
+			// Strip shell-builtin flags (compgen -f, complete ... -f, _describe -t) before checking removed run flags
+			cleaned := strings.ReplaceAll(out, "compgen -f", "compgen")
+			cleaned = strings.ReplaceAll(cleaned, "complete -c cloakenv -f", "complete -c cloakenv")
+			cleaned = strings.ReplaceAll(cleaned, "_describe -t", "_describe")
+			for _, removedRunFlag := range []string{"-e", "-m", "-t", "-i", "-f"} {
+				re := regexp.MustCompile(`(?:^|[^a-zA-Z0-9_-])` + regexp.QuoteMeta(removedRunFlag) + `(?:[^a-zA-Z0-9_-]|$)`)
+				if re.MatchString(cleaned) {
+					t.Errorf("%s completion should not contain removed run flag %q", shell, removedRunFlag)
 				}
 			}
 		})
