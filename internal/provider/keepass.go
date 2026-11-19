@@ -55,10 +55,6 @@ func (k *KeePassProvider) Scheme() string {
 //   - "keyring_prefix": service name prefix for keyring
 //   - "force_prompt": "true" to force prompting for password
 func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
-	if cfg.SingleEntity != nil && *cfg.SingleEntity {
-		return errors.New("keepass provider: cannot be configured as a single-entity vault")
-	}
-
 	k.resolveReferences = cfg.ResolveReferences || cfg.Settings["resolve_references"] == "true"
 
 	vaultPath := cfg.Settings["vault_path"]
@@ -340,65 +336,36 @@ func (k *KeePassProvider) GetSecret(_ context.Context, location string) (string,
 	return "", fmt.Errorf("keepass provider: attribute %q is empty or not found for entry %q", attr, k.getEntryTitle(entry))
 }
 
-// GetEntry retrieves a complete structured entry by location.
-func (k *KeePassProvider) GetEntry(ctx context.Context, location string) (Entry, error) {
-	entry, _, err := k.GetEntryWithPath(ctx, location)
-	return entry, err
-}
-
-// GetEntryWithPath retrieves a structured entry along with its authoritative canonical path.
-func (k *KeePassProvider) GetEntryWithPath(_ context.Context, location string) (Entry, string, error) {
-	if k.db == nil {
-		return Entry{}, "", errors.New("keepass provider: not initialized")
-	}
-
-	entry, parentGroup, groupPath, _, err := k.findEntry(location)
-	if err != nil {
-		return Entry{}, "", err
-	}
-
-	title := k.getEntryTitle(entry)
-	var authoritativePath string
-	if groupPath == "" {
-		authoritativePath = title
-	} else {
-		authoritativePath = groupPath + "/" + title
-	}
-
-	e, err := k.toEntry(entry, parentGroup, groupPath)
-	if err != nil {
-		return Entry{}, "", err
-	}
-
-	return e, authoritativePath, nil
-}
-
-// GetEntryTitle retrieves only the title of an entry by location without loading attributes or binary attachments.
-func (k *KeePassProvider) GetEntryTitle(_ context.Context, location string) (string, error) {
-	if k.db == nil {
-		return "", errors.New("keepass provider: not initialized")
-	}
-
-	entry, _, _, _, err := k.findEntry(location)
-	if err != nil {
-		return "", err
-	}
-
-	return k.getEntryTitle(entry), nil
-}
-
-// Search retrieves all entries matching the query criteria.
-func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]SearchResult, error) {
+// GetEntry retrieves a single flat raw Entry by location.
+func (k *KeePassProvider) GetEntry(_ context.Context, location string) (Entry, error) {
 	if k.db == nil {
 		return nil, errors.New("keepass provider: not initialized")
 	}
+	entry, parentGroup, groupPath, _, err := k.findEntry(location)
+	if err != nil {
+		return nil, err
+	}
+	title := k.getEntryTitle(entry)
+	var entryPath string
+	if groupPath == "" {
+		entryPath = title
+	} else {
+		entryPath = groupPath + "/" + title
+	}
+	return k.toEntry(entry, parentGroup, groupPath, entryPath)
+}
 
+// Search retrieves all raw entries matching the optional provider-native query criteria.
+func (k *KeePassProvider) Search(_ context.Context, query SearchQuery) ([]Entry, error) {
+	if k.db == nil {
+		return nil, errors.New("keepass provider: not initialized")
+	}
 	if len(k.db.Content.Root.Groups) == 0 {
 		return nil, errors.New("keepass provider: database has no root group")
 	}
-	rootGroup := &k.db.Content.Root.Groups[0]
 
-	var results []SearchResult
+	rootGroup := &k.db.Content.Root.Groups[0]
+	var results []Entry
 
 	queryTitleLower := strings.ToLower(query.Title)
 	queryPathLower := strings.ToLower(query.Path)
@@ -435,14 +402,11 @@ func (k *KeePassProvider) Search(ctx context.Context, query SearchQuery) ([]Sear
 				continue
 			}
 
-			e, err := k.toEntry(entry, g, groupPath)
+			e, err := k.toEntry(entry, g, groupPath, entryPath)
 			if err != nil {
 				return err
 			}
-			results = append(results, SearchResult{
-				Path:  entryPath,
-				Entry: e,
-			})
+			results = append(results, e)
 		}
 
 		for i := range g.Groups {
@@ -510,55 +474,50 @@ NextQueryTag:
 	return true
 }
 
-// toEntry converts a gokeepasslib.Entry into provider.Entry with UUID and parent group metadata.
-func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry, parentGroup *gokeepasslib.Group, groupPath string) (Entry, error) {
+// toEntry converts a gokeepasslib.Entry into a flat raw provider.Entry with
+// canonical top-level metadata ("title", "path", "uuid", "tags", "group").
+func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry, parentGroup *gokeepasslib.Group, groupPath, entryPath string) (Entry, error) {
 	title := k.getEntryTitle(entry)
 	if k.resolveReferences {
 		var err error
 		title, err = k.resolveValue(entry, "Title", title)
 		if err != nil {
-			return Entry{}, err
+			return nil, err
 		}
 	}
-	tags := utils.ParseTagString(entry.Tags)
 
-	attrs := make(map[string]any)
+	flat := make(Entry, len(entry.Values)+len(entry.Binaries)+5)
 	for _, v := range entry.Values {
 		val := v.Value.Content
 		if k.resolveReferences {
 			var err error
 			val, err = k.resolveValue(entry, v.Key, val)
 			if err != nil {
-				return Entry{}, err
+				return nil, err
 			}
 		}
-		attrs[v.Key] = val
+		flat[v.Key] = val
 	}
 
-	// Add attachments as attributes
+	// Add binary attachments directly as raw attributes.
 	for _, ref := range entry.Binaries {
 		if content, ok := k.getBinaryContent(ref.Value.ID); ok {
-			attrs[ref.Name] = content
+			flat[ref.Name] = content
 		}
 	}
 
-	var groupInfo *GroupInfo
+	flat["title"] = title
+	flat["path"] = entryPath
+	flat["uuid"] = hex.EncodeToString(entry.UUID[:])
+	flat["tags"] = utils.ParseTagString(entry.Tags)
 	if parentGroup != nil {
-		groupInfo = &GroupInfo{
-			Name: parentGroup.Name,
-			UUID: hex.EncodeToString(parentGroup.UUID[:]),
-			Path: groupPath,
+		flat["group"] = map[string]any{
+			"name": parentGroup.Name,
+			"uuid": hex.EncodeToString(parentGroup.UUID[:]),
+			"path": groupPath,
 		}
 	}
-
-	resEntry := Entry{
-		Title:      title,
-		Tags:       tags,
-		UUID:       hex.EncodeToString(entry.UUID[:]),
-		Group:      groupInfo,
-		Attributes: attrs,
-	}
-	return resEntry.EnsureOriginal(), nil
+	return flat, nil
 }
 
 // parseKeePassLocation splits "Path/To/Entry:Attribute" into path and attribute.
@@ -606,16 +565,6 @@ func (k *KeePassProvider) getEntryValue(entry *gokeepasslib.Entry, key string) s
 	k.entryCache[entry] = m
 
 	return m[key]
-}
-
-// SetSecret returns an error because the KeePass provider is currently read-only.
-func (k *KeePassProvider) SetSecret(_ context.Context, _ string, _ string) error {
-	return fmt.Errorf("keepass provider is read-only")
-}
-
-// DeleteSecret returns an error because the KeePass provider is currently read-only.
-func (k *KeePassProvider) DeleteSecret(_ context.Context, _ string) error {
-	return fmt.Errorf("keepass provider is read-only")
 }
 
 // Validate checks if the KeePass configuration is valid (vault_path must be set).

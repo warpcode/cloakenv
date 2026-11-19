@@ -539,21 +539,11 @@ func TestExecMemo_ZeroTTLDoesNotInitializeCacheProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOrchestrator failed: %v", err)
 	}
-	if err := injectMockVault(orch, "custom", []provider.SearchResult{
-		{
-			Provider: "search",
-			Vault:    "custom",
-			Path:     "app",
-			Entry: provider.Entry{
-				Title: "app",
-				Attributes: map[string]any{
-					"token": `{{ exec "echo" "no-cache-init" }}`,
-				},
-			},
+	orch.providerManager.vaultCache["custom"] = newTestMemoryProvider(map[string]provider.Entry{
+		"app": {
+			"token": `{{ exec "echo" "no-cache-init" }}`,
 		},
-	}); err != nil {
-		t.Fatalf("injectMockVault failed: %v", err)
-	}
+	})
 
 	val, err := orch.Resolve(context.Background(), "custom://app:token")
 	if err != nil {
@@ -594,6 +584,13 @@ func TestExecMemo_OrchestratorIntegration(t *testing.T) {
 	}
 
 	expr := fmt.Sprintf(`{{ exec %q "arg1" }}`, scriptPath)
+	memEntries := map[string]provider.Entry{
+		"app": {
+			"token_a": expr,
+			"token_b": expr,
+			"token_c": expr,
+		},
+	}
 	cfg := &config.Config{
 		Cache: config.CacheConfig{
 			DefaultTTL: "10m",
@@ -604,29 +601,12 @@ func TestExecMemo_OrchestratorIntegration(t *testing.T) {
 			},
 		},
 	}
-	mockResults := []provider.SearchResult{
-		{
-			Provider: "env",
-			Vault:    "custom",
-			Path:     "app",
-			Entry: provider.Entry{
-				Title: "app",
-				Attributes: map[string]any{
-					"token_a": expr,
-					"token_b": expr,
-					"token_c": expr,
-				},
-			},
-		},
-	}
 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "custom", mockResults); err != nil {
-		t.Fatalf("injectMockVault failed: %v", err)
-	}
+	orch.providerManager.vaultCache["custom"] = newTestMemoryProvider(memEntries)
 
 	ctx := context.Background()
 
@@ -658,9 +638,7 @@ func TestExecMemo_OrchestratorIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create second orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch2, "custom", mockResults); err != nil {
-		t.Fatalf("injectMockVault(orch2) failed: %v", err)
-	}
+	orch2.providerManager.vaultCache["custom"] = newTestMemoryProvider(memEntries)
 	val2, err := orch2.Resolve(ctx, "custom://app:token_a")
 	if err != nil {
 		t.Fatalf("orch2 Resolve failed: %v", err)

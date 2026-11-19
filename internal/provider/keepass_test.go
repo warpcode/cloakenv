@@ -105,27 +105,6 @@ func TestKeePassProvider(t *testing.T) {
 		}
 	})
 
-	t.Run("GetEntryTitle", func(t *testing.T) {
-		title, err := kp.GetEntryTitle(ctx, "website/Test Website")
-		if err != nil {
-			t.Fatalf("GetEntryTitle failed: %v", err)
-		}
-		if title != "Test Website" {
-			t.Errorf("GetEntryTitle = %q, want %q", title, "Test Website")
-		}
-
-		_, err = kp.GetEntryTitle(ctx, "nonexistent/entry")
-		if err == nil {
-			t.Errorf("expected error for nonexistent entry, got nil")
-		}
-
-		uninitKP := NewKeePassProvider()
-		_, err = uninitKP.GetEntryTitle(ctx, "website/Test Website")
-		if err == nil {
-			t.Errorf("expected error on uninitialized KeePassProvider, got nil")
-		}
-	})
-
 	t.Run("GetSecret", func(t *testing.T) {
 		tests := []struct {
 			name     string
@@ -156,12 +135,12 @@ func TestKeePassProvider(t *testing.T) {
 			t.Fatalf("failed to retrieve entry for GetSecret test: %v", err)
 		}
 		uuidVal, err := kp.GetSecret(ctx, "website/Test Website:UUID")
-		if err != nil || uuidVal != entry.UUID {
-			t.Errorf("GetSecret :UUID = %q, want %q, err: %v", uuidVal, entry.UUID, err)
+		if err != nil || uuidVal != entry.UUID() {
+			t.Errorf("GetSecret :UUID = %q, want %q, err: %v", uuidVal, entry.UUID(), err)
 		}
 		uuidLowerVal, err := kp.GetSecret(ctx, "website/Test Website:uuid")
-		if err != nil || uuidLowerVal != entry.UUID {
-			t.Errorf("GetSecret :uuid = %q, want %q, err: %v", uuidLowerVal, entry.UUID, err)
+		if err != nil || uuidLowerVal != entry.UUID() {
+			t.Errorf("GetSecret :uuid = %q, want %q, err: %v", uuidLowerVal, entry.UUID(), err)
 		}
 		grpVal, err := kp.GetSecret(ctx, "website/Test Website:group")
 		if err != nil || grpVal != "website" {
@@ -172,8 +151,8 @@ func TestKeePassProvider(t *testing.T) {
 			t.Errorf("GetSecret :group_name = %q, want 'website', err: %v", grpNameVal, err)
 		}
 		grpUUIDVal, err := kp.GetSecret(ctx, "website/Test Website:group_uuid")
-		if err != nil || grpUUIDVal != entry.Group.UUID {
-			t.Errorf("GetSecret :group_uuid = %q, want %q, err: %v", grpUUIDVal, entry.Group.UUID, err)
+		if err != nil || grpUUIDVal != entry.Group()["uuid"] {
+			t.Errorf("GetSecret :group_uuid = %q, want %q, err: %v", grpUUIDVal, entry.Group()["uuid"], err)
 		}
 		grpPathVal, err := kp.GetSecret(ctx, "website/Test Website:group_path")
 		if err != nil || grpPathVal != "website" {
@@ -186,23 +165,23 @@ func TestKeePassProvider(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetEntry failed: %v", err)
 		}
-		if entry.Title != "Test Website" {
-			t.Errorf("expected title 'Test Website', got %q", entry.Title)
+		if entry.Title() != "Test Website" {
+			t.Errorf("expected title 'Test Website', got %q", entry.Title())
 		}
-		if len(entry.UUID) != 32 {
-			t.Errorf("expected 32-character hex UUID, got %q", entry.UUID)
+		if len(entry.UUID()) != 32 {
+			t.Errorf("expected 32-character hex UUID, got %q", entry.UUID())
 		}
-		if entry.Group == nil {
+		if entry.Group() == nil {
 			t.Fatalf("expected non-nil Group")
 		}
-		if entry.Group.Name != "website" {
-			t.Errorf("expected group name 'website', got %q", entry.Group.Name)
+		if entry.Group()["name"] != "website" {
+			t.Errorf("expected group name 'website', got %q", entry.Group()["name"])
 		}
-		if entry.Group.Path != "website" {
-			t.Errorf("expected group path 'website', got %q", entry.Group.Path)
+		if entry.Group()["path"] != "website" {
+			t.Errorf("expected group path 'website', got %q", entry.Group()["path"])
 		}
-		if len(entry.Group.UUID) != 32 {
-			t.Errorf("expected 32-character hex Group UUID, got %q", entry.Group.UUID)
+		if len(entry.Group()["uuid"].(string)) != 32 {
+			t.Errorf("expected 32-character hex Group UUID, got %q", entry.Group()["uuid"])
 		}
 	})
 
@@ -251,31 +230,18 @@ func TestKeePassProvider(t *testing.T) {
 				if len(results) != tc.wantCount {
 					t.Fatalf("expected %d result(s), got %d", tc.wantCount, len(results))
 				}
-				if tc.wantFirstPath != "" && results[0].Path != tc.wantFirstPath {
-					t.Errorf("expected path %q, got %q", tc.wantFirstPath, results[0].Path)
+				if tc.wantFirstPath != "" && results[0].Path() != tc.wantFirstPath {
+					t.Errorf("expected path %q, got %q", tc.wantFirstPath, results[0].Path())
 				}
 				if tc.wantCount > 0 {
-					if len(results[0].Entry.UUID) != 32 {
-						t.Errorf("expected 32-character hex UUID in search result, got %q", results[0].Entry.UUID)
+					if len(results[0].UUID()) != 32 {
+						t.Errorf("expected 32-character hex UUID in search result, got %q", results[0].UUID())
 					}
-					if results[0].Entry.Group == nil || results[0].Entry.Group.Name == "" {
-						t.Errorf("expected populated Group in search result, got %+v", results[0].Entry.Group)
+					if results[0].Group() == nil || results[0].Group()["name"] == "" {
+						t.Errorf("expected populated Group in search result, got %+v", results[0].Group())
 					}
 				}
 			})
-		}
-	})
-
-	t.Run("ReadOnly", func(t *testing.T) {
-		if err := kp.SetSecret(ctx, "a", "b"); err == nil {
-			t.Errorf("expected SetSecret to fail")
-		} else if !strings.Contains(err.Error(), "read-only") {
-			t.Errorf("expected error to contain 'read-only', got %q", err.Error())
-		}
-		if err := kp.DeleteSecret(ctx, "a"); err == nil {
-			t.Errorf("expected DeleteSecret to fail")
-		} else if !strings.Contains(err.Error(), "read-only") {
-			t.Errorf("expected error to contain 'read-only', got %q", err.Error())
 		}
 	})
 
@@ -334,28 +300,6 @@ func TestKeePassProvider(t *testing.T) {
 			t.Errorf("expected to find entry with title 'Test Website' in test database fixture")
 		}
 	})
-}
-
-func TestKeePassProvider_SetSecret(t *testing.T) {
-	kp := NewKeePassProvider()
-	err := kp.SetSecret(context.Background(), "KEY", "VAL")
-	if err == nil {
-		t.Error("expected error for SetSecret, got nil")
-	}
-	if err != nil && !strings.Contains(err.Error(), "read-only") {
-		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
-	}
-}
-
-func TestKeePassProvider_DeleteSecret(t *testing.T) {
-	kp := NewKeePassProvider()
-	err := kp.DeleteSecret(context.Background(), "KEY")
-	if err == nil {
-		t.Error("expected error for DeleteSecret, got nil")
-	}
-	if err != nil && !strings.Contains(err.Error(), "read-only") {
-		t.Errorf("expected error to contain 'read-only', got %q", err.Error())
-	}
 }
 
 func TestMatchEntryTags(t *testing.T) {
@@ -546,19 +490,19 @@ func TestKeePassProvider_CustomUUIDAttributePrecedence(t *testing.T) {
 		t.Errorf("GetSecret :uuid = %q, want 'custom-override-uuid'", valLower)
 	}
 
-	// GetEntry still populates entry.UUID with 32-char hex XML UUID and entry.Attributes["UUID"] with "custom-override-uuid"
+	// GetEntry still populates entry.UUID() with 32-char hex XML UUID and entry["UUID"] with "custom-override-uuid"
 	e, err := kp.GetEntry(ctx, "website/Test Website")
 	if err != nil {
 		t.Fatalf("GetEntry failed: %v", err)
 	}
-	if len(e.UUID) != 32 {
-		t.Errorf("expected 32-char hex XML UUID in entry.UUID, got %q", e.UUID)
+	if len(e.UUID()) != 32 {
+		t.Errorf("expected 32-char hex XML UUID in entry.UUID(), got %q", e.UUID())
 	}
-	if e.UUID == "custom-override-uuid" {
+	if e.UUID() == "custom-override-uuid" {
 		t.Errorf("e.UUID should be XML UUID, not custom attribute")
 	}
-	if e.Attributes["UUID"] != "custom-override-uuid" {
-		t.Errorf("e.Attributes[\"UUID\"] = %v, want 'custom-override-uuid'", e.Attributes["UUID"])
+	if e["UUID"] != "custom-override-uuid" {
+		t.Errorf("e.Attributes[\"UUID\"] = %v, want 'custom-override-uuid'", e["UUID"])
 	}
 }
 
@@ -634,12 +578,12 @@ func TestKeePassProvider_KeyFileOnly(t *testing.T) {
 			t.Fatalf("Initialize failed for key-file only database: %v", err)
 		}
 
-		title, err := kp.GetEntryTitle(ctx, "KeyFileEntry")
+		entry, err := kp.GetEntry(ctx, "KeyFileEntry")
 		if err != nil {
-			t.Fatalf("GetEntryTitle failed: %v", err)
+			t.Fatalf("GetEntry failed: %v", err)
 		}
-		if title != "KeyFileEntry" {
-			t.Errorf("expected title 'KeyFileEntry', got %q", title)
+		if entry.Title() != "KeyFileEntry" {
+			t.Errorf("expected title 'KeyFileEntry', got %q", entry.Title())
 		}
 
 		secret, err := kp.GetSecret(ctx, "KeyFileEntry")

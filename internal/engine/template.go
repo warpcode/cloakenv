@@ -223,20 +223,39 @@ func wrapTemplateData(data any) any {
 }
 
 func entryToTemplateContext(e provider.Entry, providerName, vault, path string) TemplateContext {
-	meta := provider.BuildMetaMap(e, providerName, vault, path)
-
-	origEntry := e
-	if e.Original != nil {
-		origEntry = *e.Original
+	tags := e.Tags()
+	if tags == nil {
+		tags = []string{}
 	}
-	origMeta := provider.BuildMetaMap(origEntry, providerName, vault, path)
+	entryPath := path
+	if entryPath == "" {
+		entryPath = e.Path()
+	}
+	meta := map[string]any{
+		"Provider": providerName,
+		"Vault":    vault,
+		"Path":     entryPath,
+		"Title":    e.Title(),
+		"UUID":     e.UUID(),
+		"Tags":     tags,
+	}
+	if grp := e.Group(); grp != nil {
+		meta["Group"] = grp
+	}
+	attrs := make(map[string]any, len(e))
+	for k, v := range e {
+		if isReservedMetadataKey(k) {
+			continue
+		}
+		attrs[k] = v
+	}
 
 	return TemplateContext{
 		Meta:       meta,
-		Attributes: e.Attributes,
+		Attributes: attrs,
 		Original: &TemplateContext{
-			Meta:       origMeta,
-			Attributes: origEntry.Attributes,
+			Meta:       meta,
+			Attributes: attrs,
 		},
 	}
 }

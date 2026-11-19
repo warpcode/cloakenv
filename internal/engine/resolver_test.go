@@ -16,7 +16,9 @@ func TestGetEntry_AttributeSelector(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"vault_x": {Provider: "env"},
+			"vault_x": {
+				Provider: "env",
+			},
 		},
 	}
 
@@ -24,21 +26,23 @@ func TestGetEntry_AttributeSelector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "vault_x", []provider.SearchResult{
-		{Provider: "search", Vault: "vault_x", Path: "myentity", Entry: provider.Entry{Title: "myentity", Attributes: map[string]any{"Password": "s3cr3t", "UserName": "alice", "Notes": "some notes"}}},
-	}); err != nil {
-		t.Fatalf("injectMockVault(vault_x) failed: %v", err)
-	}
+	orch.providerManager.vaultCache["vault_x"] = newTestMemoryProvider(map[string]provider.Entry{
+		"myentity": {
+			"Password": "s3cr3t",
+			"UserName": "alice",
+			"Notes":    "some notes",
+		},
+	})
 
 	t.Run("single_attr_only", func(t *testing.T) {
 		entry, err := orch.GetEntry(ctx, "vault_x://myentity:Password")
 		if err != nil {
 			t.Fatalf("GetEntry failed: %v", err)
 		}
-		if len(entry.Attributes) != 1 {
-			t.Errorf("expected 1 attribute, got %d: %v", len(entry.Attributes), entry.Attributes)
+		if len(entry) != 1 {
+			t.Errorf("expected 1 attribute, got %d: %v", len(entry), entry)
 		}
-		val, ok := entry.Attributes["Password"]
+		val, ok := entry["Password"]
 		if !ok {
 			t.Fatal("expected 'Password' key in synthetic entry")
 		}
@@ -52,8 +56,14 @@ func TestGetEntry_AttributeSelector(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetEntry failed: %v", err)
 		}
-		if len(entry.Attributes) != 3 {
-			t.Errorf("expected 3 attributes, got %d: %v", len(entry.Attributes), entry.Attributes)
+		attrCount := 0
+		for k := range entry {
+			if !isReservedMetadataKey(k) {
+				attrCount++
+			}
+		}
+		if attrCount != 3 {
+			t.Errorf("expected 3 attributes, got %d: %v", attrCount, entry)
 		}
 	})
 }
@@ -96,7 +106,9 @@ func TestOrchestratorExpansion(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"vault_exp": {Provider: "env"},
+			"vault_exp": {
+				Provider: "env",
+			},
 		},
 	}
 
@@ -104,11 +116,11 @@ func TestOrchestratorExpansion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "vault_exp", []provider.SearchResult{
-		{Provider: "search", Vault: "vault_exp", Path: "database", Entry: provider.Entry{Title: "database", Attributes: map[string]any{"password": "supersecretpassword"}}},
-	}); err != nil {
-		t.Fatalf("injectMockVault(vault_exp) failed: %v", err)
-	}
+	orch.providerManager.vaultCache["vault_exp"] = newTestMemoryProvider(map[string]provider.Entry{
+		"database": {
+			"password": "supersecretpassword",
+		},
+	})
 
 	t.Run("Single expansion in a value", func(t *testing.T) {
 		val, err := orch.Resolve(ctx, `{{ get "env://EXP_USER" }}`)
@@ -188,12 +200,8 @@ func TestGetEntry(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"vault_x": {
-				Provider: "env",
-			},
-			"vault_y": {
-				Provider: "env",
-			},
+			"vault_x": {Provider: "env"},
+			"vault_y": {Provider: "env"},
 		},
 	}
 
@@ -201,19 +209,26 @@ func TestGetEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "vault_x", []provider.SearchResult{
-		{Provider: "search", Vault: "vault_x", Path: "myentity", Entry: provider.Entry{Title: "myentity", Attributes: map[string]any{"Password": "s3cr3t", "recursive": "vault_x://myentity"}}},
-		{Provider: "search", Vault: "vault_x", Path: "error_attr", Entry: provider.Entry{Title: "error_attr", Attributes: map[string]any{"Password": `{{ get "vault_missing://nonexistent" }}`}}},
-		{Provider: "search", Vault: "vault_x", Path: "recursive_attr", Entry: provider.Entry{Title: "recursive_attr", Attributes: map[string]any{"Password": `{{ get "vault_x://recursive_attr:Password" }}`}}},
-	}); err != nil {
-		t.Fatalf("injectMockVault(vault_x) failed: %v", err)
-	}
-	if err := injectMockVault(orch, "vault_y", []provider.SearchResult{
-		{Provider: "search", Vault: "vault_y", Path: "target", Entry: provider.Entry{Title: "target", Attributes: map[string]any{"Password": "pass"}}},
-		{Provider: "search", Vault: "vault_y", Path: "no_resolve", Entry: provider.Entry{Title: "no_resolve", Attributes: map[string]any{"Password": "vault_y://target"}}},
-	}); err != nil {
-		t.Fatalf("injectMockVault(vault_y) failed: %v", err)
-	}
+	orch.providerManager.vaultCache["vault_x"] = newTestMemoryProvider(map[string]provider.Entry{
+		"myentity": {
+			"Password":  "s3cr3t",
+			"recursive": "vault_x://myentity",
+		},
+		"error_attr": {
+			"Password": `{{ get "vault_missing://nonexistent" }}`,
+		},
+		"recursive_attr": {
+			"Password": `{{ get "vault_x://recursive_attr:Password" }}`,
+		},
+	})
+	orch.providerManager.vaultCache["vault_y"] = newTestMemoryProvider(map[string]provider.Entry{
+		"target": {
+			"Password": "pass",
+		},
+		"no_resolve": {
+			"Password": "vault_y://target",
+		},
+	})
 
 	orch.providerManager.builtins["failinit"] = &failInitProvider{}
 
@@ -257,7 +272,7 @@ func TestGetEntry(t *testing.T) {
 		},
 		{
 			name:    "provider_not_searchable",
-			uri:     "keyring://foo",
+			uri:     "cache://foo",
 			wantErr: "does not support structured entries",
 		},
 		{
@@ -319,12 +334,18 @@ func TestGetEntry(t *testing.T) {
 			}
 
 			if tt.wantAttrs != nil {
-				if len(entry.Attributes) != len(tt.wantAttrs) {
-					t.Errorf("expected %d attributes, got %d: %v", len(tt.wantAttrs), len(entry.Attributes), entry.Attributes)
+				gotAttrs := make(map[string]any)
+				for k, v := range entry {
+					if !isReservedMetadataKey(k) {
+						gotAttrs[k] = v
+					}
+				}
+				if len(gotAttrs) != len(tt.wantAttrs) {
+					t.Errorf("expected %d attributes, got %d: %v", len(tt.wantAttrs), len(gotAttrs), gotAttrs)
 				}
 				for k, v := range tt.wantAttrs {
-					if entry.Attributes[k] != v {
-						t.Errorf("expected attribute %q to be %q, got %q", k, v, entry.Attributes[k])
+					if gotAttrs[k] != v {
+						t.Errorf("expected attribute %q to be %q, got %q", k, v, gotAttrs[k])
 					}
 				}
 			}
@@ -339,15 +360,13 @@ func TestResolve_BareURIQuoteEscaping(t *testing.T) {
 	res := NewResolver(pm, sem)
 
 	var receivedQuery string
-	res.SetSearchFunc(func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]provider.SearchResult, error) {
+	res.SetSearchFunc(func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]SearchResult, error) {
 		receivedQuery = expressionStr
-		return []provider.SearchResult{
+		return []SearchResult{
 			{
 				Entry: provider.Entry{
-					Title: "Matched Entry",
-					Attributes: map[string]any{
-						"Password": "super_secret_password",
-					},
+					"title":    "Matched Entry",
+					"Password": "super_secret_password",
 				},
 			},
 		}, nil
@@ -417,7 +436,7 @@ func TestResolve_BareURIQuoteEscaping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEntries failed with search URL params: %v", err)
 	}
-	if len(entriesURL) != 1 || entriesURL[0].Title != "Matched Entry" {
+	if len(entriesURL) != 1 || entriesURL[0].Title() != "Matched Entry" {
 		t.Errorf("unexpected entries from search URL params: %v", entriesURL)
 	}
 
@@ -425,7 +444,7 @@ func TestResolve_BareURIQuoteEscaping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEntries failed with search Expr: %v", err)
 	}
-	if len(entriesExpr) != 1 || entriesExpr[0].Title != "Matched Entry" {
+	if len(entriesExpr) != 1 || entriesExpr[0].Title() != "Matched Entry" {
 		t.Errorf("unexpected entries from search Expr: %v", entriesExpr)
 	}
 }
@@ -440,23 +459,24 @@ func TestResolver_GetEntries_And_GetEntriesRecursive(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"custom_v": {Provider: "env"},
+			"custom_v": {
+				Provider: "env",
+			},
 		},
 	}
 
-	orch, err := NewOrchestrator(cfg)
-	if err != nil {
-		t.Fatalf("NewOrchestrator failed: %v", err)
-	}
-	if err := injectMockVault(orch, "custom_v", []provider.SearchResult{
-		{
-			Provider: "search", Vault: "custom_v", Path: "app",
-			Entry: provider.Entry{Title: "App Entry", Tags: []string{"prod"}, Attributes: map[string]any{"apiKey": "12345", "secret": "s3cr3t"}},
+	pm := NewProviderManager(cfg, nil, nil)
+	pm.vaultCache["custom_v"] = newTestMemoryProvider(map[string]provider.Entry{
+		"app": {
+			"title":  "App Entry",
+			"path":   "app",
+			"tags":   []string{"prod"},
+			"apiKey": "12345",
+			"secret": "s3cr3t",
 		},
-	}); err != nil {
-		t.Fatalf("injectMockVault failed: %v", err)
-	}
-	res := orch.resolver
+	})
+	sem := make(chan struct{}, 10)
+	res := NewResolver(pm, sem)
 
 	tests := []struct {
 		name       string
@@ -475,11 +495,11 @@ func TestResolver_GetEntries_And_GetEntriesRecursive(t *testing.T) {
 			wantCount:  1,
 			wantErr:    false,
 			checkFn: func(t *testing.T, entries []provider.Entry) {
-				if entries[0].Title != "App Entry" {
-					t.Errorf("Title = %q, want 'App Entry'", entries[0].Title)
+				if entries[0].Title() != "App Entry" {
+					t.Errorf("Title = %q, want 'App Entry'", entries[0].Title())
 				}
-				if entries[0].Attributes["apiKey"] != "12345" {
-					t.Errorf("apiKey = %v, want '12345'", entries[0].Attributes["apiKey"])
+				if entries[0]["apiKey"] != "12345" {
+					t.Errorf("apiKey = %v, want '12345'", entries[0]["apiKey"])
 				}
 			},
 		},
@@ -491,8 +511,8 @@ func TestResolver_GetEntries_And_GetEntriesRecursive(t *testing.T) {
 			wantCount:  1,
 			wantErr:    false,
 			checkFn: func(t *testing.T, entries []provider.Entry) {
-				if entries[0].Title != "App Entry" {
-					t.Errorf("Title = %q, want 'App Entry'", entries[0].Title)
+				if entries[0].Title() != "App Entry" {
+					t.Errorf("Title = %q, want 'App Entry'", entries[0].Title())
 				}
 			},
 		},
@@ -511,10 +531,10 @@ func TestResolver_GetEntries_And_GetEntriesRecursive(t *testing.T) {
 			wantCount:  1,
 			wantErr:    false,
 			checkFn: func(t *testing.T, entries []provider.Entry) {
-				if entries[0].Attributes["apiKey"] != "12345" {
-					t.Errorf("apiKey = %v, want '12345'", entries[0].Attributes["apiKey"])
+				if entries[0]["apiKey"] != "12345" {
+					t.Errorf("apiKey = %v, want '12345'", entries[0]["apiKey"])
 				}
-				if _, ok := entries[0].Attributes["secret"]; ok {
+				if _, ok := entries[0]["secret"]; ok {
 					t.Errorf("expected only apiKey in attribute selector, but secret is present")
 				}
 			},

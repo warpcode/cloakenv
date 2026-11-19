@@ -51,20 +51,24 @@ func (o *Orchestrator) Sync(ctx context.Context, sourceURI, targetURI string, op
 		return nil, fmt.Errorf("failed to get target provider %q: %w", targetScheme, err)
 	}
 
-	writableTarget, ok := targetProv.(provider.WritableProvider)
+	type writableProvider interface {
+		SetSecret(ctx context.Context, location string, value string) error
+		DeleteSecret(ctx context.Context, location string) error
+	}
+	writableTarget, ok := targetProv.(writableProvider)
 	if !ok {
 		return nil, fmt.Errorf("target vault %q is read-only or does not support writing", targetScheme)
 	}
 
 	// Validate target by checking scheme; read-only providers are rejected fast
 	switch targetScheme {
-	case "env", "keepass":
+	case "env", "keepass", "pass", "vault":
 		return nil, fmt.Errorf("target vault %q is read-only or does not support writing", targetScheme)
 	}
 	if o.config != nil && o.config.Vaults != nil {
 		if vCfg, exists := o.config.Vaults[targetScheme]; exists {
 			switch vCfg.Provider {
-			case "keepass":
+			case "keepass", "pass", "vault":
 				return nil, fmt.Errorf("target vault %q is read-only or does not support writing", targetScheme)
 			}
 		}
@@ -187,14 +191,20 @@ func (o *Orchestrator) extractSourceKeys(ctx context.Context, sourceURI string, 
 	if location != "" {
 		entry, err := o.GetEntry(ctx, sourceURI)
 		if err == nil {
-			if len(entry.Attributes) == 1 {
-				if _, hasKey := entry.Attributes[location]; hasKey {
-					strVal, _ := utils.SerializeAttrValue(entry.Attributes[location])
+			nonMeta := 0
+			for k := range entry {
+				if !isReservedMetadataKey(k) {
+					nonMeta++
+				}
+			}
+			if nonMeta == 1 {
+				if _, hasKey := entry[location]; hasKey {
+					strVal, _ := utils.SerializeAttrValue(entry[location])
 					results[location] = strVal
 					return results, true, nil
 				}
 			}
-			if matchesTags(entry.Tags, opts.Tags) {
+			if matchesTags(entry.Tags(), opts.Tags) {
 				extractEntryAttributes(location, entry, results)
 			}
 			return results, false, nil
@@ -206,22 +216,25 @@ func (o *Orchestrator) extractSourceKeys(ctx context.Context, sourceURI string, 
 		return nil, false, fmt.Errorf("failed to search source vault %q: %w", scheme, err)
 	}
 
-	for _, sr := range entries {
-		if !matchesTags(sr.Entry.Tags, opts.Tags) {
+	for _, entry := range entries {
+		if !matchesTags(entry.Tags(), opts.Tags) {
 			continue
 		}
-		entryPath := sr.Path
+		entryPath := entry.Path()
 		if entryPath == "" {
-			entryPath = sr.Entry.Title
+			entryPath = entry.Title()
 		}
-		extractEntryAttributes(entryPath, sr.Entry, results)
+		extractEntryAttributes(entryPath, entry, results)
 	}
 
 	return results, false, nil
 }
 
 func extractEntryAttributes(basePath string, entry provider.Entry, results map[string]string) {
-	for attrKey, attrVal := range entry.Attributes {
+	for attrKey, attrVal := range entry {
+		if isReservedMetadataKey(attrKey) {
+			continue
+		}
 		if strings.EqualFold(attrKey, "title") || strings.EqualFold(attrKey, "tags") {
 			continue
 		}

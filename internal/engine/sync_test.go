@@ -101,7 +101,7 @@ func TestOrchestrator_Sync(t *testing.T) {
 		}
 	})
 
-	t.Run("sync searchable vault with filtering (tags, prefix, regex)", func(t *testing.T) {
+	t.Run("sync custom_vault with filtering (tags, prefix, regex)", func(t *testing.T) {
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"mock_src": {
@@ -114,35 +114,21 @@ func TestOrchestrator_Sync(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewOrchestrator failed: %v", err)
 		}
-		if err := injectMockVault(orch, "mock_src", []provider.SearchResult{
-			{
-				Provider: "search",
-				Vault:    "mock_src",
-				Path:     "api",
-				Entry: provider.Entry{
-					Title: "API Service",
-					Tags:  []string{"sync:keyring", "env:prod"},
-					Attributes: map[string]any{
-						"KEY":    "api_key_val",
-						"SECRET": "api_secret_val",
-					},
-				},
+		orch.providerManager.vaultCache["mock_src"] = newTestMemoryProvider(map[string]provider.Entry{
+			"api": {
+				"title":  "API Service",
+				"path":   "api",
+				"tags":   []string{"sync:keyring", "env:prod"},
+				"KEY":    "api_key_val",
+				"SECRET": "api_secret_val",
 			},
-			{
-				Provider: "search",
-				Vault:    "mock_src",
-				Path:     "db",
-				Entry: provider.Entry{
-					Title: "DB Service",
-					Tags:  []string{"internal"},
-					Attributes: map[string]any{
-						"PASSWORD": "db_pass_val",
-					},
-				},
+			"db": {
+				"title":    "DB Service",
+				"path":     "db",
+				"tags":     []string{"internal"},
+				"PASSWORD": "db_pass_val",
 			},
-		}); err != nil {
-			t.Fatalf("injectMockVault failed: %v", err)
-		}
+		})
 
 		// 1. Filter by tag: only "api" entity matches "sync:keyring"
 		summary, err := orch.Sync(ctx, "mock_src://", "keyring://work", SyncOptions{
@@ -194,19 +180,13 @@ func TestOrchestrator_Sync(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewOrchestrator failed: %v", err)
 		}
-		if err := injectMockVault(orch, "leak_src", []provider.SearchResult{
-			{
-				Provider: "search",
-				Vault:    "leak_src",
-				Path:     "creds",
-				Entry: provider.Entry{
-					Title:      "Credentials",
-					Attributes: map[string]any{"TOKEN": "super_sensitive_token_do_not_leak"},
-				},
+		orch.providerManager.vaultCache["leak_src"] = newTestMemoryProvider(map[string]provider.Entry{
+			"creds": {
+				"title": "Credentials",
+				"path":  "creds",
+				"TOKEN": "super_sensitive_token_do_not_leak",
 			},
-		}); err != nil {
-			t.Fatalf("injectMockVault failed: %v", err)
-		}
+		})
 
 		summary, err := orch.Sync(ctx, "leak_src://", "keyring://app", SyncOptions{DryRun: true})
 		if err != nil {

@@ -12,27 +12,20 @@ import (
 
 func buildInspectTestConfig(t *testing.T) *config.Config {
 	t.Helper()
-	dbPath := writeTestKDBX(t, "secrets", "testpass", testKDBXEntry{
-		Title: "OpenAI Prod",
-		Tags:  "litellm,prod",
-		Attributes: map[string]string{
-			"api_key": "sk-super-secret-openai-99999",
-			"org_id":  "org-secret-12345",
-		},
-	})
+	t.Setenv("api_key", "sk-super-secret-openai-99999")
+	t.Setenv("org_id", "org-secret-12345")
+
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"secrets": {
-				Provider:  "keepass",
-				VaultPath: dbPath,
+				Provider: "env",
 			},
 		},
 		Envs: map[string][]config.VaultSourceConfig{
 			"ai_env": {
 				{
 					Vault: "secrets",
-					Query: `{{ hasTag "litellm" .tags }}`,
-					Rules: []config.RuleConfig{{Type: "pass"}},
+					Rules: []config.RuleConfig{{Type: "pass", Include: []string{"api_key", "org_id"}}},
 				},
 			},
 		},
@@ -42,8 +35,7 @@ func buildInspectTestConfig(t *testing.T) *config.Config {
 				Vaults: []config.VaultSourceConfig{
 					{
 						Vault: "secrets",
-						Query: `{{ hasTag "litellm" .tags }}`,
-						Rules: []config.RuleConfig{{Type: "pass"}},
+						Rules: []config.RuleConfig{{Type: "pass", Include: []string{"api_key", "org_id"}}},
 					},
 				},
 			},
@@ -112,7 +104,7 @@ func TestInspect_RedactionAndModes(t *testing.T) {
 		}
 		out := stdout.String()
 		assertNoLeaks(t, out)
-		for _, want := range []string{"OpenAI Prod", "litellm", "API_KEY=" + runner.RedactedPlaceholder, "ORG_ID=" + runner.RedactedPlaceholder} {
+		for _, want := range []string{"API_KEY=" + runner.RedactedPlaceholder, "ORG_ID=" + runner.RedactedPlaceholder} {
 			if !strings.Contains(out, want) {
 				t.Errorf("expected %q in output:\n%s", want, out)
 			}
@@ -140,7 +132,7 @@ func TestInspect_RedactionAndModes(t *testing.T) {
 		}
 		out := stdout.String()
 		assertNoLeaks(t, out)
-		for _, want := range []string{"driver: yaml", "OpenAI Prod", runner.RedactedPlaceholder} {
+		for _, want := range []string{"driver: yaml", runner.RedactedPlaceholder} {
 			if !strings.Contains(out, want) {
 				t.Errorf("expected %q in output:\n%s", want, out)
 			}

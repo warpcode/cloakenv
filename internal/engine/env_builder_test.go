@@ -26,37 +26,20 @@ func TestBuildMergedEntry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "vaultA", []provider.SearchResult{
-		{
-			Provider: "search", Vault: "vaultA", Path: "entry1",
-			Entry: provider.Entry{
-				Title:      "entry1",
-				Tags:       []string{"tagA", "commonTag"},
-				Attributes: map[string]any{"user": "userA", "pass": "passA"},
-			},
+	orch.providerManager.vaultCache["vaultA"] = newTestMemoryProvider(map[string]provider.Entry{
+		"entry1": {
+			"user": "userA",
+			"pass": "passA",
+			"tags": []string{"tagA", "commonTag"},
 		},
-		{
-			Provider: "search", Vault: "vaultA", Path: "entry_extra",
-			Entry: provider.Entry{
-				Title:      "entry_extra",
-				Attributes: map[string]any{"k": "v"},
-			},
+	})
+	orch.providerManager.vaultCache["vaultB"] = newTestMemoryProvider(map[string]provider.Entry{
+		"entry2": {
+			"host": "hostB",
+			"user": "userB_overridden",
+			"tags": []string{"tagB", "commonTag"},
 		},
-	}); err != nil {
-		t.Fatalf("injectMockVault(vaultA) failed: %v", err)
-	}
-	if err := injectMockVault(orch, "vaultB", []provider.SearchResult{
-		{
-			Provider: "search", Vault: "vaultB", Path: "entry2",
-			Entry: provider.Entry{
-				Title:      "entry2",
-				Tags:       []string{"tagB", "commonTag"},
-				Attributes: map[string]any{"host": "hostB", "user": "userB_overridden"},
-			},
-		},
-	}); err != nil {
-		t.Fatalf("injectMockVault(vaultB) failed: %v", err)
-	}
+	})
 
 	ctx := t.Context()
 
@@ -76,25 +59,25 @@ func TestBuildMergedEntry(t *testing.T) {
 			t.Fatalf("BuildMergedEntry failed: %v", err)
 		}
 
-		if got, want := entry.Attributes["user"], "userB_overridden"; got != want {
-			t.Errorf("entry.Attributes[\"user\"] = %v; want %v", got, want)
+		if got, want := entry["user"], "userB_overridden"; got != want {
+			t.Errorf("entry[\"user\"] = %v; want %v", got, want)
 		}
-		if got, want := entry.Attributes["host"], "hostB"; got != want {
-			t.Errorf("entry.Attributes[\"host\"] = %v; want %v", got, want)
+		if got, want := entry["host"], "hostB"; got != want {
+			t.Errorf("entry[\"host\"] = %v; want %v", got, want)
 		}
-		if _, exists := entry.Attributes["pass"]; exists {
-			t.Errorf("entry.Attributes[\"pass\"] should have been filtered out by whitelist")
+		if _, exists := entry["pass"]; exists {
+			t.Errorf("entry[\"pass\"] should have been filtered out by whitelist")
 		}
-		if got, want := entry.Attributes["EXTRA_KEY"], "resolved_env_val"; got != want {
-			t.Errorf("entry.Attributes[\"EXTRA_KEY\"] = %v; want %v", got, want)
+		if got, want := entry["EXTRA_KEY"], "resolved_env_val"; got != want {
+			t.Errorf("entry[\"EXTRA_KEY\"] = %v; want %v", got, want)
 		}
 
 		tagSet := make(map[string]bool)
-		for _, tag := range entry.Tags {
+		for _, tag := range entry.Tags() {
 			tagSet[tag] = true
 		}
 		if !tagSet["tagA"] || !tagSet["tagB"] || !tagSet["commonTag"] {
-			t.Errorf("unexpected tags in merged entry: %v", entry.Tags)
+			t.Errorf("unexpected tags in merged entry: %v", entry.Tags())
 		}
 	})
 
@@ -128,12 +111,17 @@ func TestOrchestratorBuildEnvMerges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "my_vault", []provider.SearchResult{
-		{Provider: "search", Vault: "my_vault", Path: "app_one", Entry: provider.Entry{Title: "app_one", Attributes: map[string]any{"DB_USER": "user1", "DB_PASS": "pass1", "PORT": "3000"}}},
-		{Provider: "search", Vault: "my_vault", Path: "app_two", Entry: provider.Entry{Title: "app_two", Attributes: map[string]any{"PORT": "5000", "DB_USER": "user2"}}},
-	}); err != nil {
-		t.Fatalf("injectMockVault failed: %v", err)
-	}
+	orch.providerManager.vaultCache["my_vault"] = newTestMemoryProvider(map[string]provider.Entry{
+		"app_one": {
+			"DB_USER": "user1",
+			"DB_PASS": "pass1",
+			"PORT":    "3000",
+		},
+		"app_two": {
+			"PORT":    "5000",
+			"DB_USER": "user2",
+		},
+	})
 	ctx := context.Background()
 
 	t.Run("MergeMultipleSourcesAndOverrides", func(t *testing.T) {
@@ -208,20 +196,18 @@ func TestEnvBuilder_BareURICommandArgResolution(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("BARE_TEST_VAR", "resolved_bare_value")
 
+	t.Setenv("API_KEY", "app-secret-xyz")
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"app_vault": {Provider: "env"},
+			"app_vault": {
+				Provider: "env",
+			},
 		},
 	}
 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
-	}
-	if err := injectMockVault(orch, "app_vault", []provider.SearchResult{
-		{Provider: "search", Vault: "app_vault", Path: "app", Entry: provider.Entry{Title: "app", Attributes: map[string]any{"API_KEY": "app-secret-xyz"}}},
-	}); err != nil {
-		t.Fatalf("injectMockVault failed: %v", err)
 	}
 
 	t.Run("resolves bare known URI arguments", func(t *testing.T) {
@@ -424,20 +410,6 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "aws_dev", []provider.SearchResult{
-		{Provider: "search", Vault: "aws_dev", Path: "aws", Entry: provider.Entry{Title: "aws", Attributes: map[string]any{
-			"AWS_ACCESS_KEY_ID":     "AKIA1111",
-			"AWS_SECRET_ACCESS_KEY": "secret1111",
-			"EXTRA_VAR":             "should_be_filtered",
-		}}},
-	}); err != nil {
-		t.Fatalf("injectMockVault(aws_dev) failed: %v", err)
-	}
-	if err := injectMockVault(orch, "k8s_vault", []provider.SearchResult{
-		{Provider: "search", Vault: "k8s_vault", Path: "staging", Entry: provider.Entry{Title: "staging", Attributes: map[string]any{"KUBECONFIG": "/path/to/staging.conf"}}},
-	}); err != nil {
-		t.Fatalf("injectMockVault(k8s_vault) failed: %v", err)
-	}
 
 	t.Run("Matching command autoloads named envs and inline template maps", func(t *testing.T) {
 		cmdArgs := []string{"aws", "s3", "ls"}
@@ -546,11 +518,6 @@ func TestBuildEnvForCommand_Autoload(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
-		if err := injectMockVault(orchRegex, "litellm_vault", []provider.SearchResult{
-			{Provider: "search", Vault: "litellm_vault", Path: "litellm", Entry: provider.Entry{Title: "litellm", Attributes: map[string]any{"LITELLM_KEY": "sk-12345"}}},
-		}); err != nil {
-			t.Fatalf("injectMockVault(litellm_vault) failed: %v", err)
-		}
 
 		cmdArgs := []string{"litellm", "--config", "~/.config/litellm/config.yaml"}
 		newCmdArgs, res, err := orchRegex.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs})
@@ -586,8 +553,12 @@ func TestOrchestratorBuildEnvEmptyEnv(t *testing.T) {
 		},
 	}
 	orch, _ := NewOrchestrator(cfg)
-	_ = injectMockVault(orch, "my_vault", []provider.SearchResult{
-		{Provider: "search", Vault: "my_vault", Path: "app_one", Entry: provider.Entry{Title: "app_one", Attributes: map[string]any{"DB_USER": "user1", "DB_PASS": "pass1", "PORT": "3000"}}},
+	orch.providerManager.vaultCache["my_vault"] = newTestMemoryProvider(map[string]provider.Entry{
+		"app_one": {
+			"DB_USER": "user1",
+			"DB_PASS": "pass1",
+			"PORT":    "3000",
+		},
 	})
 	ctx := context.Background()
 
@@ -735,106 +706,14 @@ func TestGetParentEnv(t *testing.T) {
 	}
 }
 
-func TestEnvBuilder_VaultKeyFormat(t *testing.T) {
-	ctx := context.Background()
-
-	cfg := &config.Config{
-		Vaults: map[string]config.VaultConfig{
-			"vault_none":  {Provider: "env", KeyFormat: "none"},
-			"vault_env":   {Provider: "env", KeyFormat: "env"},
-			"vault_snake": {Provider: "env", KeyFormat: "snake"},
-			"vault_kebab": {Provider: "env", KeyFormat: "kebab"},
-		},
-	}
-
-	orch, err := NewOrchestrator(cfg)
-	if err != nil {
-		t.Fatalf("failed to create orchestrator: %v", err)
-	}
-	_ = injectMockVault(orch, "vault_none", []provider.SearchResult{{Provider: "search", Vault: "vault_none", Path: "app", Entry: provider.Entry{Title: "app", Attributes: map[string]any{"api-key": "secret1", "db.user": "user1", "UserName": "admin1"}}}})
-	_ = injectMockVault(orch, "vault_env", []provider.SearchResult{{Provider: "search", Vault: "vault_env", Path: "app", Entry: provider.Entry{Title: "app", Attributes: map[string]any{"api-key": "secret2", "db.user": "user2", "UserName": "admin2"}}}})
-	_ = injectMockVault(orch, "vault_snake", []provider.SearchResult{{Provider: "search", Vault: "vault_snake", Path: "app", Entry: provider.Entry{Title: "app", Attributes: map[string]any{"api-key": "secret3", "db.user": "user3", "UserName": "admin3"}}}})
-	_ = injectMockVault(orch, "vault_kebab", []provider.SearchResult{{Provider: "search", Vault: "vault_kebab", Path: "app", Entry: provider.Entry{Title: "app", Attributes: map[string]any{"api-key": "secret4", "db.user": "user4", "UserName": "admin4"}}}})
-
-	t.Run("none", func(t *testing.T) {
-		res, err := orch.BuildEnv(ctx, EnvConfig{
-			Merges:   []string{"vault_none://app"},
-			EmptyEnv: true,
-		})
-		if err != nil {
-			t.Fatalf("BuildEnv failed: %v", err)
-		}
-		envMap := make(map[string]string)
-		for _, item := range res {
-			k, v, _ := strings.Cut(item, "=")
-			envMap[k] = v
-		}
-		if envMap["api-key"] != "secret1" || envMap["db.user"] != "user1" || envMap["UserName"] != "admin1" {
-			t.Errorf("expected original keys preserved for none, got %v", envMap)
-		}
-	})
-
-	t.Run("env", func(t *testing.T) {
-		res, err := orch.BuildEnv(ctx, EnvConfig{
-			Merges:   []string{"vault_env://app"},
-			EmptyEnv: true,
-		})
-		if err != nil {
-			t.Fatalf("BuildEnv failed: %v", err)
-		}
-		envMap := make(map[string]string)
-		for _, item := range res {
-			k, v, _ := strings.Cut(item, "=")
-			envMap[k] = v
-		}
-		if envMap["API_KEY"] != "secret2" || envMap["DB_USER"] != "user2" || envMap["USERNAME"] != "admin2" {
-			t.Errorf("expected env formatted keys, got %v", envMap)
-		}
-	})
-
-	t.Run("snake", func(t *testing.T) {
-		res, err := orch.BuildEnv(ctx, EnvConfig{
-			Merges:   []string{"vault_snake://app"},
-			EmptyEnv: true,
-		})
-		if err != nil {
-			t.Fatalf("BuildEnv failed: %v", err)
-		}
-		envMap := make(map[string]string)
-		for _, item := range res {
-			k, v, _ := strings.Cut(item, "=")
-			envMap[k] = v
-		}
-		if envMap["api_key"] != "secret3" || envMap["db_user"] != "user3" || envMap["username"] != "admin3" {
-			t.Errorf("expected snake formatted keys, got %v", envMap)
-		}
-	})
-
-	t.Run("kebab", func(t *testing.T) {
-		res, err := orch.BuildEnv(ctx, EnvConfig{
-			Merges:   []string{"vault_kebab://app"},
-			EmptyEnv: true,
-		})
-		if err != nil {
-			t.Fatalf("BuildEnv failed: %v", err)
-		}
-		envMap := make(map[string]string)
-		for _, item := range res {
-			k, v, _ := strings.Cut(item, "=")
-			envMap[k] = v
-		}
-		if envMap["api-key"] != "secret4" || envMap["db-user"] != "user4" || envMap["username"] != "admin4" {
-			t.Errorf("expected kebab formatted keys, got %v", envMap)
-		}
-	})
-}
-
 func TestBuildEnvForCommandDetails(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("SRC_AUTO", "resolved_auto_val")
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"test_vault": {Provider: "env"},
+			"test_vault": {
+				Provider: "env",
+			},
 		},
 		Envs: map[string][]config.VaultSourceConfig{
 			"auto_env": {
@@ -861,11 +740,13 @@ func TestBuildEnvForCommandDetails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOrchestrator failed: %v", err)
 	}
-	if err := injectMockVault(orch, "test_vault", []provider.SearchResult{
-		{Provider: "search", Vault: "test_vault", Path: "app", Entry: provider.Entry{Title: "app", Attributes: map[string]any{"VAR_Z": "val_z", "VAR_A": "val_a", "VAR_M": "val_m"}}},
-	}); err != nil {
-		t.Fatalf("injectMockVault failed: %v", err)
-	}
+	orch.providerManager.vaultCache["test_vault"] = newTestMemoryProvider(map[string]provider.Entry{
+		"default": {
+			"VAR_Z": "val_z",
+			"VAR_A": "val_a",
+			"VAR_M": "val_m",
+		},
+	})
 
 	details, err := orch.BuildEnvForCommandDetails(ctx, EnvConfig{
 		CmdArgs: []string{"test-alias", "arg1", "arg2"},

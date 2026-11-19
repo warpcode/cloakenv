@@ -15,7 +15,7 @@ import (
 )
 
 // SearchFunc defines the signature for searching across repositories.
-type SearchFunc func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]provider.SearchResult, error)
+type SearchFunc func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]SearchResult, error)
 
 // maxConcurrency bounds concurrent secret resolutions across array and nested
 // attribute expansions within the Resolver. It is deliberately independent from
@@ -149,19 +149,19 @@ func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, 
 		}
 
 		matchedEntry := results[0].Entry
-		val, ok := matchedEntry.Attributes[attr]
+		val, ok := matchedEntry[attr]
 		if !ok {
 			// Deterministic case-insensitive fallback (lexicographically
 			// smallest matching key wins) so case-colliding attribute names
 			// resolve stably across runs.
-			if v, found := findAttrCaseFold(matchedEntry.Attributes, attr); found {
+			if v, found := findAttrCaseFold(matchedEntry, attr); found {
 				val = v
 				ok = true
 			}
 		}
 		if !ok {
 			r.logAuditEvent(uri, "ERROR")
-			return "", fmt.Errorf("attribute %q not found in matched entry %q", attr, matchedEntry.Title)
+			return "", fmt.Errorf("attribute %q not found in matched entry %q", attr, matchedEntry.Title())
 		}
 
 		var valStr string
@@ -225,20 +225,19 @@ func (r *Resolver) fetchProviderEntry(ctx context.Context, scheme, location stri
 }
 
 func (r *Resolver) resolveEntryAttributes(ctx context.Context, entry provider.Entry, shouldResolveAttrs bool, depth int) (provider.Entry, error) {
-	resolvedAttrs := make(map[string]any)
-	for k, v := range entry.Attributes {
-		if !shouldResolveAttrs {
-			resolvedAttrs[k] = v
+	resolved := make(provider.Entry, len(entry))
+	for k, v := range entry {
+		if !shouldResolveAttrs || isReservedMetadataKey(k) {
+			resolved[k] = v
 			continue
 		}
 		resolvedVal, err := r.ResolveAttrRecursive(ctx, v, depth+1, k)
 		if err != nil {
-			return provider.Entry{}, fmt.Errorf("failed to resolve attribute %q: %w", k, err)
+			return nil, fmt.Errorf("failed to resolve attribute %q: %w", k, err)
 		}
-		resolvedAttrs[k] = resolvedVal
+		resolved[k] = resolvedVal
 	}
-	entry.Attributes = resolvedAttrs
-	return entry, nil
+	return resolved, nil
 }
 
 func (r *Resolver) resolveAttributeSelector(ctx context.Context, location, uri string, depth int) (provider.Entry, bool, error) {
@@ -250,7 +249,7 @@ func (r *Resolver) resolveAttributeSelector(ctx context.Context, location, uri s
 				return provider.Entry{}, true, err
 			}
 			return provider.Entry{
-				Attributes: map[string]any{attrName: val},
+				attrName: val,
 			}, true, nil
 		}
 	}
@@ -290,11 +289,7 @@ func (r *Resolver) GetEntriesRecursive(ctx context.Context, uri string, depth in
 		}
 		entries := make([]provider.Entry, len(results))
 		for i, res := range results {
-			entry := res.Entry
-			if provider.IsRawKeys(ctx) && entry.Original != nil {
-				entry = *entry.Original
-			}
-			entries[i] = entry
+			entries[i] = res.Entry
 		}
 		return entries, nil
 	}
@@ -309,21 +304,9 @@ func (r *Resolver) GetEntriesRecursive(ctx context.Context, uri string, depth in
 		}
 		entries := make([]provider.Entry, len(results))
 		for i, res := range results {
-			entry := res.Entry
-			if provider.IsRawKeys(ctx) && entry.Original != nil {
-				entry = *entry.Original
-			}
-			entries[i] = entry
+			entries[i] = res.Entry
 		}
 		return entries, nil
-	}
-
-	if provider.IsRawKeys(ctx) {
-		entry, err := r.GetRawEntryRecursive(ctx, uri, depth)
-		if err != nil {
-			return nil, err
-		}
-		return []provider.Entry{entry}, nil
 	}
 
 	entry, err := r.GetEntryRecursive(ctx, uri, depth)
@@ -406,33 +389,29 @@ func (r *Resolver) getRawEntryRecursive(ctx context.Context, uri string, depth i
 			if err != nil {
 				return provider.Entry{}, err
 			}
-			val, ok := parentEntry.Attributes[attrName]
+			val, ok := parentEntry[attrName]
 			if !ok {
-				for k, v := range parentEntry.Attributes {
-					if strings.EqualFold(k, attrName) {
-						val = v
-						attrName = k
-						ok = true
-						break
-					}
+				if v, found := findAttrCaseFold(parentEntry, attrName); found {
+					val = v
+					ok = true
 				}
 			}
 			if !ok {
-				return provider.Entry{}, fmt.Errorf("attribute %q not found in raw entry %q", attrName, location[:attrIdx])
+				return nil, fmt.Errorf("attribute %q not found in raw entry %q", attrName, location[:attrIdx])
 			}
-			return provider.Entry{
-				Title:      parentEntry.Title,
-				Tags:       parentEntry.Tags,
-				UUID:       parentEntry.UUID,
-				Group:      parentEntry.Group,
-				Attributes: map[string]any{attrName: val},
-			}.EnsureOriginal(), nil
+			result := provider.Entry{attrName: val}
+			for _, mk := range []string{"title", "path", "uuid", "tags", "group"} {
+				if mv, exists := parentEntry[mk]; exists {
+					result[mk] = mv
+				}
+			}
+			return result, nil
 		}
 	}
 
 	p, isBuiltin, err := r.providers.GetProvider(ctx, scheme)
 	if err != nil {
-		return provider.Entry{}, err
+		return nil, err
 	}
 
 	_ = isBuiltin
@@ -441,10 +420,6 @@ func (r *Resolver) getRawEntryRecursive(ctx context.Context, uri string, depth i
 	if searchable, ok := rawP.(provider.SearchableProvider); ok {
 		entry, err := searchable.GetEntry(ctx, location)
 		if err == nil {
-			if entry.Original != nil {
-				entry = *entry.Original
-			}
-			entry = entry.EnsureOriginal()
 			if !resolveValues {
 				return entry, nil
 			}
@@ -452,15 +427,10 @@ func (r *Resolver) getRawEntryRecursive(ctx context.Context, uri string, depth i
 		}
 	}
 
-	rawCtx := provider.WithRawKeys(ctx)
-	entry, shouldResolveAttrs, err := r.fetchProviderEntry(rawCtx, scheme, location)
+	entry, shouldResolveAttrs, err := r.fetchProviderEntry(ctx, scheme, location)
 	if err != nil {
-		return provider.Entry{}, err
+		return nil, err
 	}
-	if entry.Original != nil {
-		entry = *entry.Original
-	}
-	entry = entry.EnsureOriginal()
 	if !resolveValues {
 		return entry, nil
 	}
