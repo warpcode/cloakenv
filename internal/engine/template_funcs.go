@@ -105,7 +105,25 @@ func templateCoalesce(vals ...any) string {
 	return ""
 }
 
-func toEnv(m map[string]any) (string, error) {
+func toEnv(v any) (string, error) {
+	if v == nil {
+		return "", nil
+	}
+	switch mp := v.(type) {
+	case map[string]any:
+		return renderEnvMap(mp)
+	case map[string]string:
+		converted := make(map[string]any, len(mp))
+		for k, val := range mp {
+			converted[k] = val
+		}
+		return renderEnvMap(converted)
+	default:
+		return "", fmt.Errorf("toEnv requires map[string]any or map[string]string, got %T", v)
+	}
+}
+
+func renderEnvMap(m map[string]any) (string, error) {
 	var ks []string
 	for k := range m {
 		if isReservedMetadataKey(k) || strings.EqualFold(k, "meta") ||

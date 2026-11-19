@@ -261,8 +261,6 @@ func (p *countingInitProvider) Validate(_ map[string]string) error { return nil 
 func (p *countingInitProvider) GetSecret(_ context.Context, _ string) (string, error) {
 	return "val", nil
 }
-func (p *countingInitProvider) SetSecret(_ context.Context, _, _ string) error { return nil }
-func (p *countingInitProvider) DeleteSecret(_ context.Context, _ string) error { return nil }
 
 func TestProviderManagerConcurrentInitialization(t *testing.T) {
 	t.Run("builtin concurrent initialization race", func(t *testing.T) {

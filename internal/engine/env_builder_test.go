@@ -420,11 +420,9 @@ func TestBuildEnvForCommand_PR487ReviewRegressionCoverage(t *testing.T) {
 		}
 		cfg.CompileAutoloadRules()
 		re := NewRuleEngine()
-		eb := NewEnvBuilder(cfg, nil)
 		envsB := NewEnvsBuilderWithFetcher(cfg, fetcher, re)
-		eb.SetEnvsBuilder(envsB)
-		eb.SetTemplatesRenderer(NewTemplatesRendererWithFetcher(cfg, fetcher, re, envsB))
-		eb.SetRuleEngine(re)
+		tr := NewTemplatesRendererWithFetcher(cfg, fetcher, re, envsB)
+		eb := NewEnvBuilder(cfg, envsB, tr, re)
 		details, err := eb.BuildEnvForCommandDetails(ctx, EnvConfig{
 			CmdArgs:  []string{"deploy", "now"},
 			EmptyEnv: true,
@@ -440,8 +438,7 @@ func TestBuildEnvForCommand_PR487ReviewRegressionCoverage(t *testing.T) {
 		}
 
 		// Error path 1: envsBuilder == nil when named env referenced
-		ebNil := NewEnvBuilder(cfg, nil)
-		ebNil.SetRuleEngine(re)
+		ebNil := NewEnvBuilder(cfg, nil, nil, re)
 		if _, err := ebNil.BuildEnvForCommandDetails(ctx, EnvConfig{CmdArgs: []string{"deploy"}, EmptyEnv: true}); err == nil || !strings.Contains(err.Error(), "envs builder is not configured") {
 			t.Errorf("expected nil envsBuilder error, got: %v", err)
 		}
@@ -451,9 +448,7 @@ func TestBuildEnvForCommand_PR487ReviewRegressionCoverage(t *testing.T) {
 			Autoload: []config.AutoloadRule{{Match: "^deploy", Envs: []config.AutoloadEnvItem{config.NamedEnvItem("missing_env")}}},
 		}
 		cfgUnknown.CompileAutoloadRules()
-		ebUnknown := NewEnvBuilder(cfgUnknown, nil)
-		ebUnknown.SetEnvsBuilder(NewEnvsBuilderWithFetcher(cfgUnknown, fetcher, re))
-		ebUnknown.SetRuleEngine(re)
+		ebUnknown := NewEnvBuilder(cfgUnknown, NewEnvsBuilderWithFetcher(cfgUnknown, fetcher, re), nil, re)
 		if _, err := ebUnknown.BuildEnvForCommandDetails(ctx, EnvConfig{CmdArgs: []string{"deploy"}, EmptyEnv: true}); err == nil {
 			t.Error("expected error for unknown named env")
 		}
@@ -463,9 +458,7 @@ func TestBuildEnvForCommand_PR487ReviewRegressionCoverage(t *testing.T) {
 			Autoload: []config.AutoloadRule{{Match: "^deploy", Envs: []config.AutoloadEnvItem{config.InlineEnvItem(map[string]string{"BAD": "{{ .DOES_NOT_EXIST }}"})}}},
 		}
 		cfgMissing.CompileAutoloadRules()
-		ebMissing := NewEnvBuilder(cfgMissing, nil)
-		ebMissing.SetEnvsBuilder(NewEnvsBuilderWithFetcher(cfgMissing, fetcher, re))
-		ebMissing.SetRuleEngine(re)
+		ebMissing := NewEnvBuilder(cfgMissing, NewEnvsBuilderWithFetcher(cfgMissing, fetcher, re), nil, re)
 		if _, err := ebMissing.BuildEnvForCommandDetails(ctx, EnvConfig{CmdArgs: []string{"deploy"}, EmptyEnv: true}); err == nil {
 			t.Error("expected missingkey=error from inline env template")
 		}
@@ -500,10 +493,9 @@ func TestResolveAutoloadTemplates_RejectsEmptyEvaluatedPath(t *testing.T) {
 	}
 	cfg.CompileAutoloadRules()
 	re := NewRuleEngine()
-	eb := NewEnvBuilder(cfg, nil)
-	eb.SetRuleEngine(re)
-	eb.SetEnvsBuilder(NewEnvsBuilderWithFetcher(cfg, fetcher, re))
-	eb.SetTemplatesRenderer(NewTemplatesRendererWithFetcher(cfg, fetcher, re, NewEnvsBuilderWithFetcher(cfg, fetcher, re)))
+	envsB := NewEnvsBuilderWithFetcher(cfg, fetcher, re)
+	tr := NewTemplatesRendererWithFetcher(cfg, fetcher, re, envsB)
+	eb := NewEnvBuilder(cfg, envsB, tr, re)
 
 	if _, err := eb.BuildEnvForCommandDetails(ctx, EnvConfig{CmdArgs: []string{"app"}, EmptyEnv: true}); err == nil || !strings.Contains(err.Error(), "evaluated path is empty") {
 		t.Fatalf("expected empty evaluated path error, got: %v", err)

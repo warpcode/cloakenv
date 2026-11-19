@@ -16,7 +16,6 @@ type Orchestrator struct {
 	config            *config.Config
 	providerManager   *ProviderManager
 	envBuilder        *EnvBuilder
-	ruleEngine        *RuleEngine
 	envsBuilder       *EnvsBuilder
 	templatesRenderer *TemplatesRenderer
 	auditLogger       *audit.Logger
@@ -80,7 +79,6 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 		config:            cfg,
 		providerManager:   pm,
 		envBuilder:        envBuilder,
-		ruleEngine:        ruleEngine,
 		envsBuilder:       envsBuilder,
 		templatesRenderer: templatesRenderer,
 		auditLogger:       auditLogger,
