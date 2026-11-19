@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/warpcode/cloakenv/internal/config"
@@ -145,19 +147,75 @@ func Run(args []string, cfg *config.Config) int {
 		if len(cmdToDisplay) == 0 {
 			cmdToDisplay = cmdArgs
 		}
-		printDryRunPreview(cmdToDisplay, envDetails.InjectedKeys)
+		printDryRunPreview(cmdToDisplay, envDetails.InjectedKeys, envDetails.RenderedTemplates)
 		return 0
 	}
 
-	// Stop signalContext notification before transferring control to runner.RunCommand,
-	// so child process signal handling is not intercepted by the parent context.
+	var deliveries []runner.TemplateDelivery
+	for _, rt := range envDetails.RenderedTemplates {
+		// Mode 1 (EnvVar) is already injected into envDetails.Env; materialize file deliveries (Modes 2-4).
+		if rt.EnvVar != "" {
+			continue
+		}
+		deliveries = append(deliveries, runner.TemplateDelivery{
+			TemplateName: rt.TemplateName,
+			EnvVar:       rt.EnvVar,
+			EnvPathVar:   rt.EnvPathVar,
+			Path:         rt.Path,
+			Persist:      rt.Persist,
+			Content:      rt.Content,
+		})
+	}
+
+	var cleanup func()
+	finalEnv := envDetails.Env
+	if len(deliveries) > 0 {
+		envOverrides, matCleanup, matErr := runner.MaterializeTemplates(deliveries)
+		if matErr != nil {
+			fmt.Fprintf(os.Stderr, "Template delivery failed: %v\n", matErr)
+			return 1
+		}
+		cleanup = matCleanup
+		defer cleanup()
+		finalEnv = mergeEnvOverrides(finalEnv, envOverrides)
+	}
+
+	// Stop signalContext notification before transferring control to runner,
+	// so runner supervises child signal forwarding and zero-on-exit cleanup cleanly.
 	stop()
 
-	// Execute the wrapped command
-	return runner.RunCommand(finalCmdArgs, envDetails.Env)
+	return runner.RunCommandWithOptions(context.Background(), finalCmdArgs, finalEnv, runner.RunOptions{
+		MaskSecrets: envDetails.MaskSecrets,
+		Cleanup:     cleanup,
+	})
 }
 
-func printDryRunPreview(cmdArgs []string, injectedKeys []string) {
+func mergeEnvOverrides(baseEnv []string, overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return baseEnv
+	}
+	merged := make(map[string]string, len(baseEnv)+len(overrides))
+	for _, kv := range baseEnv {
+		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
+			merged[k] = v
+		}
+	}
+	for k, v := range overrides {
+		merged[k] = v
+	}
+	keys := make([]string, 0, len(merged))
+	for k := range merged {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, k+"="+merged[k])
+	}
+	return out
+}
+
+func printDryRunPreview(cmdArgs []string, injectedKeys []string, templates []engine.RenderedTemplateDelivery) {
 	fmt.Println("[DRY RUN] Command execution preview:")
 	fmt.Printf("Command: %s\n", strings.Join(cmdArgs, " "))
 	if len(injectedKeys) == 0 {
@@ -166,6 +224,21 @@ func printDryRunPreview(cmdArgs []string, injectedKeys []string) {
 		fmt.Println("Injected variables:")
 		for _, k := range injectedKeys {
 			fmt.Printf("  %s\n", k)
+		}
+	}
+	if len(templates) > 0 {
+		fmt.Println("Templates:")
+		for _, tpl := range templates {
+			switch {
+			case tpl.EnvVar != "":
+				fmt.Printf("  %s (driver=%s, env=%s)\n", tpl.TemplateName, tpl.Driver, tpl.EnvVar)
+			case tpl.EnvPathVar != "" && tpl.Path == "":
+				fmt.Printf("  %s (driver=%s, env_path=%s, ephemeral=true, persist=%t)\n", tpl.TemplateName, tpl.Driver, tpl.EnvPathVar, tpl.Persist)
+			case tpl.EnvPathVar != "" && tpl.Path != "":
+				fmt.Printf("  %s (driver=%s, env_path=%s, path=%s, persist=%t)\n", tpl.TemplateName, tpl.Driver, tpl.EnvPathVar, tpl.Path, tpl.Persist)
+			default:
+				fmt.Printf("  %s (driver=%s, path=%s, persist=%t)\n", tpl.TemplateName, tpl.Driver, tpl.Path, tpl.Persist)
+			}
 		}
 	}
 }
