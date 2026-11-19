@@ -227,17 +227,16 @@ func (re *RuleEngine) applyMatch(entry map[string]any, sortedKeys []string, rule
 	var added []string
 
 	for _, k := range sortedKeys {
-		valStr, err := utils.SerializeAttrValue(entry[k])
-		if err != nil {
-			return nil, fmt.Errorf("failed to serialize field %q: %w", k, err)
-		}
-
 		var keyCaps []string
 		if keyRe != nil {
 			keyCaps = keyRe.FindStringSubmatch(k)
 			if keyCaps == nil {
 				continue
 			}
+		}
+		valStr, err := utils.SerializeAttrValue(entry[k])
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize field %q: %w", k, err)
 		}
 		var valCaps []string
 		if valRe != nil {
@@ -255,12 +254,9 @@ func (re *RuleEngine) applyMatch(entry map[string]any, sortedKeys []string, rule
 		if len(keyPrimaryCaps) == 0 {
 			keyPrimaryCaps = valCaps
 		}
-		targetKey := expandCaptureGroups(rule.Key, keyPrimaryCaps)
-		if strings.Contains(targetKey, "{{") {
-			targetKey, err = re.evalTemplate("match.key", targetKey, ctx)
-			if err != nil {
-				return nil, err
-			}
+		targetKey, err := re.evalMatchExpr("match.key", rule.Key, keyPrimaryCaps, ctx)
+		if err != nil {
+			return nil, err
 		}
 		if targetKey == "" {
 			continue
@@ -272,12 +268,9 @@ func (re *RuleEngine) applyMatch(entry map[string]any, sortedKeys []string, rule
 			if len(valPrimaryCaps) == 0 {
 				valPrimaryCaps = keyCaps
 			}
-			targetVal = expandCaptureGroups(rule.Value, valPrimaryCaps)
-			if strings.Contains(targetVal, "{{") {
-				targetVal, err = re.evalTemplate("match.value", targetVal, ctx)
-				if err != nil {
-					return nil, err
-				}
+			targetVal, err = re.evalMatchExpr("match.value", rule.Value, valPrimaryCaps, ctx)
+			if err != nil {
+				return nil, err
 			}
 		}
 
@@ -327,6 +320,102 @@ func (re *RuleEngine) applySet(entry map[string]any, rule config.RuleConfig, out
 		added = append(added, targetKey)
 	}
 	return added, nil
+}
+
+// evalMatchExpr evaluates a match rule's key or value expression without exposing
+// captured runtime strings to Go text/template parsing (preventing template injection
+// and parse failures when captured values contain literal "{{").
+func (re *RuleEngine) evalMatchExpr(name, expr string, caps []string, ctx map[string]any) (string, error) {
+	if !strings.Contains(expr, "{{") {
+		return expandCaptureGroups(expr, caps), nil
+	}
+	exprCtx := make(map[string]any, len(ctx)+2)
+	maps.Copy(exprCtx, ctx)
+	exprCtx["captures"] = caps
+	exprCtx["__captures"] = caps
+	safeTmpl := rewriteCapturePlaceholdersForTemplate(expr, len(caps))
+	return re.evalTemplate(name, safeTmpl, exprCtx)
+}
+
+// rewriteCapturePlaceholdersForTemplate replaces $0..$N and ${0}..${N} capture
+// placeholders in a template string with safe index lookups against .__captures,
+// keeping captured runtime strings strictly as data rather than template syntax.
+func rewriteCapturePlaceholdersForTemplate(tmpl string, capCount int) string {
+	if capCount == 0 || !strings.ContainsRune(tmpl, '$') {
+		return tmpl
+	}
+	var sb strings.Builder
+	sb.Grow(len(tmpl))
+	inDelim := false
+	inQuote := byte(0)
+	for i := 0; i < len(tmpl); i++ {
+		if !inDelim && i+1 < len(tmpl) && tmpl[i] == '{' && tmpl[i+1] == '{' {
+			inDelim = true
+			sb.WriteString("{{")
+			i++
+			continue
+		}
+		if inDelim {
+			if inQuote != 0 {
+				if tmpl[i] == '\\' && inQuote == '"' && i+1 < len(tmpl) {
+					sb.WriteByte(tmpl[i])
+					sb.WriteByte(tmpl[i+1])
+					i++
+					continue
+				}
+				if tmpl[i] == inQuote {
+					inQuote = 0
+				}
+				sb.WriteByte(tmpl[i])
+				continue
+			}
+			if tmpl[i] == '"' || tmpl[i] == '`' {
+				inQuote = tmpl[i]
+				sb.WriteByte(tmpl[i])
+				continue
+			}
+			if i+1 < len(tmpl) && tmpl[i] == '}' && tmpl[i+1] == '}' {
+				inDelim = false
+				sb.WriteString("}}")
+				i++
+				continue
+			}
+		}
+
+		if tmpl[i] == '$' && i+1 < len(tmpl) {
+			if tmpl[i+1] == '{' {
+				end := strings.IndexByte(tmpl[i+2:], '}')
+				if end > 0 {
+					idxStr := tmpl[i+2 : i+2+end]
+					if idx, err := strconv.Atoi(idxStr); err == nil && idx >= 0 && idx < capCount {
+						if inDelim {
+							fmt.Fprintf(&sb, "(index .__captures %d)", idx)
+						} else {
+							fmt.Fprintf(&sb, "{{ index .__captures %d }}", idx)
+						}
+						i += 2 + end
+						continue
+					}
+				}
+			} else if tmpl[i+1] >= '0' && tmpl[i+1] <= '9' {
+				j := i + 1
+				for j < len(tmpl) && tmpl[j] >= '0' && tmpl[j] <= '9' {
+					j++
+				}
+				if idx, err := strconv.Atoi(tmpl[i+1 : j]); err == nil && idx >= 0 && idx < capCount {
+					if inDelim {
+						fmt.Fprintf(&sb, "(index .__captures %d)", idx)
+					} else {
+						fmt.Fprintf(&sb, "{{ index .__captures %d }}", idx)
+					}
+					i = j - 1
+					continue
+				}
+			}
+		}
+		sb.WriteByte(tmpl[i])
+	}
+	return sb.String()
 }
 
 func (re *RuleEngine) evalTemplate(name, tmplStr string, ctx map[string]any) (string, error) {
@@ -449,25 +538,59 @@ func ruleTemplateFuncs() texttemplate.FuncMap {
 		"kebab":      func(s string) string { return utils.FormatKeyWithFormat(s, utils.KeyFormatKebab) },
 		"shquote":    shquote,
 		"shellQuote": shquote,
-		"keys": func(m map[string]any) []string {
-			ks := make([]string, 0, len(m))
-			for k := range m {
-				ks = append(ks, k)
+		"keys": func(m any) ([]string, error) {
+			if m == nil {
+				return []string{}, nil
 			}
-			slices.Sort(ks)
-			return ks
+			switch mp := m.(type) {
+			case map[string]any:
+				ks := make([]string, 0, len(mp))
+				for k := range mp {
+					ks = append(ks, k)
+				}
+				slices.Sort(ks)
+				return ks, nil
+			case map[string]string:
+				ks := make([]string, 0, len(mp))
+				for k := range mp {
+					ks = append(ks, k)
+				}
+				slices.Sort(ks)
+				return ks, nil
+			default:
+				return nil, fmt.Errorf("keys requires a map, got %T", m)
+			}
 		},
-		"values": func(m map[string]any) []any {
-			ks := make([]string, 0, len(m))
-			for k := range m {
-				ks = append(ks, k)
+		"values": func(m any) ([]any, error) {
+			if m == nil {
+				return []any{}, nil
 			}
-			slices.Sort(ks)
-			vs := make([]any, 0, len(ks))
-			for _, k := range ks {
-				vs = append(vs, m[k])
+			switch mp := m.(type) {
+			case map[string]any:
+				ks := make([]string, 0, len(mp))
+				for k := range mp {
+					ks = append(ks, k)
+				}
+				slices.Sort(ks)
+				vs := make([]any, 0, len(ks))
+				for _, k := range ks {
+					vs = append(vs, mp[k])
+				}
+				return vs, nil
+			case map[string]string:
+				ks := make([]string, 0, len(mp))
+				for k := range mp {
+					ks = append(ks, k)
+				}
+				slices.Sort(ks)
+				vs := make([]any, 0, len(ks))
+				for _, k := range ks {
+					vs = append(vs, mp[k])
+				}
+				return vs, nil
+			default:
+				return nil, fmt.Errorf("values requires a map, got %T", m)
 			}
-			return vs
 		},
 		"join": func(sep string, v any) (string, error) {
 			if v == nil {

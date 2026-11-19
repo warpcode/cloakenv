@@ -254,3 +254,189 @@ func TestEntryToRawMap(t *testing.T) {
 		t.Fatalf("unexpected group in raw map: %#v", raw["group"])
 	}
 }
+
+func TestRuleEngine_ReviewRegressionCoverage(t *testing.T) {
+	re := NewRuleEngine()
+
+	t.Run("match prevents template injection and preserves literal {{ and $ in captures", func(t *testing.T) {
+		entry := map[string]any{
+			"title":   "InjectTest",
+			"Secret":  "SUPER_SECRET_DO_NOT_LEAK",
+			"RAW_KEY": "{{ .Secret }}-$1-literal-{{broken",
+		}
+
+		// 1. Plain capture rule (no {{ in rule): captured {{ .Secret }} MUST NOT be evaluated as template.
+		out, err := re.Apply(entry, []config.RuleConfig{
+			{
+				Type:       "match",
+				Match:      `^RAW_(.*)$`,
+				ValueMatch: `^(.*)$`,
+				Key:        "CAPTURED_$1",
+				Value:      "val:$1",
+			},
+		}, "none")
+		if err != nil {
+			t.Fatalf("Apply failed on secret containing literal {{: %v", err)
+		}
+		want := "val:{{ .Secret }}-$1-literal-{{broken"
+		if out["CAPTURED_KEY"] != want {
+			t.Fatalf("got %q, want %q", out["CAPTURED_KEY"], want)
+		}
+		if strings.Contains(out["CAPTURED_KEY"], "SUPER_SECRET_DO_NOT_LEAK") {
+			t.Fatal("template injection occurred: secret leaked into captured value")
+		}
+
+		// 2. Combined template + capture rule (outside and inside {{ }}): captured {{ .Secret }} stays data.
+		out2, err := re.Apply(entry, []config.RuleConfig{
+			{
+				Type:       "match",
+				Match:      `^RAW_(.*)$`,
+				ValueMatch: `^(.*)$`,
+				Key:        `{{ .title | upper }}_${1}`,
+				Value:      `prefix={{ upper $1 }}|tail=$1`,
+			},
+		}, "none")
+		if err != nil {
+			t.Fatalf("Apply failed on combined template+capture rule: %v", err)
+		}
+		if got := out2["INJECTTEST_KEY"]; got != "prefix={{ .SECRET }}-$1-LITERAL-{{BROKEN|tail={{ .Secret }}-$1-literal-{{broken" {
+			t.Fatalf("unexpected combined output: %q", got)
+		}
+		if strings.Contains(out2["INJECTTEST_KEY"], "SUPER_SECRET_DO_NOT_LEAK") {
+			t.Fatal("template injection occurred in combined template+capture rule")
+		}
+	})
+
+	t.Run("capture syntax ${1}, $0, and out-of-bounds $9", func(t *testing.T) {
+		entry := map[string]any{"ENV_API_KEY": "tok_1"}
+		out, err := re.Apply(entry, []config.RuleConfig{
+			{
+				Type:  "match",
+				Match: `^ENV_(API)_(KEY)$`,
+				Key:   "${1}_FULL_$0_OOB_$9",
+				Value: "${0}_$2_$9",
+			},
+		}, "none")
+		if err != nil {
+			t.Fatalf("Apply failed: %v", err)
+		}
+		if got := out["API_FULL_ENV_API_KEY_OOB_$9"]; got != "ENV_API_KEY_KEY_$9" {
+			t.Fatalf("got %q, want %q", got, "ENV_API_KEY_KEY_$9")
+		}
+	})
+
+	t.Run("keys and values template helpers accept .output map[string]string and reject non-maps", func(t *testing.T) {
+		entry := map[string]any{"B": "2", "A": "1"}
+		out, err := re.Apply(entry, []config.RuleConfig{
+			{Type: "pass", KeyFormat: "none"},
+			{
+				Type: "set",
+				Values: map[string]string{
+					"OUT_KEYS": `{{ join "," (keys .output) }}`,
+					"OUT_VALS": `{{ join "," (values .output) }}`,
+				},
+			},
+		}, "none")
+		if err != nil {
+			t.Fatalf("Apply failed: %v", err)
+		}
+		if out["OUT_KEYS"] != "A,B" {
+			t.Errorf("OUT_KEYS = %q, want A,B", out["OUT_KEYS"])
+		}
+		if out["OUT_VALS"] != "1,2" {
+			t.Errorf("OUT_VALS = %q, want 1,2", out["OUT_VALS"])
+		}
+
+		// Non-map argument must error explicitly
+		if _, err := re.Apply(entry, []config.RuleConfig{
+			{Type: "set", Values: map[string]string{"BAD": `{{ keys "not-a-map" }}`}},
+		}, "none"); err == nil {
+			t.Fatal("expected error calling keys on string")
+		}
+		if _, err := re.Apply(entry, []config.RuleConfig{
+			{Type: "set", Values: map[string]string{"BAD": `{{ values 123 }}`}},
+		}, "none"); err == nil {
+			t.Fatal("expected error calling values on int")
+		}
+	})
+
+	t.Run("applyMatch skips serialization for keys not matching key regex", func(t *testing.T) {
+		entry := map[string]any{
+			"UNMATCHED_BAD": func() {}, // unserializable if touched
+			"MATCH_OK":      "ok-val",
+		}
+		out, err := re.Apply(entry, []config.RuleConfig{
+			{Type: "match", Match: `^MATCH_(.*)$`, Key: "OUT_$1"},
+		}, "none")
+		if err != nil {
+			t.Fatalf("expected unmatched unserializable field to be skipped, got err: %v", err)
+		}
+		if out["OUT_OK"] != "ok-val" {
+			t.Fatalf("OUT_OK = %q, want ok-val", out["OUT_OK"])
+		}
+	})
+
+	t.Run("non-string coercion through RuleEngine.Apply", func(t *testing.T) {
+		entry := map[string]any{
+			"PORT":    8080,
+			"ENABLED": true,
+			"LIST":    []string{"a", "b"},
+			"OBJ":     map[string]any{"k": "v"},
+		}
+		out, err := re.Apply(entry, []config.RuleConfig{{Type: "pass", KeyFormat: "none"}}, "none")
+		if err != nil {
+			t.Fatalf("Apply failed: %v", err)
+		}
+		if out["PORT"] != "8080" || out["ENABLED"] != "true" || out["LIST"] != "- a\n- b" || out["OBJ"] != "k: v" {
+			t.Fatalf("unexpected coerced output: %#v", out)
+		}
+	})
+
+	t.Run("pass key_format modes snake, kebab, none", func(t *testing.T) {
+		entry := map[string]any{"API-Key Name": "v1"}
+		for _, tc := range []struct {
+			format string
+			want   string
+		}{
+			{"snake", "api_key_name"},
+			{"kebab", "api-key-name"},
+			{"none", "API-Key Name"},
+		} {
+			out, err := re.Apply(entry, []config.RuleConfig{{Type: "pass", KeyFormat: tc.format}}, "none")
+			if err != nil {
+				t.Fatalf("key_format %q failed: %v", tc.format, err)
+			}
+			if out[tc.want] != "v1" {
+				t.Errorf("key_format %q: expected key %q, got %#v", tc.format, tc.want, out)
+			}
+		}
+	})
+
+	t.Run("set deterministic sorted evaluation order", func(t *testing.T) {
+		entry := map[string]any{"x": "1"}
+		_, traces, err := re.ApplyWithTrace(entry, []config.RuleConfig{
+			{Type: "set", Values: map[string]string{"Z_KEY": "z", "A_KEY": "a", "M_KEY": "m"}},
+		}, "none")
+		if err != nil {
+			t.Fatalf("ApplyWithTrace failed: %v", err)
+		}
+		got := strings.Join(traces[0].KeysAdded, ",")
+		if got != "A_KEY,M_KEY,Z_KEY" {
+			t.Fatalf("set trace order = %q, want A_KEY,M_KEY,Z_KEY", got)
+		}
+	})
+
+	t.Run("error branches: invalid value_match regex and invalid exclude glob", func(t *testing.T) {
+		entry := map[string]any{"A": "1"}
+		if _, err := re.Apply(entry, []config.RuleConfig{
+			{Type: "match", ValueMatch: "[invalid", Key: "K"},
+		}, "none"); err == nil {
+			t.Fatal("expected error for invalid value_match regex")
+		}
+		if _, err := re.Apply(entry, []config.RuleConfig{
+			{Type: "pass", Exclude: []string{"[invalid"}},
+		}, "none"); err == nil {
+			t.Fatal("expected error for invalid exclude glob")
+		}
+	})
+}
