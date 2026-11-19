@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/provider"
 	"github.com/warpcode/cloakenv/internal/utils"
 )
 
@@ -327,4 +328,256 @@ func TestOrchestrator_PipelineIntegrationWithEnvProvider(t *testing.T) {
 	if rendered != want {
 		t.Fatalf("got %q, want %q", rendered, want)
 	}
+}
+
+type mockSearchableVaultProvider struct {
+	scheme  string
+	results []provider.SearchResult
+}
+
+func (m *mockSearchableVaultProvider) Scheme() string { return m.scheme }
+func (m *mockSearchableVaultProvider) Initialize(_ context.Context, _ provider.ProviderConfig) error {
+	return nil
+}
+func (m *mockSearchableVaultProvider) GetSecret(_ context.Context, _ string) (string, error) {
+	return "", os.ErrNotExist
+}
+func (m *mockSearchableVaultProvider) SetSecret(_ context.Context, _, _ string) error { return nil }
+func (m *mockSearchableVaultProvider) DeleteSecret(_ context.Context, _ string) error { return nil }
+func (m *mockSearchableVaultProvider) Validate(_ map[string]string) error             { return nil }
+func (m *mockSearchableVaultProvider) Search(_ context.Context, _ provider.SearchQuery) ([]provider.SearchResult, error) {
+	return m.results, nil
+}
+func (m *mockSearchableVaultProvider) GetEntry(_ context.Context, _ string) (provider.Entry, error) {
+	return provider.Entry{}, os.ErrNotExist
+}
+
+func TestOutputPipeline_ReviewRegressionCoverage(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("FetchEntries populates empty tags on untagged entries so hasTag succeeds under missingkey=error", func(t *testing.T) {
+		pm := NewProviderManager(&config.Config{}, map[string]provider.SecretProvider{
+			"work": &mockSearchableVaultProvider{
+				scheme: "keepass",
+				results: []provider.SearchResult{
+					{
+						Path: "db/untagged",
+						Entry: provider.Entry{
+							Title:      "Untagged",
+							Attributes: map[string]any{"Password": "pw1"},
+						},
+					},
+					{
+						Path: "db/tagged",
+						Entry: provider.Entry{
+							Title:      "Tagged",
+							Tags:       []string{"prod"},
+							Attributes: map[string]any{"Password": "pw2"},
+						},
+					},
+				},
+			},
+		}, nil)
+		fetcher := &providerManagerEntryFetcher{pm: pm}
+		cfg := &config.Config{
+			Envs: map[string][]config.VaultSourceConfig{
+				"prod_env": {{
+					Vault: "work",
+					Query: `{{ hasTag "prod" .tags }}`,
+					Rules: []config.RuleConfig{{Type: "pass", KeyFormat: "env"}},
+				}},
+			},
+		}
+		eb := NewEnvsBuilderWithFetcher(cfg, fetcher, NewRuleEngine())
+		res, err := eb.BuildDetailed(ctx, "prod_env")
+		if err != nil {
+			t.Fatalf("BuildDetailed failed on vault containing untagged entry: %v", err)
+		}
+		if res.Env["PASSWORD"] != "pw2" {
+			t.Fatalf("got PASSWORD=%q, want pw2", res.Env["PASSWORD"])
+		}
+	})
+
+	t.Run("dotenv driver with from_env populates TemplateRenderResult.Entries", func(t *testing.T) {
+		fetcher := &stubVaultFetcher{
+			vaults: map[string][]SourceEntry{
+				"work": {{
+					Vault: "work",
+					Path:  "app/a",
+					Title: "A",
+					Raw:   map[string]any{"title": "A", "tags": []string{}, "API_KEY": "sk-from-env-secret"},
+				}},
+			},
+		}
+		cfg := &config.Config{
+			Envs: map[string][]config.VaultSourceConfig{
+				"app_env": {{Vault: "work"}},
+			},
+			Templates: map[string]config.TemplateConfig{
+				"dot": {Driver: "dotenv", FromEnv: "app_env"},
+			},
+		}
+		eb := NewEnvsBuilderWithFetcher(cfg, fetcher, NewRuleEngine())
+		tr := NewTemplatesRendererWithFetcher(cfg, fetcher, NewRuleEngine(), eb)
+		res, err := tr.RenderDetailed(ctx, "dot")
+		if err != nil {
+			t.Fatalf("RenderDetailed failed: %v", err)
+		}
+		if len(res.Entries) != 1 || res.Entries[0]["API_KEY"] != "sk-from-env-secret" {
+			t.Fatalf("expected Entries to contain from_env secrets for masking, got %#v", res.Entries)
+		}
+		if !strings.Contains(res.Content, `API_KEY="sk-from-env-secret"`) {
+			t.Fatalf("unexpected dotenv content: %q", res.Content)
+		}
+	})
+
+	t.Run("dotenv escapes special characters and rejects invalid keys without leaking secret values", func(t *testing.T) {
+		fetcher := &stubVaultFetcher{
+			vaults: map[string][]SourceEntry{
+				"work": {{
+					Vault: "work",
+					Path:  "app/esc",
+					Title: "Esc",
+					Raw: map[string]any{
+						"title": "Esc",
+						"tags":  []string{},
+						"VAL":   "a\\b\"c$HOME`id`\nd\re\tf",
+					},
+				}},
+			},
+		}
+		cfg := &config.Config{
+			Templates: map[string]config.TemplateConfig{
+				"dot": {
+					Driver: "dotenv",
+					Vaults: []config.VaultSourceConfig{{
+						Vault: "work",
+						Rules: []config.RuleConfig{{Type: "pass", KeyFormat: "none"}},
+					}},
+				},
+			},
+		}
+		eb := NewEnvsBuilderWithFetcher(cfg, fetcher, NewRuleEngine())
+		tr := NewTemplatesRendererWithFetcher(cfg, fetcher, NewRuleEngine(), eb)
+		res, err := tr.RenderDetailed(ctx, "dot")
+		if err != nil {
+			t.Fatalf("RenderDetailed failed: %v", err)
+		}
+		want := `VAL="a\\b\"c\$HOME\` + "`" + `id\` + "`" + `\nd\re\tf"`
+		if res.Content != want {
+			t.Fatalf("got:\n%s\nwant:\n%s", res.Content, want)
+		}
+
+		// Invalid key injection attempt
+		badFetcher := &stubVaultFetcher{
+			vaults: map[string][]SourceEntry{
+				"work": {{
+					Vault: "work",
+					Path:  "app/bad",
+					Title: "Bad",
+					Raw:   map[string]any{"title": "Bad", "tags": []string{}, "GOOD\nEVIL=1": "TOP_SECRET_VAL"},
+				}},
+			},
+		}
+		trBad := NewTemplatesRendererWithFetcher(cfg, badFetcher, NewRuleEngine(), NewEnvsBuilderWithFetcher(cfg, badFetcher, NewRuleEngine()))
+		_, err = trBad.RenderDetailed(ctx, "dot")
+		if err == nil {
+			t.Fatal("expected error for invalid dotenv key containing newline/=")
+		}
+		if strings.Contains(err.Error(), "TOP_SECRET_VAL") {
+			t.Fatalf("error leaked secret value: %v", err)
+		}
+	})
+
+	t.Run("EvaluateQueryPredicate truthiness variants and parse errors", func(t *testing.T) {
+		raw := map[string]any{"title": "T", "tags": []string{"a"}}
+		cases := []struct {
+			query   string
+			want    bool
+			wantErr bool
+		}{
+			{" true \n", true, false},
+			{"false", false, false},
+			{"", true, false},
+			{"   ", true, false},
+			{"{{ \"\" }}", false, false},
+			{"1", false, false},
+			{"{{ if }}", false, true},
+		}
+		for _, tc := range cases {
+			got, err := EvaluateQueryPredicate(tc.query, raw)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("query %q: expected error", tc.query)
+				}
+				continue
+			}
+			if err != nil {
+				t.Errorf("query %q: unexpected error: %v", tc.query, err)
+			}
+			if got != tc.want {
+				t.Errorf("query %q: got %v, want %v", tc.query, got, tc.want)
+			}
+		}
+	})
+
+	t.Run("Title tie-break sorting when Path matches", func(t *testing.T) {
+		fetcher := &stubVaultFetcher{
+			vaults: map[string][]SourceEntry{
+				"work": {
+					{Vault: "work", Path: "same/path", Title: "Zeta", Raw: map[string]any{"title": "Zeta", "tags": []string{}, "KEY": "from-zeta"}},
+					{Vault: "work", Path: "same/path", Title: "Alpha", Raw: map[string]any{"title": "Alpha", "tags": []string{}, "KEY": "from-alpha"}},
+				},
+			},
+		}
+		cfg := &config.Config{
+			Envs: map[string][]config.VaultSourceConfig{"e": {{Vault: "work"}}},
+		}
+		res, err := NewEnvsBuilderWithFetcher(cfg, fetcher, NewRuleEngine()).BuildDetailed(ctx, "e")
+		if err != nil {
+			t.Fatalf("BuildDetailed failed: %v", err)
+		}
+		if len(res.Sources) != 2 || res.Sources[0].Title != "Alpha" || res.Sources[1].Title != "Zeta" {
+			t.Fatalf("expected Alpha before Zeta, got %#v", res.Sources)
+		}
+		if res.Env["KEY"] != "from-zeta" {
+			t.Fatalf("expected later Title (Zeta) to win collision, got %q", res.Env["KEY"])
+		}
+	})
+
+	t.Run("inline template missingkey=error and undefined env/template/driver errors", func(t *testing.T) {
+		fetcher := &stubVaultFetcher{
+			vaults: map[string][]SourceEntry{
+				"work": {{Vault: "work", Path: "a", Title: "A", Raw: map[string]any{"title": "A", "tags": []string{}, "K": "v"}}},
+			},
+		}
+		cfg := &config.Config{
+			Templates: map[string]config.TemplateConfig{
+				"inline_missing": {
+					Driver:   "template",
+					Template: `{{ range .entries }}{{ .MISSING_KEY }}{{ end }}`,
+					Vaults:   []config.VaultSourceConfig{{Vault: "work"}},
+				},
+				"bad_driver": {
+					Driver: "xml",
+					Vaults: []config.VaultSourceConfig{{Vault: "work"}},
+				},
+			},
+		}
+		eb := NewEnvsBuilderWithFetcher(cfg, fetcher, NewRuleEngine())
+		tr := NewTemplatesRendererWithFetcher(cfg, fetcher, NewRuleEngine(), eb)
+
+		if _, err := eb.Build(ctx, "does_not_exist"); err == nil {
+			t.Error("expected error for undefined env")
+		}
+		if _, err := tr.Render(ctx, "does_not_exist"); err == nil {
+			t.Error("expected error for undefined template")
+		}
+		if _, err := tr.Render(ctx, "inline_missing"); err == nil {
+			t.Error("expected missingkey=error on inline template")
+		}
+		if _, err := tr.Render(ctx, "bad_driver"); err == nil {
+			t.Error("expected error for unsupported driver")
+		}
+	})
 }
