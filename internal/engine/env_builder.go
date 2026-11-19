@@ -128,7 +128,10 @@ func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, 
 			}
 			var keys []envKV
 			for _, entry := range entries {
-				for k, v := range entry.Attributes {
+				for k, v := range entry {
+					if isReservedMetadataKey(k) {
+						continue
+					}
 					if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
 						continue
 					}
@@ -221,10 +224,12 @@ func (eb *EnvBuilder) BuildMergedEntry(ctx context.Context, cfg MergedEntryConfi
 		tags = []string{}
 	}
 
-	return provider.Entry{
-		Tags:       tags,
-		Attributes: attributes,
-	}, nil
+	result := make(provider.Entry, len(attributes)+1)
+	for k, v := range attributes {
+		result[k] = v
+	}
+	result["tags"] = tags
+	return result, nil
 }
 
 func (eb *EnvBuilder) resolveMergedEntries(ctx context.Context, merges []string) ([]provider.Entry, error) {
@@ -273,10 +278,13 @@ func mergeTagsAndAttributes(entries []provider.Entry, whitelist []string) ([]str
 	attributes := make(map[string]any)
 
 	for _, e := range entries {
-		for _, tag := range e.Tags {
+		for _, tag := range e.Tags() {
 			tagSet[tag] = true
 		}
-		for k, v := range e.Attributes {
+		for k, v := range e {
+			if isReservedMetadataKey(k) {
+				continue
+			}
 			if strings.EqualFold(k, "title") {
 				continue
 			}

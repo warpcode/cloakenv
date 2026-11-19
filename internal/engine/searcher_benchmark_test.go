@@ -39,14 +39,11 @@ func BenchmarkMultiVaultSearch(b *testing.B) {
 		vName := fmt.Sprintf("v%d", i)
 		orch.providerManager.vaultCache[vName] = &delayedSearchableProvider{
 			delay: 100 * time.Microsecond,
-			items: []provider.SearchResult{
+			items: []provider.Entry{
 				{
-					Vault: vName,
-					Path:  fmt.Sprintf("path_%d", i),
-					Entry: provider.Entry{
-						Title: fmt.Sprintf("Title %d", i),
-						Tags:  []string{"tag1", "common"},
-					},
+					"path":  fmt.Sprintf("path_%d", i),
+					"title": fmt.Sprintf("Title %d", i),
+					"tags":  []string{"tag1", "common"},
 				},
 			},
 		}

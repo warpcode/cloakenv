@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 
@@ -15,6 +16,12 @@ type KeyringStore interface {
 	Get(service, account string) (string, error)
 	Set(service, account, password string) error
 	Delete(service, account string) error
+}
+
+// EnumerableKeyringStore is an optional KeyringStore capability for listing
+// all stored account/value pairs under a given service namespace.
+type EnumerableKeyringStore interface {
+	List(service string) (map[string]string, error)
 }
 
 type defaultKeyringStore struct{}
@@ -31,7 +38,8 @@ func (defaultKeyringStore) Delete(service, account string) error {
 	return keyring.Delete(service, account)
 }
 
-// MockKeyringStore is an in-memory, thread-safe implementation of KeyringStore for testing.
+// MockKeyringStore is an in-memory, thread-safe implementation of KeyringStore
+// and EnumerableKeyringStore for testing.
 type MockKeyringStore struct {
 	mu      sync.RWMutex
 	secrets map[string]map[string]string
@@ -53,12 +61,10 @@ func (m *MockKeyringStore) Get(service, account string) (string, error) {
 	if !ok {
 		return "", keyring.ErrNotFound
 	}
-
 	val, ok := accounts[account]
 	if !ok {
 		return "", keyring.ErrNotFound
 	}
-
 	return val, nil
 }
 
@@ -83,38 +89,51 @@ func (m *MockKeyringStore) Delete(service, account string) error {
 	if !ok {
 		return keyring.ErrNotFound
 	}
-
 	if _, ok := accounts[account]; !ok {
 		return keyring.ErrNotFound
 	}
-
 	delete(accounts, account)
 	if len(accounts) == 0 {
 		delete(m.secrets, service)
 	}
-
 	return nil
 }
 
-// OSKeyringProvider implements SecretProvider for the built-in keyring:// scheme.
-// It delegates to the native OS credential store:
+// List returns a snapshot of all account/password pairs stored for service.
+func (m *MockKeyringStore) List(service string) (map[string]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	accounts, ok := m.secrets[service]
+	if !ok {
+		return map[string]string{}, nil
+	}
+	out := make(map[string]string, len(accounts))
+	maps.Copy(out, accounts)
+	return out, nil
+}
+
+// OSKeyringProvider implements read-only SecretProvider and SearchableProvider
+// for the built-in "keyring" scheme. It delegates to the native OS credential store:
 //   - macOS: Keychain Services
 //   - Linux: Secret Service API via D-Bus (GNOME Keyring / KWallet)
 //   - Windows: Credential Manager
 //
-// OSKeyringProvider is intentionally non-searchable: the OS keyring has no
-// enumeration API and exposing all stored credentials in search results would
-// be a security risk. It does not implement SearchableProvider.
+// As a flat K/V vault, Search emits a single Entry containing stored user keys
+// for the configured service namespace (excluding internal cloakenv auth/cache keys).
+// Direct auth lifecycle management uses SetRawSecret and DeleteRawSecret.
 type OSKeyringProvider struct {
-	store KeyringStore
+	mu      sync.RWMutex
+	store   KeyringStore
+	service string
+	keys    []string
 }
-
-var _ WritableProvider = (*OSKeyringProvider)(nil)
 
 // NewOSKeyringProvider returns a new keyring provider instance using the default OS keyring store.
 func NewOSKeyringProvider() *OSKeyringProvider {
 	return &OSKeyringProvider{
-		store: defaultKeyringStore{},
+		store:   defaultKeyringStore{},
+		service: "cloakenv",
 	}
 }
 
@@ -124,7 +143,8 @@ func NewOSKeyringProviderWithStore(store KeyringStore) *OSKeyringProvider {
 		store = defaultKeyringStore{}
 	}
 	return &OSKeyringProvider{
-		store: store,
+		store:   store,
+		service: "cloakenv",
 	}
 }
 
@@ -133,8 +153,32 @@ func (o *OSKeyringProvider) Scheme() string {
 	return "keyring"
 }
 
-// Initialize is a no-op for the keyring provider; the OS handles session state.
-func (o *OSKeyringProvider) Initialize(_ context.Context, _ ProviderConfig) error {
+// Initialize configures the keyring service namespace and optional key list.
+func (o *OSKeyringProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+
+	service := cfg.Settings["keyring_prefix"]
+	if service == "" {
+		service = cfg.Settings["service"]
+	}
+	if service == "" {
+		service = "cloakenv"
+	}
+	o.service = service
+
+	rawKeys := cfg.Settings["keys"]
+	if rawKeys == "" {
+		rawKeys = cfg.Query
+	}
+	o.keys = nil
+	if rawKeys != "" {
+		for _, k := range strings.Split(rawKeys, ",") {
+			if trimmed := strings.TrimSpace(k); trimmed != "" {
+				o.keys = append(o.keys, trimmed)
+			}
+		}
+	}
 	return nil
 }
 
@@ -145,23 +189,130 @@ func (o *OSKeyringProvider) GetSecret(_ context.Context, location string) (strin
 	if err != nil {
 		return "", err
 	}
-
 	secret, err := o.store.Get(service, account)
 	if err != nil {
 		return "", fmt.Errorf("keyring lookup failed for %s/%s: %w", service, account, err)
 	}
-
 	return secret, nil
 }
 
-// SetSecret stores a secret in the OS keyring.
-// Location format: "service/account" (e.g., "cloakenv/work").
-func (o *OSKeyringProvider) SetSecret(_ context.Context, location string, value string) error {
-	service, account, err := parseKeyringLocation(location)
-	if err != nil {
-		return err
+// isInternalKeyringAccount reports whether an account name is reserved for
+// cloakenv's own internal credential/cache storage and must not be exposed
+// in flat vault entries.
+func isInternalKeyringAccount(account string) bool {
+	return account == keyringAccount || account == "cache-master-key" || strings.HasPrefix(account, "provider/") || strings.HasPrefix(account, "cache/")
+}
+
+// buildKeyringEntry builds a single flat Entry holding all accessible user keys
+// for the configured service namespace.
+func (o *OSKeyringProvider) buildKeyringEntry() (Entry, error) {
+	o.mu.RLock()
+	service := o.service
+	if service == "" {
+		service = "cloakenv"
 	}
-	return o.store.Set(service, account, value)
+	explicitKeys := append([]string(nil), o.keys...)
+	store := o.store
+	o.mu.RUnlock()
+
+	entry := Entry{
+		"title": "OS Keyring",
+		"path":  "keyring",
+		"tags":  []string{},
+	}
+
+	if enum, ok := store.(EnumerableKeyringStore); ok {
+		all, err := enum.List(service)
+		if err != nil {
+			return nil, fmt.Errorf("keyring list failed for %q: %w", service, err)
+		}
+		for k, v := range all {
+			if isInternalKeyringAccount(k) {
+				continue
+			}
+			entry[k] = v
+		}
+	}
+
+	for _, k := range explicitKeys {
+		if isInternalKeyringAccount(k) {
+			continue
+		}
+		if _, exists := entry[k]; exists {
+			continue
+		}
+		if err := validateRawKeyringTarget(service, k); err != nil {
+			return nil, err
+		}
+		val, err := store.Get(service, k)
+		if err != nil {
+			if errors.Is(err, keyring.ErrNotFound) {
+				continue
+			}
+			return nil, fmt.Errorf("keyring lookup failed for %s/%s: %w", service, k, err)
+		}
+		entry[k] = val
+	}
+
+	return entry, nil
+}
+
+// Search returns a single flat Entry containing stored keys for the keyring service.
+func (o *OSKeyringProvider) Search(_ context.Context, query SearchQuery) ([]Entry, error) {
+	entry, err := o.buildKeyringEntry()
+	if err != nil {
+		return nil, err
+	}
+	if query.Title != "" && !strings.Contains(strings.ToLower(entry.Title()), strings.ToLower(query.Title)) {
+		return []Entry{}, nil
+	}
+	if query.Path != "" && !strings.Contains(strings.ToLower(entry.Path()), strings.ToLower(query.Path)) {
+		return []Entry{}, nil
+	}
+	if len(query.Tags) > 0 {
+		return []Entry{}, nil
+	}
+	return []Entry{entry}, nil
+}
+
+// GetEntry retrieves the flat Entry of all keyring keys when location is empty
+// or "keyring", or a single-key Entry for "service/account" or "account".
+func (o *OSKeyringProvider) GetEntry(_ context.Context, location string) (Entry, error) {
+	trimmed := strings.TrimSpace(location)
+	if trimmed == "" || trimmed == "keyring" {
+		return o.buildKeyringEntry()
+	}
+
+	var service, account string
+	if strings.Contains(trimmed, "/") {
+		var err error
+		service, account, err = parseKeyringLocation(trimmed)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		o.mu.RLock()
+		service = o.service
+		if service == "" {
+			service = "cloakenv"
+		}
+		o.mu.RUnlock()
+		account = trimmed
+		if err := validateRawKeyringTarget(service, account); err != nil {
+			return nil, err
+		}
+	}
+
+	val, err := o.store.Get(service, account)
+	if err != nil {
+		return nil, fmt.Errorf("keyring lookup failed for %s/%s: %w", service, account, err)
+	}
+	return Entry{
+		"title": account,
+		"path":  service + "/" + account,
+		"tags":  []string{},
+		account: val,
+	}, nil
 }
 
 // validateRawKeyringTarget verifies that service and account are non-empty and do not contain null bytes.
@@ -173,6 +324,26 @@ func validateRawKeyringTarget(service, account string) error {
 		return errors.New("invalid keyring target: contains null byte")
 	}
 	return nil
+}
+
+// SetSecret stores a secret in the OS keyring using "service/account" format.
+// Used internally by auth and keyring maintenance tooling.
+func (o *OSKeyringProvider) SetSecret(_ context.Context, location string, value string) error {
+	service, account, err := parseKeyringLocation(location)
+	if err != nil {
+		return err
+	}
+	return o.store.Set(service, account, value)
+}
+
+// DeleteSecret removes a secret from the OS keyring using "service/account" format.
+// Used internally by auth and keyring maintenance tooling.
+func (o *OSKeyringProvider) DeleteSecret(_ context.Context, location string) error {
+	service, account, err := parseKeyringLocation(location)
+	if err != nil {
+		return err
+	}
+	return o.store.Delete(service, account)
 }
 
 // SetRawSecret stores a secret in the OS keyring using raw service and account strings.
@@ -193,34 +364,19 @@ func (o *OSKeyringProvider) DeleteRawSecret(service, account string) error {
 	return o.store.Delete(service, account)
 }
 
-// DeleteSecret removes a secret from the OS keyring.
-// Location format: "service/account" (e.g., "cloakenv/work").
-func (o *OSKeyringProvider) DeleteSecret(_ context.Context, location string) error {
-	service, account, err := parseKeyringLocation(location)
-	if err != nil {
-		return err
-	}
-	return o.store.Delete(service, account)
-}
-
 // parseKeyringLocation splits a "service/account" string.
 func parseKeyringLocation(location string) (string, string, error) {
-	// Defense-in-depth: Reject null bytes in keyring locations.
-	// Null bytes can cause string truncation or memory safety issues in native C-bindings
-	// and system APIs (macOS Keychain, Linux Secret Service / libsecret, Windows Credential Manager).
 	if strings.IndexByte(location, 0) != -1 {
 		return "", "", errors.New("invalid keyring location: contains null byte")
 	}
-
 	parts := strings.SplitN(location, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", "", errors.New("invalid keyring location; expected format: service/account")
 	}
-
 	return parts[0], parts[1], nil
 }
 
 // Validate is a no-op for the keyring provider.
-func (o *OSKeyringProvider) Validate(settings map[string]string) error {
+func (o *OSKeyringProvider) Validate(_ map[string]string) error {
 	return nil
 }

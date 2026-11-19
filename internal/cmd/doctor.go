@@ -231,7 +231,7 @@ func DoctorCmd(args []string, cfg *config.Config, stdout, stderr io.Writer) int 
 					fmt.Fprintln(stdout, "    [OK] HashiCorp Vault configured (reachability check deferred to runtime)")
 				}
 			default:
-				fmt.Fprintf(stdout, "    [ERROR] Unsupported provider %q\n", vault.Provider)
+				fmt.Fprintf(stdout, "    [ERROR] Unknown provider %q\n", vault.Provider)
 				hasErrors = true
 			}
 		}

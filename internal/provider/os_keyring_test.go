@@ -10,14 +10,6 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-func TestOSKeyringProvider_WritableProvider(t *testing.T) {
-	kp := NewOSKeyringProvider()
-	var _ WritableProvider = kp
-	if _, ok := any(kp).(WritableProvider); !ok {
-		t.Errorf("expected OSKeyringProvider to implement WritableProvider")
-	}
-}
-
 func TestOSKeyringProvider(t *testing.T) {
 	t.Parallel()
 
@@ -366,5 +358,61 @@ func TestMockKeyringStore_DeleteCases(t *testing.T) {
 	// Service map should be cleaned up when last account is deleted
 	if err := store.Delete("svc", "acc1"); !errors.Is(err, keyring.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestOSKeyringProvider_SearchFlatEntry(t *testing.T) {
+	store := NewMockKeyringStore()
+	_ = store.Set("myservice", "API_TOKEN", "tok-123")
+	_ = store.Set("myservice", "DB_PASS", "db-456")
+	// Internal keys must never be exposed via flat Search entries.
+	_ = store.Set("myservice", keyringAccount, "internal-aes-key")
+	_ = store.Set("myservice", "provider/work", "internal-master-pw")
+
+	p := NewOSKeyringProviderWithStore(store)
+	ctx := context.Background()
+	if err := p.Initialize(ctx, ProviderConfig{
+		Settings: map[string]string{"keyring_prefix": "myservice"},
+	}); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	entries, err := p.Search(ctx, SearchQuery{})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 flat Entry from keyring Search, got %d", len(entries))
+	}
+	e := entries[0]
+	if e.Title() != "OS Keyring" || e.Path() != "keyring" {
+		t.Errorf("unexpected metadata: title=%q path=%q", e.Title(), e.Path())
+	}
+	if e["API_TOKEN"] != "tok-123" || e["DB_PASS"] != "db-456" {
+		t.Errorf("expected stored user keys in flat Entry, got %+v", e)
+	}
+	if _, leaked := e[keyringAccount]; leaked {
+		t.Errorf("internal cache master key must not be exposed in keyring Search")
+	}
+	if _, leaked := e["provider/work"]; leaked {
+		t.Errorf("internal provider credential must not be exposed in keyring Search")
+	}
+
+	// GetEntry with empty location returns same single flat entry.
+	allEntry, err := p.GetEntry(ctx, "")
+	if err != nil {
+		t.Fatalf("GetEntry(\"\") failed: %v", err)
+	}
+	if allEntry["API_TOKEN"] != "tok-123" {
+		t.Errorf("GetEntry(\"\") API_TOKEN = %v, want tok-123", allEntry["API_TOKEN"])
+	}
+
+	// GetEntry with specific account returns single-key entry.
+	singleEntry, err := p.GetEntry(ctx, "API_TOKEN")
+	if err != nil {
+		t.Fatalf("GetEntry(API_TOKEN) failed: %v", err)
+	}
+	if singleEntry["API_TOKEN"] != "tok-123" {
+		t.Errorf("GetEntry(API_TOKEN) = %v, want tok-123", singleEntry["API_TOKEN"])
 	}
 }

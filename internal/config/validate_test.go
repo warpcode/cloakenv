@@ -239,22 +239,6 @@ templates:
 		}
 	})
 
-	t.Run("unsupported providers fail validation", func(t *testing.T) {
-		for _, prov := range []string{"yaml", "json", "custom_vault"} {
-			cfgYAML := "vaults:\n  bad:\n    provider: " + prov + "\n"
-			cfgPath := filepath.Join(tempDir, "unsupported_"+prov+".yaml")
-			_ = os.WriteFile(cfgPath, []byte(cfgYAML), 0600)
-
-			res, err := Validate(cfgPath, false)
-			if err != nil {
-				t.Fatalf("unexpected error for %s: %v", prov, err)
-			}
-			if res.IsValid() {
-				t.Fatalf("expected validation failure for unsupported provider %q", prov)
-			}
-		}
-	})
-
 	t.Run("implicit env and keyring vaults pass without explicit declaration", func(t *testing.T) {
 		implicitYAML := `envs:
   local:

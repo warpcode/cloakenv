@@ -18,7 +18,7 @@ import (
 type delayedSearchableProvider struct {
 	delay       time.Duration
 	err         error
-	items       []provider.SearchResult
+	items       []provider.Entry
 	inFlight    *atomic.Int64
 	maxInFlight *atomic.Int64
 }
@@ -39,7 +39,7 @@ func (d *delayedSearchableProvider) DeleteSecret(_ context.Context, _ string) er
 func (d *delayedSearchableProvider) Validate(_ map[string]string) error {
 	return nil
 }
-func (d *delayedSearchableProvider) Search(ctx context.Context, _ provider.SearchQuery) ([]provider.SearchResult, error) {
+func (d *delayedSearchableProvider) Search(ctx context.Context, _ provider.SearchQuery) ([]provider.Entry, error) {
 	if d.inFlight != nil && d.maxInFlight != nil {
 		current := d.inFlight.Add(1)
 		defer d.inFlight.Add(-1)
@@ -80,49 +80,31 @@ func TestSearcher_GoTemplatePredicates(t *testing.T) {
 	}
 
 	orch.providerManager.vaultCache["vault_a"] = &delayedSearchableProvider{
-		items: []provider.SearchResult{
+		items: []provider.Entry{
 			{
-				Provider: "keepass",
-				Vault:    "vault_a",
-				Path:     "prod/db",
-				Entry: provider.Entry{
-					Title: "Primary DB",
-					UUID:  "uuid-1",
-					Tags:  []string{"LiteLLM", "prod"},
-					Group: &provider.GroupInfo{Name: "prod", Path: "infra/prod", UUID: "g-1"},
-					Attributes: map[string]any{
-						"host": "db.internal",
-						"port": "5432",
-					},
-				},
+				"path":  "prod/db",
+				"title": "Primary DB",
+				"uuid":  "uuid-1",
+				"tags":  []string{"LiteLLM", "prod"},
+				"group": map[string]any{"name": "prod", "path": "infra/prod", "uuid": "g-1"},
+				"host":  "db.internal",
+				"port":  "5432",
 			},
 			{
-				Provider: "keepass",
-				Vault:    "vault_a",
-				Path:     "staging/api",
-				Entry: provider.Entry{
-					Title: "Staging API",
-					UUID:  "uuid-2",
-					Tags:  []string{"staging"},
-					Group: &provider.GroupInfo{Name: "staging", Path: "infra/staging", UUID: "g-2"},
-					Attributes: map[string]any{
-						"host": "api.staging",
-						"port": "8080",
-					},
-				},
+				"path":  "staging/api",
+				"title": "Staging API",
+				"uuid":  "uuid-2",
+				"tags":  []string{"staging"},
+				"group": map[string]any{"name": "staging", "path": "infra/staging", "uuid": "g-2"},
+				"host":  "api.staging",
+				"port":  "8080",
 			},
 			{
-				Provider: "keepass",
-				Vault:    "vault_a",
-				Path:     "misc/note",
-				Entry: provider.Entry{
-					Title: "Generic Note",
-					UUID:  "uuid-3",
-					Tags:  []string{"misc"},
-					Attributes: map[string]any{
-						"notes": "no port attribute here",
-					},
-				},
+				"path":  "misc/note",
+				"title": "Generic Note",
+				"uuid":  "uuid-3",
+				"tags":  []string{"misc"},
+				"notes": "no port attribute here",
 			},
 		},
 	}
@@ -134,7 +116,7 @@ func TestSearcher_GoTemplatePredicates(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
-		if len(res) != 1 || res[0].Entry.Title != "Primary DB" {
+		if len(res) != 1 || res[0].Entry.Title() != "Primary DB" {
 			t.Fatalf("unexpected results: %+v", res)
 		}
 	})
@@ -144,7 +126,7 @@ func TestSearcher_GoTemplatePredicates(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
-		if len(res) != 1 || res[0].Entry.Title != "Staging API" {
+		if len(res) != 1 || res[0].Entry.Title() != "Staging API" {
 			t.Fatalf("unexpected results: %+v", res)
 		}
 	})
@@ -226,24 +208,18 @@ func TestSearcher_URLQueryParams(t *testing.T) {
 	}
 
 	orch.providerManager.vaultCache["vault_a"] = &delayedSearchableProvider{
-		items: []provider.SearchResult{
+		items: []provider.Entry{
 			{
-				Provider: "keepass",
-				Vault:    "vault_a",
-				Path:     "servers/ssh/bastion",
-				Entry: provider.Entry{
-					Title: "Bastion Host",
-					Tags:  []string{"auth:ssh", "env:prod"},
-					Group: &provider.GroupInfo{Name: "Production", Path: "infra/Production"},
-					Attributes: map[string]any{
-						"username": "admin",
-						"url":      "https://example.com/path",
-						"notes":    "",
-						"token":    "abc==",
-						"version":  "v>=2",
-						"expr":     "a!=b",
-					},
-				},
+				"path":     "servers/ssh/bastion",
+				"title":    "Bastion Host",
+				"tags":     []string{"auth:ssh", "env:prod"},
+				"group":    map[string]any{"name": "Production", "path": "infra/Production"},
+				"username": "admin",
+				"url":      "https://example.com/path",
+				"notes":    "",
+				"token":    "abc==",
+				"version":  "v>=2",
+				"expr":     "a!=b",
 			},
 		},
 	}
@@ -391,25 +367,19 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 			delay:       delay,
 			inFlight:    &inFlight,
 			maxInFlight: &maxInFlight,
-			items: []provider.SearchResult{
-				{Vault: "v1", Path: "p1", Entry: provider.Entry{Title: "t1"}},
-			},
+			items:       []provider.Entry{{"path": "p1", "title": "t1"}},
 		}
 		p2 := &delayedSearchableProvider{
 			delay:       delay,
 			inFlight:    &inFlight,
 			maxInFlight: &maxInFlight,
-			items: []provider.SearchResult{
-				{Vault: "v2", Path: "p2", Entry: provider.Entry{Title: "t2"}},
-			},
+			items:       []provider.Entry{{"path": "p2", "title": "t2"}},
 		}
 		p3 := &delayedSearchableProvider{
 			delay:       delay,
 			inFlight:    &inFlight,
 			maxInFlight: &maxInFlight,
-			items: []provider.SearchResult{
-				{Vault: "v3", Path: "p3", Entry: provider.Entry{Title: "t3"}},
-			},
+			items:       []provider.Entry{{"path": "p3", "title": "t3"}},
 		}
 
 		orch.providerManager.vaultCache["v1"] = p1
@@ -442,9 +412,7 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 
 		pOK := &delayedSearchableProvider{
 			delay: 200 * time.Millisecond,
-			items: []provider.SearchResult{
-				{Vault: "v_ok", Path: "p_ok", Entry: provider.Entry{Title: "t_ok"}},
-			},
+			items: []provider.Entry{{"path": "p_ok", "title": "t_ok"}},
 		}
 		pFail := &delayedSearchableProvider{
 			delay: 10 * time.Millisecond,
@@ -505,9 +473,9 @@ func TestBuiltinsNonSearchable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
-		_, err = orch.Search(ctx, `{{ eq .title "test" }}`, []string{"keyring"})
+		_, err = orch.Search(ctx, `{{ eq .title "test" }}`, []string{"cache"})
 		if err == nil {
-			t.Fatal("expected error searching keyring, got nil")
+			t.Fatal("expected error searching cache, got nil")
 		}
 		if !strings.Contains(err.Error(), "does not support searching") {
 			t.Errorf("expected 'does not support searching' error, got: %v", err)
@@ -526,11 +494,9 @@ func TestSearchConcurrentCompilation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "vault1", []provider.SearchResult{
-		{Provider: "keepass", Vault: "vault1", Path: "item1", Entry: provider.Entry{Title: "item1", Attributes: map[string]any{"Password": "pass"}}},
-	}); err != nil {
-		t.Fatalf("injectMockVault failed: %v", err)
-	}
+	InjectTestVaultForTest(orch, "vault1", map[string]provider.Entry{
+		"item1": {"path": "item1", "title": "item1", "Password": "pass"},
+	})
 
 	const numGoroutines = 30
 	var wg sync.WaitGroup
@@ -566,7 +532,7 @@ func TestSearchNilConfig(t *testing.T) {
 		t.Errorf("expected 'no configuration loaded' error, got %v", err)
 	}
 
-	_, err = orch.Search(ctx, `{{ eq .title "test" }}`, []string{"keyring"})
+	_, err = orch.Search(ctx, `{{ eq .title "test" }}`, []string{"cache"})
 	if err == nil {
 		t.Fatal("expected error searching with nil config and builtin scope, got nil")
 	}
@@ -586,12 +552,10 @@ func TestSearcher_GroupAttributeFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "grp", []provider.SearchResult{
-		{Provider: "keepass", Vault: "grp", Path: "svc1", Entry: provider.Entry{Title: "svc1", Attributes: map[string]any{"Group": "Production", "Password": "p1"}}},
-		{Provider: "keepass", Vault: "grp", Path: "svc2", Entry: provider.Entry{Title: "svc2", Attributes: map[string]any{"group": map[string]any{"name": "Staging", "path": "Infra/Staging"}, "Password": "p2"}}},
-	}); err != nil {
-		t.Fatalf("injectMockVault(grp) failed: %v", err)
-	}
+	InjectTestVaultForTest(orch, "grp", map[string]provider.Entry{
+		"svc1": {"path": "svc1", "title": "svc1", "Group": "Production", "Password": "p1"},
+		"svc2": {"path": "svc2", "title": "svc2", "group": map[string]any{"name": "Staging", "path": "Infra/Staging"}, "Password": "p2"},
+	})
 
 	ctx := context.Background()
 

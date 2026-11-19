@@ -23,7 +23,6 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	boolTrue := true
 	cfg := &config.Config{
 		ConfigPath: filepath.Join(tmpDir, "config.yaml"),
 		Templates: map[string]config.TemplateConfig{
@@ -35,10 +34,6 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 			},
 		},
 		Vaults: map[string]config.VaultConfig{
-			"vault_a_src": {
-				Provider:   "env",
-				Searchable: &boolTrue,
-			},
 			"vault_a": {
 				Provider: "env",
 			},
@@ -49,30 +44,24 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := orch.InjectMockVaultForTest("vault_a", []provider.SearchResult{
-		{
-			Provider: "search", Vault: "vault_a", Path: "myentity",
-			Entry: provider.Entry{
-				Title: "myentity",
-				Tags:  []string{"test"},
-				Attributes: map[string]any{
-					"Password":     "secret_pass",
-					"k":            "v",
-					"json_payload": `{"token":"tok_secret_123"}`,
-					"yaml_payload": "api_key: key_xyz_789\nenv: prod",
-				},
-			},
+	engine.InjectTestVaultForTest(orch, "vault_a", map[string]provider.Entry{
+		"myentity": {
+			"title":        "myentity",
+			"path":         "myentity",
+			"Password":     "secret_pass",
+			"k":            "v",
+			"tags":         []string{"test"},
+			"json_payload": `{"token":"tok_secret_123"}`,
+			"yaml_payload": "api_key: key_xyz_789\nenv: prod",
 		},
-		{Provider: "search", Vault: "vault_a", Path: "deep", Entry: provider.Entry{Title: "deep", Attributes: map[string]any{"val": `{{ get "vault_a://deep2:val" }}`}}},
-		{Provider: "search", Vault: "vault_a", Path: "deep2", Entry: provider.Entry{Title: "deep2", Attributes: map[string]any{"val": `{{ get "vault_a://deep3:val" }}`}}},
-		{Provider: "search", Vault: "vault_a", Path: "deep3", Entry: provider.Entry{Title: "deep3", Attributes: map[string]any{"val": `{{ get "vault_a://deep4:val" }}`}}},
-		{Provider: "search", Vault: "vault_a", Path: "deep4", Entry: provider.Entry{Title: "deep4", Attributes: map[string]any{"val": `{{ get "vault_a://deep5:val" }}`}}},
-		{Provider: "search", Vault: "vault_a", Path: "deep5", Entry: provider.Entry{Title: "deep5", Attributes: map[string]any{"val": `{{ get "vault_a://deep6:val" }}`}}},
-		{Provider: "search", Vault: "vault_a", Path: "deep6", Entry: provider.Entry{Title: "deep6", Attributes: map[string]any{"val": `{{ get "vault_a://deep7:val" }}`}}},
-		{Provider: "search", Vault: "vault_a", Path: "deep7", Entry: provider.Entry{Title: "deep7", Attributes: map[string]any{"val": "bottom"}}},
-	}); err != nil {
-		t.Fatalf("InjectMockVaultForTest failed: %v", err)
-	}
+		"deep":  {"val": `{{ get "vault_a://deep2:val" }}`},
+		"deep2": {"val": `{{ get "vault_a://deep3:val" }}`},
+		"deep3": {"val": `{{ get "vault_a://deep4:val" }}`},
+		"deep4": {"val": `{{ get "vault_a://deep5:val" }}`},
+		"deep5": {"val": `{{ get "vault_a://deep6:val" }}`},
+		"deep6": {"val": `{{ get "vault_a://deep7:val" }}`},
+		"deep7": {"val": "bottom"},
+	})
 
 	te := engine.NewTemplateEngine(orch.GetResolver())
 

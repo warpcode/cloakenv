@@ -65,22 +65,16 @@ func BenchmarkBuildEnv(b *testing.B) {
 }
 
 func BenchmarkSearch(b *testing.B) {
-	entriesCount := 1000
-	results := make([]provider.SearchResult, 0, entriesCount)
-	for i := range entriesCount {
-		results = append(results, provider.SearchResult{
-			Provider: "search",
-			Vault:    "bench",
-			Path:     fmt.Sprintf("entry_%d", i),
-			Entry: provider.Entry{
-				Title: fmt.Sprintf("Title %d", i),
-				Tags:  []string{fmt.Sprintf("tag_%d", i%10), "common"},
-				Attributes: map[string]any{
-					"attr1": fmt.Sprintf("val1_%d", i),
-					"attr2": i,
-				},
-			},
-		})
+	entries := make(map[string]provider.Entry, 1000)
+	for i := range 1000 {
+		key := fmt.Sprintf("entry_%d", i)
+		entries[key] = provider.Entry{
+			"title": fmt.Sprintf("Title %d", i),
+			"path":  key,
+			"tags":  []string{fmt.Sprintf("tag_%d", i%10), "common"},
+			"attr1": fmt.Sprintf("val1_%d", i),
+			"attr2": i,
+		}
 	}
 
 	cfg := &config.Config{
@@ -95,12 +89,10 @@ func BenchmarkSearch(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "bench", results); err != nil {
-		b.Fatalf("injectMockVault failed: %v", err)
-	}
+	orch.providerManager.vaultCache["bench"] = newTestMemoryProvider(entries)
 
 	ctx := context.Background()
-	query := `attr2 > 500 and "common" in tags`
+	query := `{{ and (gt .attr2 500) (hasTag "common" .tags) }}`
 
 	b.ResetTimer()
 	for range b.N {

@@ -92,7 +92,7 @@ func TestCachingIntegration_Orchestrator(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", tempDir)
 	t.Setenv("HOME", tempDir)
 
-	t.Setenv("API_KEY", "secret_api_key_value")
+	t.Setenv("CLOAKENV_CACHED_API_KEY", "secret_api_key_value")
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"cached_vault": {
@@ -114,7 +114,7 @@ func TestCachingIntegration_Orchestrator(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Resolve secret
-	val1, err := orch.Resolve(ctx, "cached_vault://API_KEY")
+	val1, err := orch.Resolve(ctx, "cached_vault://CLOAKENV_CACHED_API_KEY")
 	if err != nil {
 		t.Fatalf("Resolve failed: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestCachingIntegration_Orchestrator(t *testing.T) {
 	}
 
 	// 2. Second resolve hits cache
-	val2, err := orch.Resolve(ctx, "cached_vault://API_KEY")
+	val2, err := orch.Resolve(ctx, "cached_vault://CLOAKENV_CACHED_API_KEY")
 	if err != nil || val2 != val1 {
 		t.Errorf("second resolve failed: %v, val=%q", err, val2)
 	}
