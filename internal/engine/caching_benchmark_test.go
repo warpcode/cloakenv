@@ -104,6 +104,16 @@ func TestCachingIntegration_Orchestrator(t *testing.T) {
 				},
 			},
 		},
+		Envs: map[string][]config.VaultSourceConfig{
+			"cached_env": {
+				{
+					Vault: "cached_vault",
+					Rules: []config.RuleConfig{
+						{Type: "pass", Include: []string{"CLOAKENV_CACHED_API_KEY"}},
+					},
+				},
+			},
+		},
 	}
 
 	orch, err := NewOrchestrator(cfg)
@@ -113,19 +123,19 @@ func TestCachingIntegration_Orchestrator(t *testing.T) {
 
 	ctx := context.Background()
 
-	// 1. Resolve secret
-	val1, err := orch.Resolve(ctx, "cached_vault://CLOAKENV_CACHED_API_KEY")
+	// 1. Build env via cached vault
+	env1, err := orch.EnvsBuilder().Build(ctx, "cached_env")
 	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
+		t.Fatalf("EnvsBuilder.Build failed: %v", err)
 	}
-	if val1 != "secret_api_key_value" {
-		t.Errorf("expected 'secret_api_key_value', got %q", val1)
+	if env1["CLOAKENV_CACHED_API_KEY"] != "secret_api_key_value" {
+		t.Errorf("expected 'secret_api_key_value', got %q", env1["CLOAKENV_CACHED_API_KEY"])
 	}
 
-	// 2. Second resolve hits cache
-	val2, err := orch.Resolve(ctx, "cached_vault://CLOAKENV_CACHED_API_KEY")
-	if err != nil || val2 != val1 {
-		t.Errorf("second resolve failed: %v, val=%q", err, val2)
+	// 2. Second build succeeds identically
+	env2, err := orch.EnvsBuilder().Build(ctx, "cached_env")
+	if err != nil || env2["CLOAKENV_CACHED_API_KEY"] != env1["CLOAKENV_CACHED_API_KEY"] {
+		t.Errorf("second build failed: %v, env=%+v", err, env2)
 	}
 
 	// 3. ClearCache

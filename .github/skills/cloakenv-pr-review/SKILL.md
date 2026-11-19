@@ -39,7 +39,7 @@ The script extracts a full audit bundle to `/tmp/cloakenv_pr_<n>_<timestamp>/` a
 - Full diff against `origin/main` (`main.diff`) and diff against base (`base.diff`).
 - Workflow integrity checks (verifies `ci.yml` and `semgrep.yml`).
 - Smuggled refactor scans (detects `regexCache.*sync\.Map` or deleted autoload rules).
-- Switch drift checks (verifies provider cases in `initVaultProvider`).
+- Switch drift checks (verifies read-only provider cases in `initVaultProvider`).
 - Sibling PR duplicate detection (detects matching blob hashes from concurrent bot sessions).
 
 ### Phase 2: Base Branch & CI Verification
@@ -51,19 +51,16 @@ The script extracts a full audit bundle to `/tmp/cloakenv_pr_<n>_<timestamp>/` a
    - Review `main.diff` in the payload directory rather than relying solely on the GitHub web UI diff.
    - Verify that all checks pass against `origin/main` before considering approval.
 
-### Phase 3: Deep Filtering & Invariant Audit
+### Phase 3: Deep Pipeline & Security Invariant Audit
 
-Review all changes modifying `internal/provider/` or `internal/engine/` against the institutional traps documented in `@references/filter-traps.md`:
+Review all changes modifying `internal/provider/`, `internal/engine/`, `internal/runner/`, or `internal/cmd/`:
 
-1. **Decorator Chain Order**: Verify that `initVaultProvider` applies wrappers in exact sequence:
-   - Base Provider -> `FilteringProvider` -> `MappingProvider` -> `KeyFormatProvider` -> `AttributesProvider`.
-2. **Wrapper Composition**: Ensure any new wrapper composes with `FilteringProvider` rather than replacing it (PR #210 regression).
-3. **No Unfiltered Fallback**: Confirm there is no fallback to `underlying.GetSecret` after a miss that bypasses filtering.
-4. **Default Attribute & Dot-Path Lookups**: Verify that eliminating fallback does not break bare `provider://entity` lookups or multi-entity dot-path resolution (PR #212 regression).
-5. **Colon-Qualified Filter Candidates**: Ensure filter candidates include colon forms (`entryPath+":"+attr`, `entryTitle+":"+attr`, `entityLoc+":"+attr`).
-6. **Include Precedence**: Ensure `include_fields` rules evaluate before and take precedence over `exclude_fields`.
-7. **Virtual Search Integrity**: Ensure `SearchProvider` preserves candidate entry metadata (`Title`, `Tags`) so stored queries match.
-8. **Template Evaluation Order**: Ensure `.attributes` templates evaluate only after filtering, mapping, and key formatting.
+1. **Pure Read-Only Vaults**: Vault providers (`keepass`, `pass`, `vault`, `env`, `keyring`) must return untouched flat `Entry` maps with zero filtering, key mapping, or template transforms.
+2. **RuleEngine Semantics**: Verify `pass`, `match`, and `set` rules in `internal/engine/rules.go` preserve reserved metadata keys (`title`, `path`, `uuid`, `tags`, `group`), enforce last-rule-wins ordering, and never leak values in traces or errors.
+3. **Zero-Leak Inspection & Masking**: Verify `cloakenv inspect` unconditionally emits `<REDACTED>` for every secret value, audit logs never emit resolved payloads, and `runner` streams child output through `MaskingWriter` and zeros temp template files (`0700`/`0600`, `O_NOFOLLOW`) on exit.
+4. **Keyring Internal Isolation**: Confirm the built-in `keyring` vault excludes internal keys (`cache_token`, `cache-master-key`, `cache/*`, `provider/*`).
+5. **Verbatim Child Command Pass-Through**: Verify `BuildEnvForCommand` passes child command arguments through verbatim without secret or template expansion.
+6. **Pure Go Templating**: Templates use Go `text/template` with `.Option("missingkey=error")` and pure helpers only—no URI/exec/include lookups.
 
 ### Phase 4: Review Discipline & Fact Verification
 
@@ -95,5 +92,5 @@ Follow the 7 rules of review discipline documented in `@references/review-discip
 
 ## 3. Reference Files
 
-- [Filter Traps & Invariants](references/filter-traps.md) — Detailed breakdown of provider wrappers, fallback traps, colon candidates, and template ordering.
+- [Filter Traps & Invariants](references/filter-traps.md) — Historical context on provider security traps and template safety.
 - [Review Discipline](references/review-discipline.md) — The 7 core rules of review discipline, ruleset and merge gates, and silent approval invariant.
