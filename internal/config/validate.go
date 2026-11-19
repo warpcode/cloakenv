@@ -96,7 +96,6 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 		"keepass": true,
 		"env":     true,
 		"pass":    true,
-		"search":  true,
 		"vault":   true,
 		"keyring": true,
 	}
@@ -112,7 +111,7 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 		if vault.Provider == "" {
 			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: missing required field 'provider'", vaultName))
 		} else if !validProviders[vault.Provider] {
-			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: unsupported provider %q (must be one of: keepass, env, pass, search, vault, keyring)", vaultName, vault.Provider))
+			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: unsupported provider %q (must be one of: keepass, env, pass, vault, keyring)", vaultName, vault.Provider))
 		} else if (vaultName == "env" && vault.Provider != "env") || (vaultName == "keyring" && vault.Provider != "keyring") {
 			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: built-in vault name %q must use provider %q, got %q", vaultName, vaultName, vaultName, vault.Provider))
 		}
@@ -129,13 +128,6 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 						res.Errors = append(res.Errors, fmt.Sprintf("vault %q: cannot access vault_path %s: %v", vaultName, vault.VaultPath, err))
 					}
 				}
-			}
-		}
-
-		// Search provider validation
-		if vault.Provider == "search" {
-			if len(vault.SourceVaults) == 0 && len(vault.Sources) == 0 {
-				res.Warnings = append(res.Warnings, fmt.Sprintf("vault %q: search provider has no 'source_vaults' or 'sources' configured", vaultName))
 			}
 		}
 

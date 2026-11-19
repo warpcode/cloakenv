@@ -98,27 +98,11 @@ func NewCachingProvider(p SecretProvider, cfg CachingConfig) (SecretProvider, er
 		cp.aesKey = keyBytes
 	}
 
-	_, isSearchable := p.(SearchableProvider)
-	_, isValResolvable := p.(ValueResolvableProvider)
-
-	if isSearchable && isValResolvable {
-		return &SearchableValueResolvableCachingProvider{
-			SearchableCachingProvider: &SearchableCachingProvider{
-				CachingProvider: cp,
-			},
-		}, nil
-	}
-	if isSearchable {
+	if _, isSearchable := p.(SearchableProvider); isSearchable {
 		return &SearchableCachingProvider{
 			CachingProvider: cp,
 		}, nil
 	}
-	if isValResolvable {
-		return &ValueResolvableCachingProvider{
-			CachingProvider: cp,
-		}, nil
-	}
-
 	return cp, nil
 }
 
@@ -648,30 +632,4 @@ func (s *SearchableCachingProvider) Search(ctx context.Context, query SearchQuer
 		return searchable.Search(ctx, query)
 	}
 	return nil, fmt.Errorf("provider %q does not support searching", s.Scheme())
-}
-
-// ValueResolvableCachingProvider wraps CachingProvider for ValueResolvableProvider backends.
-type ValueResolvableCachingProvider struct {
-	*CachingProvider
-}
-
-// SupportsValueResolution delegates to underlying provider.
-func (v *ValueResolvableCachingProvider) SupportsValueResolution() bool {
-	if vr, ok := v.underlying.(ValueResolvableProvider); ok {
-		return vr.SupportsValueResolution()
-	}
-	return false
-}
-
-// SearchableValueResolvableCachingProvider implements both SearchableProvider and ValueResolvableProvider.
-type SearchableValueResolvableCachingProvider struct {
-	*SearchableCachingProvider
-}
-
-// SupportsValueResolution delegates to underlying provider.
-func (s *SearchableValueResolvableCachingProvider) SupportsValueResolution() bool {
-	if vr, ok := s.underlying.(ValueResolvableProvider); ok {
-		return vr.SupportsValueResolution()
-	}
-	return false
 }

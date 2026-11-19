@@ -11,168 +11,6 @@ import (
 	"github.com/warpcode/cloakenv/internal/provider"
 )
 
-func TestResolveValues(t *testing.T) {
-	ctx := context.Background()
-
-	// vault_b holds a plain secret value.
-	// vault_a holds an attribute whose value is a URI pointing into vault_b.
-	boolPtr := func(b bool) *bool { return &b }
-
-	makeOrch := func(t *testing.T, resolveValues bool) *Orchestrator {
-		t.Helper()
-		cfg := &config.Config{
-			Vaults: map[string]config.VaultConfig{
-				"vault_a": {
-					Provider:      "search",
-					Sources:       []string{"env://"},
-					ResolveValues: resolveValues,
-				},
-				"vault_b": {
-					Provider:   "env",
-					Searchable: boolPtr(true),
-				},
-			},
-		}
-		orch, err := NewOrchestrator(cfg)
-		if err != nil {
-			t.Fatalf("failed to create orchestrator: %v", err)
-		}
-		if err := injectMockVault(orch, "vault_a", []provider.SearchResult{
-			{Provider: "search", Vault: "vault_a", Path: "entity1", Entry: provider.Entry{Title: "entity1", Attributes: map[string]any{"Password": `{{ get "vault_b://entry1:secret" }}`}}},
-		}); err != nil {
-			t.Fatalf("injectMockVault(vault_a) failed: %v", err)
-		}
-		if err := injectMockVault(orch, "vault_b", []provider.SearchResult{
-			{Provider: "search", Vault: "vault_b", Path: "entry1", Entry: provider.Entry{Title: "entry1", Attributes: map[string]any{"secret": "resolved_value"}}},
-		}); err != nil {
-			t.Fatalf("injectMockVault(vault_b) failed: %v", err)
-		}
-		return orch
-	}
-
-	t.Run("ResolveValues_On", func(t *testing.T) {
-		orch := makeOrch(t, true)
-
-		val, err := orch.Resolve(ctx, `{{ get "vault_a://entity1:Password" }}`)
-		if err != nil {
-			t.Fatalf("Resolve failed: %v", err)
-		}
-		if val != "resolved_value" {
-			t.Errorf("expected resolved_value, got %q", val)
-		}
-	})
-
-	t.Run("ResolveValues_Off", func(t *testing.T) {
-		orch := makeOrch(t, false)
-
-		val, err := orch.Resolve(ctx, `{{ get "vault_a://entity1:Password" }}`)
-		if err != nil {
-			t.Fatalf("Resolve failed: %v", err)
-		}
-		// Should return the raw URI string, not the resolved secret.
-		if val != `{{ get "vault_b://entry1:secret" }}` {
-			t.Errorf("expected raw URI, got %q", val)
-		}
-	})
-
-	t.Run("ResolveValues_Off_GetEntry", func(t *testing.T) {
-		// GetEntry must also honour resolve_values: false — attribute values
-		// that are URIs must be returned raw without being resolved.
-		orch := makeOrch(t, false)
-
-		entry, err := orch.GetEntry(ctx, "vault_a://entity1")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-		raw, ok := entry.Attributes["Password"]
-		if !ok {
-			t.Fatal("expected 'Password' attribute in entry")
-		}
-		if raw != `{{ get "vault_b://entry1:secret" }}` {
-			t.Errorf("expected raw URI in attribute, got %q", raw)
-		}
-	})
-
-	t.Run("ResolveValues_FalseReturn_HonoredByInterfacePresence", func(t *testing.T) {
-		// A provider implementing ValueResolvableProvider whose SupportsValueResolution returns false
-		// must still have resolve_values: false honored by the engine based on interface presence.
-		orch := makeOrch(t, false)
-
-		underlying, _, err := orch.providerManager.GetProvider(ctx, "vault_a")
-		if err != nil {
-			t.Fatalf("failed to get vault_a provider: %v", err)
-		}
-		orch.providerManager.vaultCache["vault_a"] = &falseReturnResolvableProvider{underlying: underlying}
-
-		val, err := orch.Resolve(ctx, `{{ get "vault_a://entity1:Password" }}`)
-		if err != nil {
-			t.Fatalf("Resolve failed: %v", err)
-		}
-		if val != `{{ get "vault_b://entry1:secret" }}` {
-			t.Errorf("expected raw URI when resolve_values is false, got %q", val)
-		}
-
-		entry, err := orch.GetEntry(ctx, "vault_a://entity1")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-		if raw := entry.Attributes["Password"]; raw != `{{ get "vault_b://entry1:secret" }}` {
-			t.Errorf("expected raw URI in GetEntry when resolve_values is false, got %q", raw)
-		}
-	})
-
-	t.Run("ResolveValues_CircularReference", func(t *testing.T) {
-		// vault_c.entry references vault_c itself — forms a cycle.
-		cfg := &config.Config{
-			Vaults: map[string]config.VaultConfig{
-				"vault_c": {
-					Provider:      "search",
-					Sources:       []string{"env://"},
-					ResolveValues: true,
-				},
-			},
-		}
-
-		orch, err := NewOrchestrator(cfg)
-		if err != nil {
-			t.Fatalf("failed to create orchestrator: %v", err)
-		}
-		if err := injectMockVault(orch, "vault_c", []provider.SearchResult{
-			{Provider: "search", Vault: "vault_c", Path: "entry", Entry: provider.Entry{Title: "entry", Attributes: map[string]any{"Password": `{{ get "vault_c://entry:Password" }}`}}},
-		}); err != nil {
-			t.Fatalf("injectMockVault(vault_c) failed: %v", err)
-		}
-
-		_, err = orch.Resolve(ctx, `{{ get "vault_c://entry:Password" }}`)
-		if err == nil {
-			t.Error("expected error due to circular reference, got nil")
-		}
-		if !strings.Contains(err.Error(), "max depth") {
-			t.Errorf("expected max depth error, got: %v", err)
-		}
-	})
-
-	t.Run("ResolveValues_RejectedOnUnsupportedProvider", func(t *testing.T) {
-		// resolve_values must be rejected at startup for providers that do not implement ValueResolvableProvider.
-		cfg := &config.Config{
-			Vaults: map[string]config.VaultConfig{
-				"bad_env": {
-					Provider:      "env",
-					ResolveValues: true,
-				},
-			},
-		}
-
-		_, err := NewOrchestrator(cfg)
-		if err == nil {
-			t.Fatal("expected error for resolve_values on env provider, got nil")
-		}
-		if !strings.Contains(err.Error(), "resolve_values") {
-			t.Errorf("expected resolve_values error, got: %v", err)
-		}
-	})
-}
-
 func TestGetEntry_AttributeSelector(t *testing.T) {
 	ctx := context.Background()
 
@@ -351,14 +189,10 @@ func TestGetEntry(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"vault_x": {
-				Provider:      "search",
-				Sources:       []string{"env://"},
-				ResolveValues: true,
+				Provider: "env",
 			},
 			"vault_y": {
-				Provider:      "search",
-				Sources:       []string{"env://"},
-				ResolveValues: false,
+				Provider: "env",
 			},
 		},
 	}
@@ -498,42 +332,6 @@ func TestGetEntry(t *testing.T) {
 	}
 }
 
-type falseReturnResolvableProvider struct {
-	underlying provider.SecretProvider
-}
-
-func (f *falseReturnResolvableProvider) Scheme() string { return f.underlying.Scheme() }
-func (f *falseReturnResolvableProvider) Initialize(ctx context.Context, cfg provider.ProviderConfig) error {
-	return f.underlying.Initialize(ctx, cfg)
-}
-func (f *falseReturnResolvableProvider) GetSecret(ctx context.Context, location string) (string, error) {
-	return f.underlying.GetSecret(ctx, location)
-}
-func (f *falseReturnResolvableProvider) SetSecret(ctx context.Context, loc, val string) error {
-	return f.underlying.SetSecret(ctx, loc, val)
-}
-func (f *falseReturnResolvableProvider) DeleteSecret(ctx context.Context, loc string) error {
-	return f.underlying.DeleteSecret(ctx, loc)
-}
-func (f *falseReturnResolvableProvider) Validate(s map[string]string) error {
-	return f.underlying.Validate(s)
-}
-func (f *falseReturnResolvableProvider) SupportsValueResolution() bool {
-	return false
-}
-func (f *falseReturnResolvableProvider) GetEntry(ctx context.Context, loc string) (provider.Entry, error) {
-	if s, ok := f.underlying.(provider.SearchableProvider); ok {
-		return s.GetEntry(ctx, loc)
-	}
-	return provider.Entry{}, nil
-}
-func (f *falseReturnResolvableProvider) Search(ctx context.Context, q provider.SearchQuery) ([]provider.SearchResult, error) {
-	if s, ok := f.underlying.(provider.SearchableProvider); ok {
-		return s.Search(ctx, q)
-	}
-	return nil, nil
-}
-
 func TestResolve_BareURIQuoteEscaping(t *testing.T) {
 	ctx := context.Background()
 	pm := NewProviderManager(&config.Config{}, nil, nil)
@@ -563,7 +361,7 @@ func TestResolve_BareURIQuoteEscaping(t *testing.T) {
 	if customVal != "super_secret_password" {
 		t.Errorf("got %q, want %q", customVal, "super_secret_password")
 	}
-	if receivedQuery != `"\"api\"" in tags` {
+	if receivedQuery != `tags="api"` {
 		t.Errorf("expected received query to be \"\\\"api\\\"\" in tags, got %q", receivedQuery)
 	}
 
@@ -574,43 +372,43 @@ func TestResolve_BareURIQuoteEscaping(t *testing.T) {
 	if val != "super_secret_password" {
 		t.Errorf("got %q, want %q", val, "super_secret_password")
 	}
-	if !strings.Contains(receivedQuery, `title contains "api"`) {
+	if receivedQuery != "title=api" {
 		t.Errorf("expected received query to contain %q, got %q", `title contains "api"`, receivedQuery)
 	}
 
 	// Test Expr "in" operator syntax
-	exprInVal, err := res.Resolve(ctx, `search://"api" in tags/Password`)
+	exprInVal, err := res.Resolve(ctx, `search://{{ hasTag "api" .tags }}/Password`)
 	if err != nil {
 		t.Fatalf("Resolve failed with Expr 'in' query: %v", err)
 	}
 	if exprInVal != "super_secret_password" {
 		t.Errorf("got %q, want %q", exprInVal, "super_secret_password")
 	}
-	if receivedQuery != `"api" in tags` {
+	if receivedQuery != `{{ hasTag "api" .tags }}` {
 		t.Errorf("expected received query %q, got %q", `"api" in tags`, receivedQuery)
 	}
 
 	// Test Expr "==" operator syntax
-	exprEqVal, err := res.Resolve(ctx, `search://title == "api"/Password`)
+	exprEqVal, err := res.Resolve(ctx, `search://{{ eq .title "api" }}/Password`)
 	if err != nil {
 		t.Fatalf("Resolve failed with Expr '==' query: %v", err)
 	}
 	if exprEqVal != "super_secret_password" {
 		t.Errorf("got %q, want %q", exprEqVal, "super_secret_password")
 	}
-	if receivedQuery != `title == "api"` {
+	if receivedQuery != `{{ eq .title "api" }}` {
 		t.Errorf("expected received query %q, got %q", `title == "api"`, receivedQuery)
 	}
 
 	// Test Expr syntax without attribute, defaulting to Password
-	exprDefaultVal, err := res.Resolve(ctx, `search://"api" in tags`)
+	exprDefaultVal, err := res.Resolve(ctx, `search://{{ hasTag "api" .tags }}`)
 	if err != nil {
 		t.Fatalf("Resolve failed with Expr query without attribute: %v", err)
 	}
 	if exprDefaultVal != "super_secret_password" {
 		t.Errorf("got %q, want %q", exprDefaultVal, "super_secret_password")
 	}
-	if receivedQuery != `"api" in tags` {
+	if receivedQuery != `{{ hasTag "api" .tags }}` {
 		t.Errorf("expected received query %q, got %q", `"api" in tags`, receivedQuery)
 	}
 
@@ -623,7 +421,7 @@ func TestResolve_BareURIQuoteEscaping(t *testing.T) {
 		t.Errorf("unexpected entries from search URL params: %v", entriesURL)
 	}
 
-	entriesExpr, err := res.GetEntries(ctx, `search://"api" in tags`)
+	entriesExpr, err := res.GetEntries(ctx, `search://{{ hasTag "api" .tags }}`)
 	if err != nil {
 		t.Fatalf("GetEntries failed with search Expr: %v", err)
 	}

@@ -81,7 +81,7 @@ func (r *Resolver) Resolve(ctx context.Context, uri string) (string, error) {
 // ResolveWithKey takes a full value, evaluates any {{ get "scheme://..." }} template
 // expressions, and includes the configKey in any failure messages if provided.
 func (r *Resolver) ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error) {
-	if !strings.Contains(uri, "{{") {
+	if !strings.Contains(uri, "{{") || strings.HasPrefix(uri, "search://") {
 		if scheme, _, err := utils.ParseURI(uri); err == nil && r.isKnownScheme(scheme) {
 			uri = "{{ get " + strconv.Quote(uri) + " }}"
 		}
@@ -185,24 +185,14 @@ func (r *Resolver) resolveSingleURI(ctx context.Context, uri string, depth int, 
 		return "", fmt.Errorf("failed to get secret from %q: %w", scheme, err)
 	}
 
-	shouldResolve := true
-	if !isBuiltin {
-		if _, ok := p.(provider.ValueResolvableProvider); ok {
-			shouldResolve = r.providers.Config().Vaults[scheme].ResolveValues
-		}
-	}
-
-	if shouldResolve {
-		result, err := r.expandString(ctx, val, depth+1, configKey)
-		if err != nil {
-			r.logAuditEvent(uri, classifyAuditOutcome(err))
-			return "", err
-		}
-		r.logAuditEvent(uri, "SUCCESS")
-		return result, nil
+	_ = isBuiltin
+	result, err := r.expandString(ctx, val, depth+1, configKey)
+	if err != nil {
+		r.logAuditEvent(uri, classifyAuditOutcome(err))
+		return "", err
 	}
 	r.logAuditEvent(uri, "SUCCESS")
-	return val, nil
+	return result, nil
 }
 
 // GetEntry retrieves a complete structured entry by location.
@@ -230,14 +220,8 @@ func (r *Resolver) fetchProviderEntry(ctx context.Context, scheme, location stri
 		return provider.Entry{}, false, err
 	}
 
-	shouldResolveAttrs := true
-	if !isBuiltin {
-		if _, ok := p.(provider.ValueResolvableProvider); ok {
-			shouldResolveAttrs = r.providers.Config().Vaults[scheme].ResolveValues
-		}
-	}
-
-	return entry, shouldResolveAttrs, nil
+	_ = isBuiltin
+	return entry, true, nil
 }
 
 func (r *Resolver) resolveEntryAttributes(ctx context.Context, entry provider.Entry, shouldResolveAttrs bool, depth int) (provider.Entry, error) {
@@ -451,13 +435,8 @@ func (r *Resolver) getRawEntryRecursive(ctx context.Context, uri string, depth i
 		return provider.Entry{}, err
 	}
 
+	_ = isBuiltin
 	shouldResolveAttrs := true
-	if !isBuiltin {
-		if _, ok := p.(provider.ValueResolvableProvider); ok {
-			shouldResolveAttrs = r.providers.Config().Vaults[scheme].ResolveValues
-		}
-	}
-
 	rawP := unwrapToRawProvider(p)
 	if searchable, ok := rawP.(provider.SearchableProvider); ok {
 		entry, err := searchable.GetEntry(ctx, location)

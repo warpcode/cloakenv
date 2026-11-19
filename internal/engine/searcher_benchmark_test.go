@@ -56,7 +56,7 @@ func BenchmarkMultiVaultSearch(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for range b.N {
-		results, err := orch.Search(ctx, `"common" in tags`, nil)
+		results, err := orch.Search(ctx, `{{ hasTag "common" .tags }}`, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

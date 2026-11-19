@@ -360,7 +360,7 @@ func DefaultAuditLogPath() (string, error) {
 
 // VaultConfig defines a named secret vault backend and its configuration options.
 type VaultConfig struct {
-	// Provider identifies the provider backend type (e.g., "keepass", "pass", "env", "search", "vault").
+	// Provider identifies the provider backend type (e.g., "keepass", "pass", "env", "keyring", "vault").
 	Provider string `yaml:"provider"`
 
 	// VaultPath is the filesystem path to the backend's data store
@@ -391,13 +391,6 @@ type VaultConfig struct {
 	// Attributes holds vault-level computed attribute templates applied to entries returned by this vault.
 	Attributes map[string]any `yaml:"attributes"`
 
-	// ResolveValues enables URI resolution for attribute values within this vault.
-	// When true, any attribute value that is a valid URI referencing a registered
-	// scheme is resolved recursively (up to depth 5) before being returned.
-	// Template interpolation is supported using {{ get "scheme://..." }} syntax.
-	// Defaults to false.
-	ResolveValues bool `yaml:"resolve_values"`
-
 	// ResolveReferences enables KeePass entry placeholder and cross-entry reference resolution.
 	// Defaults to false.
 	ResolveReferences bool `yaml:"resolve_references"`
@@ -419,13 +412,7 @@ type VaultConfig struct {
 	// "snake" (lowercase_with_underscores), "kebab" (lowercase-with-hyphens).
 	KeyFormat string `yaml:"key_format,omitempty"`
 
-	// SourceVaults specifies the list of vault names to query for search provider vaults.
-	SourceVaults []string `yaml:"source_vaults"`
-
-	// Sources specifies a list of queries or entry/vault URIs to group and merge for search provider vaults.
-	Sources []string `yaml:"sources,omitempty"`
-
-	// Query specifies the search expression for search provider vaults.
+	// Query specifies an optional provider-native query/scope filter for remote vaults.
 	Query string `yaml:"query"`
 
 	// Address specifies the HashiCorp Vault server URL (e.g., "https://vault.example.com:8200").
@@ -591,7 +578,6 @@ func load(path string, resolveTemplates bool) (*Config, error) {
 		"keepass": true,
 		"env":     true,
 		"pass":    true,
-		"search":  true,
 		"vault":   true,
 		"keyring": true,
 	}
@@ -602,7 +588,7 @@ func load(path string, resolveTemplates bool) (*Config, error) {
 			return nil, fmt.Errorf("vault %q: missing required field 'provider'", vaultName)
 		}
 		if !validProviders[vault.Provider] {
-			return nil, fmt.Errorf("vault %q: unsupported provider %q (must be one of: keepass, env, pass, search, vault, keyring)", vaultName, vault.Provider)
+			return nil, fmt.Errorf("vault %q: unsupported provider %q (must be one of: keepass, env, pass, vault, keyring)", vaultName, vault.Provider)
 		}
 		for _, pattern := range vault.IncludeFields {
 			if _, err := pathpkg.Match(pattern, ""); err != nil {

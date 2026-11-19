@@ -11,7 +11,7 @@ import (
 )
 
 type mockKeyFormatProvider struct {
-	mockSearchableValueResolvableProvider
+	mockSearchableProvider
 }
 
 func newMockKeyFormatProvider(entries map[string]Entry) *mockKeyFormatProvider {
@@ -25,11 +25,9 @@ func newMockKeyFormatProvider(entries map[string]Entry) *mockKeyFormatProvider {
 		})
 	}
 	return &mockKeyFormatProvider{
-		mockSearchableValueResolvableProvider: mockSearchableValueResolvableProvider{
-			mockSearchableProvider: mockSearchableProvider{
-				entries: entries,
-				results: results,
-			},
+		mockSearchableProvider: mockSearchableProvider{
+			entries: entries,
+			results: results,
 		},
 	}
 }
@@ -59,9 +57,6 @@ func TestKeyFormatProvider_InterfacePreservation(t *testing.T) {
 
 	if _, ok := p.(SearchableProvider); !ok {
 		t.Fatal("expected KeyFormatProvider to implement SearchableProvider")
-	}
-	if _, ok := p.(ValueResolvableProvider); !ok {
-		t.Fatal("expected KeyFormatProvider to implement ValueResolvableProvider")
 	}
 }
 

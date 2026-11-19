@@ -255,33 +255,6 @@ templates:
 		}
 	})
 
-	t.Run("search vault with sources passes validation without warnings", func(t *testing.T) {
-		cfgYAML := `
-vaults:
-  work:
-    provider: keepass
-    vault_path: ` + filepath.ToSlash(dummyDb) + `
-  grouped:
-    provider: search
-    sources:
-      - "work://app"
-      - '"prod" in tags'
-`
-		cfgPath := filepath.Join(tempDir, "search_sources.yaml")
-		_ = os.WriteFile(cfgPath, []byte(cfgYAML), 0600)
-
-		res, err := Validate(cfgPath, true)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !res.IsValid() {
-			t.Fatalf("expected valid config, got errors: %v", res.Errors)
-		}
-		if len(res.Warnings) != 0 {
-			t.Fatalf("expected 0 warnings, got %v", res.Warnings)
-		}
-	})
-
 	t.Run("implicit env and keyring vaults pass without explicit declaration", func(t *testing.T) {
 		implicitYAML := `envs:
   local:

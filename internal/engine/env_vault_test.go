@@ -75,7 +75,7 @@ func TestEnvVault_StandardPipelineAndDecorators(t *testing.T) {
 	})
 
 	t.Run("SearchScopedEnvVault", func(t *testing.T) {
-		results, err := orch.Search(ctx, `cloakenv_envtest_secret_api_key == "sk-12345"`, []string{"env"})
+		results, err := orch.Search(ctx, `{{ eq .cloakenv_envtest_secret_api_key "sk-12345" }}`, []string{"env"})
 		if err != nil {
 			t.Fatalf("Search with --vault env failed: %v", err)
 		}

@@ -8,7 +8,6 @@ import (
 	"github.com/warpcode/cloakenv/internal/audit"
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/provider"
-	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 // Orchestrator coordinates secret resolution across multiple vaults and providers.
@@ -48,14 +47,9 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	// Validate vault configurations
 	if cfg != nil {
 		for vaultName, vault := range cfg.Vaults {
-			if err := validateVaultConfig(vaultName, vault, cfg, pm, builtins); err != nil {
+			if err := validateVaultConfig(vaultName, vault, builtins); err != nil {
 				return nil, err
 			}
-		}
-
-		// Detect cyclic dependencies among search vaults
-		if err := detectSearchVaultCycles(cfg); err != nil {
-			return nil, err
 		}
 
 		// Validate autoload configuration rules
@@ -82,10 +76,6 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 		resolver.SetAuditLogger(auditLogger)
 	}
 	searcher := NewSearcher(pm, resolver)
-
-	pm.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]provider.SearchResult, error) {
-		return searcher.SearchRecursive(ctx, query, sourceVaults, depth)
-	})
 
 	// Break the circular dependency by setting the search callback dynamically
 	resolver.SetSearchFunc(func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]provider.SearchResult, error) {
@@ -242,7 +232,7 @@ func (o *Orchestrator) CheckAccess(ctx context.Context, vaultName string) error 
 	return o.providerManager.CheckAccess(ctx, vaultName)
 }
 
-func validateVaultConfig(vaultName string, vault config.VaultConfig, cfg *config.Config, pm *ProviderManager, builtins map[string]provider.SecretProvider) error {
+func validateVaultConfig(vaultName string, vault config.VaultConfig, builtins map[string]provider.SecretProvider) error {
 	if _, isBuiltin := builtins[vaultName]; isBuiltin {
 		if (vaultName != "env" || vault.Provider != "env") && (vaultName != "pass" || vault.Provider != "pass") {
 			return fmt.Errorf("invalid config: vault name %q conflicts with built-in scheme", vaultName)
@@ -257,17 +247,6 @@ func validateVaultConfig(vaultName string, vault config.VaultConfig, cfg *config
 		// valid
 	default:
 		return fmt.Errorf("invalid config for vault %q: invalid key_format %q (must be one of: none, env, snake, kebab)", vaultName, vault.KeyFormat)
-	}
-
-	// If resolve_values is set, ask the provider whether it supports it.
-	if vault.ResolveValues {
-		p, err := newBareProvider(vault.Provider)
-		if err != nil {
-			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
-		}
-		if _, ok := p.(provider.ValueResolvableProvider); !ok {
-			return fmt.Errorf("invalid config for vault %q: provider %q does not support resolve_values", vaultName, vault.Provider)
-		}
 	}
 
 	switch vault.Provider {
@@ -296,110 +275,10 @@ func validateVaultConfig(vaultName string, vault config.VaultConfig, cfg *config
 		if err := pp.Validate(settings); err != nil {
 			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
 		}
-	case "search":
-		if vault.Searchable != nil {
-			return fmt.Errorf("invalid config for vault %q: search provider does not support the searchable flag", vaultName)
-		}
-		if len(vault.SourceVaults) == 0 && len(vault.Sources) == 0 {
-			return fmt.Errorf("invalid config for vault %q: search provider requires at least one source vault or source", vaultName)
-		}
-		for _, sv := range vault.SourceVaults {
-			if strings.TrimSpace(sv) == "" {
-				return fmt.Errorf("invalid config for vault %q: empty source vault name", vaultName)
-			}
-			if sv == vaultName {
-				return fmt.Errorf("invalid config for vault %q: search provider cannot reference itself in source_vaults", vaultName)
-			}
-			if _, exists := cfg.Vaults[sv]; !exists && !pm.HasBuiltin(sv) {
-				return fmt.Errorf("invalid config for vault %q: source vault %q does not exist", vaultName, sv)
-			}
-		}
-		for _, src := range vault.Sources {
-			trimmed := strings.TrimSpace(src)
-			if trimmed == "" {
-				return fmt.Errorf("invalid config for vault %q: empty source entry", vaultName)
-			}
-			if strings.Contains(trimmed, "://") {
-				scheme, _, err := utils.ParseURI(trimmed)
-				if err != nil {
-					return fmt.Errorf("invalid config for vault %q: invalid source URI %q: %w", vaultName, src, err)
-				}
-				if scheme == vaultName {
-					return fmt.Errorf("invalid config for vault %q: search provider cannot reference itself in sources", vaultName)
-				}
-				if scheme != "search" {
-					if _, exists := cfg.Vaults[scheme]; !exists && !pm.HasBuiltin(scheme) {
-						return fmt.Errorf("invalid config for vault %q: source vault %q does not exist", vaultName, scheme)
-					}
-				}
-			}
-		}
-		sp := provider.NewSearchProvider()
-		settings := map[string]string{
-			"query": vault.Query,
-		}
-		if err := sp.Validate(settings); err != nil {
-			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
-		}
 	default:
 		return fmt.Errorf("unsupported provider type %q for vault %q", vault.Provider, vaultName)
 	}
 
-	return nil
-}
-
-func detectSearchVaultCycles(cfg *config.Config) error {
-	for vName, vCfg := range cfg.Vaults {
-		if vCfg.Provider != "search" {
-			continue
-		}
-		var detectCycle func(name string, path []string) error
-		detectCycle = func(name string, path []string) error {
-			for _, p := range path {
-				if p == name {
-					return fmt.Errorf("invalid config for vault %q: cyclic dependency detected in search vaults (%s -> %s)", vName, strings.Join(path, " -> "), name)
-				}
-			}
-			targetCfg, exists := cfg.Vaults[name]
-			if !exists || targetCfg.Provider != "search" {
-				return nil
-			}
-			newPath := append(path, name)
-			for _, sv := range targetCfg.SourceVaults {
-				if err := detectCycle(sv, newPath); err != nil {
-					return err
-				}
-			}
-			for _, src := range targetCfg.Sources {
-				trimmed := strings.TrimSpace(src)
-				if strings.Contains(trimmed, "://") {
-					scheme, _, err := utils.ParseURI(trimmed)
-					if err == nil && scheme != "search" {
-						if err := detectCycle(scheme, newPath); err != nil {
-							return err
-						}
-					}
-				}
-			}
-			return nil
-		}
-		for _, sv := range vCfg.SourceVaults {
-			if err := detectCycle(sv, []string{vName}); err != nil {
-				return err
-			}
-		}
-		for _, src := range vCfg.Sources {
-			trimmed := strings.TrimSpace(src)
-			if strings.Contains(trimmed, "://") {
-				scheme, _, err := utils.ParseURI(trimmed)
-				if err == nil && scheme != "search" {
-					if err := detectCycle(scheme, []string{vName}); err != nil {
-						return err
-					}
-				}
-			}
-		}
-	}
 	return nil
 }
 
