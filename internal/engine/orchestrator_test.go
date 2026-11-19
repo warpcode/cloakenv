@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -68,6 +70,18 @@ func TestOrchestratorFacade(t *testing.T) {
 				},
 			},
 		},
+		Templates: map[string]config.TemplateConfig{
+			"deploy_cfg": {
+				Driver: "json",
+				Vaults: []config.VaultSourceConfig{
+					{
+						Vault: "test_vault",
+						Query: `{{ hasTag "prod" .tags }}`,
+						Rules: []config.RuleConfig{{Type: "pass"}},
+					},
+				},
+			},
+		},
 		Autoload: []config.AutoloadRule{
 			{
 				Match: "deploy",
@@ -75,6 +89,7 @@ func TestOrchestratorFacade(t *testing.T) {
 			},
 		},
 	}
+	cfg.CompileAutoloadRules()
 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
@@ -89,53 +104,25 @@ func TestOrchestratorFacade(t *testing.T) {
 		},
 	})
 
-	t.Run("Resolve and ResolveWithKey", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, `{{ get "test_vault://service_a:API_KEY" }}`)
+	t.Run("EnvsBuilder and TemplatesRenderer", func(t *testing.T) {
+		envMap, err := orch.EnvsBuilder().Build(ctx, "deploy_env")
 		if err != nil {
-			t.Fatalf("Resolve failed: %v", err)
+			t.Fatalf("EnvsBuilder.Build failed: %v", err)
 		}
-		if val != "secret-api-key" {
-			t.Errorf("Resolve() = %q, want %q", val, "secret-api-key")
+		if envMap["API_KEY"] != "secret-api-key" {
+			t.Errorf("API_KEY = %q, want %q", envMap["API_KEY"], "secret-api-key")
 		}
 
-		valKey, err := orch.ResolveWithKey(ctx, `{{ get "test_vault://service_a:API_KEY" }}`, "MY_KEY")
+		rendered, err := orch.TemplatesRenderer().Render(ctx, "deploy_cfg")
 		if err != nil {
-			t.Fatalf("ResolveWithKey failed: %v", err)
+			t.Fatalf("TemplatesRenderer.Render failed: %v", err)
 		}
-		if valKey != "secret-api-key" {
-			t.Errorf("ResolveWithKey() = %q, want %q", valKey, "secret-api-key")
+		if !strings.Contains(rendered, "secret-api-key") {
+			t.Errorf("expected rendered JSON to contain secret, got %q", rendered)
 		}
 	})
 
-	t.Run("GetEntry", func(t *testing.T) {
-		entry, err := orch.GetEntry(ctx, "test_vault://service_a")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-		if entry["API_KEY"] != "secret-api-key" {
-			t.Errorf("GetEntry() API_KEY = %v, want %q", entry["API_KEY"], "secret-api-key")
-		}
-	})
-
-	t.Run("Search", func(t *testing.T) {
-		results, err := orch.Search(ctx, `{{ hasTag "prod" .tags }}`, nil)
-		if err != nil {
-			t.Fatalf("Search failed: %v", err)
-		}
-		if len(results) != 1 {
-			t.Errorf("Search() len = %d, want 1", len(results))
-		}
-	})
-
-	t.Run("BuildEnv and BuildEnvForCommand", func(t *testing.T) {
-		env, err := orch.BuildEnv(ctx, EnvConfig{Explicit: map[string]string{"CUSTOM": "test_vault://service_a:API_KEY"}, EmptyEnv: true})
-		if err != nil {
-			t.Fatalf("BuildEnv failed: %v", err)
-		}
-		if len(env) != 1 || env[0] != "CUSTOM=secret-api-key" {
-			t.Errorf("BuildEnv() = %v, want [CUSTOM=secret-api-key]", env)
-		}
-
+	t.Run("BuildEnvForCommand", func(t *testing.T) {
 		args, cmdEnv, err := orch.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: []string{"deploy", "--run"}, EmptyEnv: true})
 		if err != nil {
 			t.Fatalf("BuildEnvForCommand failed: %v", err)
@@ -194,14 +181,10 @@ func TestOrchestratorFacade(t *testing.T) {
 		}
 	})
 
-	t.Run("ClearCache", func(t *testing.T) {
-		err := orch.ClearCache(ctx)
-		if err != nil {
+	t.Run("ClearCache and PruneCache", func(t *testing.T) {
+		if err := orch.ClearCache(ctx); err != nil {
 			t.Fatalf("ClearCache failed: %v", err)
 		}
-	})
-
-	t.Run("PruneCache", func(t *testing.T) {
 		stats, err := orch.PruneCache(ctx)
 		if err != nil {
 			t.Fatalf("PruneCache failed: %v", err)
@@ -216,7 +199,6 @@ func TestOrchestratorFacade(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "does not support authentication") {
 			t.Errorf("Login non-keepass expected unsupported error, got: %v", err)
 		}
-
 		err = orch.Forget(ctx, "test_vault")
 		if err == nil || !strings.Contains(err.Error(), "does not support authentication") {
 			t.Errorf("Forget non-keepass expected unsupported error, got: %v", err)
@@ -224,40 +206,46 @@ func TestOrchestratorFacade(t *testing.T) {
 	})
 }
 
-func TestOrchestrator_GetEntries(t *testing.T) {
-	keyring.MockInit()
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("LocalAppData", t.TempDir())
-
-	ctx := context.Background()
+func TestOrchestrator_AuditLoggingZeroLeak(t *testing.T) {
+	auditPath := filepath.Join(t.TempDir(), "audit.jsonl")
+	t.Setenv("CLOAKENV_AUDIT_SECRET", "super-secret-audit-value-999")
 
 	cfg := &config.Config{
-		Vaults: map[string]config.VaultConfig{
-			"test_vault": {
-				Provider: "env",
+		Audit: config.AuditConfig{
+			Enabled: true,
+			LogPath: auditPath,
+			Format:  "json",
+		},
+		Envs: map[string][]config.VaultSourceConfig{
+			"audit_env": {
+				{
+					Vault: "env",
+					Rules: []config.RuleConfig{{Type: "pass", Include: []string{"CLOAKENV_AUDIT_SECRET"}}},
+				},
 			},
 		},
 	}
 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
-		t.Fatalf("failed to create orchestrator: %v", err)
+		t.Fatalf("NewOrchestrator failed: %v", err)
 	}
-	orch.providerManager.vaultCache["test_vault"] = newTestMemoryProvider(map[string]provider.Entry{
-		"flat_entry": {
-			"title": "Flat Entry",
-			"path":  "flat_entry",
-			"tags":  []string{"tag1"},
-			"KEY1":  "val1",
-		},
-	})
+	if _, err := orch.EnvsBuilder().Build(context.Background(), "audit_env"); err != nil {
+		t.Fatalf("EnvsBuilder.Build failed: %v", err)
+	}
+	if err := orch.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
 
-	entries, err := orch.GetEntries(ctx, "test_vault://flat_entry")
+	data, err := os.ReadFile(auditPath)
 	if err != nil {
-		t.Fatalf("GetEntries failed: %v", err)
+		t.Fatalf("failed to read audit log: %v", err)
 	}
-	if len(entries) != 1 || entries[0].Title() != "Flat Entry" || entries[0]["KEY1"] != "val1" {
-		t.Fatalf("unexpected entries: %+v", entries)
+	logContent := string(data)
+	if !strings.Contains(logContent, "env://") || !strings.Contains(logContent, "SUCCESS") {
+		t.Errorf("expected audit entry for env:// SUCCESS, got:\n%s", logContent)
+	}
+	if strings.Contains(logContent, "super-secret-audit-value-999") {
+		t.Fatalf("SECURITY LEAK: audit log contained plaintext secret:\n%s", logContent)
 	}
 }

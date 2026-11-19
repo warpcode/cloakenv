@@ -10,14 +10,11 @@ import (
 	"github.com/warpcode/cloakenv/internal/provider"
 )
 
-// Orchestrator coordinates secret resolution across multiple vaults and providers.
-// Built-in schemes ("keyring", "env", "cache", "pass") are always available; configured vaults
-// become additional schemes at runtime.
+// Orchestrator coordinates declarative secret pipelines (envs, templates, autoload),
+// redacted inspection, vault authentication, and cache lifecycle operations.
 type Orchestrator struct {
 	config            *config.Config
 	providerManager   *ProviderManager
-	resolver          *Resolver
-	searcher          *Searcher
 	envBuilder        *EnvBuilder
 	ruleEngine        *RuleEngine
 	envsBuilder       *EnvsBuilder
@@ -26,7 +23,7 @@ type Orchestrator struct {
 }
 
 // NewOrchestrator creates a new orchestrator with the given config,
-// registers built-in providers, and validates all remote configurations.
+// registers built-in providers, and validates all vault and autoload configurations.
 // Note: config.Load automatically precompiles autoload rules. Callers constructing
 // a Config struct manually should call cfg.CompileAutoloadRules() before evaluation.
 func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
@@ -60,8 +57,6 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 		}
 	}
 
-	concurrencySem := make(chan struct{}, maxConcurrency)
-	resolver := NewResolver(pm, concurrencySem)
 	var auditLogger *audit.Logger
 	if cfg != nil && cfg.Audit.Enabled {
 		var err error
@@ -73,84 +68,23 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 		if err != nil {
 			return nil, err
 		}
-		resolver.SetAuditLogger(auditLogger)
 	}
-	searcher := NewSearcher(pm, resolver)
 
-	// Break the circular dependency by setting the search callback dynamically
-	resolver.SetSearchFunc(func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]SearchResult, error) {
-		return searcher.SearchRecursive(ctx, expressionStr, sourceVaults, depth)
-	})
-
+	fetcher := &providerManagerEntryFetcher{pm: pm, auditLogger: auditLogger}
 	ruleEngine := NewRuleEngine()
-	envsBuilder := NewEnvsBuilder(cfg, pm, ruleEngine)
-	templatesRenderer := NewTemplatesRenderer(cfg, pm, ruleEngine, envsBuilder)
-	envBuilder := NewEnvBuilder(cfg, resolver)
-	envBuilder.SetRuleEngine(ruleEngine)
-	envBuilder.SetEnvsBuilder(envsBuilder)
-	envBuilder.SetTemplatesRenderer(templatesRenderer)
-	o := &Orchestrator{
+	envsBuilder := NewEnvsBuilderWithFetcher(cfg, fetcher, ruleEngine)
+	templatesRenderer := NewTemplatesRendererWithFetcher(cfg, fetcher, ruleEngine, envsBuilder)
+	envBuilder := NewEnvBuilder(cfg, envsBuilder, templatesRenderer, ruleEngine)
+
+	return &Orchestrator{
 		config:            cfg,
 		providerManager:   pm,
-		resolver:          resolver,
-		searcher:          searcher,
 		envBuilder:        envBuilder,
 		ruleEngine:        ruleEngine,
 		envsBuilder:       envsBuilder,
 		templatesRenderer: templatesRenderer,
 		auditLogger:       auditLogger,
-	}
-
-	return o, nil
-}
-
-// Resolve takes a full value, evaluates any {{ get "scheme://..." }} template
-// expressions, and returns the resolved secret value.
-func (o *Orchestrator) Resolve(ctx context.Context, uri string) (string, error) {
-	return o.resolver.Resolve(ctx, uri)
-}
-
-// ResolveWithKey takes a full value, evaluates any {{ get "scheme://..." }} template
-// expressions, and includes the configKey in any failure messages if provided.
-func (o *Orchestrator) ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error) {
-	return o.resolver.ResolveWithKey(ctx, uri, configKey)
-}
-
-// GetEntry retrieves a complete structured entry by location.
-func (o *Orchestrator) GetEntry(ctx context.Context, uri string) (provider.Entry, error) {
-	return o.resolver.GetEntry(ctx, uri)
-}
-
-// GetRawEntry retrieves the unmodified Stage 1 raw entry before filtering,
-// mapping, key formatting, and computed attributes.
-func (o *Orchestrator) GetRawEntry(ctx context.Context, uri string) (provider.Entry, error) {
-	return o.resolver.GetRawEntry(ctx, uri)
-}
-
-// GetRawEntrySnapshot retrieves the pristine Stage 1 entry snapshot exactly as
-// stored by the underlying provider, without resolving attribute values.
-func (o *Orchestrator) GetRawEntrySnapshot(ctx context.Context, uri string) (provider.Entry, error) {
-	return o.resolver.GetRawEntrySnapshot(ctx, uri)
-}
-
-func (o *Orchestrator) GetEntries(ctx context.Context, uri string) ([]provider.Entry, error) {
-	return o.resolver.GetEntries(ctx, uri)
-}
-
-// Search queries entries across searchable repositories using an expression.
-func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoScopes []string) ([]SearchResult, error) {
-	return o.searcher.Search(ctx, expressionStr, repoScopes)
-}
-
-// BuildMergedEntry constructs a single merged entry by merging multiple entries
-// and resolving explicit mappings.
-func (o *Orchestrator) BuildMergedEntry(ctx context.Context, cfg MergedEntryConfig) (provider.Entry, error) {
-	return o.envBuilder.BuildMergedEntry(ctx, cfg)
-}
-
-// BuildEnv constructs the full environment block without command autoloading.
-func (o *Orchestrator) BuildEnv(ctx context.Context, cfg EnvConfig) ([]string, error) {
-	return o.envBuilder.BuildEnv(ctx, cfg)
+	}, nil
 }
 
 // BuildEnvForCommand constructs the full environment block and evaluates config autoload rules.
@@ -163,8 +97,7 @@ func (o *Orchestrator) BuildEnvForCommandDetails(ctx context.Context, cfg EnvCon
 	return o.envBuilder.BuildEnvForCommandDetails(ctx, cfg)
 }
 
-// Keyring returns the built-in keyring provider for direct access
-// (used by the config subcommands).
+// Keyring returns the built-in keyring provider for direct access.
 func (o *Orchestrator) Keyring() *provider.OSKeyringProvider {
 	return o.providerManager.Keyring()
 }
@@ -257,6 +190,7 @@ func validateVaultConfig(vaultName string, vault config.VaultConfig, builtins ma
 	default:
 		return fmt.Errorf("unsupported provider type %q for vault %q", vault.Provider, vaultName)
 	}
+
 	return nil
 }
 
@@ -274,11 +208,6 @@ func (o *Orchestrator) IsRunAlias(cmdArgs []string) bool {
 		return false
 	}
 	return IsRunAlias(o.config, cmdArgs)
-}
-
-// GetResolver returns the internal Resolver (used for testing).
-func (o *Orchestrator) GetResolver() *Resolver {
-	return o.resolver
 }
 
 // EnvsBuilder returns the declarative `envs:` pipeline builder.
