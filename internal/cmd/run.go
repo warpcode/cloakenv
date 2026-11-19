@@ -14,54 +14,24 @@ import (
 	"github.com/warpcode/cloakenv/internal/runner"
 )
 
-// Run handles "cloakenv run [-E] [-e KEY=uri ...] [-t template_path] [-m entry-uri] [-i KEY ...] [--no-autoload] [--dry-run] -- <cmd> [args]".
+// Run handles "cloakenv run [-E] [--no-autoload] [--dry-run] -- <cmd> [args]".
+// Secrets are resolved strictly via matching `autoload` rules in config.yaml.
 func Run(args []string, cfg *config.Config) int {
 	var (
-		explicitEnv = make(map[string]string)
-		merges      []string
-		whitelist   []string
-		cmdArgs     []string
-		noAutoload  bool
-		emptyEnv    bool
-		dryRun      bool
-		showHelp    bool
-		keyFormat   string
+		cmdArgs    []string
+		noAutoload bool
+		emptyEnv   bool
+		dryRun     bool
+		showHelp   bool
 	)
 
 	parser := NewFlagParser()
 	parser.Bool([]string{"-h", "--help"}, &showHelp)
-	parser.Var([]string{"-f", "--key-format"}, true, "flag -f/--key-format requires an argument", func(name, val string) error {
-		if val != "none" && val != "env" && val != "snake" && val != "kebab" {
-			return fmt.Errorf("invalid key format %q (expected none, env, snake, or kebab)", val)
-		}
-		keyFormat = val
-		return nil
-	})
 	parser.StopAtNonFlag = true
 	parser.Bool([]string{"-E"}, &emptyEnv)
 	parser.Bool([]string{"--no-autoload"}, &noAutoload)
 	parser.HiddenBool([]string{"--skip-autoload"}, &noAutoload)
 	parser.Bool([]string{"--dry-run"}, &dryRun)
-	parser.Var([]string{"-e"}, true, "", func(name, val string) error {
-		key, uri, ok := strings.Cut(val, "=")
-		if !ok || key == "" || uri == "" {
-			return fmt.Errorf("invalid -e format: %q (expected KEY=uri)", val)
-		}
-		explicitEnv[key] = uri
-		return nil
-	})
-	parser.Var([]string{"-t"}, true, "", func(name, val string) error {
-		envs, err := config.ParseTemplateFile(val)
-		if err != nil {
-			return fmt.Errorf("error parsing template file %s: %w", val, err)
-		}
-		for k, v := range envs {
-			explicitEnv[k] = v
-		}
-		return nil
-	})
-	parser.StringSlice([]string{"-m"}, &merges, "")
-	parser.StringSlice([]string{"-i"}, &whitelist, "")
 
 	dashDashIdx := -1
 	for i, arg := range args {
@@ -106,18 +76,12 @@ func Run(args []string, cfg *config.Config) int {
 		return 1
 	}
 
-	if keyFormat != "" {
-		if cfg == nil {
-			cfg = &config.Config{}
-		}
-		cfg.KeyFormatOverride = keyFormat
-	}
-
 	orch, err := engine.NewOrchestrator(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
+
 	ctx, stop := signalContext()
 	defer stop()
 
@@ -126,13 +90,9 @@ func Run(args []string, cfg *config.Config) int {
 		activeCmdArgs = cmdArgs
 	}
 
-	// Build the environment block and evaluate command transformations
 	envDetails, err := orch.BuildEnvForCommandDetails(ctx, engine.EnvConfig{
-		CmdArgs:   activeCmdArgs,
-		Explicit:  explicitEnv,
-		Merges:    merges,
-		Whitelist: whitelist,
-		EmptyEnv:  emptyEnv,
+		CmdArgs:  activeCmdArgs,
+		EmptyEnv: emptyEnv,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Secret resolution failed: %v\n", err)
@@ -155,7 +115,6 @@ func Run(args []string, cfg *config.Config) int {
 
 	var deliveries []runner.TemplateDelivery
 	for _, rt := range envDetails.RenderedTemplates {
-		// Mode 1 (EnvVar) is already injected into envDetails.Env; materialize file deliveries (Modes 2-4).
 		if rt.EnvVar != "" {
 			continue
 		}

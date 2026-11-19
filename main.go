@@ -112,22 +112,12 @@ func run(args []string, stderr io.Writer) int {
 		return cmd.Completion(parsedArgs[2:], os.Stdout, stderr)
 	case "run":
 		return cmd.Run(parsedArgs[2:], cfg)
-	case "get":
-		return cmd.Get(parsedArgs[2:], cfg)
-	case "set":
-		return cmd.Set(parsedArgs[2:], cfg)
-	case "delete":
-		return cmd.Delete(parsedArgs[2:], cfg)
+	case "inspect":
+		return cmd.Inspect(parsedArgs[2:], cfg, os.Stdout, stderr)
 	case "cache":
 		return cmd.Cache(parsedArgs[2:], cfg)
-	case "show":
-		return cmd.Show(parsedArgs[2:], cfg)
-	case "search":
-		return cmd.Search(parsedArgs[2:], cfg)
 	case "auth":
 		return cmd.Auth(parsedArgs[2:], cfg)
-	case "sync":
-		return cmd.Sync(parsedArgs[2:], cfg)
 	case "internal":
 		return cmd.Internal(parsedArgs[2:], cfg)
 	default:

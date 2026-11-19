@@ -16,10 +16,9 @@ func TestCompletion(t *testing.T) {
 		wantErrSub string
 	}{
 		{
-			name:       "no args",
-			args:       []string{},
-			wantExit:   1,
-			wantErrSub: "",
+			name:     "no args",
+			args:     []string{},
+			wantExit: 1,
 		},
 		{
 			name:       "help flag",
@@ -82,13 +81,32 @@ func TestCompletion(t *testing.T) {
 	}
 }
 
+func TestCompletion_ReflectsLockedDownCLI(t *testing.T) {
+	for _, shell := range []string{"bash", "zsh", "fish", "powershell"} {
+		t.Run(shell, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := Completion([]string{shell}, &stdout, &stderr); code != 0 {
+				t.Fatalf("Completion(%s) failed: %d %s", shell, code, stderr.String())
+			}
+			out := stdout.String()
+			if !strings.Contains(out, "inspect") {
+				t.Errorf("%s completion missing 'inspect' subcommand", shell)
+			}
+			for _, removed := range []string{"--show-meta", "--ttl", "--raw"} {
+				if strings.Contains(out, removed) {
+					t.Errorf("%s completion should not contain removed flag %q", shell, removed)
+				}
+			}
+		})
+	}
+}
+
 func TestBashCompletionSyntax(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Completion([]string{"bash"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("unexpected exit code: %d", code)
 	}
-
 	cmd := exec.Command("bash", "-n")
 	cmd.Stdin = &stdout
 	out, err := cmd.CombinedOutput()
