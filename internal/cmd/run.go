@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"slices"
 	"strings"
@@ -147,7 +149,7 @@ func Run(args []string, cfg *config.Config) int {
 		if len(cmdToDisplay) == 0 {
 			cmdToDisplay = cmdArgs
 		}
-		printDryRunPreview(cmdToDisplay, envDetails.InjectedKeys, envDetails.RenderedTemplates)
+		printDryRunPreview(cmdToDisplay, envDetails.InjectedKeys, envDetails.RenderedTemplates, envDetails.MaskSecrets)
 		return 0
 	}
 
@@ -177,16 +179,23 @@ func Run(args []string, cfg *config.Config) int {
 		}
 		cleanup = matCleanup
 		defer cleanup()
+		if ctx.Err() != nil {
+			cleanup()
+			return exitCodeForContext(ctx, 1)
+		}
 		finalEnv = mergeEnvOverrides(finalEnv, envOverrides)
 	}
 
-	// Stop signalContext notification before transferring control to runner,
-	// so runner supervises child signal forwarding and zero-on-exit cleanup cleanly.
-	stop()
+	if ctx.Err() != nil {
+		return exitCodeForContext(ctx, 1)
+	}
 
+	// Transfer signal ownership to runner without a gap: runner installs its own
+	// signal handler before invoking OnSignalsRegistered (stop).
 	return runner.RunCommandWithOptions(context.Background(), finalCmdArgs, finalEnv, runner.RunOptions{
-		MaskSecrets: envDetails.MaskSecrets,
-		Cleanup:     cleanup,
+		MaskSecrets:         envDetails.MaskSecrets,
+		Cleanup:             cleanup,
+		OnSignalsRegistered: stop,
 	})
 }
 
@@ -194,7 +203,11 @@ func mergeEnvOverrides(baseEnv []string, overrides map[string]string) []string {
 	if len(overrides) == 0 {
 		return baseEnv
 	}
-	merged := make(map[string]string, len(baseEnv)+len(overrides))
+	capHint := len(baseEnv)
+	if len(overrides) <= math.MaxInt-capHint {
+		capHint += len(overrides)
+	}
+	merged := make(map[string]string, capHint)
 	for _, kv := range baseEnv {
 		if k, v, ok := strings.Cut(kv, "="); ok && k != "" {
 			merged[k] = v
@@ -215,9 +228,21 @@ func mergeEnvOverrides(baseEnv []string, overrides map[string]string) []string {
 	return out
 }
 
-func printDryRunPreview(cmdArgs []string, injectedKeys []string, templates []engine.RenderedTemplateDelivery) {
+func maskDryRunString(s string, trie *runner.MaskTrie) string {
+	if trie == nil || s == "" {
+		return s
+	}
+	var buf bytes.Buffer
+	mw := runner.NewMaskingWriter(&buf, trie)
+	_, _ = mw.Write([]byte(s))
+	_ = mw.Flush()
+	return buf.String()
+}
+
+func printDryRunPreview(cmdArgs []string, injectedKeys []string, templates []engine.RenderedTemplateDelivery, maskSecrets []string) {
+	trie := runner.NewMaskTrie(maskSecrets)
 	fmt.Println("[DRY RUN] Command execution preview:")
-	fmt.Printf("Command: %s\n", strings.Join(cmdArgs, " "))
+	fmt.Printf("Command: %s\n", maskDryRunString(strings.Join(cmdArgs, " "), trie))
 	if len(injectedKeys) == 0 {
 		fmt.Println("Injected variables: (none)")
 	} else {
@@ -235,9 +260,9 @@ func printDryRunPreview(cmdArgs []string, injectedKeys []string, templates []eng
 			case tpl.EnvPathVar != "" && tpl.Path == "":
 				fmt.Printf("  %s (driver=%s, env_path=%s, ephemeral=true, persist=%t)\n", tpl.TemplateName, tpl.Driver, tpl.EnvPathVar, tpl.Persist)
 			case tpl.EnvPathVar != "" && tpl.Path != "":
-				fmt.Printf("  %s (driver=%s, env_path=%s, path=%s, persist=%t)\n", tpl.TemplateName, tpl.Driver, tpl.EnvPathVar, tpl.Path, tpl.Persist)
+				fmt.Printf("  %s (driver=%s, env_path=%s, path=%s, persist=%t)\n", tpl.TemplateName, tpl.Driver, tpl.EnvPathVar, maskDryRunString(tpl.Path, trie), tpl.Persist)
 			default:
-				fmt.Printf("  %s (driver=%s, path=%s, persist=%t)\n", tpl.TemplateName, tpl.Driver, tpl.Path, tpl.Persist)
+				fmt.Printf("  %s (driver=%s, path=%s, persist=%t)\n", tpl.TemplateName, tpl.Driver, maskDryRunString(tpl.Path, trie), tpl.Persist)
 			}
 		}
 	}

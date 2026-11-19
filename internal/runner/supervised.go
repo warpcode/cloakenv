@@ -16,11 +16,12 @@ import (
 // RunOptions configures supervised process execution with stdout/stderr secret
 // masking and guaranteed cleanup hooks on normal exit or signal termination.
 type RunOptions struct {
-	MaskSecrets []string
-	Cleanup     func()
-	Stdin       io.Reader
-	Stdout      io.Writer
-	Stderr      io.Writer
+	MaskSecrets         []string
+	Cleanup             func()
+	OnSignalsRegistered func()
+	Stdin               io.Reader
+	Stdout              io.Writer
+	Stderr              io.Writer
 }
 
 // RunCommandWithOptions executes cmdArgs with env under the provided options.
@@ -40,7 +41,22 @@ func RunCommandWithOptions(ctx context.Context, cmdArgs []string, env []string, 
 
 	trie := NewMaskTrie(opts.MaskSecrets)
 	if trie == nil && opts.Cleanup == nil && opts.Stdin == nil && opts.Stdout == nil && opts.Stderr == nil {
+		if opts.OnSignalsRegistered != nil {
+			opts.OnSignalsRegistered()
+		}
 		return RunCommand(cmdArgs, env)
+	}
+
+	sigCh := make(chan os.Signal, 2)
+	notifyForwardSignals(sigCh)
+	defer signal.Stop(sigCh)
+	if opts.OnSignalsRegistered != nil {
+		opts.OnSignalsRegistered()
+	}
+	select {
+	case sig := <-sigCh:
+		return exitCodeFromWaitError(nil, sig)
+	default:
 	}
 
 	stderr := opts.Stderr
@@ -103,8 +119,6 @@ func RunCommandWithOptions(ctx context.Context, cmdArgs []string, env []string, 
 		return 1
 	}
 
-	sigCh := make(chan os.Signal, 2)
-	notifyForwardSignals(sigCh)
 	doneCh := make(chan struct{})
 
 	var sigMu sync.Mutex

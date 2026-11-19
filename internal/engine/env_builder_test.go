@@ -1086,6 +1086,9 @@ func TestBuildEnvForCommand_PR487ReviewRegressionCoverage(t *testing.T) {
 			Envs: map[string][]config.VaultSourceConfig{
 				"base_env": {{Vault: "work"}},
 			},
+			Templates: map[string]config.TemplateConfig{
+				"app_cfg": {Driver: "json", Vaults: []config.VaultSourceConfig{{Vault: "work"}}},
+			},
 			Autoload: []config.AutoloadRule{
 				{
 					Match: `^deploy`,
@@ -1105,7 +1108,9 @@ func TestBuildEnvForCommand_PR487ReviewRegressionCoverage(t *testing.T) {
 		cfg.CompileAutoloadRules()
 		re := NewRuleEngine()
 		eb := NewEnvBuilder(cfg, nil)
-		eb.SetEnvsBuilder(NewEnvsBuilderWithFetcher(cfg, fetcher, re))
+		envsB := NewEnvsBuilderWithFetcher(cfg, fetcher, re)
+		eb.SetEnvsBuilder(envsB)
+		eb.SetTemplatesRenderer(NewTemplatesRendererWithFetcher(cfg, fetcher, re, envsB))
 		eb.SetRuleEngine(re)
 		details, err := eb.BuildEnvForCommandDetails(ctx, EnvConfig{
 			CmdArgs:  []string{"deploy", "now"},
@@ -1152,4 +1157,42 @@ func TestBuildEnvForCommand_PR487ReviewRegressionCoverage(t *testing.T) {
 			t.Error("expected missingkey=error from inline env template")
 		}
 	})
+}
+
+func TestResolveAutoloadTemplates_RejectsEmptyEvaluatedPath(t *testing.T) {
+	ctx := context.Background()
+	fetcher := &stubVaultFetcher{
+		vaults: map[string][]SourceEntry{
+			"work": {{
+				Vault: "work",
+				Path:  "a",
+				Title: "A",
+				Raw:   map[string]any{"title": "A", "tags": []string{}, "K": "v"},
+			}},
+		},
+	}
+	cfg := &config.Config{
+		Templates: map[string]config.TemplateConfig{
+			"t1": {Driver: "json", Vaults: []config.VaultSourceConfig{{Vault: "work"}}},
+		},
+		Autoload: []config.AutoloadRule{
+			{
+				Match: `^app`,
+				Envs:  []config.AutoloadEnvItem{config.InlineEnvItem(map[string]string{"EMPTY_PATH": "   "})},
+				Templates: []config.AutoloadTemplateConfig{
+					{Template: "t1", Path: `{{ .EMPTY_PATH }}`},
+				},
+			},
+		},
+	}
+	cfg.CompileAutoloadRules()
+	re := NewRuleEngine()
+	eb := NewEnvBuilder(cfg, nil)
+	eb.SetRuleEngine(re)
+	eb.SetEnvsBuilder(NewEnvsBuilderWithFetcher(cfg, fetcher, re))
+	eb.SetTemplatesRenderer(NewTemplatesRendererWithFetcher(cfg, fetcher, re, NewEnvsBuilderWithFetcher(cfg, fetcher, re)))
+
+	if _, err := eb.BuildEnvForCommandDetails(ctx, EnvConfig{CmdArgs: []string{"app"}, EmptyEnv: true}); err == nil || !strings.Contains(err.Error(), "evaluated path is empty") {
+		t.Fatalf("expected empty evaluated path error, got: %v", err)
+	}
 }

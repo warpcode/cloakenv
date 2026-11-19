@@ -531,6 +531,9 @@ func (eb *EnvBuilder) resolveAutoloadTemplates(ctx context.Context, templates []
 				return nil, fmt.Errorf("autoload template #%d (%q) path evaluation failed: %w", idx+1, tpl.Template, err)
 			}
 		}
+		if strings.TrimSpace(tpl.Path) != "" && strings.TrimSpace(resolvedPath) == "" {
+			return nil, fmt.Errorf("autoload template #%d (%q): evaluated path is empty", idx+1, tpl.Template)
+		}
 
 		var secrets []string
 		if res.Content != "" {
