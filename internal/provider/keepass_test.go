@@ -755,3 +755,34 @@ func TestKeePassProvider_CompositeAuth(t *testing.T) {
 		}
 	})
 }
+
+func TestKeePassProvider_LowercasePasswordFallback(t *testing.T) {
+	k := NewKeePassProvider()
+
+	entryDefault := gokeepasslib.NewEntry()
+	entryDefault.Values = append(entryDefault.Values,
+		gokeepasslib.ValueData{Key: "Title", Value: gokeepasslib.V{Content: "svc"}},
+		gokeepasslib.ValueData{Key: "Password", Value: gokeepasslib.V{Content: "upper-pw"}},
+	)
+	flat, err := k.toEntry(&entryDefault, nil, "", "svc")
+	if err != nil {
+		t.Fatalf("toEntry failed: %v", err)
+	}
+	if flat["Password"] != "upper-pw" || flat["password"] != "upper-pw" {
+		t.Fatalf("expected both Password and lowercase password to be set, got Password=%v password=%v", flat["Password"], flat["password"])
+	}
+
+	entryExplicit := gokeepasslib.NewEntry()
+	entryExplicit.Values = append(entryExplicit.Values,
+		gokeepasslib.ValueData{Key: "Title", Value: gokeepasslib.V{Content: "svc-explicit"}},
+		gokeepasslib.ValueData{Key: "Password", Value: gokeepasslib.V{Content: "upper-pw"}},
+		gokeepasslib.ValueData{Key: "password", Value: gokeepasslib.V{Content: "lower-pw"}},
+	)
+	flatExplicit, err := k.toEntry(&entryExplicit, nil, "", "svc-explicit")
+	if err != nil {
+		t.Fatalf("toEntry failed: %v", err)
+	}
+	if flatExplicit["Password"] != "upper-pw" || flatExplicit["password"] != "lower-pw" {
+		t.Fatalf("expected explicit lowercase password to be preserved, got Password=%v password=%v", flatExplicit["Password"], flatExplicit["password"])
+	}
+}

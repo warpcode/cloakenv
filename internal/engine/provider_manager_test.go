@@ -349,3 +349,50 @@ func TestProviderManagerConcurrentInitialization(t *testing.T) {
 		}
 	})
 }
+
+func TestProviderManager_IsolatedKeyringVaultInstances(t *testing.T) {
+	store := provider.NewMockKeyringStore()
+	_ = store.Set("cloakenv", "KEY_ALPHA", "alpha-val")
+	_ = store.Set("cloakenv", "KEY_BETA", "beta-val")
+
+	sharedKR := provider.NewOSKeyringProviderWithStore(store)
+	cfg := &config.Config{
+		Keyring: config.KeyringConfig{Prefix: "cloakenv"},
+		Vaults: map[string]config.VaultConfig{
+			"kr_alpha": {
+				Provider: "keyring",
+				Query:    "KEY_ALPHA",
+			},
+			"kr_beta": {
+				Provider: "keyring",
+				Query:    "KEY_BETA",
+			},
+		},
+	}
+	pm := NewProviderManager(cfg, map[string]provider.SecretProvider{"keyring": sharedKR}, sharedKR)
+	ctx := context.Background()
+
+	pAlpha, isBuiltin, err := pm.GetProvider(ctx, "kr_alpha")
+	if err != nil || isBuiltin {
+		t.Fatalf("GetProvider(kr_alpha) = (%v, %v, %v)", pAlpha, isBuiltin, err)
+	}
+	pBeta, isBuiltin, err := pm.GetProvider(ctx, "kr_beta")
+	if err != nil || isBuiltin {
+		t.Fatalf("GetProvider(kr_beta) = (%v, %v, %v)", pBeta, isBuiltin, err)
+	}
+	pBuiltin, isBuiltin, err := pm.GetProvider(ctx, "keyring")
+	if err != nil || !isBuiltin {
+		t.Fatalf("GetProvider(keyring) = (%v, %v, %v)", pBuiltin, isBuiltin, err)
+	}
+	if pAlpha == pBeta || pAlpha == pBuiltin || pBeta == pBuiltin {
+		t.Fatalf("expected isolated OSKeyringProvider instances across vaults and builtin")
+	}
+	entriesB, err := pBeta.(provider.SearchableProvider).Search(ctx, provider.SearchQuery{})
+	if err != nil || len(entriesB) != 1 || entriesB[0]["KEY_BETA"] != "beta-val" {
+		t.Fatalf("unexpected kr_beta entries: %+v err=%v", entriesB, err)
+	}
+	entriesA, err := pAlpha.(provider.SearchableProvider).Search(ctx, provider.SearchQuery{})
+	if err != nil || len(entriesA) != 1 || entriesA[0]["KEY_ALPHA"] != "alpha-val" {
+		t.Fatalf("unexpected kr_alpha entries (may have been overwritten by kr_beta): %+v err=%v", entriesA, err)
+	}
+}

@@ -486,7 +486,14 @@ func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry, parentGroup *gokeep
 		}
 	}
 
-	flat := make(Entry, len(entry.Values)+len(entry.Binaries)+5)
+	flat := make(Entry, len(entry.Values)+len(entry.Binaries)+6)
+	hasLowerPassword := false
+	for _, v := range entry.Values {
+		if v.Key == "password" {
+			hasLowerPassword = true
+			break
+		}
+	}
 	for _, v := range entry.Values {
 		val := v.Value.Content
 		if k.resolveReferences {
@@ -497,6 +504,9 @@ func (k *KeePassProvider) toEntry(entry *gokeepasslib.Entry, parentGroup *gokeep
 			}
 		}
 		flat[v.Key] = val
+		if v.Key == "Password" && !hasLowerPassword {
+			flat["password"] = val
+		}
 	}
 
 	// Add binary attachments directly as raw attributes.
