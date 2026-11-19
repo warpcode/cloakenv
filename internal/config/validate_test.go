@@ -363,3 +363,232 @@ vaults:
 		}
 	})
 }
+
+func TestValidate_ReviewRegressionCoverage(t *testing.T) {
+	tempDir := t.TempDir()
+
+	t.Run("all 12 legacy vault keys are rejected with migration hints", func(t *testing.T) {
+		legacyCases := []struct {
+			key  string
+			yaml string
+		}{
+			{"include_fields", "include_fields: [\"*\"]"},
+			{"exclude_fields", "exclude_fields: [\"Notes\"]"},
+			{"mapping", "mapping:\n      - match: \"(.*)\"\n        to: \"$1\""},
+			{"key_format", "key_format: env"},
+			{"attributes", "attributes:\n      A: \"b\""},
+			{"entities", "entities:\n      e1:\n        attributes:\n          A: \"b\""},
+			{"single_entity", "single_entity: true"},
+			{"entity_name", "entity_name: main"},
+			{"entities_root_key", "entities_root_key: secrets"},
+			{"searchable", "searchable: true"},
+			{"resolve_values", "resolve_values: true"},
+			{"source_vaults", "source_vaults: [env]"},
+		}
+		if len(legacyCases) != len(legacyVaultKeys) {
+			t.Fatalf("test covers %d legacy keys, want %d", len(legacyCases), len(legacyVaultKeys))
+		}
+		for _, tc := range legacyCases {
+			t.Run(tc.key, func(t *testing.T) {
+				cfgYAML := "vaults:\n  v:\n    provider: env\n    " + tc.yaml + "\n"
+				p := filepath.Join(tempDir, "legacy_"+tc.key+".yaml")
+				if err := os.WriteFile(p, []byte(cfgYAML), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				res, err := Validate(p, false)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if res.IsValid() {
+					t.Fatalf("expected legacy key %q to fail validation", tc.key)
+				}
+				found := false
+				for _, e := range res.Errors {
+					if strings.Contains(e, tc.key) && strings.Contains(e, "no longer supported") {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected migration hint for %q, got errors: %v", tc.key, res.Errors)
+				}
+			})
+		}
+	})
+
+	t.Run("strict mode rejects unknown fields inside templates.<name>", func(t *testing.T) {
+		cfgYAML := `templates:
+  bad_tmpl:
+    driver: dotenv
+    from_envs: app_env
+    vault: env
+`
+		p := filepath.Join(tempDir, "strict_tmpl_unknown.yaml")
+		if err := os.WriteFile(p, []byte(cfgYAML), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := Validate(p, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		joined := strings.Join(res.Errors, "\n")
+		if !strings.Contains(joined, `unknown field "from_envs"`) || !strings.Contains(joined, `unknown field "vault"`) {
+			t.Fatalf("expected strict unknown field errors for from_envs and vault, got: %v", res.Errors)
+		}
+	})
+
+	t.Run("driver template missing path/empty template aggregates with other errors", func(t *testing.T) {
+		cfgYAML := `templates:
+  empty_tmpl:
+    driver: template
+    vaults:
+      - vault: env
+        rules:
+          - type: pass
+            include: ["FOO"]
+  missing_file_tmpl:
+    driver: template
+    path: does-not-exist.tmpl
+    vaults:
+      - vault: env
+        rules:
+          - type: pass
+            include: ["FOO"]
+  bad_dotenv:
+    driver: dotenv
+    from_env: nonexistent_env
+`
+		p := filepath.Join(tempDir, "aggregate_tmpl_errors.yaml")
+		if err := os.WriteFile(p, []byte(cfgYAML), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := Validate(p, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		joined := strings.Join(res.Errors, "\n")
+		for _, want := range []string{
+			`template "empty_tmpl": driver`,
+			`template "missing_file_tmpl": file does not exist`,
+			`template "bad_dotenv": from_env references unknown env "nonexistent_env"`,
+		} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("expected aggregated error containing %q, got:\n%s", want, joined)
+			}
+		}
+	})
+
+	t.Run("driver validation error branches", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			yaml    string
+			wantErr string
+		}{
+			{
+				name:    "from_env rejected on template driver",
+				yaml:    "envs:\n  e:\n    - vault: env\ntemplates:\n  t:\n    driver: template\n    template: \"ok\"\n    from_env: e\n",
+				wantErr: "'from_env' is only valid when driver is `dotenv`",
+			},
+			{
+				name:    "from_env rejected on json driver",
+				yaml:    "envs:\n  e:\n    - vault: env\ntemplates:\n  t:\n    driver: json\n    from_env: e\n",
+				wantErr: "'from_env' is only valid when driver is `dotenv`",
+			},
+			{
+				name:    "from_env rejected on yaml driver",
+				yaml:    "envs:\n  e:\n    - vault: env\ntemplates:\n  t:\n    driver: yaml\n    from_env: e\n",
+				wantErr: "'from_env' is only valid when driver is `dotenv`",
+			},
+			{
+				name:    "template rejected on json driver",
+				yaml:    "templates:\n  t:\n    driver: json\n    template: \"hi\"\n",
+				wantErr: "'template' and 'path' cannot be used with driver \"json\"",
+			},
+			{
+				name:    "path rejected on yaml driver",
+				yaml:    "templates:\n  t:\n    driver: yaml\n    path: foo.tmpl\n",
+				wantErr: "'template' and 'path' cannot be used with driver \"yaml\"",
+			},
+			{
+				name:    "template rejected on dotenv driver",
+				yaml:    "templates:\n  t:\n    driver: dotenv\n    template: \"hi\"\n",
+				wantErr: "'template' and 'path' cannot be used with driver `dotenv`",
+			},
+			{
+				name:    "match rule missing match and value_match",
+				yaml:    "envs:\n  e:\n    - vault: env\n      rules:\n        - type: match\n          key: FOO\n",
+				wantErr: "match rule requires 'match' or 'value_match'",
+			},
+			{
+				name:    "match rule missing key",
+				yaml:    "envs:\n  e:\n    - vault: env\n      rules:\n        - type: match\n          match: \"^FOO$\"\n",
+				wantErr: "match rule missing 'key'",
+			},
+			{
+				name:    "set rule empty values",
+				yaml:    "envs:\n  e:\n    - vault: env\n      rules:\n        - type: set\n",
+				wantErr: "set rule requires non-empty 'values'",
+			},
+			{
+				name:    "invalid pass exclude glob",
+				yaml:    "envs:\n  e:\n    - vault: env\n      rules:\n        - type: pass\n          exclude: [\"[bad\"]\n",
+				wantErr: "invalid exclude glob pattern",
+			},
+			{
+				name:    "missing source vault",
+				yaml:    "envs:\n  e:\n    - query: \"true\"\n",
+				wantErr: "missing required field 'vault'",
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				p := filepath.Join(tempDir, strings.ReplaceAll(tc.name, " ", "_")+".yaml")
+				if err := os.WriteFile(p, []byte(tc.yaml), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				res, err := Validate(p, true)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				joined := strings.Join(res.Errors, "\n")
+				if !strings.Contains(joined, tc.wantErr) {
+					t.Errorf("expected error containing %q, got:\n%s", tc.wantErr, joined)
+				}
+			})
+		}
+	})
+
+	t.Run("wildcard pass warning fires for implicit and explicit env and keyring vaults", func(t *testing.T) {
+		cfgYAML := `vaults:
+  proc_env:
+    provider: env
+  os_kr:
+    provider: keyring
+envs:
+  e_implicit:
+    - vault: env
+    - vault: keyring
+      rules:
+        - type: pass
+  e_explicit:
+    - vault: proc_env
+    - vault: os_kr
+      rules:
+        - type: pass
+`
+		p := filepath.Join(tempDir, "flat_warnings.yaml")
+		if err := os.WriteFile(p, []byte(cfgYAML), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := Validate(p, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.IsValid() {
+			t.Fatalf("expected valid config with warnings, got errors: %v", res.Errors)
+		}
+		if len(res.Warnings) != 4 {
+			t.Fatalf("expected 4 wildcard pass warnings (implicit + explicit env/keyring), got %d: %v", len(res.Warnings), res.Warnings)
+		}
+	})
+}

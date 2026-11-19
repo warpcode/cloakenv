@@ -73,14 +73,17 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 		}
 	}
 
-	// Reject legacy vault output/transformation keys via raw YAML AST inspection
+	// Reject legacy vault output/transformation keys (and unknown template keys in strict mode) via raw YAML AST inspection
 	var rawDoc goyaml.Node
 	if err := goyaml.Unmarshal(data, &rawDoc); err == nil && len(rawDoc.Content) > 0 {
 		checkLegacyVaultKeys(rawDoc.Content[0], res)
+		if strict {
+			checkStrictTemplateKeys(rawDoc.Content[0], res)
+		}
 	}
 
-	// Load configuration using the standard Load method to resolve paths
-	cfg, err := Load(configPath)
+	// Load configuration without aborting on missing/empty template files so all validation errors aggregate
+	cfg, err := load(configPath, false)
 	if err != nil {
 		res.Errors = append(res.Errors, err.Error())
 		return res, nil
@@ -195,22 +198,27 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 			if tmpl.Path == "" && tmpl.Template == "" {
 				res.Errors = append(res.Errors, fmt.Sprintf("template %q: driver `template` requires 'template' or 'path'", tmplName))
 			}
+			tmplBody := tmpl.Template
 			if tmpl.Path != "" {
-				resolvedPath := tmpl.Path
+				resolvedPath := expandHome(tmpl.Path)
 				if !filepath.IsAbs(resolvedPath) {
 					resolvedPath = filepath.Join(baseDir, resolvedPath)
 				}
-				if _, err := os.Stat(resolvedPath); err != nil {
+				resolvedPath = filepath.Clean(resolvedPath)
+				data, err := os.ReadFile(resolvedPath)
+				if err != nil {
 					if errors.Is(err, os.ErrNotExist) {
 						res.Errors = append(res.Errors, fmt.Sprintf("template %q: file does not exist: %s", tmplName, tmpl.Path))
 					} else {
 						res.Errors = append(res.Errors, fmt.Sprintf("template %q: cannot access path %s: %v", tmplName, tmpl.Path, err))
 					}
+				} else {
+					tmplBody = string(data)
 				}
 			}
-			if tmpl.Template != "" {
+			if tmplBody != "" {
 				t := texttemplate.New(tmplName).Funcs(StandardTemplateFuncs())
-				if _, err := t.Parse(tmpl.Template); err != nil {
+				if _, err := t.Parse(tmplBody); err != nil {
 					res.Errors = append(res.Errors, fmt.Sprintf("template %q: template syntax error: %v", tmplName, err))
 				}
 			}
@@ -252,6 +260,50 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 	}
 
 	return res, nil
+}
+
+var validTemplateKeys = map[string]bool{
+	"driver":   true,
+	"path":     true,
+	"template": true,
+	"from_env": true,
+	"vaults":   true,
+}
+
+func derefYAMLNode(n *goyaml.Node) *goyaml.Node {
+	for n != nil && n.Kind == goyaml.AliasNode && n.Alias != nil {
+		n = n.Alias
+	}
+	return n
+}
+
+func checkStrictTemplateKeys(doc *goyaml.Node, res *ValidationResult) {
+	doc = derefYAMLNode(doc)
+	if doc == nil || doc.Kind != goyaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(doc.Content); i += 2 {
+		if doc.Content[i].Value != "templates" {
+			continue
+		}
+		tmplsNode := derefYAMLNode(doc.Content[i+1])
+		if tmplsNode == nil || tmplsNode.Kind != goyaml.MappingNode {
+			continue
+		}
+		for j := 0; j+1 < len(tmplsNode.Content); j += 2 {
+			tmplName := tmplsNode.Content[j].Value
+			tmplMap := derefYAMLNode(tmplsNode.Content[j+1])
+			if tmplMap == nil || tmplMap.Kind != goyaml.MappingNode {
+				continue
+			}
+			for k := 0; k+1 < len(tmplMap.Content); k += 2 {
+				fieldKey := tmplMap.Content[k].Value
+				if !validTemplateKeys[fieldKey] {
+					res.Errors = append(res.Errors, fmt.Sprintf("schema validation error: template %q: unknown field %q", tmplName, fieldKey))
+				}
+			}
+		}
+	}
 }
 
 func checkLegacyVaultKeys(doc *goyaml.Node, res *ValidationResult) {
@@ -301,8 +353,10 @@ func validateVaultSources(owner string, sources []VaultSourceConfig, cfg *Config
 			}
 		}
 
-		isFlatImplicit := src.Vault == "env" || src.Vault == "keyring"
-		if isFlatImplicit && len(src.Rules) == 0 {
+		vaultCfg, declaredVault := cfg.Vaults[src.Vault]
+		isFlatVault := (!declaredVault && (src.Vault == "env" || src.Vault == "keyring")) ||
+			(declaredVault && (vaultCfg.Provider == "env" || vaultCfg.Provider == "keyring"))
+		if isFlatVault && len(src.Rules) == 0 {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("%s (%s): implicit wildcard pass without explicit 'include' globs may expose the full process environment or keyring", srcLabel, src.Vault))
 		}
 
@@ -325,7 +379,7 @@ func validateVaultSources(owner string, sources []VaultSourceConfig, cfg *Config
 				default:
 					res.Errors = append(res.Errors, fmt.Sprintf("%s: invalid key_format %q (must be one of: none, env, snake, kebab)", ruleLabel, rule.KeyFormat))
 				}
-				if isFlatImplicit && len(rule.Include) == 0 {
+				if isFlatVault && len(rule.Include) == 0 {
 					res.Warnings = append(res.Warnings, fmt.Sprintf("%s (%s): pass rule without explicit 'include' globs may expose the full process environment or keyring", ruleLabel, src.Vault))
 				}
 			case "match":

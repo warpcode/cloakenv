@@ -94,6 +94,9 @@ func (t TemplateConfig) EffectiveDriver() string {
 
 // UnmarshalYAML implements custom unmarshaling for TemplateConfig to support scalar strings and structs.
 func (t *TemplateConfig) UnmarshalYAML(value *goyaml.Node) error {
+	for value.Kind == goyaml.AliasNode && value.Alias != nil {
+		value = value.Alias
+	}
 	if value.Kind == goyaml.ScalarNode {
 		t.Driver = "template"
 		t.Template = value.Value
@@ -376,6 +379,10 @@ func DefaultConfigPath() (string, error) {
 // Load reads and parses a YAML configuration file.
 // Returns an empty Config with initialized maps if the file does not exist.
 func Load(path string) (*Config, error) {
+	return load(path, true)
+}
+
+func load(path string, resolveTemplates bool) (*Config, error) {
 	cfg := &Config{
 		Envs:   make(map[string][]VaultSourceConfig),
 		Vaults: make(map[string]VaultConfig),
@@ -470,27 +477,29 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Process templates: expand path and read file for template-driver entries
-	for tmplName, tmpl := range cfg.Templates {
-		if tmpl.EffectiveDriver() == "template" {
-			if tmpl.Path != "" {
-				expandedPath := expandHome(tmpl.Path)
-				if !filepath.IsAbs(expandedPath) && cfg.ConfigPath != "" {
-					baseDir := filepath.Dir(cfg.ConfigPath)
-					expandedPath = filepath.Join(baseDir, expandedPath)
+	if resolveTemplates {
+		for tmplName, tmpl := range cfg.Templates {
+			if tmpl.EffectiveDriver() == "template" {
+				if tmpl.Path != "" {
+					expandedPath := expandHome(tmpl.Path)
+					if !filepath.IsAbs(expandedPath) && cfg.ConfigPath != "" {
+						baseDir := filepath.Dir(cfg.ConfigPath)
+						expandedPath = filepath.Join(baseDir, expandedPath)
+					}
+					expandedPath = filepath.Clean(expandedPath)
+					data, err := os.ReadFile(expandedPath)
+					if err != nil {
+						return nil, fmt.Errorf("template %q: failed to read path %q: %w", tmplName, tmpl.Path, err)
+					}
+					tmpl.Template = string(data)
+					tmpl.Path = expandedPath
 				}
-				expandedPath = filepath.Clean(expandedPath)
-				data, err := os.ReadFile(expandedPath)
-				if err != nil {
-					return nil, fmt.Errorf("template %q: failed to read path %q: %w", tmplName, tmpl.Path, err)
+				if tmpl.Template == "" {
+					return nil, fmt.Errorf("template %q: template content is empty", tmplName)
 				}
-				tmpl.Template = string(data)
-				tmpl.Path = expandedPath
 			}
-			if tmpl.Template == "" {
-				return nil, fmt.Errorf("template %q: template content is empty", tmplName)
-			}
+			cfg.Templates[tmplName] = tmpl
 		}
-		cfg.Templates[tmplName] = tmpl
 	}
 
 	validProviders := map[string]bool{
@@ -499,6 +508,7 @@ func Load(path string) (*Config, error) {
 		"pass":    true,
 		"search":  true,
 		"vault":   true,
+		"keyring": true,
 	}
 
 	// Validate providers, include_fields, exclude_fields, and mapping rules
@@ -507,7 +517,7 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("vault %q: missing required field 'provider'", vaultName)
 		}
 		if !validProviders[vault.Provider] {
-			return nil, fmt.Errorf("vault %q: unsupported provider %q (must be one of: keepass, env, pass, search, vault)", vaultName, vault.Provider)
+			return nil, fmt.Errorf("vault %q: unsupported provider %q (must be one of: keepass, env, pass, search, vault, keyring)", vaultName, vault.Provider)
 		}
 		for _, pattern := range vault.IncludeFields {
 			if _, err := pathpkg.Match(pattern, ""); err != nil {
