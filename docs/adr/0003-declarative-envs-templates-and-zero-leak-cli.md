@@ -5,7 +5,7 @@
 | **Status** | Accepted |
 | **Date** | 2026-11-17 |
 | **Deciders** | warpcode |
-| **Supersedes** | Portions of [ADR-0001](0001-unify-templating-on-go-text-template-and-composed-custom-vaults.md) (`custom_vault`, per-vault `attributes`) and [ADR-0002](0002-cross-vault-sync-and-secure-retrieval-caching.md) (`cloakenv sync`, `WritableProvider`) |
+| **Supersedes** | Portions of [ADR-0001](0001-unify-templating-on-go-text-template-and-composed-custom-vaults.md) (`custom_vault`, `search` vaults, per-vault `include_fields`/`exclude_fields`/`mapping`/`key_format`/`attributes`/`resolve_values`, `get`/`entry`/`search` template functions, and `get`/`show`/`run -m`), and [ADR-0002](0002-cross-vault-sync-and-secure-retrieval-caching.md) (`cloakenv sync`, `WritableProvider`) |
 | **Reversibility** | One-way |
 
 ---
@@ -86,7 +86,7 @@ Each `autoload` rule matches a command executed via `cloakenv run -- <command>` 
 
 ### 3.6 Zero-Leak CLI Surface
 - Remove `get`, `show`, `search`, `set`, `delete`, and `sync` CLI subcommands, and remove ad-hoc secret flags (`-m`, `-e`, `-t`, `-i`, `-f`) from `cloakenv run`.
-- Add `cloakenv inspect [vault|env|template|command]` which evaluates queries, rules, and autoload matches while strictly redacting all secret values as `<REDACTED>`.
+- Add `cloakenv inspect [env|template|run]` which evaluates queries, rules, and autoload matches while strictly redacting all secret values as `<REDACTED>`.
 - Retain `cloakenv run`, `cloakenv inspect`, `cloakenv doctor`, `cloakenv auth`, `cloakenv cache`, `cloakenv version`, and `cloakenv completion`.
 
 
@@ -102,6 +102,6 @@ Each `autoload` rule matches a command executed via `cloakenv run -- <command>` 
 ## 4. Consequences
 
 - **Breaking change**: Removal of the `get`, `show`, `search`, `set`, `delete` and `sync` commands, the `run -m/-e/-t/-i/-f` flags, and the vault keys `include_fields`, `exclude_fields`, `mapping`, `key_format`, `attributes`, `searchable`, `resolve_values`, `entities`, `source_vaults`. Config validation MUST reject legacy keys with a message pointing to the replacement, and the release MUST include a CHANGELOG migration note.
-- **Superseded**: ADR-0001's `custom_vault` and `get`/`entry`/`search` template functions, and ADR-0002's `cloakenv sync` and `WritableProvider`, are retired. Caching from ADR-0002 is retained.
+- **Superseded**: ADR-0001's `custom_vault`, `search` vaults, per-vault `include_fields`/`exclude_fields`/`mapping`/`key_format`/`attributes`/`resolve_values`, `get`/`entry`/`search` template functions, and `get`/`show`/`run -m`, together with ADR-0002's `cloakenv sync` and `WritableProvider`, are retired. Caching from ADR-0002 is retained.
 - **Documentation debt**: `AGENTS.md` invariants (wrapper ordering, filter precedence/authorization, provider wrappers, child-command pass-through, `internal/yaml` contract), `README.md`, shell completions and `.github/skills/` must be updated alongside #469, #471, #473, #476 and #479.
 - **Suggested implementation order**: #476 and #469 → #477 and #470 → #471, #472 and #478 → #474 → #473 and #479.

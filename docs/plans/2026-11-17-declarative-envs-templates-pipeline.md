@@ -116,6 +116,7 @@ autoload:
   - [ ] Given a KeePass entry with `Title: "OpenAI"`, `Password: "sk-123"`, and `Tags: ["ai"]`, when retrieved from the vault, then the raw `Entry` contains `"title"`, `"password"`, `"Password"`, and `"tags"` at the top level with no `.meta`, `.attributes`, `.orig`, or `.output` wrappers.
   - [ ] Given `vault: env` with `OPENAI_API_KEY=sk-123` and `PATH=/usr/bin`, when retrieved, then a single `Entry` map is returned containing those keys untouched.
   - [ ] Given `env` or `keyring` referenced in `envs:` or `templates:` without a declaration in `vaults:`, when `config.Load` and engine initialization run, then they resolve implicitly as built-in providers.
+  - [ ] Given a `vaults:` block containing any legacy key (`include_fields`, `exclude_fields`, `mapping`, `key_format`, `attributes`, `searchable`, `resolve_values`, `entities`, `single_entity`, `entity_name`, `entities_root_key`, `source_vaults`), when `config.Validate` / `cloakenv doctor` runs, then validation rejects the key with an error message pointing to its replacement.
 
 ### `REQ-002`: Go Template `query:` Selection & Removal of `expr-lang/expr` [Accepted] — P0
 - **Depends On**: `G-002`, `REQ-001`
@@ -138,6 +139,7 @@ autoload:
 - **Statement**: WHEN resolving an `envs:` entry, the engine SHALL flatten post-rule `[]map[string]string` entries in deterministic order (`path`, then `title` within a vault; source list order across `vaults:`) into a single `map[string]string`; WHEN resolving a `templates:` entry, `TemplatesRenderer` SHALL render `.entries` for `driver: template | json | yaml` or flatten `.entries` for `driver: dotenv`.
 - **Acceptance Criteria**:
   - [ ] Given two matched entries with colliding output key `API_KEY`, when flattened by `EnvsBuilder`, then the later entry in deterministic order wins.
+  - [ ] Given `driver: template` (inline `template:` or `path:`) in `templates:`, when rendered with `.Option("missingkey=error")`, then it renders `.entries` and fails on missing keys.
   - [ ] Given `driver: json` or `driver: yaml` in `templates:`, when rendered, then output serializes the post-rules `.entries` slice (`[]map[string]string`).
   - [ ] Given `driver: dotenv` with `from_env: litellm_env`, when rendered, then it emits sorted `KEY="VALUE"` dotenv lines matching `litellm_env`.
 
@@ -149,13 +151,14 @@ autoload:
   - [ ] Given `env_path: LITELLM_CONFIG_PATH` with no `path:`, when `autoload` runs, then an ephemeral `0600` file is created in `/dev/shm` (or `os.CreateTemp`), `$LITELLM_CONFIG_PATH` points to it, and the file is zeroed and unlinked on exit or signal.
   - [ ] Given `env_path: CFG` and `path: "/tmp/{{ .APP_ENV }}.yaml"`, when `autoload` runs, then `path` is templated against resolved `envs`, written with `0600`, `$CFG` points to the resolved path, and the file is zeroed and unlinked on exit unless `persist: true`.
   - [ ] Given `path: "./.env.local"` without `env_path:`, when `autoload` runs, then the file is written without adding an extra ENV var and cleaned up on exit unless `persist: true`.
+  - [ ] Given a `path:` pointing through a symlinked file or ancestor directory, or targeting a pre-existing file, when `autoload` materializes templates, then parent directories are created with `0700`, symlinks and pre-existing files are refused with an error, and no existing target is overwritten.
 
 ### `REQ-006`: Zero-Leak CLI Surface & Redacted `cloakenv inspect` [Accepted] — P0
 - **Depends On**: `G-004`, `ADR-0003`
 - **Statement**: WHEN any CLI subcommand executes, `cloakenv` SHALL prohibit plaintext secret dumping by removing `get`, `show`, `search`, `set`, `delete`, `sync`, and ad-hoc `run` secret flags, while providing `cloakenv inspect` with all secret values unconditionally masked as `<REDACTED>`.
 - **Acceptance Criteria**:
   - [ ] Given `cloakenv get`, `cloakenv show`, `cloakenv search`, `cloakenv set`, `cloakenv delete`, or `cloakenv sync`, when invoked, then the CLI reports an unknown command error and exits non-zero.
-  - [ ] Given `cloakenv inspect <env|template|command>`, when invoked, then matching vault entries, rule transformations, and autoload targets are displayed with every secret value replaced by `<REDACTED>`.
+  - [ ] Given `cloakenv inspect [env|template|run]`, when invoked, then matching vault entries, rule transformations, and autoload targets are displayed with every secret value replaced by `<REDACTED>`.
 
 ---
 
