@@ -2,6 +2,7 @@ package engine
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
@@ -799,5 +800,52 @@ func BenchmarkMatchWildcard_Wildcard(b *testing.B) {
 		if !matchWildcard("aws*", "aws.ec2.eu-west-1") {
 			b.Fatal("expected match")
 		}
+	}
+}
+
+func TestEvaluateAutoload_MultiRuleAndChainedRewrites(t *testing.T) {
+	cfg := &config.Config{
+		Autoload: []config.AutoloadRule{
+			{
+				Match:   `^mycli\s+(.*)$`,
+				Command: `realcli --profile prod \1`,
+				Envs: []config.AutoloadEnvItem{
+					config.NamedEnvItem("base_env"),
+					config.InlineEnvItem(map[string]string{"STAGE": "base"}),
+				},
+				Templates: []config.AutoloadTemplateConfig{
+					{Template: "cfg_a", EnvPath: "CFG_A"},
+				},
+			},
+			{
+				Match:   `^realcli\s+--profile\s+prod\s+(.*)$`,
+				Command: `realcli --profile prod --audited \1`,
+				Envs: []config.AutoloadEnvItem{
+					config.InlineEnvItem(map[string]string{"STAGE": "override", "AUDIT": "1"}),
+				},
+				Templates: []config.AutoloadTemplateConfig{
+					{Template: "cfg_b", Path: "/tmp/b.yaml"},
+				},
+			},
+		},
+	}
+	cfg.CompileAutoloadRules()
+
+	eval, err := EvaluateAutoload(cfg, []string{"mycli", "deploy", "--dry-run"})
+	if err != nil {
+		t.Fatalf("EvaluateAutoload failed: %v", err)
+	}
+	wantCmd := []string{"realcli", "--profile", "prod", "--audited", "deploy", "--dry-run"}
+	if strings.Join(eval.Command, "|") != strings.Join(wantCmd, "|") {
+		t.Fatalf("chained Command = %v, want %v", eval.Command, wantCmd)
+	}
+	if len(eval.MatchedRules) != 2 {
+		t.Fatalf("MatchedRules len = %d, want 2", len(eval.MatchedRules))
+	}
+	if len(eval.Envs) != 3 {
+		t.Fatalf("accumulated Envs len = %d, want 3", len(eval.Envs))
+	}
+	if len(eval.Templates) != 2 || eval.Templates[0].Template != "cfg_a" || eval.Templates[1].Template != "cfg_b" {
+		t.Fatalf("accumulated Templates = %#v, want [cfg_a, cfg_b]", eval.Templates)
 	}
 }

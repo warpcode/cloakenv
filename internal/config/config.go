@@ -3,6 +3,7 @@
 package config
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -148,6 +149,9 @@ func InlineEnvItem(m map[string]string) AutoloadEnvItem {
 
 // UnmarshalYAML unmarshals an AutoloadEnvItem from either a YAML string scalar or a string map.
 func (a *AutoloadEnvItem) UnmarshalYAML(value *goyaml.Node) error {
+	for value.Kind == goyaml.AliasNode && value.Alias != nil {
+		value = value.Alias
+	}
 	if value.Kind == goyaml.ScalarNode {
 		if value.Tag != "!!str" && value.Tag != "" {
 			return fmt.Errorf("autoload env item must be an env name string or key-value map")
@@ -189,6 +193,9 @@ func (a AutoloadEnvItem) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON unmarshals an AutoloadEnvItem from JSON string or map.
 func (a *AutoloadEnvItem) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return errors.New("autoload env item cannot be null")
+	}
 	var s string
 	if err := json.Unmarshal(data, &s); err == nil {
 		a.Name = s

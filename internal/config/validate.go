@@ -280,6 +280,14 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 				}
 				slices.Sort(inlineKeys)
 				for _, k := range inlineKeys {
+					if strings.TrimSpace(k) == "" {
+						res.Errors = append(res.Errors, fmt.Sprintf("%s env #%d: inline env key cannot be empty or whitespace", ruleLabel, j+1))
+						continue
+					}
+					if strings.ContainsRune(k, '=') {
+						res.Errors = append(res.Errors, fmt.Sprintf("%s env #%d: inline env key %q cannot contain '='", ruleLabel, j+1, k))
+						continue
+					}
 					v := item.Inline[k]
 					if strings.Contains(v, "{{") {
 						if err := validateTemplateSyntax(fmt.Sprintf("%s env #%d key %q", ruleLabel, j+1, k), v); err != nil {
@@ -294,19 +302,23 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 
 		for j, tmplAtt := range rule.Templates {
 			attLabel := fmt.Sprintf("%s template #%d", ruleLabel, j+1)
-			if tmplAtt.Template == "" {
+			tmplName := strings.TrimSpace(tmplAtt.Template)
+			attEnv := strings.TrimSpace(tmplAtt.Env)
+			attEnvPath := strings.TrimSpace(tmplAtt.EnvPath)
+			attPath := strings.TrimSpace(tmplAtt.Path)
+			if tmplName == "" {
 				res.Errors = append(res.Errors, fmt.Sprintf("%s: missing required field 'template'", attLabel))
-			} else if _, exists := cfg.Templates[tmplAtt.Template]; !exists {
+			} else if _, exists := cfg.Templates[tmplName]; !exists {
 				res.Errors = append(res.Errors, fmt.Sprintf("%s: references unknown template %q", attLabel, tmplAtt.Template))
 			}
-			hasTarget := tmplAtt.Env != "" || tmplAtt.EnvPath != "" || tmplAtt.Path != ""
+			hasTarget := attEnv != "" || attEnvPath != "" || attPath != ""
 			if !hasTarget {
 				res.Errors = append(res.Errors, fmt.Sprintf("%s: must set at least one of 'env', 'env_path', or 'path'", attLabel))
 			}
-			if tmplAtt.Env != "" && (tmplAtt.EnvPath != "" || tmplAtt.Path != "") {
+			if attEnv != "" && (attEnvPath != "" || attPath != "") {
 				res.Errors = append(res.Errors, fmt.Sprintf("%s: cannot combine 'env' with 'env_path' or 'path'", attLabel))
 			}
-			if tmplAtt.Path != "" && strings.Contains(tmplAtt.Path, "{{") {
+			if attPath != "" && strings.Contains(tmplAtt.Path, "{{") {
 				if err := validateTemplateSyntax(fmt.Sprintf("%s path", attLabel), tmplAtt.Path); err != nil {
 					res.Errors = append(res.Errors, err.Error())
 				}

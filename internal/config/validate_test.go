@@ -869,3 +869,93 @@ autoload:
 		}
 	}
 }
+
+func TestAutoloadEnvItem_AliasesAndJSONNullAndWhitespaceValidation(t *testing.T) {
+	t.Run("YAML anchor and alias in autoload envs", func(t *testing.T) {
+		yamlData := `
+x_shared_inline: &shared_inline
+  APP_ENV: "prod"
+x_shared_name: &shared_name "base_env"
+envs:
+  base_env:
+    - vault: env
+      rules:
+        - type: pass
+          include: ["FOO"]
+autoload:
+  - match: "^deploy"
+    envs:
+      - *shared_name
+      - *shared_inline
+`
+		tmp := filepath.Join(t.TempDir(), "alias.yaml")
+		if err := os.WriteFile(tmp, []byte(yamlData), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(tmp)
+		if err != nil {
+			t.Fatalf("Load failed with YAML alias: %v", err)
+		}
+		if len(cfg.Autoload) != 1 || len(cfg.Autoload[0].Envs) != 2 {
+			t.Fatalf("unexpected autoload envs: %#v", cfg.Autoload)
+		}
+		if cfg.Autoload[0].Envs[0].Name != "base_env" {
+			t.Errorf("alias scalar Name = %q, want base_env", cfg.Autoload[0].Envs[0].Name)
+		}
+		if cfg.Autoload[0].Envs[1].Inline["APP_ENV"] != "prod" {
+			t.Errorf("alias map APP_ENV = %q, want prod", cfg.Autoload[0].Envs[1].Inline["APP_ENV"])
+		}
+	})
+
+	t.Run("JSON null rejected by AutoloadEnvItem.UnmarshalJSON", func(t *testing.T) {
+		var item AutoloadEnvItem
+		if err := item.UnmarshalJSON([]byte("null")); err == nil {
+			t.Fatal("expected error unmarshaling JSON null into AutoloadEnvItem")
+		}
+		if err := item.UnmarshalJSON([]byte("  null  ")); err == nil {
+			t.Fatal("expected error unmarshaling padded JSON null into AutoloadEnvItem")
+		}
+	})
+
+	t.Run("validation rejects blank/invalid inline env keys and whitespace-only template targets", func(t *testing.T) {
+		yamlData := `
+templates:
+  t1:
+    driver: json
+    vaults:
+      - vault: env
+        rules:
+          - type: pass
+            include: ["FOO"]
+autoload:
+  - match: "^run-app"
+    envs:
+      - "   ": "blank_key"
+        "BAD=KEY": "has_equals"
+    templates:
+      - template: "   "
+        env: "   "
+        env_path: "  "
+        path: "  "
+`
+		tmp := filepath.Join(t.TempDir(), "ws_bad.yaml")
+		if err := os.WriteFile(tmp, []byte(yamlData), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := Validate(tmp, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		joined := strings.Join(res.Errors, "\n")
+		for _, want := range []string{
+			"inline env key cannot be empty or whitespace",
+			`inline env key "BAD=KEY" cannot contain '='`,
+			"missing required field 'template'",
+			"must set at least one of 'env', 'env_path', or 'path'",
+		} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("expected error containing %q, got:\n%s", want, joined)
+			}
+		}
+	})
+}
