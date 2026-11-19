@@ -530,9 +530,7 @@ func TestExecMemo_ZeroTTLDoesNotInitializeCacheProvider(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"custom": {
-				Provider:      "search",
-				Sources:       []string{"env://"},
-				ResolveValues: true,
+				Provider: "env",
 			},
 		},
 	}
@@ -602,15 +600,13 @@ func TestExecMemo_OrchestratorIntegration(t *testing.T) {
 		},
 		Vaults: map[string]config.VaultConfig{
 			"custom": {
-				Provider:      "search",
-				Sources:       []string{"env://"},
-				ResolveValues: true,
+				Provider: "env",
 			},
 		},
 	}
 	mockResults := []provider.SearchResult{
 		{
-			Provider: "search",
+			Provider: "env",
 			Vault:    "custom",
 			Path:     "app",
 			Entry: provider.Entry{

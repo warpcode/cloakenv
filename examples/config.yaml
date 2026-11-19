@@ -62,33 +62,6 @@ vaults:
     vault_path: "~/.keepass/Accounts.kdbx"
     searchable: false
 
-  # Defines the openrouter:// URI scheme (Stored Search vault provider using source_vaults + query)
-  # Acts as a stored search definition returning a filtered synthetic view over source vaults.
-  openrouter:
-    provider: "search"
-    source_vaults: ["work"]
-    query: '"service:openrouter" in tags'
-
-  # Defines the app_stack:// URI scheme (Stored Search vault grouping multiple entry URIs and queries)
-  app_stack:
-    provider: "search"
-    resolve_values: true
-    sources:
-      - "work://infra/db"
-      - 'search://"api" in tags'
-    include_fields:
-      - "DB_*"
-      - "API_*"
-    exclude_fields:
-      - "DB_SECRET_KEY"
-    mapping:
-      - match: "^API_(.*)"
-        key: "{{ .meta.Title | env }}_API_$1"
-    key_format: "env"
-    attributes:
-      DATABASE_URL: "postgres://{{ .attributes.DB_USER }}:{{ .attributes.DB_PASSWORD }}@{{ .attributes.DB_HOST }}:5432/app"
-      DOTENV: "{{ .attributes | toEnv }}"
-
   # Example of generic field filtering on any vault provider using include_fields and exclude_fields:
   # include_fields: limits returned entry attributes to field names matching glob patterns
   # exclude_fields: removes entry attributes matching glob patterns before returning the entry

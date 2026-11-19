@@ -50,14 +50,6 @@ vaults:
     entities_root_key: entries
     searchable: false
     single_entity: false
-  search_view:
-    provider: search
-    sources:
-      - "keepass://app"
-      - '"prod" in tags'
-    tags: [tag1, tag2]
-    attributes:
-      secret_key: secret_val
 envs:
   aws_env:
     - vault: env
@@ -179,24 +171,6 @@ vaults:
 
 	if vault.SingleEntity == nil || *vault.SingleEntity != false {
 		t.Error("expected single_entity to be false")
-	}
-
-	// Verify search vault sources and attributes parsing
-	searchVault, ok := cfg.Vaults["search_view"]
-	if !ok {
-		t.Fatal("expected 'search_view' vault to exist")
-	}
-	if searchVault.Provider != "search" {
-		t.Errorf("expected provider 'search', got %q", searchVault.Provider)
-	}
-	if len(searchVault.Sources) != 2 || searchVault.Sources[0] != "keepass://app" || searchVault.Sources[1] != `"prod" in tags` {
-		t.Errorf("expected sources [keepass://app, \"prod\" in tags], got %v", searchVault.Sources)
-	}
-	if len(searchVault.Tags) != 2 || searchVault.Tags[0] != "tag1" || searchVault.Tags[1] != "tag2" {
-		t.Errorf("expected tags [tag1, tag2], got %v", searchVault.Tags)
-	}
-	if val, ok := searchVault.Attributes["secret_key"]; !ok || val != "secret_val" {
-		t.Errorf("expected attributes to contain secret_key=secret_val, got %v", searchVault.Attributes)
 	}
 
 	// Verify autoload rules parsing
