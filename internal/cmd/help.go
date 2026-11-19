@@ -10,7 +10,7 @@ const generalUsage = `cloakenv — pluggable secret orchestrator & runtime injec
 
 Usage:
   cloakenv [-c config_path] run [-E] [--no-autoload] [--dry-run] -- <command> [args]
-  cloakenv [-c config_path] inspect [env <name> | template <name> | run -- <command> [args]] [-o text|json|yaml]
+  cloakenv [-c config_path] inspect [-o text|json|yaml] [env <name> | template <name> | run -- <command> [args]]
   cloakenv [-c config_path] auth <login|forget|status> [vault]
   cloakenv [-c config_path] cache <clear|prune>
   cloakenv [-c config_path] doctor [--strict]
@@ -72,7 +72,7 @@ func PrintInspectHelpTo(w io.Writer) {
   cloakenv inspect [-o text|json|yaml]
   cloakenv inspect env <name> [-o text|json|yaml]
   cloakenv inspect template <name> [-o text|json|yaml]
-  cloakenv inspect run -- <command> [args] [-o text|json|yaml]
+  cloakenv inspect [-o text|json|yaml] run -- <command> [args]
 
 Description:
   Evaluate config.yaml queries, rules, and autoload matching to preview matched
