@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	texttemplate "text/template"
@@ -309,12 +310,19 @@ func (r *TemplatesRenderer) RenderDetailed(ctx context.Context, templateName str
 				return nil, fmt.Errorf("template %q: from_env %q: %w", templateName, tCfg.FromEnv, envErr)
 			}
 			maps.Copy(flat, envRes.Env)
+			if len(envRes.Env) > 0 {
+				entries = append([]map[string]string{maps.Clone(envRes.Env)}, entries...)
+			}
 			summaries = append(slices.Clone(envRes.Sources), summaries...)
 		}
 		for _, entryMap := range entries {
 			maps.Copy(flat, entryMap)
 		}
-		content = formatDotenv(flat)
+		formatted, fmtErr := formatDotenv(flat)
+		if fmtErr != nil {
+			return nil, fmt.Errorf("template %q: %w", templateName, fmtErr)
+		}
+		content = formatted
 
 	default:
 		return nil, fmt.Errorf("template %q: unsupported driver %q", templateName, driver)
@@ -396,12 +404,17 @@ func resolveSources(
 	return entriesOut, summaries, nil
 }
 
-func formatDotenv(flat map[string]string) string {
+var dotenvKeyPattern = regexp.MustCompile("^[A-Za-z_][A-Za-z0-9_]*$")
+
+func formatDotenv(flat map[string]string) (string, error) {
 	if len(flat) == 0 {
-		return ""
+		return "", nil
 	}
 	keys := make([]string, 0, len(flat))
 	for k := range flat {
+		if !dotenvKeyPattern.MatchString(k) {
+			return "", fmt.Errorf("invalid dotenv key %q: must match ^[A-Za-z_][A-Za-z0-9_]*$", k)
+		}
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
@@ -415,12 +428,14 @@ func formatDotenv(flat map[string]string) string {
 		sb.WriteByte('=')
 		sb.WriteString(formatDotenvValue(flat[k]))
 	}
-	return sb.String()
+	return sb.String(), nil
 }
 
 func formatDotenvValue(v string) string {
 	v = strings.ReplaceAll(v, `\`, `\\`)
 	v = strings.ReplaceAll(v, `"`, `\"`)
+	v = strings.ReplaceAll(v, "$", `\$`)
+	v = strings.ReplaceAll(v, "`", "\\`")
 	v = strings.ReplaceAll(v, "\n", `\n`)
 	v = strings.ReplaceAll(v, "\r", `\r`)
 	v = strings.ReplaceAll(v, "\t", `\t`)

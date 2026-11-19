@@ -43,17 +43,21 @@ func EntryToRawMap(entry provider.Entry, providerName, vaultName, entryPath stri
 	for k, v := range entry.Attributes {
 		raw[k] = provider.CloneValue(v)
 	}
-	if _, exists := raw["title"]; !exists && entry.Title != "" {
+	if _, exists := raw["title"]; !exists {
 		raw["title"] = entry.Title
 	}
-	if _, exists := raw["path"]; !exists && entryPath != "" {
+	if _, exists := raw["path"]; !exists {
 		raw["path"] = entryPath
 	}
-	if _, exists := raw["uuid"]; !exists && entry.UUID != "" {
+	if _, exists := raw["uuid"]; !exists {
 		raw["uuid"] = entry.UUID
 	}
-	if _, exists := raw["tags"]; !exists && len(entry.Tags) > 0 {
-		raw["tags"] = slices.Clone(entry.Tags)
+	if _, exists := raw["tags"]; !exists {
+		if len(entry.Tags) > 0 {
+			raw["tags"] = slices.Clone(entry.Tags)
+		} else {
+			raw["tags"] = []string{}
+		}
 	}
 	if _, exists := raw["vault"]; !exists && vaultName != "" {
 		raw["vault"] = vaultName
