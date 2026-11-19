@@ -265,7 +265,7 @@ func (pm *ProviderManager) initKeyring(ctx context.Context, vault config.VaultCo
 	// while using a per-vault provider instance for independent service/query settings.
 	var kp *provider.OSKeyringProvider
 	if pm.keyring != nil {
-		kp = pm.keyring
+		kp = pm.keyring.CloneWithStore()
 	} else {
 		kp = provider.NewOSKeyringProvider()
 	}

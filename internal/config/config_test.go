@@ -47,16 +47,12 @@ vaults:
   keepass:
     provider: keepass
     vault_path: ~/secrets.kdbx
-    entities_root_key: entries
-    searchable: false
-    single_entity: false
-  custom_static:
-    provider: custom_vault
-    single_entity: true
-    entity_name: "Static Vault"
-    tags: [tag1, tag2]
-    attributes:
-      secret_key: secret_val
+    query: "prod"
+  local_env:
+    provider: env
+  os_kr:
+    provider: keyring
+    query: "API_TOKEN"
 envs:
   aws_env:
     - vault: env

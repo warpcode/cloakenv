@@ -269,6 +269,8 @@ func (v *VaultProvider) buildReadURL(path string) string {
 		} else {
 			subpath = ""
 		}
+	} else if cleanPath == mount {
+		subpath = ""
 	} else if strings.HasPrefix(cleanPath, mount+"/") {
 		subpath = strings.TrimPrefix(cleanPath, mount+"/")
 	}
@@ -282,6 +284,8 @@ func (v *VaultProvider) buildReadURL(path string) string {
 // buildListURL constructs the HTTP endpoint URL for listing keys at a path.
 // For KV v2: /v1/<mount>/metadata/<subpath>?list=true
 // For KV v1: /v1/<mount>/<subpath>?list=true
+var errVaultNotFound = errors.New("vault provider: secret not found")
+
 func (v *VaultProvider) buildListURL(path string) string {
 	cleanPath := strings.Trim(path, "/")
 	if v.engineVersion == 1 {
@@ -301,6 +305,8 @@ func (v *VaultProvider) buildListURL(path string) string {
 		} else {
 			subpath = ""
 		}
+	} else if cleanPath == mount {
+		subpath = ""
 	} else if strings.HasPrefix(cleanPath, mount+"/") {
 		subpath = strings.TrimPrefix(cleanPath, mount+"/")
 	}
@@ -362,7 +368,7 @@ func (v *VaultProvider) readSecretData(ctx context.Context, path string) (map[st
 	defer utils.ZeroBytes(respBytes)
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("vault provider: secret at path %q not found", path)
+		return nil, fmt.Errorf("%w at path %q", errVaultNotFound, path)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("vault provider: HTTP %d: %s", resp.StatusCode, sanitizeVaultError(respBytes))
@@ -560,9 +566,10 @@ func (v *VaultProvider) listKeys(ctx context.Context, root string) ([]string, er
 		if strings.HasSuffix(k, "/") {
 			// Sub-directory: recurse
 			subKeys, err := v.listKeys(ctx, fullPath)
-			if err == nil {
-				results = append(results, subKeys...)
+			if err != nil {
+				return nil, err
 			}
+			results = append(results, subKeys...)
 		} else {
 			results = append(results, fullPath)
 		}
@@ -583,14 +590,17 @@ func (v *VaultProvider) Search(ctx context.Context, query SearchQuery) ([]Entry,
 
 	keys, err := v.listKeys(ctx, startPath)
 	if err != nil {
-		return []Entry{}, nil
+		return nil, err
 	}
 
 	var results []Entry
 	for _, k := range keys {
 		entry, err := v.GetEntry(ctx, k)
 		if err != nil {
-			continue
+			if errors.Is(err, errVaultNotFound) {
+				continue
+			}
+			return nil, err
 		}
 
 		if query.Title != "" && !strings.Contains(strings.ToLower(entry.Title()), strings.ToLower(query.Title)) {

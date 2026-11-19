@@ -148,6 +148,15 @@ func NewOSKeyringProviderWithStore(store KeyringStore) *OSKeyringProvider {
 	}
 }
 
+// CloneWithStore returns a fresh OSKeyringProvider sharing only the underlying KeyringStore
+// so independent configured vaults never mutate shared service or key state.
+func (o *OSKeyringProvider) CloneWithStore() *OSKeyringProvider {
+	o.mu.RLock()
+	store := o.store
+	o.mu.RUnlock()
+	return NewOSKeyringProviderWithStore(store)
+}
+
 // Scheme returns "keyring".
 func (o *OSKeyringProvider) Scheme() string {
 	return "keyring"
@@ -200,7 +209,12 @@ func (o *OSKeyringProvider) GetSecret(_ context.Context, location string) (strin
 // cloakenv's own internal credential/cache storage and must not be exposed
 // in flat vault entries.
 func isInternalKeyringAccount(account string) bool {
-	return account == keyringAccount || account == "cache-master-key" || strings.HasPrefix(account, "provider/") || strings.HasPrefix(account, "cache/")
+	return account == keyringAccount ||
+		account == cacheDiskKeyringAccount ||
+		account == "cache-master-key" ||
+		strings.HasPrefix(account, "provider/") ||
+		strings.HasPrefix(account, "cache/") ||
+		strings.HasPrefix(account, cacheKeyringAccountPrefix)
 }
 
 // buildKeyringEntry builds a single flat Entry holding all accessible user keys
@@ -232,6 +246,8 @@ func (o *OSKeyringProvider) buildKeyringEntry() (Entry, error) {
 			}
 			entry[k] = v
 		}
+	} else if len(explicitKeys) == 0 {
+		return nil, errors.New("keyring vault requires explicit keys via vault 'query' when OS keyring backend does not support service enumeration")
 	}
 
 	for _, k := range explicitKeys {
@@ -303,6 +319,9 @@ func (o *OSKeyringProvider) GetEntry(_ context.Context, location string) (Entry,
 		}
 	}
 
+	if isInternalKeyringAccount(account) {
+		return nil, fmt.Errorf("keyring lookup denied: %q is an internal keyring key", account)
+	}
 	val, err := o.store.Get(service, account)
 	if err != nil {
 		return nil, fmt.Errorf("keyring lookup failed for %s/%s: %w", service, account, err)
