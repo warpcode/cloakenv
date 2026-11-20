@@ -22,6 +22,19 @@ func forwardSignalToChild(proc *os.Process, sig os.Signal) error {
 	return proc.Signal(sig)
 }
 
+func exitCodeFromSignal(sig os.Signal) int {
+	if sig == syscall.SIGTERM {
+		return 143
+	}
+	if sig == os.Interrupt || sig == syscall.SIGINT {
+		return 130
+	}
+	if sysSig, ok := sig.(syscall.Signal); ok && sysSig > 0 {
+		return 128 + int(sysSig)
+	}
+	return 1
+}
+
 func exitCodeFromWaitError(err error, receivedSig os.Signal) int {
 	if err == nil {
 		return 0
@@ -33,13 +46,7 @@ func exitCodeFromWaitError(err error, receivedSig os.Signal) int {
 		}
 		return exitErr.ExitCode()
 	}
-	if receivedSig == syscall.SIGTERM {
-		return 143
-	}
-	if receivedSig == os.Interrupt {
-		return 130
-	}
-	return 1
+	return exitCodeFromSignal(receivedSig)
 }
 
 func isBatchFileBlocked(_ string) bool {
