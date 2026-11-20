@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -143,6 +144,125 @@ func TestRunCommandWithOptions_SignalCleanup(t *testing.T) {
 
 			if _, err := os.Lstat(targetFile); !os.IsNotExist(err) {
 				t.Errorf("SECURITY FAILURE: ephemeral file %q was NOT cleaned up after %v (err=%v)", targetFile, tc.sig, err)
+			}
+		})
+	}
+}
+
+func TestExitCodeFromSignal(t *testing.T) {
+	if got := exitCodeFromSignal(os.Interrupt); got != 130 {
+		t.Errorf("exitCodeFromSignal(os.Interrupt) = %d, want 130", got)
+	}
+	if got := exitCodeFromSignal(nil); got != 1 {
+		t.Errorf("exitCodeFromSignal(nil) = %d, want 1", got)
+	}
+	if runtime.GOOS != "windows" {
+		if got := exitCodeFromSignal(syscall.SIGTERM); got != 143 {
+			t.Errorf("exitCodeFromSignal(SIGTERM) = %d, want 143", got)
+		}
+	}
+}
+
+func TestRunCommandWithOptions_PreStartSignalExitCode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signal subprocess test is Unix-specific")
+	}
+
+	if targetFile := os.Getenv("GO_WANT_PRESTART_SIGNAL_FILE"); targetFile != "" {
+		readyFile := os.Getenv("GO_WANT_PRESTART_READY_FILE")
+		childRanFile := os.Getenv("GO_WANT_PRESTART_CHILD_FILE")
+		_, cleanup, err := MaterializeTemplates([]TemplateDelivery{
+			{
+				TemplateName: "prestart_tpl",
+				Path:         targetFile,
+				Content:      "prestart-secret",
+			},
+		})
+		if err != nil {
+			os.Exit(2)
+		}
+		code := RunCommandWithOptions(
+			context.Background(),
+			[]string{"sh", "-c", `touch "$1"`, "--", childRanFile},
+			os.Environ(),
+			RunOptions{
+				MaskSecrets: []string{"prestart-secret"},
+				Cleanup:     cleanup,
+				OnSignalsRegistered: func() {
+					_ = os.WriteFile(readyFile, []byte("ready"), 0o600)
+					_, _ = io.ReadAll(os.Stdin)
+				},
+			},
+		)
+		os.Exit(code)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		sig      syscall.Signal
+		wantCode int
+	}{
+		{name: "SIGTERM", sig: syscall.SIGTERM, wantCode: 143},
+		{name: "SIGINT", sig: syscall.SIGINT, wantCode: 130},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			targetFile := filepath.Join(dir, "prestart.yaml")
+			readyFile := filepath.Join(dir, "ready")
+			childRanFile := filepath.Join(dir, "child_ran")
+
+			cmd := exec.Command(os.Args[0], "-test.run=^TestRunCommandWithOptions_PreStartSignalExitCode$")
+			cmd.Env = append(os.Environ(),
+				"GO_WANT_PRESTART_SIGNAL_FILE="+targetFile,
+				"GO_WANT_PRESTART_READY_FILE="+readyFile,
+				"GO_WANT_PRESTART_CHILD_FILE="+childRanFile,
+			)
+			stdinPipe, err := cmd.StdinPipe()
+			if err != nil {
+				t.Fatalf("failed to create stdin pipe: %v", err)
+			}
+			if err := cmd.Start(); err != nil {
+				t.Fatalf("failed to start helper subprocess: %v", err)
+			}
+
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				if _, err := os.Stat(readyFile); err == nil {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if _, err := os.Stat(readyFile); err != nil {
+				_ = stdinPipe.Close()
+				_ = cmd.Process.Kill()
+				t.Fatalf("helper never reached OnSignalsRegistered: %v", err)
+			}
+
+			if err := cmd.Process.Signal(tc.sig); err != nil {
+				_ = stdinPipe.Close()
+				_ = cmd.Process.Kill()
+				t.Fatalf("failed sending %v: %v", tc.sig, err)
+			}
+			// Allow signal delivery into buffered sigCh before releasing OnSignalsRegistered.
+			time.Sleep(50 * time.Millisecond)
+			_ = stdinPipe.Close()
+
+			waitErr := cmd.Wait()
+			if waitErr == nil {
+				t.Fatalf("expected non-zero exit code %d on pre-start %v, got exit 0", tc.wantCode, tc.sig)
+			}
+			var exitErr *exec.ExitError
+			if !errors.As(waitErr, &exitErr) {
+				t.Fatalf("expected *exec.ExitError, got %T: %v", waitErr, waitErr)
+			}
+			if exitErr.ExitCode() != tc.wantCode {
+				t.Errorf("pre-start %v exit code = %d, want %d", tc.sig, exitErr.ExitCode(), tc.wantCode)
+			}
+			if _, err := os.Lstat(childRanFile); !os.IsNotExist(err) {
+				t.Errorf("child command must not start after pre-start %v", tc.sig)
+			}
+			if _, err := os.Lstat(targetFile); !os.IsNotExist(err) {
+				t.Errorf("ephemeral file %q was not cleaned up on pre-start %v", targetFile, tc.sig)
 			}
 		})
 	}

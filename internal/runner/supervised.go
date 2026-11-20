@@ -55,7 +55,7 @@ func RunCommandWithOptions(ctx context.Context, cmdArgs []string, env []string, 
 	}
 	select {
 	case sig := <-sigCh:
-		return exitCodeFromWaitError(nil, sig)
+		return exitCodeFromSignal(sig)
 	default:
 	}
 
