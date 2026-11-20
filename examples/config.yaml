@@ -41,7 +41,6 @@ vaults:
 
   process_env:
     provider: "env"
-    query: "AWS_*"
 
   os_keyring:
     provider: "keyring"
@@ -88,6 +87,10 @@ templates:
     vaults:
       - vault: "work"
         query: '{{ hasTag "app" .tags }}'
+        rules:
+          - type: pass
+            include: ["title", "path", "username", "password"]
+            key_format: "none"
 
 # Command autoloading rules
 autoload:
