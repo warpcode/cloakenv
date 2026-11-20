@@ -364,10 +364,9 @@ Supports KV v1 and KV v2 with token or AppRole (`role_id`/`secret_id`) authentic
 vaults:
   local_env:
     provider: env
-    query: "AWS_*"
 ```
 
-Available implicitly as `vault: env` (or explicitly configured with a comma/whitespace-separated `query:` key/glob filter). Returns a single flat `Entry` of matching process environment variables.
+Available implicitly as `vault: env` (or explicitly configured under `vaults:`). Returns a single flat `Entry` containing current process environment variables; use `rules:` with explicit `include:` globs (for example, `include: ["AWS_*"]`) to select specific variables.
 
 ### OS Keyring (`keyring`)
 
@@ -456,7 +455,7 @@ See [`examples/config.yaml`](examples/config.yaml) for a complete, validated con
 
 ## Headless & CI/CD Usage
 
-1. Supply credentials via process environment (`vault: env` with `query:` globs) or Vault AppRole (`role_id`/`secret_id` or `VAULT_TOKEN`).
+1. Supply credentials via process environment (`vault: env` with `pass` `include:` globs) or Vault AppRole (`role_id`/`secret_id` or `VAULT_TOKEN`).
 2. Bind CI deployment commands via `autoload:` and execute with `cloakenv run -- ./deploy.sh` (or `--dry-run` / `cloakenv inspect` in CI sanity checks).
 3. Set `audit.enabled: true` when non-secret access telemetry (`jsonl` or `json`) is required.
 

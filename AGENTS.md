@@ -11,7 +11,7 @@ It resolves raw entries from read-only secret vaults through a declarative `Rule
 | Package | Responsibility | Invariant / Must NOT |
 |---|---|---|
 | `internal/audit` | Structured JSON-lines audit logging for secret access attempts | No plaintext secret values or resolved payloads in log output |
-| `internal/cmd` | Top-level CLI subcommand dispatch (`run`, `inspect`, `auth`, `doctor`, `cache`, `version`) and flag parsing | No secret resolution, plaintext secret printing, or direct backend provider instantiation |
+| `internal/cmd` | Top-level CLI subcommand dispatch (`run`, `inspect`, `auth`, `doctor`, `cache`, `completion`, `version`, `internal`) and flag parsing | No secret resolution, plaintext secret printing, or direct backend provider instantiation |
 | `internal/config` | Parse and validate YAML configuration (`vaults`, `envs`, `templates`, `autoload`) | No secret resolution or I/O beyond file reads |
 | `internal/engine` | Orchestrate vault loading, `RuleEngine` transforms, `EnvsBuilder`, `TemplatesRenderer`, autoload matching, and caching | No direct imports of backend-specific libraries |
 | `internal/provider` | Implement read-only `provider.SecretProvider` / `provider.SearchableProvider` per backend (`keepass`, `pass`, `vault`, `env`, `keyring`, `cache`) | No shared mutable state between providers; no filtering, mapping, or template transforms |
