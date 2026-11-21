@@ -94,9 +94,9 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 	// 2. Validate Vaults
 	validProviders := map[string]bool{
 		"keepass": true,
-		"env":     true,
 		"pass":    true,
 		"vault":   true,
+		"env":     true,
 		"keyring": true,
 	}
 
@@ -111,7 +111,7 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 		if vault.Provider == "" {
 			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: missing required field 'provider'", vaultName))
 		} else if !validProviders[vault.Provider] {
-			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: unsupported provider %q (must be one of: keepass, env, pass, vault, keyring)", vaultName, vault.Provider))
+			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: unknown provider %q (must be one of: keepass, pass, vault, env, keyring)", vaultName, vault.Provider))
 		} else if (vaultName == "env" && vault.Provider != "env") || (vaultName == "keyring" && vault.Provider != "keyring") {
 			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: built-in vault name %q must use provider %q, got %q", vaultName, vaultName, vaultName, vault.Provider))
 		}
@@ -127,23 +127,6 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 					} else {
 						res.Errors = append(res.Errors, fmt.Sprintf("vault %q: cannot access vault_path %s: %v", vaultName, vault.VaultPath, err))
 					}
-				}
-			}
-		}
-
-		// KeyFormat validation
-		switch vault.KeyFormat {
-		case "", "none", "env", "snake", "kebab":
-		default:
-			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: invalid key_format %q (must be one of: none, env, snake, kebab)", vaultName, vault.KeyFormat))
-		}
-
-		// Validate vault-level attributes templates
-		for attrKey, attrVal := range vault.Attributes {
-			if strVal, ok := attrVal.(string); ok && strings.Contains(strVal, "{{") {
-				tmpl := texttemplate.New(attrKey).Funcs(StandardTemplateFuncs())
-				if _, err := tmpl.Parse(strVal); err != nil {
-					res.Errors = append(res.Errors, fmt.Sprintf("vault %q attribute %q: template syntax error: %v", vaultName, attrKey, err))
 				}
 			}
 		}

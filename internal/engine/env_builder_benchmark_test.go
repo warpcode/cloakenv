@@ -72,20 +72,15 @@ func BenchmarkBuildEnvMerges(b *testing.B) {
 	b.ReportAllocs()
 	ctx := context.Background()
 
-	var results []provider.SearchResult
+	entities := make(map[string]provider.Entry)
 	var merges []string
 	for i := range 10 {
 		entityName := fmt.Sprintf("app_%d", i)
-		attrs := make(map[string]any)
+		attrs := make(provider.Entry)
 		for j := range 20 {
 			attrs[fmt.Sprintf("VAR_%d_%d", i, j)] = fmt.Sprintf("val_%d_%d", i, j)
 		}
-		results = append(results, provider.SearchResult{
-			Provider: "search",
-			Vault:    "bench_vault",
-			Path:     entityName,
-			Entry:    provider.Entry{Title: entityName, Attributes: attrs},
-		})
+		entities[entityName] = attrs
 		merges = append(merges, fmt.Sprintf("bench_vault://%s", entityName))
 	}
 
@@ -101,9 +96,7 @@ func BenchmarkBuildEnvMerges(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "bench_vault", results); err != nil {
-		b.Fatalf("injectMockVault failed: %v", err)
-	}
+	orch.providerManager.vaultCache["bench_vault"] = newTestMemoryProvider(entities)
 
 	b.ResetTimer()
 	for range b.N {

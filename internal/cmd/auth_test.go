@@ -331,7 +331,7 @@ func TestAuth_Status(t *testing.T) {
 			},
 			"dummy": {
 				Provider:  "env",
-				VaultPath: "/fake/path3",
+				VaultPath: "/fake/path3.json",
 			},
 		},
 	}
@@ -401,7 +401,7 @@ func TestAuth_Status_StructuredOutput(t *testing.T) {
 		Vaults: map[string]config.VaultConfig{
 			"dummy": {
 				Provider:  "env",
-				VaultPath: "/fake/path3",
+				VaultPath: "/fake/path3.json",
 			},
 			"mykp_noauth": {
 				Provider:  "keepass",
@@ -436,8 +436,8 @@ func TestAuth_Status_StructuredOutput(t *testing.T) {
 		if rec.Status != "ACTIVE" {
 			t.Errorf("expected status 'ACTIVE', got %q", rec.Status)
 		}
-		if rec.VaultPath != "/fake/path3" {
-			t.Errorf("expected vault_path '/fake/path3', got %q", rec.VaultPath)
+		if rec.VaultPath != "/fake/path3.json" {
+			t.Errorf("expected vault_path '/fake/path3.json', got %q", rec.VaultPath)
 		}
 		if rec.Latency == "" {
 			t.Errorf("expected non-empty latency")

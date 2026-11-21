@@ -4,19 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/zalando/go-keyring"
 )
-
-func TestOSKeyringProvider_WritableProvider(t *testing.T) {
-	kp := NewOSKeyringProvider()
-	var _ WritableProvider = kp
-	if _, ok := any(kp).(WritableProvider); !ok {
-		t.Errorf("expected OSKeyringProvider to implement WritableProvider")
-	}
-}
 
 func TestOSKeyringProvider(t *testing.T) {
 	t.Parallel()
@@ -366,5 +359,253 @@ func TestMockKeyringStore_DeleteCases(t *testing.T) {
 	// Service map should be cleaned up when last account is deleted
 	if err := store.Delete("svc", "acc1"); !errors.Is(err, keyring.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestOSKeyringProvider_SearchFlatEntry(t *testing.T) {
+	store := NewMockKeyringStore()
+	_ = store.Set("myservice", "API_TOKEN", "tok-123")
+	_ = store.Set("myservice", "DB_PASS", "db-456")
+	// Internal keys must never be exposed via flat Search entries.
+	_ = store.Set("myservice", keyringAccount, "internal-aes-key")
+	_ = store.Set("myservice", "provider/work", "internal-master-pw")
+
+	p := NewOSKeyringProviderWithStore(store)
+	ctx := context.Background()
+	if err := p.Initialize(ctx, ProviderConfig{
+		Settings: map[string]string{"keyring_prefix": "myservice"},
+	}); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	entries, err := p.Search(ctx, SearchQuery{})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 flat Entry from keyring Search, got %d", len(entries))
+	}
+	e := entries[0]
+	if e.Title() != "OS Keyring" || e.Path() != "keyring" {
+		t.Errorf("unexpected metadata: title=%q path=%q", e.Title(), e.Path())
+	}
+	if e["API_TOKEN"] != "tok-123" || e["DB_PASS"] != "db-456" {
+		t.Errorf("expected stored user keys in flat Entry, got %+v", e)
+	}
+	if _, leaked := e[keyringAccount]; leaked {
+		t.Errorf("internal cache master key must not be exposed in keyring Search")
+	}
+	if _, leaked := e["provider/work"]; leaked {
+		t.Errorf("internal provider credential must not be exposed in keyring Search")
+	}
+
+	// GetEntry with empty location returns same single flat entry.
+	allEntry, err := p.GetEntry(ctx, "")
+	if err != nil {
+		t.Fatalf("GetEntry(\"\") failed: %v", err)
+	}
+	if allEntry["API_TOKEN"] != "tok-123" {
+		t.Errorf("GetEntry(\"\") API_TOKEN = %v, want tok-123", allEntry["API_TOKEN"])
+	}
+
+	// GetEntry with specific account returns single-key entry.
+	singleEntry, err := p.GetEntry(ctx, "API_TOKEN")
+	if err != nil {
+		t.Fatalf("GetEntry(API_TOKEN) failed: %v", err)
+	}
+	if singleEntry["API_TOKEN"] != "tok-123" {
+		t.Errorf("GetEntry(API_TOKEN) = %v, want tok-123", singleEntry["API_TOKEN"])
+	}
+}
+
+type nonEnumerableKeyringStore struct {
+	secrets map[string]string
+}
+
+func (n *nonEnumerableKeyringStore) Get(service, account string) (string, error) {
+	v, ok := n.secrets[service+"/"+account]
+	if !ok {
+		return "", keyring.ErrNotFound
+	}
+	return v, nil
+}
+
+func (n *nonEnumerableKeyringStore) Set(service, account, password string) error {
+	if n.secrets == nil {
+		n.secrets = make(map[string]string)
+	}
+	n.secrets[service+"/"+account] = password
+	return nil
+}
+
+func (n *nonEnumerableKeyringStore) Delete(service, account string) error {
+	delete(n.secrets, service+"/"+account)
+	return nil
+}
+
+func TestOSKeyringProvider_BlocksInternalAccountsEverywhere(t *testing.T) {
+	store := NewMockKeyringStore()
+	_ = store.Set("myservice", keyringAccount, "internal-token")
+	_ = store.Set("myservice", cacheDiskKeyringAccount, "disk-aes-key")
+	_ = store.Set("myservice", "cache-master-key", "legacy-master")
+	_ = store.Set("myservice", "provider/work", "work-pass")
+	_ = store.Set("myservice", "cache/item", "cached-val")
+	_ = store.Set("myservice", cacheKeyringAccountPrefix+"item", "cached-v2-val")
+	_ = store.Set("myservice", "API_TOKEN", "user-secret")
+
+	p := NewOSKeyringProviderWithStore(store)
+	ctx := context.Background()
+	if err := p.Initialize(ctx, ProviderConfig{
+		Settings: map[string]string{"keyring_prefix": "myservice"},
+	}); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	entries, err := p.Search(ctx, SearchQuery{})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	blocked := []string{
+		keyringAccount,
+		cacheDiskKeyringAccount,
+		"cache-master-key",
+		"provider/work",
+		"cache/item",
+		cacheKeyringAccountPrefix + "item",
+	}
+	for _, key := range blocked {
+		if _, leaked := entries[0][key]; leaked {
+			t.Errorf("internal key %q leaked in Search()", key)
+		}
+		if _, err := p.GetEntry(ctx, key); err == nil {
+			t.Errorf("GetEntry(%q) should deny internal key lookup", key)
+		}
+		if _, err := p.GetEntry(ctx, "myservice/"+key); err == nil {
+			t.Errorf("GetEntry(%q) should deny internal key lookup", "myservice/"+key)
+		}
+	}
+	if entries[0]["API_TOKEN"] != "user-secret" {
+		t.Errorf("expected API_TOKEN to remain accessible, got %v", entries[0]["API_TOKEN"])
+	}
+}
+
+func TestOSKeyringProvider_NonEnumerableStoreRequiresExplicitKeys(t *testing.T) {
+	store := &nonEnumerableKeyringStore{
+		secrets: map[string]string{
+			"cloakenv/API_TOKEN": "tok-abc",
+		},
+	}
+	p := NewOSKeyringProviderWithStore(store)
+	ctx := context.Background()
+
+	if _, err := p.Search(ctx, SearchQuery{}); err == nil || !strings.Contains(err.Error(), "query") {
+		t.Fatalf("expected error explaining query requirement on non-enumerable store, got %v", err)
+	}
+	if _, err := p.GetEntry(ctx, ""); err == nil {
+		t.Fatalf("expected GetEntry empty location to fail on non-enumerable store with empty keys")
+	}
+
+	if err := p.Initialize(ctx, ProviderConfig{Query: "API_TOKEN"}); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+	entries, err := p.Search(ctx, SearchQuery{})
+	if err != nil {
+		t.Fatalf("Search with explicit key failed: %v", err)
+	}
+	if len(entries) != 1 || entries[0]["API_TOKEN"] != "tok-abc" {
+		t.Fatalf("unexpected entries from explicit key lookup: %+v", entries)
+	}
+}
+
+func TestOSKeyringProvider_CloneWithStoreIsolatesState(t *testing.T) {
+	store := &nonEnumerableKeyringStore{
+		secrets: map[string]string{
+			"svcA/KEY_A": "val-a",
+			"svcB/KEY_B": "val-b",
+		},
+	}
+	base := NewOSKeyringProviderWithStore(store)
+	c1 := base.CloneWithStore()
+	c2 := base.CloneWithStore()
+
+	ctx := context.Background()
+	if err := c1.Initialize(ctx, ProviderConfig{
+		Settings: map[string]string{"keyring_prefix": "svcA"},
+		Query:    "KEY_A",
+	}); err != nil {
+		t.Fatalf("c1 init failed: %v", err)
+	}
+	if err := c2.Initialize(ctx, ProviderConfig{
+		Settings: map[string]string{"keyring_prefix": "svcB"},
+		Query:    "KEY_B",
+	}); err != nil {
+		t.Fatalf("c2 init failed: %v", err)
+	}
+
+	e1, err := c1.Search(ctx, SearchQuery{})
+	if err != nil || e1[0]["KEY_A"] != "val-a" || e1[0]["KEY_B"] != nil {
+		t.Fatalf("c1 state contaminated: entries=%+v err=%v", e1, err)
+	}
+	e2, err := c2.Search(ctx, SearchQuery{})
+	if err != nil || e2[0]["KEY_B"] != "val-b" || e2[0]["KEY_A"] != nil {
+		t.Fatalf("c2 state contaminated: entries=%+v err=%v", e2, err)
+	}
+}
+
+func TestOSKeyringProviderInternalAccountCaseInsensitiveIsolation(t *testing.T) {
+	t.Parallel()
+	store := NewMockKeyringStore()
+	_ = store.Set("cloakenv", "CACHE_DISK_TOKEN", "disk-key-secret")
+	_ = store.Set("cloakenv", "Cache_Token", "cache-token-secret")
+	_ = store.Set("cloakenv", "CACHE-MASTER-KEY", "master-key-secret")
+	_ = store.Set("cloakenv", "PROVIDER/work", "keepass-master-pw")
+	_ = store.Set("cloakenv", "CACHE/item1", "cached-item")
+	_ = store.Set("cloakenv", "CACHE_V2/item2", "cached-item-v2")
+	_ = store.Set("cloakenv", "allowed_api_key", "ok-val")
+
+	kp := NewOSKeyringProviderWithStore(store)
+	ctx := context.Background()
+	if err := kp.Initialize(ctx, ProviderConfig{
+		Settings: map[string]string{"service": "cloakenv"},
+		Query:    "CACHE_DISK_TOKEN,Cache_Token,CACHE-MASTER-KEY,PROVIDER/work,CACHE/item1,CACHE_V2/item2,allowed_api_key",
+	}); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	internalAccounts := []string{
+		"CACHE_DISK_TOKEN",
+		"Cache_Token",
+		"CACHE-MASTER-KEY",
+		"PROVIDER/work",
+		"CACHE/item1",
+		"CACHE_V2/item2",
+		" provider/work ",
+	}
+	for _, acct := range internalAccounts {
+		if _, err := kp.GetSecret(ctx, "cloakenv/"+acct); err == nil {
+			t.Errorf("GetSecret(%q) should have been denied", acct)
+		}
+		if _, err := kp.GetEntry(ctx, acct); err == nil {
+			t.Errorf("GetEntry(%q) should have been denied", acct)
+		}
+	}
+
+	entries, err := kp.Search(ctx, SearchQuery{})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 flat keyring entry, got %d", len(entries))
+	}
+	if entries[0]["allowed_api_key"] != "ok-val" {
+		t.Fatalf("expected allowed_api_key=ok-val, got %v", entries[0]["allowed_api_key"])
+	}
+	for _, acct := range internalAccounts {
+		if _, leaked := entries[0][acct]; leaked {
+			t.Errorf("Search leaked internal account %q", acct)
+		}
 	}
 }

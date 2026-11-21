@@ -598,27 +598,22 @@ func TestRun_TemplateDeliveryAndMasking(t *testing.T) {
 	if os.Getenv("GO_WANT_DELIVERY_RUNNER") == "1" {
 		_ = os.Unsetenv("GO_WANT_DELIVERY_RUNNER")
 		baseDir := os.Getenv("CLOAKENV_DELIVERY_DIR")
-		dbPath := writeTestKDBX(t, "secrets", "testpass", testKDBXEntry{
-			Title: "API",
-			Attributes: map[string]string{
-				"API_KEY": "sk-delivery-super-secret-7777",
-			},
-		})
+		t.Setenv("CLOAKENV_DELIVERY_API_KEY", "sk-delivery-super-secret-7777")
 		cfg := &config.Config{
-			Vaults: map[string]config.VaultConfig{
-				"secrets": {
-					Provider:  "keepass",
-					VaultPath: dbPath,
-				},
-			},
 			Templates: map[string]config.TemplateConfig{
 				"api_cfg": {
 					Driver:   "template",
 					Template: "token={{ (index .entries 0).API_KEY }}",
 					Vaults: []config.VaultSourceConfig{
 						{
-							Vault: "secrets",
-							Rules: []config.RuleConfig{{Type: "pass"}},
+							Vault: "env",
+							Rules: []config.RuleConfig{
+								{
+									Type:  "match",
+									Match: "^CLOAKENV_DELIVERY_API_KEY$",
+									Key:   "API_KEY",
+								},
+							},
 						},
 					},
 				},

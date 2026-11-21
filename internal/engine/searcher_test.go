@@ -14,7 +14,7 @@ import (
 type delayedSearchableProvider struct {
 	delay       time.Duration
 	err         error
-	items       []provider.SearchResult
+	items       []provider.Entry
 	inFlight    *atomic.Int64
 	maxInFlight *atomic.Int64
 }
@@ -35,7 +35,7 @@ func (d *delayedSearchableProvider) DeleteSecret(_ context.Context, _ string) er
 func (d *delayedSearchableProvider) Validate(_ map[string]string) error {
 	return nil
 }
-func (d *delayedSearchableProvider) Search(ctx context.Context, _ provider.SearchQuery) ([]provider.SearchResult, error) {
+func (d *delayedSearchableProvider) Search(ctx context.Context, _ provider.SearchQuery) ([]provider.Entry, error) {
 	if d.inFlight != nil && d.maxInFlight != nil {
 		current := d.inFlight.Add(1)
 		defer d.inFlight.Add(-1)
@@ -76,36 +76,24 @@ func TestSearcher_GoTemplatePredicates(t *testing.T) {
 	}
 
 	orch.providerManager.vaultCache["vault_a"] = &delayedSearchableProvider{
-		items: []provider.SearchResult{
+		items: []provider.Entry{
 			{
-				Provider: "keepass",
-				Vault:    "vault_a",
-				Path:     "prod/db",
-				Entry: provider.Entry{
-					Title: "Primary DB",
-					UUID:  "uuid-1",
-					Tags:  []string{"LiteLLM", "prod"},
-					Group: &provider.GroupInfo{Name: "prod", Path: "infra/prod", UUID: "g-1"},
-					Attributes: map[string]any{
-						"host": "db.internal",
-						"port": "5432",
-					},
-				},
+				"path":  "prod/db",
+				"title": "Primary DB",
+				"uuid":  "uuid-1",
+				"tags":  []string{"LiteLLM", "prod"},
+				"group": map[string]any{"name": "prod", "path": "infra/prod", "uuid": "g-1"},
+				"host":  "db.internal",
+				"port":  "5432",
 			},
 			{
-				Provider: "keepass",
-				Vault:    "vault_a",
-				Path:     "staging/api",
-				Entry: provider.Entry{
-					Title: "Staging API",
-					UUID:  "uuid-2",
-					Tags:  []string{"staging"},
-					Group: &provider.GroupInfo{Name: "staging", Path: "infra/staging", UUID: "g-2"},
-					Attributes: map[string]any{
-						"host": "api.staging",
-						"port": "8080",
-					},
-				},
+				"path":  "staging/api",
+				"title": "Staging API",
+				"uuid":  "uuid-2",
+				"tags":  []string{"staging"},
+				"group": map[string]any{"name": "staging", "path": "infra/staging", "uuid": "g-2"},
+				"host":  "api.staging",
+				"port":  "8080",
 			},
 		},
 	}
@@ -117,7 +105,7 @@ func TestSearcher_GoTemplatePredicates(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
-		if len(res) != 1 || res[0].Entry.Title != "Primary DB" {
+		if len(res) != 1 || res[0].Entry.Title() != "Primary DB" {
 			t.Fatalf("unexpected results: %+v", res)
 		}
 	})
@@ -127,7 +115,7 @@ func TestSearcher_GoTemplatePredicates(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
-		if len(res) != 1 || res[0].Entry.Title != "Staging API" {
+		if len(res) != 1 || res[0].Entry.Title() != "Staging API" {
 			t.Fatalf("unexpected results: %+v", res)
 		}
 	})
@@ -189,21 +177,15 @@ func TestSearcher_URLQueryParams(t *testing.T) {
 	}
 
 	orch.providerManager.vaultCache["vault_a"] = &delayedSearchableProvider{
-		items: []provider.SearchResult{
+		items: []provider.Entry{
 			{
-				Provider: "keepass",
-				Vault:    "vault_a",
-				Path:     "servers/ssh/bastion",
-				Entry: provider.Entry{
-					Title: "Bastion Host",
-					Tags:  []string{"auth:ssh", "env:prod"},
-					Group: &provider.GroupInfo{Name: "Production", Path: "infra/Production"},
-					Attributes: map[string]any{
-						"username": "admin",
-						"url":      "https://example.com/path",
-						"notes":    "",
-					},
-				},
+				"path":     "servers/ssh/bastion",
+				"title":    "Bastion Host",
+				"tags":     []string{"auth:ssh", "env:prod"},
+				"group":    map[string]any{"name": "Production", "path": "infra/Production"},
+				"username": "admin",
+				"url":      "https://example.com/path",
+				"notes":    "",
 			},
 		},
 	}

@@ -7,13 +7,12 @@ import (
 	"strings"
 )
 
-// EnvProvider implements SecretProvider for the built-in env:// scheme.
-// It reads values directly from the current process environment.
-// Designed for headless servers and CI pipelines where keyring access
-// is unavailable.
+// EnvProvider implements read-only SecretProvider and SearchableProvider for the
+// built-in "env" scheme. It reads from the current process environment and emits
+// a single flat Entry containing all environment key/value pairs.
 type EnvProvider struct{}
 
-// NewEnvProvider returns a new environment variable provider instance.
+// NewEnvProvider returns a new EnvProvider instance.
 func NewEnvProvider() *EnvProvider {
 	return &EnvProvider{}
 }
@@ -28,118 +27,78 @@ func (e *EnvProvider) Initialize(_ context.Context, _ ProviderConfig) error {
 	return nil
 }
 
-// GetSecret reads an environment variable by name.
-// Location format: the bare variable name (e.g., "MY_API_KEY").
-// Returns an error if the variable is unset or empty.
+// GetSecret retrieves a single environment variable by name.
+// Supports "VAR_NAME", ":VAR_NAME", and "env:VAR_NAME".
 func (e *EnvProvider) GetSecret(_ context.Context, location string) (string, error) {
-	loc := location
-	loc = strings.TrimPrefix(loc, "env:")
-	loc = strings.TrimPrefix(loc, ":")
-
-	val, ok := os.LookupEnv(loc)
+	key := strings.TrimPrefix(location, "env:")
+	key = strings.TrimPrefix(key, ":")
+	if key == "" {
+		return "", fmt.Errorf("env provider: empty environment variable name")
+	}
+	val, ok := os.LookupEnv(key)
 	if !ok {
-		return "", fmt.Errorf("environment variable %q is not set", loc)
+		return "", fmt.Errorf("environment variable %q is not set", key)
 	}
-
 	if val == "" {
-		return "", fmt.Errorf("environment variable %q is set but empty", loc)
+		return "", fmt.Errorf("environment variable %q is set but empty", key)
 	}
-
 	return val, nil
 }
 
-// SetSecret returns an error because environment variables are read-only at runtime.
-func (e *EnvProvider) SetSecret(_ context.Context, _ string, _ string) error {
-	return fmt.Errorf("env provider is read-only")
-}
-
-// DeleteSecret returns an error because environment variables are read-only at runtime.
-func (e *EnvProvider) DeleteSecret(_ context.Context, _ string) error {
-	return fmt.Errorf("env provider is read-only")
-}
-
 // Validate is a no-op for the env provider.
-func (e *EnvProvider) Validate(settings map[string]string) error {
+func (e *EnvProvider) Validate(_ map[string]string) error {
 	return nil
 }
 
-// getAllEnvEntry constructs the canonical single entry representing all current environment variables.
+// getAllEnvEntry builds a single flat Entry containing all current process
+// environment variables alongside canonical metadata keys.
 func (e *EnvProvider) getAllEnvEntry() Entry {
-	attrs := make(map[string]any)
-	for _, envStr := range os.Environ() {
-		k, v, ok := strings.Cut(envStr, "=")
-		if ok && k != "" {
-			attrs[k] = v
+	environ := os.Environ()
+	entry := make(Entry, len(environ)+3)
+	for _, pair := range environ {
+		k, v, ok := strings.Cut(pair, "=")
+		if !ok || k == "" {
+			continue
 		}
+		entry[k] = v
 	}
-	return Entry{
-		Title:      "Environment Variables",
-		Tags:       []string{},
-		Attributes: attrs,
-	}
+	entry["title"] = "Environment Variables"
+	entry["path"] = "env"
+	entry["tags"] = []string{}
+	return entry
 }
 
-// Search retrieves all entries matching the query criteria.
-// EnvProvider represents the host environment as a single-entry vault.
-func (e *EnvProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
+// Search returns a single flat Entry representing the current process environment.
+func (e *EnvProvider) Search(_ context.Context, query SearchQuery) ([]Entry, error) {
 	entry := e.getAllEnvEntry()
-
-	if query.Title != "" && !strings.Contains(strings.ToLower(entry.Title), strings.ToLower(query.Title)) {
-		return []SearchResult{}, nil
+	if query.Title != "" && !strings.Contains(strings.ToLower(entry.Title()), strings.ToLower(query.Title)) {
+		return []Entry{}, nil
 	}
-	if query.Path != "" && !strings.Contains(strings.ToLower("env"), strings.ToLower(query.Path)) {
-		return []SearchResult{}, nil
+	if query.Path != "" && !strings.Contains(strings.ToLower(entry.Path()), strings.ToLower(query.Path)) {
+		return []Entry{}, nil
 	}
 	if len(query.Tags) > 0 {
-		return []SearchResult{}, nil
+		return []Entry{}, nil
 	}
-
-	return []SearchResult{
-		{
-			Path:  "env",
-			Entry: entry,
-		},
-	}, nil
+	return []Entry{entry}, nil
 }
 
-// GetEntry retrieves a complete structured entry representing environment variables.
-// When location is empty or "env", it returns the single entry containing all environment variables.
-// When location specifies a variable name, it returns an entry containing that single variable for backwards compatibility.
+// GetEntry retrieves the flat Entry of all environment variables when location
+// is empty or "env", or a single-variable Entry when a specific variable is named.
 func (e *EnvProvider) GetEntry(_ context.Context, location string) (Entry, error) {
-	key := location
-	key = strings.TrimPrefix(key, "env:")
+	key := strings.TrimPrefix(location, "env:")
 	key = strings.TrimPrefix(key, ":")
-
 	if key == "" || location == "env" {
 		return e.getAllEnvEntry(), nil
 	}
-
 	val, ok := os.LookupEnv(key)
 	if !ok {
-		return Entry{}, fmt.Errorf("environment variable %q is not set", key)
+		return nil, fmt.Errorf("environment variable %q is not set", key)
 	}
-
-	attrs := make(map[string]any)
-	attrs[key] = val
-
 	return Entry{
-		Title:      "Environment Variables",
-		Tags:       []string{},
-		Attributes: attrs,
+		"title": "Environment Variables",
+		"path":  key,
+		"tags":  []string{},
+		key:     val,
 	}, nil
-}
-
-// GetEntryWithPath retrieves a structured entry along with its authoritative path.
-func (e *EnvProvider) GetEntryWithPath(ctx context.Context, location string) (Entry, string, error) {
-	entry, err := e.GetEntry(ctx, location)
-	if err != nil {
-		return Entry{}, "", err
-	}
-	key := location
-	key = strings.TrimPrefix(key, "env:")
-	key = strings.TrimPrefix(key, ":")
-	if key == "" || location == "env" {
-		return entry, "env", nil
-	}
-	return entry, key, nil
 }

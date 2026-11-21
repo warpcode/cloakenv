@@ -332,7 +332,7 @@ func TestOrchestrator_PipelineIntegrationWithEnvProvider(t *testing.T) {
 
 type mockSearchableVaultProvider struct {
 	scheme  string
-	results []provider.SearchResult
+	results []provider.Entry
 }
 
 func (m *mockSearchableVaultProvider) Scheme() string { return m.scheme }
@@ -342,10 +342,8 @@ func (m *mockSearchableVaultProvider) Initialize(_ context.Context, _ provider.P
 func (m *mockSearchableVaultProvider) GetSecret(_ context.Context, _ string) (string, error) {
 	return "", os.ErrNotExist
 }
-func (m *mockSearchableVaultProvider) SetSecret(_ context.Context, _, _ string) error { return nil }
-func (m *mockSearchableVaultProvider) DeleteSecret(_ context.Context, _ string) error { return nil }
-func (m *mockSearchableVaultProvider) Validate(_ map[string]string) error             { return nil }
-func (m *mockSearchableVaultProvider) Search(_ context.Context, _ provider.SearchQuery) ([]provider.SearchResult, error) {
+func (m *mockSearchableVaultProvider) Validate(_ map[string]string) error { return nil }
+func (m *mockSearchableVaultProvider) Search(_ context.Context, _ provider.SearchQuery) ([]provider.Entry, error) {
 	return m.results, nil
 }
 func (m *mockSearchableVaultProvider) GetEntry(_ context.Context, _ string) (provider.Entry, error) {
@@ -359,21 +357,17 @@ func TestOutputPipeline_ReviewRegressionCoverage(t *testing.T) {
 		pm := NewProviderManager(&config.Config{}, map[string]provider.SecretProvider{
 			"work": &mockSearchableVaultProvider{
 				scheme: "keepass",
-				results: []provider.SearchResult{
+				results: []provider.Entry{
 					{
-						Path: "db/untagged",
-						Entry: provider.Entry{
-							Title:      "Untagged",
-							Attributes: map[string]any{"Password": "pw1"},
-						},
+						"path":     "db/untagged",
+						"title":    "Untagged",
+						"Password": "pw1",
 					},
 					{
-						Path: "db/tagged",
-						Entry: provider.Entry{
-							Title:      "Tagged",
-							Tags:       []string{"prod"},
-							Attributes: map[string]any{"Password": "pw2"},
-						},
+						"path":     "db/tagged",
+						"title":    "Tagged",
+						"tags":     []string{"prod"},
+						"Password": "pw2",
 					},
 				},
 			},

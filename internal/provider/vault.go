@@ -18,8 +18,8 @@ import (
 	"github.com/warpcode/cloakenv/internal/utils"
 )
 
-// VaultProvider implements SecretProvider, SearchableProvider,
-// and WritableProvider for HashiCorp Vault KV secret engines (v1 and v2).
+// VaultProvider implements read-only SecretProvider and SearchableProvider
+// for HashiCorp Vault KV secret engines (v1 and v2).
 type VaultProvider struct {
 	client        *http.Client
 	address       string
@@ -29,6 +29,7 @@ type VaultProvider struct {
 	engineVersion int // 1 or 2 (default 2)
 	namespace     string
 	mountPath     string // optional default mount path, e.g. "secret"
+	queryPrefix   string
 
 	mu sync.RWMutex
 }
@@ -133,6 +134,7 @@ func (v *VaultProvider) Initialize(ctx context.Context, config ProviderConfig) e
 	}
 
 	v.mountPath = strings.Trim(settings["mount_path"], "/")
+	v.queryPrefix = strings.Trim(config.Query, "/")
 
 	v.engineVersion = 2
 	if vStr := settings["engine_version"]; vStr != "" {
@@ -267,6 +269,8 @@ func (v *VaultProvider) buildReadURL(path string) string {
 		} else {
 			subpath = ""
 		}
+	} else if cleanPath == mount {
+		subpath = ""
 	} else if strings.HasPrefix(cleanPath, mount+"/") {
 		subpath = strings.TrimPrefix(cleanPath, mount+"/")
 	}
@@ -277,14 +281,11 @@ func (v *VaultProvider) buildReadURL(path string) string {
 	return v.address + "/v1/" + mount + "/data/" + subpath
 }
 
-// buildWriteURL constructs the appropriate HTTP endpoint URL for writing/deleting a secret.
-func (v *VaultProvider) buildWriteURL(path string) string {
-	return v.buildReadURL(path)
-}
-
 // buildListURL constructs the HTTP endpoint URL for listing keys at a path.
 // For KV v2: /v1/<mount>/metadata/<subpath>?list=true
 // For KV v1: /v1/<mount>/<subpath>?list=true
+var errVaultNotFound = errors.New("vault provider: secret not found")
+
 func (v *VaultProvider) buildListURL(path string) string {
 	cleanPath := strings.Trim(path, "/")
 	if v.engineVersion == 1 {
@@ -304,6 +305,8 @@ func (v *VaultProvider) buildListURL(path string) string {
 		} else {
 			subpath = ""
 		}
+	} else if cleanPath == mount {
+		subpath = ""
 	} else if strings.HasPrefix(cleanPath, mount+"/") {
 		subpath = strings.TrimPrefix(cleanPath, mount+"/")
 	}
@@ -365,7 +368,7 @@ func (v *VaultProvider) readSecretData(ctx context.Context, path string) (map[st
 	defer utils.ZeroBytes(respBytes)
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("vault provider: secret at path %q not found", path)
+		return nil, fmt.Errorf("%w at path %q", errVaultNotFound, path)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("vault provider: HTTP %d: %s", resp.StatusCode, sanitizeVaultError(respBytes))
@@ -465,112 +468,25 @@ func formatSecretValue(val any) string {
 	}
 }
 
-// SetSecret writes a secret value to Vault at the given location ("path:field" or "path").
-func (v *VaultProvider) SetSecret(ctx context.Context, location string, value string) error {
-	path, field := v.splitLocation(location)
-	if path == "" {
-		return errors.New("vault provider: empty path in secret location")
-	}
-
-	var payload any
-	if v.engineVersion == 2 {
-		// Read existing data if writing a specific field to preserve sibling keys
-		existing := make(map[string]any)
-		if current, err := v.readSecretData(ctx, path); err == nil && current != nil {
-			existing = current
-		}
-		targetKey := field
-		if targetKey == "" {
-			targetKey = "value"
-		}
-		existing[targetKey] = value
-		payload = map[string]any{
-			"data": existing,
-		}
-	} else {
-		// KV v1
-		existing := make(map[string]any)
-		if current, err := v.readSecretData(ctx, path); err == nil && current != nil {
-			existing = current
-		}
-		targetKey := field
-		if targetKey == "" {
-			targetKey = "value"
-		}
-		existing[targetKey] = value
-		payload = existing
-	}
-
-	bodyBytes, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	defer utils.ZeroBytes(bodyBytes)
-
-	reqURL := v.buildWriteURL(path)
-	resp, respBytes, err := v.executeRequest(ctx, http.MethodPost, reqURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return err
-	}
-	defer utils.ZeroBytes(respBytes)
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("vault provider: HTTP %d: %s", resp.StatusCode, sanitizeVaultError(respBytes))
-	}
-
-	return nil
-}
-
-// DeleteSecret removes the secret at the given location from Vault.
-func (v *VaultProvider) DeleteSecret(ctx context.Context, location string) error {
-	path, _ := v.splitLocation(location)
-	if path == "" {
-		return errors.New("vault provider: empty path in secret location")
-	}
-
-	reqURL := v.buildWriteURL(path)
-	// For KV v2, DELETE /v1/<mount>/data/<path> soft deletes the latest version
-	resp, respBytes, err := v.executeRequest(ctx, http.MethodDelete, reqURL, nil)
-	if err != nil {
-		return err
-	}
-	defer utils.ZeroBytes(respBytes)
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("vault provider: HTTP %d: %s", resp.StatusCode, sanitizeVaultError(respBytes))
-	}
-
-	return nil
-}
-
-// GetEntry retrieves a complete structured entry from Vault given location.
+// GetEntry retrieves a complete flat raw Entry from Vault given location.
 func (v *VaultProvider) GetEntry(ctx context.Context, location string) (Entry, error) {
-	entry, _, err := v.GetEntryWithPath(ctx, location)
-	return entry, err
-}
-
-// GetEntryWithPath retrieves a structured entry along with its authoritative path.
-func (v *VaultProvider) GetEntryWithPath(ctx context.Context, location string) (Entry, string, error) {
 	path, _ := v.splitLocation(location)
 	if path == "" {
-		return Entry{}, "", errors.New("vault provider: empty path in secret location")
+		return nil, errors.New("vault provider: empty path in secret location")
 	}
 
 	data, err := v.readSecretData(ctx, path)
 	if err != nil {
-		return Entry{}, "", err
+		return nil, err
 	}
 
-	// Extract title from path
 	title := path
+	groupPath := ""
 	if idx := strings.LastIndex(path, "/"); idx != -1 {
 		title = path[idx+1:]
+		groupPath = path[:idx]
 	}
 
-	// Extract tags if present in data
 	var tags []string
 	if rawTags, ok := data["tags"]; ok {
 		switch t := rawTags.(type) {
@@ -583,21 +499,32 @@ func (v *VaultProvider) GetEntryWithPath(ctx context.Context, location string) (
 				}
 			}
 		case string:
-			for _, p := range strings.Split(t, ",") {
-				if trimmed := strings.TrimSpace(p); trimmed != "" {
+			for _, part := range strings.Split(t, ",") {
+				if trimmed := strings.TrimSpace(part); trimmed != "" {
 					tags = append(tags, trimmed)
 				}
 			}
 		}
 	}
 
-	entry := Entry{
-		Title:      title,
-		Tags:       tags,
-		Attributes: data,
+	flat := make(Entry, len(data)+4)
+	for k, val := range data {
+		flat[k] = val
 	}
-
-	return entry, path, nil
+	flat["title"] = title
+	flat["path"] = path
+	flat["tags"] = tags
+	if groupPath != "" {
+		groupName := groupPath
+		if idx := strings.LastIndex(groupPath, "/"); idx != -1 {
+			groupName = groupPath[idx+1:]
+		}
+		flat["group"] = map[string]any{
+			"name": groupName,
+			"path": groupPath,
+		}
+	}
+	return flat, nil
 }
 
 // listKeys recursively lists secret paths starting from a root path.
@@ -639,9 +566,10 @@ func (v *VaultProvider) listKeys(ctx context.Context, root string) ([]string, er
 		if strings.HasSuffix(k, "/") {
 			// Sub-directory: recurse
 			subKeys, err := v.listKeys(ctx, fullPath)
-			if err == nil {
-				results = append(results, subKeys...)
+			if err != nil {
+				return nil, err
 			}
+			results = append(results, subKeys...)
 		} else {
 			results = append(results, fullPath)
 		}
@@ -650,40 +578,43 @@ func (v *VaultProvider) listKeys(ctx context.Context, root string) ([]string, er
 	return results, nil
 }
 
-// Search retrieves entries from Vault matching query criteria.
-func (v *VaultProvider) Search(ctx context.Context, query SearchQuery) ([]SearchResult, error) {
-	startPath := v.mountPath
+// Search retrieves raw entries from Vault matching optional query criteria.
+func (v *VaultProvider) Search(ctx context.Context, query SearchQuery) ([]Entry, error) {
+	startPath := v.queryPrefix
 	if query.Path != "" {
 		startPath = query.Path
+	}
+	if startPath == "" {
+		startPath = v.mountPath
 	}
 
 	keys, err := v.listKeys(ctx, startPath)
 	if err != nil {
-		// If listing root or specific path returns an error, fallback to empty search results
-		return []SearchResult{}, nil
+		return nil, err
 	}
 
-	var results []SearchResult
+	var results []Entry
 	for _, k := range keys {
-		entry, fullPath, err := v.GetEntryWithPath(ctx, k)
+		entry, err := v.GetEntry(ctx, k)
 		if err != nil {
-			continue
+			if errors.Is(err, errVaultNotFound) {
+				continue
+			}
+			return nil, err
 		}
 
-		// Filter by query.Title
-		if query.Title != "" && !strings.Contains(strings.ToLower(entry.Title), strings.ToLower(query.Title)) {
+		if query.Title != "" && !strings.Contains(strings.ToLower(entry.Title()), strings.ToLower(query.Title)) {
 			continue
 		}
-		// Filter by query.Path
-		if query.Path != "" && !strings.Contains(strings.ToLower(fullPath), strings.ToLower(query.Path)) {
+		if query.Path != "" && !strings.Contains(strings.ToLower(entry.Path()), strings.ToLower(query.Path)) {
 			continue
 		}
-		// Filter by query.Tags
 		if len(query.Tags) > 0 {
 			match := true
+			entryTags := entry.Tags()
 			for _, requiredTag := range query.Tags {
 				tagFound := false
-				for _, entryTag := range entry.Tags {
+				for _, entryTag := range entryTags {
 					if strings.EqualFold(entryTag, requiredTag) {
 						tagFound = true
 						break
@@ -699,11 +630,7 @@ func (v *VaultProvider) Search(ctx context.Context, query SearchQuery) ([]Search
 			}
 		}
 
-		results = append(results, SearchResult{
-			Path:  fullPath,
-			Entry: entry,
-		})
+		results = append(results, entry)
 	}
-
 	return results, nil
 }

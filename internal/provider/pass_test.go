@@ -15,19 +15,6 @@ func TestPassProvider_Scheme(t *testing.T) {
 	}
 }
 
-func TestPassProvider_ReadOnly(t *testing.T) {
-	p := NewPassProvider()
-	ctx := context.Background()
-
-	if err := p.SetSecret(ctx, "dev/db", "newpass"); err == nil {
-		t.Error("SetSecret() expected read-only error, got nil")
-	}
-
-	if err := p.DeleteSecret(ctx, "dev/db"); err == nil {
-		t.Error("DeleteSecret() expected read-only error, got nil")
-	}
-}
-
 func TestPassProvider_Validate(t *testing.T) {
 	p := NewPassProvider()
 
@@ -259,40 +246,32 @@ func TestPassProvider_GetEntry(t *testing.T) {
 		t.Fatalf("Initialize() failed: %v", err)
 	}
 
-	t.Run("GetEntryWithPath", func(t *testing.T) {
-		entry, authPath, err := p.GetEntryWithPath(ctx, "work/web_login")
+	t.Run("GetEntry", func(t *testing.T) {
+		entry, err := p.GetEntry(ctx, "work/web_login")
+		authPath := entry.Path()
 		if err != nil {
 			t.Fatalf("GetEntryWithPath() error = %v", err)
 		}
 		if got, want := authPath, "work/web_login"; got != want {
 			t.Errorf("authoritativePath = %q, want %q", got, want)
 		}
-		if got, want := entry.Title, "web_login"; got != want {
-			t.Errorf("entry.Title = %q, want %q", got, want)
+		if got, want := entry.Title(), "web_login"; got != want {
+			t.Errorf("entry.Title() = %q, want %q", got, want)
 		}
-		if entry.Group == nil || entry.Group.Path != "work" {
-			t.Errorf("entry.Group.Path = %v, want 'work'", entry.Group)
+		if entry.Group() == nil || entry.Group()["path"] != "work" {
+			t.Errorf("entry.Group().Path = %v, want 'work'", entry.Group())
 		}
-		if got, want := entry.Attributes["Password"], "secret123"; got != want {
-			t.Errorf("entry.Attributes[Password] = %v, want %q", got, want)
+		if got, want := entry["Password"], "secret123"; got != want {
+			t.Errorf("entry[Password] = %v, want %q", got, want)
 		}
-		if got, want := entry.Attributes["username"], "alice"; got != want {
-			t.Errorf("entry.Attributes[username] = %v, want %q", got, want)
+		if got, want := entry["username"], "alice"; got != want {
+			t.Errorf("entry[username] = %v, want %q", got, want)
 		}
-		if len(entry.Tags) != 2 || entry.Tags[0] != "production" || entry.Tags[1] != "secure" {
-			t.Errorf("entry.Tags = %v, want ['production', 'secure']", entry.Tags)
+		if len(entry.Tags()) != 2 || entry.Tags()[0] != "production" || entry.Tags()[1] != "secure" {
+			t.Errorf("entry.Tags() = %v, want ['production', 'secure']", entry.Tags())
 		}
 	})
 
-	t.Run("GetEntryTitle", func(t *testing.T) {
-		title, err := p.GetEntryTitle(ctx, "work/web_login")
-		if err != nil {
-			t.Fatalf("GetEntryTitle() error = %v", err)
-		}
-		if got, want := title, "web_login"; got != want {
-			t.Errorf("GetEntryTitle() = %q, want %q", got, want)
-		}
-	})
 }
 
 func TestPassProvider_Search(t *testing.T) {
@@ -347,7 +326,7 @@ func TestPassProvider_Search(t *testing.T) {
 		if len(results) != 1 {
 			t.Fatalf("Search(Tags: [prod]) returned %d results, want 1", len(results))
 		}
-		if got, want := results[0].Path, "production/db"; got != want {
+		if got, want := results[0].Path(), "production/db"; got != want {
 			t.Errorf("Path = %q, want %q", got, want)
 		}
 	})
@@ -360,7 +339,7 @@ func TestPassProvider_Search(t *testing.T) {
 		if len(results) != 1 {
 			t.Fatalf("Search(Title: github) returned %d results, want 1", len(results))
 		}
-		if got, want := results[0].Path, "tokens/github"; got != want {
+		if got, want := results[0].Path(), "tokens/github"; got != want {
 			t.Errorf("Path = %q, want %q", got, want)
 		}
 	})
@@ -373,8 +352,79 @@ func TestPassProvider_Search(t *testing.T) {
 		if len(results) != 1 {
 			t.Fatalf("Search(Path: development) returned %d results, want 1", len(results))
 		}
-		if got, want := results[0].Path, "development/db"; got != want {
+		if got, want := results[0].Path(), "development/db"; got != want {
 			t.Errorf("Path = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestPassProviderQueryScope(t *testing.T) {
+	storeDir := t.TempDir()
+	for _, rel := range []string{"work/api.gpg", "work/prod/db.gpg", "personal/bank.gpg", "workspace/other.gpg"} {
+		full := filepath.Join(storeDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("cipher"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("directory prefix scopes scan and skips unrelated dirs", func(t *testing.T) {
+		p := NewPassProvider()
+		if err := p.Initialize(context.Background(), ProviderConfig{
+			Settings: map[string]string{"store_dir": storeDir},
+			Query:    "work/",
+		}); err != nil {
+			t.Fatalf("Initialize failed: %v", err)
+		}
+		var decrypted []string
+		p.SetDecryptFunc(func(_ context.Context, filePath string) ([]byte, error) {
+			rel, _ := filepath.Rel(storeDir, filePath)
+			decrypted = append(decrypted, filepath.ToSlash(rel))
+			return []byte("pw-" + filepath.Base(filePath)), nil
+		})
+		entries, err := p.Search(context.Background(), SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(entries) != 2 {
+			t.Fatalf("expected 2 entries under work/, got %d", len(entries))
+		}
+		for _, d := range decrypted {
+			if d != "work/api.gpg" && d != "work/prod/db.gpg" {
+				t.Errorf("unexpectedly decrypted out-of-scope file %q", d)
+			}
+		}
+	})
+
+	t.Run("single entry scope", func(t *testing.T) {
+		p := NewPassProvider()
+		if err := p.Initialize(context.Background(), ProviderConfig{
+			Settings: map[string]string{"store_dir": storeDir},
+			Query:    "work/api",
+		}); err != nil {
+			t.Fatalf("Initialize failed: %v", err)
+		}
+		p.SetDecryptFunc(func(_ context.Context, _ string) ([]byte, error) {
+			return []byte("secret-api"), nil
+		})
+		entries, err := p.Search(context.Background(), SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(entries) != 1 || entries[0].Path() != "work/api" {
+			t.Fatalf("expected single work/api entry, got %v", entries)
+		}
+	})
+
+	t.Run("rejects path traversal query", func(t *testing.T) {
+		p := NewPassProvider()
+		if err := p.Initialize(context.Background(), ProviderConfig{
+			Settings: map[string]string{"store_dir": storeDir},
+			Query:    "../etc",
+		}); err == nil {
+			t.Fatalf("expected error for path traversal query")
 		}
 	})
 }

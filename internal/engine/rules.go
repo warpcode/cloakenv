@@ -39,38 +39,27 @@ func NewRuleEngine() *RuleEngine {
 // EntryToRawMap adapts a legacy provider.Entry struct into a flat raw field map
 // containing top-level attributes and canonical metadata fields (title, path, uuid, tags, group, vault, provider).
 func EntryToRawMap(entry provider.Entry, providerName, vaultName, entryPath string) map[string]any {
-	raw := make(map[string]any, len(entry.Attributes)+7)
-	for k, v := range entry.Attributes {
+	raw := make(map[string]any, len(entry)+3)
+	for k, v := range entry {
 		raw[k] = provider.CloneValue(v)
 	}
 	if _, exists := raw["title"]; !exists {
-		raw["title"] = entry.Title
+		raw["title"] = entry.Title()
 	}
 	if _, exists := raw["path"]; !exists {
 		raw["path"] = entryPath
 	}
 	if _, exists := raw["uuid"]; !exists {
-		raw["uuid"] = entry.UUID
+		raw["uuid"] = entry.UUID()
 	}
 	if _, exists := raw["tags"]; !exists {
-		if len(entry.Tags) > 0 {
-			raw["tags"] = slices.Clone(entry.Tags)
-		} else {
-			raw["tags"] = []string{}
-		}
+		raw["tags"] = []string{}
 	}
 	if _, exists := raw["vault"]; !exists && vaultName != "" {
 		raw["vault"] = vaultName
 	}
 	if _, exists := raw["provider"]; !exists && providerName != "" {
 		raw["provider"] = providerName
-	}
-	if _, exists := raw["group"]; !exists && entry.Group != nil {
-		raw["group"] = map[string]any{
-			"name": entry.Group.Name,
-			"uuid": entry.Group.UUID,
-			"path": entry.Group.Path,
-		}
 	}
 	return raw
 }

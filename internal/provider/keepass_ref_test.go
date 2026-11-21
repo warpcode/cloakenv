@@ -217,8 +217,8 @@ func TestKeePassReferences_Disabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEntry failed: %v", err)
 	}
-	if entry.Attributes["UserName"] != "{TITLE}_user" {
-		t.Errorf("GetEntry attribute when disabled = %q, want %q", entry.Attributes["UserName"], "{TITLE}_user")
+	if entry["UserName"] != "{TITLE}_user" {
+		t.Errorf("GetEntry attribute when disabled = %q, want %q", entry["UserName"], "{TITLE}_user")
 	}
 }
 
@@ -643,11 +643,11 @@ func TestKeePassReferences_GetEntryAndSearch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetEntry failed: %v", err)
 		}
-		if entry.Attributes["UserName"] != "LocalPlaceholders_user" {
-			t.Errorf("expected resolved UserName 'LocalPlaceholders_user', got %q", entry.Attributes["UserName"])
+		if entry["UserName"] != "LocalPlaceholders_user" {
+			t.Errorf("expected resolved UserName 'LocalPlaceholders_user', got %q", entry["UserName"])
 		}
-		if entry.Attributes["Password"] != "pass_LocalPlaceholders_user" {
-			t.Errorf("expected resolved Password 'pass_LocalPlaceholders_user', got %q", entry.Attributes["Password"])
+		if entry["Password"] != "pass_LocalPlaceholders_user" {
+			t.Errorf("expected resolved Password 'pass_LocalPlaceholders_user', got %q", entry["Password"])
 		}
 	})
 
@@ -659,8 +659,8 @@ func TestKeePassReferences_GetEntryAndSearch(t *testing.T) {
 		if len(results) != 1 {
 			t.Fatalf("expected 1 result, got %d", len(results))
 		}
-		if results[0].Entry.Attributes["UserName"] != "LocalPlaceholders_user" {
-			t.Errorf("expected resolved UserName in Search result, got %q", results[0].Entry.Attributes["UserName"])
+		if results[0]["UserName"] != "LocalPlaceholders_user" {
+			t.Errorf("expected resolved UserName in Search result, got %q", results[0]["UserName"])
 		}
 	})
 }

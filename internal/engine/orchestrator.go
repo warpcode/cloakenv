@@ -78,22 +78,8 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	searcher := NewSearcher(pm, resolver)
 
 	// Break the circular dependency by setting the search callback dynamically
-	resolver.SetSearchFunc(func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]provider.SearchResult, error) {
+	resolver.SetSearchFunc(func(ctx context.Context, expressionStr string, sourceVaults []string, depth int) ([]SearchResult, error) {
 		return searcher.SearchRecursive(ctx, expressionStr, sourceVaults, depth)
-	})
-
-	pm.SetGetEntriesFunc(func(ctx context.Context, uri string) ([]provider.Entry, error) {
-		depth := 0
-		if d, ok := ctx.Value(provider.ContextKeyDepth).(int); ok {
-			depth = d
-		}
-		nextDepth := depth + 1
-		nextCtx := context.WithValue(ctx, provider.ContextKeyDepth, nextDepth)
-		return resolver.GetEntriesRecursive(nextCtx, uri, nextDepth)
-	})
-
-	pm.SetRenderTemplateFunc(func(ctx context.Context, tmplStr string, data any) (string, error) {
-		return NewTemplateEngine(resolver).Render(ctx, tmplStr, data, 0, "")
 	})
 
 	ruleEngine := NewRuleEngine()
@@ -152,7 +138,7 @@ func (o *Orchestrator) GetEntries(ctx context.Context, uri string) ([]provider.E
 }
 
 // Search queries entries across searchable repositories using an expression.
-func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoScopes []string) ([]provider.SearchResult, error) {
+func (o *Orchestrator) Search(ctx context.Context, expressionStr string, repoScopes []string) ([]SearchResult, error) {
 	return o.searcher.Search(ctx, expressionStr, repoScopes)
 }
 
@@ -181,16 +167,6 @@ func (o *Orchestrator) BuildEnvForCommandDetails(ctx context.Context, cfg EnvCon
 // (used by the config subcommands).
 func (o *Orchestrator) Keyring() *provider.OSKeyringProvider {
 	return o.providerManager.Keyring()
-}
-
-// Write takes a full URI and writes the secret value to that location.
-func (o *Orchestrator) Write(ctx context.Context, uri string, value string) error {
-	return o.providerManager.Write(ctx, uri, value)
-}
-
-// Delete takes a full URI and removes the secret from the provider.
-func (o *Orchestrator) Delete(ctx context.Context, uri string) error {
-	return o.providerManager.Delete(ctx, uri)
 }
 
 // ClearCache clears all local cache files and vault caches.
@@ -234,7 +210,9 @@ func (o *Orchestrator) CheckAccess(ctx context.Context, vaultName string) error 
 
 func validateVaultConfig(vaultName string, vault config.VaultConfig, builtins map[string]provider.SecretProvider) error {
 	if _, isBuiltin := builtins[vaultName]; isBuiltin {
-		if (vaultName != "env" || vault.Provider != "env") && (vaultName != "pass" || vault.Provider != "pass") {
+		if (vaultName != "env" || vault.Provider != "env") &&
+			(vaultName != "pass" || vault.Provider != "pass") &&
+			(vaultName != "keyring" || vault.Provider != "keyring") {
 			return fmt.Errorf("invalid config: vault name %q conflicts with built-in scheme", vaultName)
 		}
 	}
@@ -242,18 +220,8 @@ func validateVaultConfig(vaultName string, vault config.VaultConfig, builtins ma
 		return fmt.Errorf("invalid config: vault name %q conflicts with reserved scheme", vaultName)
 	}
 
-	switch vault.KeyFormat {
-	case "", "none", "env", "snake", "kebab":
-		// valid
-	default:
-		return fmt.Errorf("invalid config for vault %q: invalid key_format %q (must be one of: none, env, snake, kebab)", vaultName, vault.KeyFormat)
-	}
-
 	switch vault.Provider {
 	case "keepass":
-		if vault.SingleEntity != nil && *vault.SingleEntity {
-			return fmt.Errorf("invalid config for vault %q: keepass provider cannot be configured as a single-entity vault", vaultName)
-		}
 		kp := provider.NewKeePassProvider()
 		settings := map[string]string{
 			"vault_path": vault.VaultPath,
@@ -264,8 +232,6 @@ func validateVaultConfig(vaultName string, vault config.VaultConfig, builtins ma
 		if err := kp.Validate(settings); err != nil {
 			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
 		}
-	case "env":
-		// env provider reads directly from process environment; no specific required settings.
 	case "pass":
 		pp := provider.NewPassProvider()
 		settings := map[string]string{
@@ -275,10 +241,22 @@ func validateVaultConfig(vaultName string, vault config.VaultConfig, builtins ma
 		if err := pp.Validate(settings); err != nil {
 			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
 		}
+	case "vault":
+		vp := provider.NewVaultProvider()
+		settings := map[string]string{
+			"address":   vault.Address,
+			"token":     vault.Token,
+			"role_id":   vault.RoleID,
+			"secret_id": vault.SecretID,
+		}
+		if err := vp.Validate(settings); err != nil {
+			return fmt.Errorf("invalid config for vault %q: %w", vaultName, err)
+		}
+	case "env", "keyring":
+		// Stateless built-in read-only providers require no vault_path settings.
 	default:
 		return fmt.Errorf("unsupported provider type %q for vault %q", vault.Provider, vaultName)
 	}
-
 	return nil
 }
 

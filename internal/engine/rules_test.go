@@ -236,14 +236,12 @@ func TestRuleEngine_Errors(t *testing.T) {
 
 func TestEntryToRawMap(t *testing.T) {
 	e := provider.Entry{
-		Title: "DB",
-		UUID:  "1234",
-		Tags:  []string{"prod", "db"},
-		Group: &provider.GroupInfo{Name: "Infra", UUID: "g-1", Path: "/Infra"},
-		Attributes: map[string]any{
-			"password": "pw",
-			"port":     5432,
-		},
+		"title":    "DB",
+		"uuid":     "1234",
+		"tags":     []string{"prod", "db"},
+		"group":    map[string]any{"name": "Infra", "uuid": "g-1", "path": "/Infra"},
+		"password": "pw",
+		"port":     5432,
 	}
 	raw := EntryToRawMap(e, "keepass", "work", "Infra/DB")
 	if raw["title"] != "DB" || raw["path"] != "Infra/DB" || raw["password"] != "pw" || raw["port"] != 5432 {
