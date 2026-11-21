@@ -357,3 +357,74 @@ func TestPassProvider_Search(t *testing.T) {
 		}
 	})
 }
+
+func TestPassProviderQueryScope(t *testing.T) {
+	storeDir := t.TempDir()
+	for _, rel := range []string{"work/api.gpg", "work/prod/db.gpg", "personal/bank.gpg", "workspace/other.gpg"} {
+		full := filepath.Join(storeDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("cipher"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("directory prefix scopes scan and skips unrelated dirs", func(t *testing.T) {
+		p := NewPassProvider()
+		if err := p.Initialize(context.Background(), ProviderConfig{
+			Settings: map[string]string{"store_dir": storeDir},
+			Query:    "work/",
+		}); err != nil {
+			t.Fatalf("Initialize failed: %v", err)
+		}
+		var decrypted []string
+		p.SetDecryptFunc(func(_ context.Context, filePath string) ([]byte, error) {
+			rel, _ := filepath.Rel(storeDir, filePath)
+			decrypted = append(decrypted, filepath.ToSlash(rel))
+			return []byte("pw-" + filepath.Base(filePath)), nil
+		})
+		entries, err := p.Search(context.Background(), SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(entries) != 2 {
+			t.Fatalf("expected 2 entries under work/, got %d", len(entries))
+		}
+		for _, d := range decrypted {
+			if d != "work/api.gpg" && d != "work/prod/db.gpg" {
+				t.Errorf("unexpectedly decrypted out-of-scope file %q", d)
+			}
+		}
+	})
+
+	t.Run("single entry scope", func(t *testing.T) {
+		p := NewPassProvider()
+		if err := p.Initialize(context.Background(), ProviderConfig{
+			Settings: map[string]string{"store_dir": storeDir},
+			Query:    "work/api",
+		}); err != nil {
+			t.Fatalf("Initialize failed: %v", err)
+		}
+		p.SetDecryptFunc(func(_ context.Context, _ string) ([]byte, error) {
+			return []byte("secret-api"), nil
+		})
+		entries, err := p.Search(context.Background(), SearchQuery{})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(entries) != 1 || entries[0].Path() != "work/api" {
+			t.Fatalf("expected single work/api entry, got %v", entries)
+		}
+	})
+
+	t.Run("rejects path traversal query", func(t *testing.T) {
+		p := NewPassProvider()
+		if err := p.Initialize(context.Background(), ProviderConfig{
+			Settings: map[string]string{"store_dir": storeDir},
+			Query:    "../etc",
+		}); err == nil {
+			t.Fatalf("expected error for path traversal query")
+		}
+	})
+}

@@ -137,55 +137,141 @@ func (pm *ProviderManager) getVaultProvider(ctx context.Context, vaultName strin
 	return p, nil
 }
 
-// initVaultProvider creates and initializes a pure read-only provider for a configured vault,
-// optionally wrapping it in CachingProvider when vault caching is enabled.
-func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
-	var p provider.SecretProvider
-	var err error
+type lazySearchableProvider struct {
+	scheme string
+	initFn func(context.Context) (provider.SecretProvider, error)
 
-	switch vault.Provider {
-	case "keepass":
-		p, err = pm.initKeePass(ctx, vaultName, vault)
-	case "pass":
-		p, err = pm.initPass(ctx, vault)
-	case "vault":
-		p, err = pm.initVault(ctx, vault)
-	case "env":
-		p, err = pm.initEnv(ctx, vault)
-	case "keyring":
-		p, err = pm.initKeyring(ctx, vault)
-	default:
-		return nil, fmt.Errorf("unsupported provider type: %q", vault.Provider)
+	mu    sync.Mutex
+	inner provider.SecretProvider
+}
+
+func (l *lazySearchableProvider) Scheme() string { return l.scheme }
+
+func (l *lazySearchableProvider) Initialize(_ context.Context, _ provider.ProviderConfig) error {
+	return nil
+}
+
+func (l *lazySearchableProvider) Validate(_ map[string]string) error { return nil }
+
+func (l *lazySearchableProvider) EnsureInitialized(ctx context.Context) error {
+	_, err := l.ensure(ctx)
+	return err
+}
+
+func (l *lazySearchableProvider) ensure(ctx context.Context) (provider.SecretProvider, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.inner != nil {
+		return l.inner, nil
 	}
+	p, err := l.initFn(ctx)
 	if err != nil {
 		return nil, err
 	}
+	l.inner = p
+	return p, nil
+}
+
+func (l *lazySearchableProvider) GetSecret(ctx context.Context, location string) (string, error) {
+	p, err := l.ensure(ctx)
+	if err != nil {
+		return "", err
+	}
+	return p.GetSecret(ctx, location)
+}
+
+func (l *lazySearchableProvider) GetEntry(ctx context.Context, location string) (provider.Entry, error) {
+	p, err := l.ensure(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sp, ok := p.(provider.SearchableProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %q does not support structured entries", l.scheme)
+	}
+	return sp.GetEntry(ctx, location)
+}
+
+func (l *lazySearchableProvider) Search(ctx context.Context, query provider.SearchQuery) ([]provider.Entry, error) {
+	p, err := l.ensure(ctx)
+	if err != nil {
+		return nil, err
+	}
+	sp, ok := p.(provider.SearchableProvider)
+	if !ok {
+		return nil, fmt.Errorf("provider %q does not support searching", l.scheme)
+	}
+	return sp.Search(ctx, query)
+}
+
+func (pm *ProviderManager) initRawVaultProvider(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
+	switch vault.Provider {
+	case "keepass":
+		return pm.initKeePass(ctx, vaultName, vault)
+	case "pass":
+		return pm.initPass(ctx, vault)
+	case "vault":
+		return pm.initVault(ctx, vault)
+	case "env":
+		return pm.initEnv(ctx, vault)
+	case "keyring":
+		return pm.initKeyring(ctx, vault)
+	default:
+		return nil, fmt.Errorf("unsupported provider type: %q", vault.Provider)
+	}
+}
+
+func (pm *ProviderManager) vaultCacheConfig(vaultName string, vault config.VaultConfig) (provider.CachingConfig, error) {
+	ttl := time.Hour
+	if vault.Cache.TTL != "" {
+		parsedTTL, parseErr := time.ParseDuration(vault.Cache.TTL)
+		if parseErr != nil {
+			return provider.CachingConfig{}, fmt.Errorf("invalid cache ttl %q: %w", vault.Cache.TTL, parseErr)
+		}
+		ttl = parsedTTL
+	}
+	mode := provider.CacheModeKeyring
+	if vault.Cache.Mode == "encrypted_disk" {
+		mode = provider.CacheModeEncryptedDisk
+	}
+	return provider.CachingConfig{
+		VaultName:     vaultName,
+		TTL:           ttl,
+		Mode:          mode,
+		KeyringPrefix: pm.config.KeyringPrefix(),
+	}, nil
+}
+
+// initVaultProvider creates and initializes a pure read-only provider for a configured vault,
+// optionally wrapping it in CachingProvider when vault caching is enabled.
+// When caching is enabled, backend initialization is deferred until a cache miss so cached
+// Search/GetEntry/GetSecret hits avoid unlocking KeePass or contacting remote vaults.
+func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
+	switch vault.Provider {
+	case "keepass", "pass", "vault", "env", "keyring":
+	default:
+		return nil, fmt.Errorf("unsupported provider type: %q", vault.Provider)
+	}
 
 	if vault.Cache.Enabled {
-		ttl := time.Hour
-		if vault.Cache.TTL != "" {
-			parsedTTL, parseErr := time.ParseDuration(vault.Cache.TTL)
-			if parseErr != nil {
-				return nil, fmt.Errorf("invalid cache ttl %q: %w", vault.Cache.TTL, parseErr)
-			}
-			ttl = parsedTTL
+		cacheCfg, err := pm.vaultCacheConfig(vaultName, vault)
+		if err != nil {
+			return nil, err
 		}
-		mode := provider.CacheModeKeyring
-		if vault.Cache.Mode == "encrypted_disk" {
-			mode = provider.CacheModeEncryptedDisk
+		lazy := &lazySearchableProvider{
+			scheme: vault.Provider,
+			initFn: func(initCtx context.Context) (provider.SecretProvider, error) {
+				return pm.initRawVaultProvider(initCtx, vaultName, vault)
+			},
 		}
-		p, err = provider.NewCachingProvider(p, provider.CachingConfig{
-			VaultName:     vaultName,
-			TTL:           ttl,
-			Mode:          mode,
-			KeyringPrefix: pm.config.KeyringPrefix(),
-		})
+		p, err := provider.NewCachingProvider(lazy, cacheCfg)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize cache wrapper for vault %q: %w", vaultName, err)
 		}
+		return p, nil
 	}
 
-	return p, nil
+	return pm.initRawVaultProvider(ctx, vaultName, vault)
 }
 
 func (pm *ProviderManager) initKeePass(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
@@ -322,8 +408,20 @@ func (pm *ProviderManager) EnsureInitialized(ctx context.Context, scheme string,
 
 // CheckAccess checks if a vault is active/accessible (i.e. can be successfully initialized).
 func (pm *ProviderManager) CheckAccess(ctx context.Context, vaultName string) error {
-	_, err := pm.getVaultProvider(ctx, vaultName)
-	return err
+	p, err := pm.getVaultProvider(ctx, vaultName)
+	if err != nil {
+		return err
+	}
+	if unwrap, ok := p.(interface {
+		Underlying() provider.SecretProvider
+	}); ok {
+		if inner := unwrap.Underlying(); inner != nil {
+			if initializer, ok := inner.(interface{ EnsureInitialized(context.Context) error }); ok {
+				return initializer.EnsureInitialized(ctx)
+			}
+		}
+	}
+	return nil
 }
 
 // ClearCache clears all local cache files and keyring vault caches.
@@ -346,15 +444,22 @@ func (pm *ProviderManager) ClearCache(ctx context.Context) error {
 
 	if pm.config != nil {
 		for vaultName, vCfg := range pm.config.Vaults {
-			if vCfg.Cache.Enabled {
-				prov, getErr := pm.getVaultProvider(ctx, vaultName)
-				if getErr != nil {
-					continue
-				}
-				if clearer, ok := prov.(interface{ Clear() error }); ok {
-					if cErr := clearer.Clear(); cErr != nil {
-						errs = append(errs, fmt.Errorf("vault %q cache clear: %w", vaultName, cErr))
-					}
+			if !vCfg.Cache.Enabled {
+				continue
+			}
+			cacheCfg, cfgErr := pm.vaultCacheConfig(vaultName, vCfg)
+			if cfgErr != nil {
+				errs = append(errs, fmt.Errorf("vault %q cache clear: %w", vaultName, cfgErr))
+				continue
+			}
+			cacheHandle, hErr := provider.NewCachingProvider(nil, cacheCfg)
+			if hErr != nil {
+				errs = append(errs, fmt.Errorf("vault %q cache clear: %w", vaultName, hErr))
+				continue
+			}
+			if clearer, ok := cacheHandle.(interface{ Clear() error }); ok {
+				if cErr := clearer.Clear(); cErr != nil {
+					errs = append(errs, fmt.Errorf("vault %q cache clear: %w", vaultName, cErr))
 				}
 			}
 		}
@@ -397,20 +502,27 @@ func (pm *ProviderManager) PruneCache(ctx context.Context) (PruneStats, error) {
 
 	if pm.config != nil {
 		for vaultName, vCfg := range pm.config.Vaults {
-			if vCfg.Cache.Enabled {
-				prov, getErr := pm.getVaultProvider(ctx, vaultName)
-				if getErr != nil {
-					continue
-				}
-				if pruner, ok := prov.(interface {
-					Prune() (int, int64, error)
-				}); ok {
-					count, bytesReclaimed, pErr := pruner.Prune()
-					stats.Count += count
-					stats.ReclaimedBytes += bytesReclaimed
-					if pErr != nil {
-						errs = append(errs, fmt.Errorf("vault %q cache prune: %w", vaultName, pErr))
-					}
+			if !vCfg.Cache.Enabled {
+				continue
+			}
+			cacheCfg, cfgErr := pm.vaultCacheConfig(vaultName, vCfg)
+			if cfgErr != nil {
+				errs = append(errs, fmt.Errorf("vault %q cache prune: %w", vaultName, cfgErr))
+				continue
+			}
+			cacheHandle, hErr := provider.NewCachingProvider(nil, cacheCfg)
+			if hErr != nil {
+				errs = append(errs, fmt.Errorf("vault %q cache prune: %w", vaultName, hErr))
+				continue
+			}
+			if pruner, ok := cacheHandle.(interface {
+				Prune() (int, int64, error)
+			}); ok {
+				count, bytesReclaimed, pErr := pruner.Prune()
+				stats.Count += count
+				stats.ReclaimedBytes += bytesReclaimed
+				if pErr != nil {
+					errs = append(errs, fmt.Errorf("vault %q cache prune: %w", vaultName, pErr))
 				}
 			}
 		}

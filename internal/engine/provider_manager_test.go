@@ -396,3 +396,73 @@ func TestProviderManager_IsolatedKeyringVaultInstances(t *testing.T) {
 		t.Fatalf("unexpected kr_alpha entries (may have been overwritten by kr_beta): %+v err=%v", entriesA, err)
 	}
 }
+
+func TestProviderManagerClearAndPruneCacheOfflineVault(t *testing.T) {
+	keyring.MockInit()
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(tmpHome, ".cache"))
+
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"offline_kp": {
+				Provider:  "keepass",
+				VaultPath: filepath.Join(tmpHome, "does-not-exist.kdbx"),
+				Cache: config.VaultCacheConfig{
+					Enabled: true,
+					Mode:    provider.CacheModeEncryptedDisk,
+					TTL:     "10m",
+				},
+			},
+		},
+	}
+
+	// Pre-populate encrypted disk cache for offline_kp via a mock searchable backend
+	// so we can verify: (1) cached Search succeeds lazily without unlocking KeePass,
+	// and (2) ClearCache clears the cache without requiring KeePass initialization.
+	seedBackend := newTestMemoryProvider(map[string]provider.Entry{
+		"prod/db": {"title": "db", "path": "prod/db", "password": "cached-secret"},
+	})
+	seedCache, err := provider.NewCachingProvider(seedBackend, provider.CachingConfig{
+		VaultName:     "offline_kp",
+		TTL:           10 * 60 * 1e9,
+		Mode:          provider.CacheModeEncryptedDisk,
+		KeyringPrefix: cfg.KeyringPrefix(),
+	})
+	if err != nil {
+		t.Fatalf("NewCachingProvider seed failed: %v", err)
+	}
+	if _, err := seedCache.(provider.SearchableProvider).Search(context.Background(), provider.SearchQuery{}); err != nil {
+		t.Fatalf("seed Search failed: %v", err)
+	}
+
+	pm := NewProviderManager(cfg, map[string]provider.SecretProvider{"cache": provider.NewCacheProvider()}, nil)
+
+	// 1. Cached Search hit must NOT try to unlock missing KeePass DB.
+	p, _, err := pm.GetProvider(context.Background(), "offline_kp")
+	if err != nil {
+		t.Fatalf("GetProvider for cached vault failed: %v", err)
+	}
+	entries, err := p.(provider.SearchableProvider).Search(context.Background(), provider.SearchQuery{})
+	if err != nil {
+		t.Fatalf("cached Search on offline vault failed: %v", err)
+	}
+	if len(entries) != 1 || entries[0]["password"] != "cached-secret" {
+		t.Fatalf("unexpected cached entries: %v", entries)
+	}
+
+	// 2. CheckAccess must still detect that the underlying KeePass file is unreachable.
+	if err := pm.CheckAccess(context.Background(), "offline_kp"); err == nil {
+		t.Fatalf("expected CheckAccess to fail for missing KeePass file")
+	}
+
+	// 3. ClearCache must clear the offline vault's cache without initializing KeePass.
+	if err := pm.ClearCache(context.Background()); err != nil {
+		t.Fatalf("ClearCache failed: %v", err)
+	}
+
+	// 4. After ClearCache, Search must now miss cache and fail trying to open missing KeePass DB.
+	if _, err := p.(provider.SearchableProvider).Search(context.Background(), provider.SearchQuery{}); err == nil {
+		t.Fatalf("expected Search to fail after ClearCache on offline vault")
+	}
+}

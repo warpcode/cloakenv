@@ -786,3 +786,52 @@ func TestKeePassProvider_LowercasePasswordFallback(t *testing.T) {
 		t.Fatalf("expected explicit lowercase password to be preserved, got Password=%v password=%v", flatExplicit["Password"], flatExplicit["password"])
 	}
 }
+
+func TestKeePassProviderQueryScope(t *testing.T) {
+	makeEntry := func(title, pw string) gokeepasslib.Entry {
+		e := gokeepasslib.NewEntry()
+		e.Values = append(e.Values,
+			gokeepasslib.ValueData{Key: "Title", Value: gokeepasslib.V{Content: title}},
+			gokeepasslib.ValueData{Key: "Password", Value: gokeepasslib.V{Content: pw}},
+		)
+		return e
+	}
+	root := gokeepasslib.NewGroup()
+	root.Name = "Root"
+	work := gokeepasslib.NewGroup()
+	work.Name = "Work"
+	work.Entries = []gokeepasslib.Entry{makeEntry("api", "w1")}
+	workProd := gokeepasslib.NewGroup()
+	workProd.Name = "Prod"
+	workProd.Entries = []gokeepasslib.Entry{makeEntry("db", "w2")}
+	work.Groups = []gokeepasslib.Group{workProd}
+
+	workspace := gokeepasslib.NewGroup()
+	workspace.Name = "Workspace"
+	workspace.Entries = []gokeepasslib.Entry{makeEntry("other", "ws1")}
+
+	personal := gokeepasslib.NewGroup()
+	personal.Name = "Personal"
+	personal.Entries = []gokeepasslib.Entry{makeEntry("bank", "p1")}
+
+	root.Groups = []gokeepasslib.Group{work, workspace, personal}
+	db := gokeepasslib.NewDatabase()
+	db.Content = &gokeepasslib.DBContent{Root: &gokeepasslib.RootData{Groups: []gokeepasslib.Group{root}}}
+
+	kp := NewKeePassProvider()
+	kp.db = db
+	kp.queryPrefix = "work/"
+
+	entries, err := kp.Search(context.Background(), SearchQuery{})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries under Work/, got %d: %v", len(entries), entries)
+	}
+	for _, e := range entries {
+		if !strings.HasPrefix(strings.ToLower(e.Path()), "work/") {
+			t.Errorf("unexpected out-of-scope entry path %q", e.Path())
+		}
+	}
+}

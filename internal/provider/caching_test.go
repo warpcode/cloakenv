@@ -308,3 +308,89 @@ func TestCachingProvider_SearchableInterface(t *testing.T) {
 		t.Errorf("expected 1 search result, got %d", len(results))
 	}
 }
+
+type mockSearchableCacheBackend struct {
+	mockBackendProvider
+	searchCalls atomic.Int64
+	entries     []Entry
+}
+
+func (m *mockSearchableCacheBackend) GetEntry(_ context.Context, location string) (Entry, error) {
+	m.calls.Add(1)
+	return Entry{"title": location, "path": location, "tags": []string{"t1"}, "secret": "val"}, nil
+}
+
+func (m *mockSearchableCacheBackend) Search(_ context.Context, _ SearchQuery) ([]Entry, error) {
+	m.searchCalls.Add(1)
+	out := make([]Entry, len(m.entries))
+	for i, e := range m.entries {
+		out[i] = e.Clone()
+	}
+	return out, nil
+}
+
+func TestSearchableCachingProviderSearchCachesResults(t *testing.T) {
+	for _, mode := range []string{CacheModeKeyring, CacheModeEncryptedDisk} {
+		t.Run(mode, func(t *testing.T) {
+			keyring.MockInit()
+			tmpHome := t.TempDir()
+			t.Setenv("HOME", tmpHome)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(tmpHome, ".cache"))
+
+			backend := &mockSearchableCacheBackend{
+				entries: []Entry{
+					{"title": "db", "path": "prod/db", "tags": []string{"prod", "db"}, "password": "pw1"},
+				},
+			}
+			wrapped, err := NewCachingProvider(backend, CachingConfig{
+				VaultName:     "work_" + mode,
+				TTL:           time.Minute,
+				Mode:          mode,
+				KeyringPrefix: "cloakenv_test",
+			})
+			if err != nil {
+				t.Fatalf("NewCachingProvider failed: %v", err)
+			}
+			sp, ok := wrapped.(SearchableProvider)
+			if !ok {
+				t.Fatalf("expected wrapped provider to implement SearchableProvider")
+			}
+
+			ctx := context.Background()
+			got1, err := sp.Search(ctx, SearchQuery{Tags: []string{"db", "prod"}})
+			if err != nil {
+				t.Fatalf("first Search failed: %v", err)
+			}
+			if len(got1) != 1 || got1[0]["password"] != "pw1" {
+				t.Fatalf("unexpected first Search result: %v", got1)
+			}
+			if backend.searchCalls.Load() != 1 {
+				t.Fatalf("expected 1 backend search call, got %d", backend.searchCalls.Load())
+			}
+
+			// Canonicalized tag order must hit the same cache entry without invoking backend.
+			got2, err := sp.Search(ctx, SearchQuery{Tags: []string{"prod", "db"}})
+			if err != nil {
+				t.Fatalf("second Search failed: %v", err)
+			}
+			if len(got2) != 1 || got2[0]["password"] != "pw1" {
+				t.Fatalf("unexpected cached Search result: %v", got2)
+			}
+			if len(got2[0].Tags()) != 2 {
+				t.Fatalf("expected cached Entry tags preserved, got %v", got2[0].Tags())
+			}
+			if backend.searchCalls.Load() != 1 {
+				t.Fatalf("expected cached Search hit without calling backend again, got %d calls", backend.searchCalls.Load())
+			}
+
+			// Different query must miss cache.
+			_, err = sp.Search(ctx, SearchQuery{Path: "other"})
+			if err != nil {
+				t.Fatalf("third Search failed: %v", err)
+			}
+			if backend.searchCalls.Load() != 2 {
+				t.Fatalf("expected cache miss on distinct SearchQuery, got %d calls", backend.searchCalls.Load())
+			}
+		})
+	}
+}

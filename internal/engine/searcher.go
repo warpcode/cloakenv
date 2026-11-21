@@ -228,6 +228,29 @@ func buildSearchEntryEnv(r SearchResult, env, groupMap, metaMap map[string]any) 
 		} else {
 			groupMap["path"] = ""
 		}
+	} else if gVal, ok := findAttrCaseFold(r.Entry, "group"); ok && gVal != nil {
+		if gm, isMap := gVal.(map[string]any); isMap {
+			if n, ok := gm["name"]; ok {
+				groupMap["name"] = fmt.Sprint(n)
+			} else {
+				groupMap["name"] = ""
+			}
+			if u, ok := gm["uuid"]; ok {
+				groupMap["uuid"] = fmt.Sprint(u)
+			} else {
+				groupMap["uuid"] = ""
+			}
+			if p, ok := gm["path"]; ok {
+				groupMap["path"] = fmt.Sprint(p)
+			} else {
+				groupMap["path"] = ""
+			}
+		} else {
+			gs := fmt.Sprint(gVal)
+			groupMap["name"] = gs
+			groupMap["uuid"] = ""
+			groupMap["path"] = gs
+		}
 	} else {
 		groupMap["name"] = ""
 		groupMap["uuid"] = ""

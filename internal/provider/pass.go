@@ -37,6 +37,7 @@ type DecryptFunc func(ctx context.Context, filePath string) ([]byte, error)
 // extracting the password from the first line and key-value attributes from subsequent lines.
 type PassProvider struct {
 	storeDir    string
+	queryPrefix string
 	decryptFunc DecryptFunc
 
 	mu        sync.RWMutex
@@ -85,7 +86,16 @@ func (p *PassProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 		dir = filepath.Join(home, ".password-store")
 	}
 
+	queryPrefix := strings.Trim(filepath.ToSlash(strings.TrimSpace(cfg.Query)), "/")
+	if queryPrefix != "" {
+		for _, seg := range strings.Split(queryPrefix, "/") {
+			if seg == ".." || seg == "." || seg == "" {
+				return fmt.Errorf("pass provider: invalid query scope %q", cfg.Query)
+			}
+		}
+	}
 	p.storeDir = expandHome(dir)
+	p.queryPrefix = queryPrefix
 	p.fileCache = make(map[string]Entry)
 
 	return nil
@@ -176,7 +186,23 @@ func (p *PassProvider) Search(ctx context.Context, query SearchQuery) ([]Entry, 
 		queryTagsLower = append(queryTagsLower, strings.ToLower(t))
 	}
 
-	err := filepath.WalkDir(storeDir, func(path string, d fs.DirEntry, err error) error {
+	p.mu.RLock()
+	queryPrefix := p.queryPrefix
+	p.mu.RUnlock()
+
+	walkRoot := storeDir
+	if queryPrefix != "" {
+		candidate := filepath.Join(storeDir, filepath.FromSlash(queryPrefix))
+		if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+			walkRoot = candidate
+		} else if _, fileErr := os.Stat(candidate + ".gpg"); fileErr == nil {
+			walkRoot = candidate + ".gpg"
+		} else {
+			return nil, nil
+		}
+	}
+
+	err := filepath.WalkDir(walkRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return nil
@@ -201,6 +227,9 @@ func (p *PassProvider) Search(ctx context.Context, query SearchQuery) ([]Entry, 
 			return relErr
 		}
 		entryPath := filepath.ToSlash(strings.TrimSuffix(relPath, ".gpg"))
+		if queryPrefix != "" && entryPath != queryPrefix && !strings.HasPrefix(entryPath, queryPrefix+"/") {
+			return nil
+		}
 		title := filepath.Base(entryPath)
 
 		if queryTitleLower != "" && !strings.Contains(strings.ToLower(title), queryTitleLower) {
