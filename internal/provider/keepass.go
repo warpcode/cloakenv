@@ -26,6 +26,7 @@ type KeePassProvider struct {
 	db *gokeepasslib.Database
 
 	resolveReferences bool
+	queryPrefix       string
 	now               func() time.Time
 
 	cacheMu     sync.RWMutex
@@ -56,6 +57,7 @@ func (k *KeePassProvider) Scheme() string {
 //   - "force_prompt": "true" to force prompting for password
 func (k *KeePassProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 	k.resolveReferences = cfg.ResolveReferences || cfg.Settings["resolve_references"] == "true"
+	k.queryPrefix = strings.Trim(strings.TrimSpace(cfg.Query), "/")
 
 	vaultPath := cfg.Settings["vault_path"]
 	if vaultPath == "" {
@@ -398,6 +400,9 @@ func (k *KeePassProvider) Search(_ context.Context, query SearchQuery) ([]Entry,
 				entryPath = groupPath + "/" + title
 			}
 
+			if k.queryPrefix != "" && !matchesKeePassQueryScope(entryPath, k.queryPrefix) {
+				continue
+			}
 			if !matchSearchEntry(entry, title, entryPath, queryTitleLower, queryPathLower, queryTagsLower) {
 				continue
 			}
@@ -609,4 +614,13 @@ func (k *KeePassProvider) getBinaryContent(id int) (string, bool) {
 
 	content, ok := k.binaryCache[id]
 	return content, ok
+}
+
+func matchesKeePassQueryScope(entryPath, scope string) bool {
+	scopeLower := strings.ToLower(strings.Trim(strings.TrimSpace(scope), "/"))
+	if scopeLower == "" {
+		return true
+	}
+	pathLower := strings.ToLower(strings.Trim(entryPath, "/"))
+	return pathLower == scopeLower || strings.HasPrefix(pathLower, scopeLower+"/")
 }

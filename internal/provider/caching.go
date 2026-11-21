@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -149,11 +150,6 @@ func (c *CachingProvider) Initialize(ctx context.Context, config ProviderConfig)
 // Validate delegates to the underlying provider.
 func (c *CachingProvider) Validate(settings map[string]string) error {
 	return c.underlying.Validate(settings)
-}
-
-// Underlying returns the wrapped SecretProvider.
-func (c *CachingProvider) Underlying() SecretProvider {
-	return c.underlying
 }
 
 // cacheKey creates a unique key for the secret / entry location.
@@ -544,6 +540,43 @@ func (c *CachingProvider) GetSecret(ctx context.Context, location string) (strin
 	return val, nil
 }
 
+// Underlying returns the wrapped SecretProvider.
+func (c *CachingProvider) Underlying() SecretProvider {
+	return c.underlying
+}
+
+func normalizeCachedEntry(e Entry) {
+	if e == nil {
+		return
+	}
+	if raw, ok := e["tags"]; ok {
+		if slice, isAny := raw.([]any); isAny {
+			tags := make([]string, 0, len(slice))
+			for _, item := range slice {
+				if str, ok := item.(string); ok {
+					tags = append(tags, str)
+				}
+			}
+			e["tags"] = tags
+		}
+	}
+}
+
+func canonicalSearchCacheKey(query SearchQuery) string {
+	tags := slices.Clone(query.Tags)
+	slices.Sort(tags)
+	raw, _ := json.Marshal(struct {
+		Path  string   `json:"path,omitempty"`
+		Title string   `json:"title,omitempty"`
+		Tags  []string `json:"tags,omitempty"`
+	}{
+		Path:  query.Path,
+		Title: query.Title,
+		Tags:  tags,
+	})
+	return "search:" + string(raw)
+}
+
 // SearchableCachingProvider wraps CachingProvider for SearchableProvider backends.
 type SearchableCachingProvider struct {
 	*CachingProvider
@@ -555,10 +588,13 @@ func (s *SearchableCachingProvider) GetEntry(ctx context.Context, location strin
 	cachedPayload, found, err := s.readPayload(cacheKeyLoc)
 	if err == nil && found {
 		var entry Entry
-		if decErr := json.Unmarshal(cachedPayload, &entry); decErr == nil {
-			utils.ZeroBytes(cachedPayload)
+		decErr := json.Unmarshal(cachedPayload, &entry)
+		utils.ZeroBytes(cachedPayload)
+		if decErr == nil {
+			normalizeCachedEntry(entry)
 			return entry, nil
 		}
+	} else if cachedPayload != nil {
 		utils.ZeroBytes(cachedPayload)
 	}
 
@@ -569,16 +605,41 @@ func (s *SearchableCachingProvider) GetEntry(ctx context.Context, location strin
 		}
 		if data, encErr := json.Marshal(entry); encErr == nil {
 			_ = s.writePayload(cacheKeyLoc, data)
+			utils.ZeroBytes(data)
 		}
 		return entry, nil
 	}
 	return nil, fmt.Errorf("provider %q does not support structured entries", s.Scheme())
 }
 
-// Search delegates search queries to the underlying SearchableProvider.
+// Search retrieves cached Search results or queries the underlying SearchableProvider and populates the cache.
 func (s *SearchableCachingProvider) Search(ctx context.Context, query SearchQuery) ([]Entry, error) {
+	cacheKeyLoc := canonicalSearchCacheKey(query)
+	cachedPayload, found, err := s.readPayload(cacheKeyLoc)
+	if err == nil && found {
+		var entries []Entry
+		decErr := json.Unmarshal(cachedPayload, &entries)
+		utils.ZeroBytes(cachedPayload)
+		if decErr == nil {
+			for _, e := range entries {
+				normalizeCachedEntry(e)
+			}
+			return entries, nil
+		}
+	} else if cachedPayload != nil {
+		utils.ZeroBytes(cachedPayload)
+	}
+
 	if searchable, ok := s.underlying.(SearchableProvider); ok {
-		return searchable.Search(ctx, query)
+		entries, err := searchable.Search(ctx, query)
+		if err != nil {
+			return nil, err
+		}
+		if data, encErr := json.Marshal(entries); encErr == nil {
+			_ = s.writePayload(cacheKeyLoc, data)
+			utils.ZeroBytes(data)
+		}
+		return entries, nil
 	}
 	return nil, fmt.Errorf("provider %q does not support searching", s.Scheme())
 }

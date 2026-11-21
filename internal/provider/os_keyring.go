@@ -198,6 +198,9 @@ func (o *OSKeyringProvider) GetSecret(_ context.Context, location string) (strin
 	if err != nil {
 		return "", err
 	}
+	if isInternalKeyringAccount(account) {
+		return "", fmt.Errorf("keyring access denied for internal account %q", account)
+	}
 	secret, err := o.store.Get(service, account)
 	if err != nil {
 		return "", fmt.Errorf("keyring lookup failed for %s/%s: %w", service, account, err)
@@ -209,12 +212,13 @@ func (o *OSKeyringProvider) GetSecret(_ context.Context, location string) (strin
 // cloakenv's own internal credential/cache storage and must not be exposed
 // in flat vault entries.
 func isInternalKeyringAccount(account string) bool {
-	return account == keyringAccount ||
-		account == cacheDiskKeyringAccount ||
-		account == "cache-master-key" ||
-		strings.HasPrefix(account, "provider/") ||
-		strings.HasPrefix(account, "cache/") ||
-		strings.HasPrefix(account, cacheKeyringAccountPrefix)
+	lower := strings.ToLower(strings.TrimSpace(account))
+	return lower == strings.ToLower(keyringAccount) ||
+		lower == strings.ToLower(cacheDiskKeyringAccount) ||
+		lower == "cache-master-key" ||
+		strings.HasPrefix(lower, "provider/") ||
+		strings.HasPrefix(lower, "cache/") ||
+		strings.HasPrefix(lower, strings.ToLower(cacheKeyringAccountPrefix))
 }
 
 // buildKeyringEntry builds a single flat Entry holding all accessible user keys

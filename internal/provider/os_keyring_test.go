@@ -554,3 +554,58 @@ func TestOSKeyringProvider_CloneWithStoreIsolatesState(t *testing.T) {
 		t.Fatalf("c2 state contaminated: entries=%+v err=%v", e2, err)
 	}
 }
+
+func TestOSKeyringProviderInternalAccountCaseInsensitiveIsolation(t *testing.T) {
+	t.Parallel()
+	store := NewMockKeyringStore()
+	_ = store.Set("cloakenv", "CACHE_DISK_TOKEN", "disk-key-secret")
+	_ = store.Set("cloakenv", "Cache_Token", "cache-token-secret")
+	_ = store.Set("cloakenv", "CACHE-MASTER-KEY", "master-key-secret")
+	_ = store.Set("cloakenv", "PROVIDER/work", "keepass-master-pw")
+	_ = store.Set("cloakenv", "CACHE/item1", "cached-item")
+	_ = store.Set("cloakenv", "CACHE_V2/item2", "cached-item-v2")
+	_ = store.Set("cloakenv", "allowed_api_key", "ok-val")
+
+	kp := NewOSKeyringProviderWithStore(store)
+	ctx := context.Background()
+	if err := kp.Initialize(ctx, ProviderConfig{
+		Settings: map[string]string{"service": "cloakenv"},
+		Query:    "CACHE_DISK_TOKEN,Cache_Token,CACHE-MASTER-KEY,PROVIDER/work,CACHE/item1,CACHE_V2/item2,allowed_api_key",
+	}); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	internalAccounts := []string{
+		"CACHE_DISK_TOKEN",
+		"Cache_Token",
+		"CACHE-MASTER-KEY",
+		"PROVIDER/work",
+		"CACHE/item1",
+		"CACHE_V2/item2",
+		" provider/work ",
+	}
+	for _, acct := range internalAccounts {
+		if _, err := kp.GetSecret(ctx, "cloakenv/"+acct); err == nil {
+			t.Errorf("GetSecret(%q) should have been denied", acct)
+		}
+		if _, err := kp.GetEntry(ctx, acct); err == nil {
+			t.Errorf("GetEntry(%q) should have been denied", acct)
+		}
+	}
+
+	entries, err := kp.Search(ctx, SearchQuery{})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 flat keyring entry, got %d", len(entries))
+	}
+	if entries[0]["allowed_api_key"] != "ok-val" {
+		t.Fatalf("expected allowed_api_key=ok-val, got %v", entries[0]["allowed_api_key"])
+	}
+	for _, acct := range internalAccounts {
+		if _, leaked := entries[0][acct]; leaked {
+			t.Errorf("Search leaked internal account %q", acct)
+		}
+	}
+}
