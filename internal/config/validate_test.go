@@ -703,3 +703,81 @@ func TestValidatePR484ReviewFixes(t *testing.T) {
 		})
 	}
 }
+
+func TestValidate_MatchRuleCapturePlaceholdersInTemplates(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "secrets.kdbx")
+	if err := os.WriteFile(dbPath, []byte("dummy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("accepts $N and ${N} capture placeholders in match key and value templates", func(t *testing.T) {
+		cfgYAML := `vaults:
+  work:
+    provider: keepass
+    vault_path: ` + dbPath + `
+envs:
+  mapped:
+    - vault: work
+      rules:
+        - type: match
+          match: "^env:(.*)$"
+          key: "{{ upper $1 }}"
+          value: "prefix-{{ lower ${1} }}-{{ .value }}"
+        - type: match
+          match: "^svc_([a-z]+)_([a-z]+)$"
+          key: "{{ upper ${1} }}_{{ upper $2 }}"
+        - type: match
+          value_match: "^token:(.*)$"
+          key: "TOKEN_{{ upper $1 }}"
+          value: "{{ lower ${1} }}"
+`
+		p := filepath.Join(tempDir, "valid_captures.yaml")
+		if err := os.WriteFile(p, []byte(cfgYAML), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := Validate(p, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.IsValid() {
+			t.Fatalf("expected valid config for capture placeholders in templates, got errors: %v", res.Errors)
+		}
+	})
+
+	t.Run("rejects out-of-range capture placeholder and invalid template syntax", func(t *testing.T) {
+		cfgYAML := `vaults:
+  work:
+    provider: keepass
+    vault_path: ` + dbPath + `
+envs:
+  bad_captures:
+    - vault: work
+      rules:
+        - type: match
+          match: "^env:(.*)$"
+          key: "{{ upper $2 }}"
+        - type: match
+          match: "^env:(.*)$"
+          key: "{{ upper $1"
+`
+		p := filepath.Join(tempDir, "invalid_captures.yaml")
+		if err := os.WriteFile(p, []byte(cfgYAML), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := Validate(p, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.IsValid() {
+			t.Fatal("expected validation errors for out-of-range capture and unclosed template")
+		}
+		joined := strings.Join(res.Errors, "\n")
+		if !strings.Contains(joined, `$2`) {
+			t.Errorf("expected out-of-range $2 error, got:\n%s", joined)
+		}
+		if !strings.Contains(joined, "template syntax error") {
+			t.Errorf("expected template syntax error, got:\n%s", joined)
+		}
+	})
+}
