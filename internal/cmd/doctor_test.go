@@ -346,3 +346,49 @@ func TestDoctorCmd_UnsupportedProviders(t *testing.T) {
 		})
 	}
 }
+
+func TestDoctorCmd_StaleEphemeralFiles(t *testing.T) {
+	tempDir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", tempDir)
+	t.Setenv("HOME", tempDir)
+	t.Setenv("LocalAppData", tempDir)
+
+	cfgPath := filepath.Join(tempDir, "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte("vaults: {}\n"), 0600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+	cfg := &config.Config{ConfigPath: cfgPath}
+
+	oldFinder := findStaleEphemeralFiles
+	defer func() { findStaleEphemeralFiles = oldFinder }()
+
+	t.Run("no stale files reports OK", func(t *testing.T) {
+		findStaleEphemeralFiles = func() []string { return nil }
+		var stdout, stderr bytes.Buffer
+		if code := DoctorCmd([]string{"--strict"}, cfg, &stdout, &stderr); code != 0 {
+			t.Fatalf("expected exit 0, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "[OK] No stale ephemeral files found") {
+			t.Errorf("expected OK stale ephemeral files line, got:\n%s", stdout.String())
+		}
+	})
+
+	t.Run("stale file warns and fails strict mode", func(t *testing.T) {
+		stalePath := filepath.Join(tempDir, "cloakenv-ephemeral-leftover")
+		findStaleEphemeralFiles = func() []string { return []string{stalePath} }
+
+		var stdout, stderr bytes.Buffer
+		if code := DoctorCmd([]string{}, cfg, &stdout, &stderr); code != 0 {
+			t.Fatalf("expected exit 0 without --strict, got %d\nstdout:\n%s", code, stdout.String())
+		}
+		if !strings.Contains(stdout.String(), "[WARN] Stale ephemeral file found: "+stalePath) {
+			t.Errorf("expected stale file warning, got:\n%s", stdout.String())
+		}
+
+		stdout.Reset()
+		stderr.Reset()
+		if code := DoctorCmd([]string{"--strict"}, cfg, &stdout, &stderr); code != 1 {
+			t.Fatalf("expected exit 1 with --strict on stale ephemeral file, got %d\nstdout:\n%s", code, stdout.String())
+		}
+	})
+}

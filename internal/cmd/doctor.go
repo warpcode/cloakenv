@@ -11,8 +11,11 @@ import (
 	"strings"
 
 	"github.com/warpcode/cloakenv/internal/config"
+	"github.com/warpcode/cloakenv/internal/runner"
 	"github.com/warpcode/cloakenv/internal/utils"
 )
+
+var findStaleEphemeralFiles = runner.FindStaleEphemeralFiles
 
 // PrintDoctorHelpTo prints usage help for the doctor subcommand to the provided writer.
 func PrintDoctorHelpTo(w io.Writer) {
@@ -233,6 +236,18 @@ func DoctorCmd(args []string, cfg *config.Config, stdout, stderr io.Writer) int 
 				fmt.Fprintf(stdout, "    [ERROR] Unsupported provider %q\n", vault.Provider)
 				hasErrors = true
 			}
+		}
+	}
+
+	// 4. Stale ephemeral template files
+	fmt.Fprintln(stdout, "\nEphemeral Files:")
+	staleFiles := findStaleEphemeralFiles()
+	if len(staleFiles) == 0 {
+		fmt.Fprintln(stdout, "  [OK] No stale ephemeral files found")
+	} else {
+		for _, sf := range staleFiles {
+			fmt.Fprintf(stdout, "  [WARN] Stale ephemeral file found: %s (from an aborted run; remove manually if no cloakenv process is active)\n", sf)
+			hasWarnings = true
 		}
 	}
 
