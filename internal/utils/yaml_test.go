@@ -1,4 +1,4 @@
-package yaml
+package utils
 
 import (
 	"bytes"
@@ -12,10 +12,10 @@ func (failMarshaler) MarshalYAML() (any, error) {
 	return nil, errors.New("marshal error")
 }
 
-func TestUnmarshal(t *testing.T) {
+func TestUnmarshalYAML(t *testing.T) {
 	data := []byte("key: value")
 	var m map[string]string
-	if err := Unmarshal(data, &m); err != nil {
+	if err := UnmarshalYAML(data, &m); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if m["key"] != "value" {
@@ -23,12 +23,12 @@ func TestUnmarshal(t *testing.T) {
 	}
 
 	badData := []byte("invalid: yaml: :")
-	if err := Unmarshal(badData, &m); err == nil {
+	if err := UnmarshalYAML(badData, &m); err == nil {
 		t.Error("expected error, got nil")
 	}
 }
 
-func TestMarshal(t *testing.T) {
+func TestMarshalYAML(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   any
@@ -54,18 +54,18 @@ func TestMarshal(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Marshal(tt.input)
+			got, err := MarshalYAML(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("Marshal() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("MarshalYAML() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr && string(got) != tt.want {
-				t.Errorf("Marshal() = %q, want %q", got, tt.want)
+				t.Errorf("MarshalYAML() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestMarshalString(t *testing.T) {
+func TestMarshalYAMLString(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   any
@@ -91,18 +91,18 @@ func TestMarshalString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := MarshalString(tt.input)
+			got, err := MarshalYAMLString(tt.input)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("MarshalString() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("MarshalYAMLString() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr && got != tt.want {
-				t.Errorf("MarshalString() = %q, want %q", got, tt.want)
+				t.Errorf("MarshalYAMLString() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestSerializeValue(t *testing.T) {
+func TestSerializeYAMLValue(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    any
@@ -125,20 +125,20 @@ func TestSerializeValue(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := SerializeValue(tc.input)
+			got, err := SerializeYAMLValue(tc.input)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if got != tc.expected {
-				t.Errorf("SerializeValue(%v) = %q, expected %q", tc.input, got, tc.expected)
+				t.Errorf("SerializeYAMLValue(%v) = %q, expected %q", tc.input, got, tc.expected)
 			}
 		})
 	}
 }
 
-func TestEncoder(t *testing.T) {
+func TestYAMLEncoder(t *testing.T) {
 	var buf bytes.Buffer
-	enc := NewEncoder(&buf)
+	enc := NewYAMLEncoder(&buf)
 	enc.SetIndent(2)
 	m := map[string]string{"key": "value"}
 	if err := enc.Encode(m); err != nil {

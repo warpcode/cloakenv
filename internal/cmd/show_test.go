@@ -12,7 +12,7 @@ import (
 
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/engine"
-	"github.com/warpcode/cloakenv/internal/yaml"
+	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 func TestShow_EnvFormat(t *testing.T) {
@@ -1054,7 +1054,7 @@ func TestShow_RawFlag(t *testing.T) {
 		}
 
 		var result map[string]any
-		if err := yaml.Unmarshal(buf.Bytes(), &result); err != nil {
+		if err := utils.UnmarshalYAML(buf.Bytes(), &result); err != nil {
 			t.Fatalf("failed to unmarshal YAML: %v, output: %s", err, buf.String())
 		}
 
@@ -1318,7 +1318,7 @@ func TestShow_ExplainFlag(t *testing.T) {
 		}
 
 		var result map[string]any
-		if err := yaml.Unmarshal(buf.Bytes(), &result); err != nil {
+		if err := utils.UnmarshalYAML(buf.Bytes(), &result); err != nil {
 			t.Fatalf("failed to unmarshal YAML: %v, output: %s", err, buf.String())
 		}
 
@@ -2089,7 +2089,7 @@ func TestShow_ExplainFlag_ParityWithShowOutput(t *testing.T) {
 	}
 
 	var showResult map[string]any
-	if err := yaml.Unmarshal(showBuf.Bytes(), &showResult); err != nil {
+	if err := utils.UnmarshalYAML(showBuf.Bytes(), &showResult); err != nil {
 		t.Fatalf("failed to unmarshal show output: %v, output: %s", err, showBuf.String())
 	}
 

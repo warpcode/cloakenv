@@ -6,12 +6,11 @@ import (
 	"strings"
 
 	"github.com/warpcode/cloakenv/internal/utils"
-	"github.com/warpcode/cloakenv/internal/yaml"
 )
 
 // serializeVal converts structured data to string format.
 func serializeVal(val any) (string, error) {
-	s, err := yaml.SerializeValue(val)
+	s, err := utils.SerializeYAMLValue(val)
 	if err != nil {
 		return "", fmt.Errorf("serialization failed: %w", err)
 	}
