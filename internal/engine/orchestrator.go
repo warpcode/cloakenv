@@ -15,12 +15,15 @@ import (
 // Built-in schemes ("keyring", "env", "cache", "pass") are always available; configured vaults
 // become additional schemes at runtime.
 type Orchestrator struct {
-	config          *config.Config
-	providerManager *ProviderManager
-	resolver        *Resolver
-	searcher        *Searcher
-	envBuilder      *EnvBuilder
-	auditLogger     *audit.Logger
+	config            *config.Config
+	providerManager   *ProviderManager
+	resolver          *Resolver
+	searcher          *Searcher
+	envBuilder        *EnvBuilder
+	ruleEngine        *RuleEngine
+	envsBuilder       *EnvsBuilder
+	templatesRenderer *TemplatesRenderer
+	auditLogger       *audit.Logger
 }
 
 // NewOrchestrator creates a new orchestrator with the given config,
@@ -104,14 +107,19 @@ func NewOrchestrator(cfg *config.Config) (*Orchestrator, error) {
 	})
 
 	envBuilder := NewEnvBuilder(cfg, resolver)
-
+	ruleEngine := NewRuleEngine()
+	envsBuilder := NewEnvsBuilder(cfg, pm, ruleEngine)
+	templatesRenderer := NewTemplatesRenderer(cfg, pm, ruleEngine, envsBuilder)
 	o := &Orchestrator{
-		config:          cfg,
-		providerManager: pm,
-		resolver:        resolver,
-		searcher:        searcher,
-		envBuilder:      envBuilder,
-		auditLogger:     auditLogger,
+		config:            cfg,
+		providerManager:   pm,
+		resolver:          resolver,
+		searcher:          searcher,
+		envBuilder:        envBuilder,
+		ruleEngine:        ruleEngine,
+		envsBuilder:       envsBuilder,
+		templatesRenderer: templatesRenderer,
+		auditLogger:       auditLogger,
 	}
 
 	return o, nil
@@ -411,4 +419,20 @@ func (o *Orchestrator) IsRunAlias(cmdArgs []string) bool {
 // GetResolver returns the internal Resolver (used for testing).
 func (o *Orchestrator) GetResolver() *Resolver {
 	return o.resolver
+}
+
+// EnvsBuilder returns the declarative `envs:` pipeline builder.
+func (o *Orchestrator) EnvsBuilder() *EnvsBuilder {
+	if o == nil {
+		return nil
+	}
+	return o.envsBuilder
+}
+
+// TemplatesRenderer returns the declarative `templates:` renderer.
+func (o *Orchestrator) TemplatesRenderer() *TemplatesRenderer {
+	if o == nil {
+		return nil
+	}
+	return o.templatesRenderer
 }
