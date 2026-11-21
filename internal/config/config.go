@@ -98,6 +98,9 @@ func (t *TemplateConfig) UnmarshalYAML(value *goyaml.Node) error {
 		value = value.Alias
 	}
 	if value.Kind == goyaml.ScalarNode {
+		if value.Tag == "!!null" {
+			return nil
+		}
 		t.Driver = "template"
 		t.Template = value.Value
 		return nil

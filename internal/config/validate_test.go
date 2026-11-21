@@ -592,3 +592,114 @@ envs:
 		}
 	})
 }
+
+func TestValidatePR484ReviewFixes(t *testing.T) {
+	tempDir := t.TempDir()
+	emptyFile := filepath.Join(tempDir, "empty.tmpl")
+	if err := os.WriteFile(emptyFile, []byte("   \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	validFile := filepath.Join(tempDir, "valid.tmpl")
+	if err := os.WriteFile(validFile, []byte("{{ .entries }}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name:    "strict unknown key in template vault source",
+			yaml:    "templates:\n  t:\n    driver: json\n    vaults:\n      - vault: env\n        bogus_src: true\n",
+			wantErr: `unknown field "bogus_src"`,
+		},
+		{
+			name:    "strict unknown key in template vault rule",
+			yaml:    "templates:\n  t:\n    driver: json\n    vaults:\n      - vault: env\n        rules:\n          - type: pass\n            bogus_rule: true\n",
+			wantErr: `unknown field "bogus_rule"`,
+		},
+		{
+			name:    "strict unknown key in vault cache mapping",
+			yaml:    "vaults:\n  v:\n    provider: env\n    cache:\n      ttl: 5m\n      bogus_cache: true\n",
+			wantErr: `unknown field "bogus_cache"`,
+		},
+		{
+			name:    "builtin env vault name with mismatched provider",
+			yaml:    "vaults:\n  env:\n    provider: keyring\n",
+			wantErr: `built-in vault name "env" must use provider "env"`,
+		},
+		{
+			name:    "builtin keyring vault name with mismatched provider",
+			yaml:    "vaults:\n  keyring:\n    provider: env\n",
+			wantErr: `built-in vault name "keyring" must use provider "keyring"`,
+		},
+		{
+			name:    "template driver combining template and path",
+			yaml:    "templates:\n  t:\n    driver: template\n    template: \"hello\"\n    path: \"" + filepath.ToSlash(validFile) + "\"\n",
+			wantErr: "cannot specify both 'template' and 'path'",
+		},
+		{
+			name:    "template driver with empty file at path",
+			yaml:    "templates:\n  t:\n    driver: template\n    path: \"" + filepath.ToSlash(emptyFile) + "\"\n",
+			wantErr: "is empty",
+		},
+		{
+			name:    "template null scalar is not literal null",
+			yaml:    "templates:\n  foo: null\n",
+			wantErr: "requires 'template' or 'path'",
+		},
+		{
+			name:    "pass rule with match field",
+			yaml:    "envs:\n  e:\n    - vault: env\n      rules:\n        - type: pass\n          match: '^A'\n",
+			wantErr: "pass rule cannot specify match/value_match/key/value fields",
+		},
+		{
+			name:    "pass rule with values field",
+			yaml:    "envs:\n  e:\n    - vault: env\n      rules:\n        - type: pass\n          values:\n            K: V\n",
+			wantErr: "pass rule cannot specify 'values' field",
+		},
+		{
+			name:    "match rule with include field",
+			yaml:    "envs:\n  e:\n    - vault: env\n      rules:\n        - type: match\n          match: '^A'\n          key: 'B'\n          include: ['*']\n",
+			wantErr: "match rule cannot specify include/exclude/key_format fields",
+		},
+		{
+			name:    "match rule with values field",
+			yaml:    "envs:\n  e:\n    - vault: env\n      rules:\n        - type: match\n          match: '^A'\n          key: 'B'\n          values:\n            K: V\n",
+			wantErr: "match rule cannot specify 'values' field",
+		},
+		{
+			name:    "set rule with key_format field",
+			yaml:    "envs:\n  e:\n    - vault: env\n      rules:\n        - type: set\n          key_format: env\n          values:\n            K: V\n",
+			wantErr: "set rule cannot specify include/exclude/key_format fields",
+		},
+		{
+			name:    "set rule with match field",
+			yaml:    "envs:\n  e:\n    - vault: env\n      rules:\n        - type: set\n          match: '^A'\n          values:\n            K: V\n",
+			wantErr: "set rule cannot specify match/value_match/key/value fields",
+		},
+		{
+			name:    "legacy vault keys via YAML anchor alias",
+			yaml:    "vaults:\n  base: &base_vault\n    provider: env\n    include_fields:\n      - FOO\n  aliased: *base_vault\n",
+			wantErr: `vault "aliased": legacy key "include_fields" is no longer supported`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(tempDir, strings.ReplaceAll(tc.name, " ", "_")+".yaml")
+			if err := os.WriteFile(p, []byte(tc.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			res, err := Validate(p, true)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			joined := strings.Join(res.Errors, "\n")
+			if !strings.Contains(joined, tc.wantErr) {
+				t.Errorf("expected error containing %q, got:\n%s", tc.wantErr, joined)
+			}
+		})
+	}
+}

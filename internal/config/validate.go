@@ -113,6 +113,8 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: missing required field 'provider'", vaultName))
 		} else if !validProviders[vault.Provider] {
 			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: unsupported provider %q (must be one of: keepass, env, pass, search, vault, keyring)", vaultName, vault.Provider))
+		} else if (vaultName == "env" && vault.Provider != "env") || (vaultName == "keyring" && vault.Provider != "keyring") {
+			res.Errors = append(res.Errors, fmt.Sprintf("vault %q: built-in vault name %q must use provider %q, got %q", vaultName, vaultName, vaultName, vault.Provider))
 		}
 
 		// File path existence check for file-backed providers
@@ -198,7 +200,15 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 			if tmpl.Path == "" && tmpl.Template == "" {
 				res.Errors = append(res.Errors, fmt.Sprintf("template %q: driver `template` requires 'template' or 'path'", tmplName))
 			}
-			tmplBody := tmpl.Template
+			if tmpl.Path != "" && tmpl.Template != "" {
+				res.Errors = append(res.Errors, fmt.Sprintf("template %q: cannot specify both 'template' and 'path'", tmplName))
+			}
+			if tmpl.Template != "" {
+				t := texttemplate.New(tmplName).Funcs(StandardTemplateFuncs())
+				if _, err := t.Parse(tmpl.Template); err != nil {
+					res.Errors = append(res.Errors, fmt.Sprintf("template %q: template syntax error: %v", tmplName, err))
+				}
+			}
 			if tmpl.Path != "" {
 				resolvedPath := expandHome(tmpl.Path)
 				if !filepath.IsAbs(resolvedPath) {
@@ -212,14 +222,13 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 					} else {
 						res.Errors = append(res.Errors, fmt.Sprintf("template %q: cannot access path %s: %v", tmplName, tmpl.Path, err))
 					}
+				} else if strings.TrimSpace(string(data)) == "" {
+					res.Errors = append(res.Errors, fmt.Sprintf("template %q: template file %q is empty", tmplName, tmpl.Path))
 				} else {
-					tmplBody = string(data)
-				}
-			}
-			if tmplBody != "" {
-				t := texttemplate.New(tmplName).Funcs(StandardTemplateFuncs())
-				if _, err := t.Parse(tmplBody); err != nil {
-					res.Errors = append(res.Errors, fmt.Sprintf("template %q: template syntax error: %v", tmplName, err))
+					t := texttemplate.New(tmplName).Funcs(StandardTemplateFuncs())
+					if _, err := t.Parse(string(data)); err != nil {
+						res.Errors = append(res.Errors, fmt.Sprintf("template %q: template syntax error: %v", tmplName, err))
+					}
 				}
 			}
 		case "json", "yaml":
@@ -270,11 +279,74 @@ var validTemplateKeys = map[string]bool{
 	"vaults":   true,
 }
 
+var validVaultSourceKeys = map[string]bool{
+	"vault": true,
+	"query": true,
+	"rules": true,
+}
+
+var validRuleKeys = map[string]bool{
+	"type":        true,
+	"include":     true,
+	"exclude":     true,
+	"key_format":  true,
+	"match":       true,
+	"value_match": true,
+	"key":         true,
+	"value":       true,
+	"values":      true,
+}
+
+var validVaultCacheKeys = map[string]bool{
+	"enabled": true,
+	"ttl":     true,
+	"mode":    true,
+}
+
 func derefYAMLNode(n *goyaml.Node) *goyaml.Node {
 	for n != nil && n.Kind == goyaml.AliasNode && n.Alias != nil {
 		n = n.Alias
 	}
 	return n
+}
+
+func checkStrictVaultSourcesKeys(owner string, seqNode *goyaml.Node, res *ValidationResult) {
+	seqNode = derefYAMLNode(seqNode)
+	if seqNode == nil || seqNode.Kind != goyaml.SequenceNode {
+		return
+	}
+	for sIdx, item := range seqNode.Content {
+		srcMap := derefYAMLNode(item)
+		if srcMap == nil || srcMap.Kind != goyaml.MappingNode {
+			continue
+		}
+		srcLabel := fmt.Sprintf("%s source #%d", owner, sIdx+1)
+		for k := 0; k+1 < len(srcMap.Content); k += 2 {
+			fieldKey := srcMap.Content[k].Value
+			if !validVaultSourceKeys[fieldKey] {
+				res.Errors = append(res.Errors, fmt.Sprintf("schema validation error: %s: unknown field %q", srcLabel, fieldKey))
+				continue
+			}
+			if fieldKey == "rules" {
+				rulesSeq := derefYAMLNode(srcMap.Content[k+1])
+				if rulesSeq == nil || rulesSeq.Kind != goyaml.SequenceNode {
+					continue
+				}
+				for rIdx, rItem := range rulesSeq.Content {
+					rMap := derefYAMLNode(rItem)
+					if rMap == nil || rMap.Kind != goyaml.MappingNode {
+						continue
+					}
+					for rk := 0; rk+1 < len(rMap.Content); rk += 2 {
+						rField := rMap.Content[rk].Value
+						if !validRuleKeys[rField] {
+							res.Errors = append(res.Errors, fmt.Sprintf("schema validation error: %s rule #%d: unknown field %q", srcLabel, rIdx+1, rField))
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 func checkStrictTemplateKeys(doc *goyaml.Node, res *ValidationResult) {
@@ -283,23 +355,54 @@ func checkStrictTemplateKeys(doc *goyaml.Node, res *ValidationResult) {
 		return
 	}
 	for i := 0; i+1 < len(doc.Content); i += 2 {
-		if doc.Content[i].Value != "templates" {
-			continue
-		}
-		tmplsNode := derefYAMLNode(doc.Content[i+1])
-		if tmplsNode == nil || tmplsNode.Kind != goyaml.MappingNode {
-			continue
-		}
-		for j := 0; j+1 < len(tmplsNode.Content); j += 2 {
-			tmplName := tmplsNode.Content[j].Value
-			tmplMap := derefYAMLNode(tmplsNode.Content[j+1])
-			if tmplMap == nil || tmplMap.Kind != goyaml.MappingNode {
+		switch doc.Content[i].Value {
+		case "templates":
+			tmplsNode := derefYAMLNode(doc.Content[i+1])
+			if tmplsNode == nil || tmplsNode.Kind != goyaml.MappingNode {
 				continue
 			}
-			for k := 0; k+1 < len(tmplMap.Content); k += 2 {
-				fieldKey := tmplMap.Content[k].Value
-				if !validTemplateKeys[fieldKey] {
-					res.Errors = append(res.Errors, fmt.Sprintf("schema validation error: template %q: unknown field %q", tmplName, fieldKey))
+			for j := 0; j+1 < len(tmplsNode.Content); j += 2 {
+				tmplName := tmplsNode.Content[j].Value
+				tmplMap := derefYAMLNode(tmplsNode.Content[j+1])
+				if tmplMap == nil || tmplMap.Kind != goyaml.MappingNode {
+					continue
+				}
+				for k := 0; k+1 < len(tmplMap.Content); k += 2 {
+					fieldKey := tmplMap.Content[k].Value
+					if !validTemplateKeys[fieldKey] {
+						res.Errors = append(res.Errors, fmt.Sprintf("schema validation error: template %q: unknown field %q", tmplName, fieldKey))
+						continue
+					}
+					if fieldKey == "vaults" {
+						checkStrictVaultSourcesKeys(fmt.Sprintf("template %q", tmplName), tmplMap.Content[k+1], res)
+					}
+				}
+			}
+		case "vaults":
+			vaultsNode := derefYAMLNode(doc.Content[i+1])
+			if vaultsNode == nil || vaultsNode.Kind != goyaml.MappingNode {
+				continue
+			}
+			for j := 0; j+1 < len(vaultsNode.Content); j += 2 {
+				vaultName := vaultsNode.Content[j].Value
+				vaultMap := derefYAMLNode(vaultsNode.Content[j+1])
+				if vaultMap == nil || vaultMap.Kind != goyaml.MappingNode {
+					continue
+				}
+				for k := 0; k+1 < len(vaultMap.Content); k += 2 {
+					if vaultMap.Content[k].Value != "cache" {
+						continue
+					}
+					cacheMap := derefYAMLNode(vaultMap.Content[k+1])
+					if cacheMap == nil || cacheMap.Kind != goyaml.MappingNode {
+						continue
+					}
+					for ck := 0; ck+1 < len(cacheMap.Content); ck += 2 {
+						cacheKey := cacheMap.Content[ck].Value
+						if !validVaultCacheKeys[cacheKey] {
+							res.Errors = append(res.Errors, fmt.Sprintf("schema validation error: vault %q cache: unknown field %q", vaultName, cacheKey))
+						}
+					}
 				}
 			}
 		}
@@ -307,6 +410,7 @@ func checkStrictTemplateKeys(doc *goyaml.Node, res *ValidationResult) {
 }
 
 func checkLegacyVaultKeys(doc *goyaml.Node, res *ValidationResult) {
+	doc = derefYAMLNode(doc)
 	if doc == nil || doc.Kind != goyaml.MappingNode {
 		return
 	}
@@ -314,14 +418,14 @@ func checkLegacyVaultKeys(doc *goyaml.Node, res *ValidationResult) {
 		if doc.Content[i].Value != "vaults" {
 			continue
 		}
-		vaultsNode := doc.Content[i+1]
-		if vaultsNode.Kind != goyaml.MappingNode {
+		vaultsNode := derefYAMLNode(doc.Content[i+1])
+		if vaultsNode == nil || vaultsNode.Kind != goyaml.MappingNode {
 			continue
 		}
 		for j := 0; j+1 < len(vaultsNode.Content); j += 2 {
 			vaultName := vaultsNode.Content[j].Value
-			vaultMap := vaultsNode.Content[j+1]
-			if vaultMap.Kind != goyaml.MappingNode {
+			vaultMap := derefYAMLNode(vaultsNode.Content[j+1])
+			if vaultMap == nil || vaultMap.Kind != goyaml.MappingNode {
 				continue
 			}
 			for k := 0; k+1 < len(vaultMap.Content); k += 2 {
@@ -364,6 +468,12 @@ func validateVaultSources(owner string, sources []VaultSourceConfig, cfg *Config
 			ruleLabel := fmt.Sprintf("%s rule #%d", srcLabel, rIdx+1)
 			switch rule.Type {
 			case "pass":
+				if rule.Match != "" || rule.ValueMatch != "" || rule.Key != "" || rule.Value != "" {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: pass rule cannot specify match/value_match/key/value fields", ruleLabel))
+				}
+				if len(rule.Values) > 0 {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: pass rule cannot specify 'values' field", ruleLabel))
+				}
 				for _, pattern := range rule.Include {
 					if _, err := pathpkg.Match(pattern, ""); err != nil {
 						res.Errors = append(res.Errors, fmt.Sprintf("%s: invalid include glob pattern %q: %v", ruleLabel, pattern, err))
@@ -383,6 +493,12 @@ func validateVaultSources(owner string, sources []VaultSourceConfig, cfg *Config
 					res.Warnings = append(res.Warnings, fmt.Sprintf("%s (%s): pass rule without explicit 'include' globs may expose the full process environment or keyring", ruleLabel, src.Vault))
 				}
 			case "match":
+				if len(rule.Include) > 0 || len(rule.Exclude) > 0 || rule.KeyFormat != "" {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: match rule cannot specify include/exclude/key_format fields", ruleLabel))
+				}
+				if len(rule.Values) > 0 {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: match rule cannot specify 'values' field", ruleLabel))
+				}
 				if rule.Match == "" && rule.ValueMatch == "" {
 					res.Errors = append(res.Errors, fmt.Sprintf("%s: match rule requires 'match' or 'value_match'", ruleLabel))
 				}
@@ -409,6 +525,12 @@ func validateVaultSources(owner string, sources []VaultSourceConfig, cfg *Config
 					}
 				}
 			case "set":
+				if len(rule.Include) > 0 || len(rule.Exclude) > 0 || rule.KeyFormat != "" {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: set rule cannot specify include/exclude/key_format fields", ruleLabel))
+				}
+				if rule.Match != "" || rule.ValueMatch != "" || rule.Key != "" || rule.Value != "" {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: set rule cannot specify match/value_match/key/value fields", ruleLabel))
+				}
 				if len(rule.Values) == 0 {
 					res.Errors = append(res.Errors, fmt.Sprintf("%s: set rule requires non-empty 'values'", ruleLabel))
 				}
