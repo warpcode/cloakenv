@@ -1,113 +1,31 @@
-# cloakenv Provider Filtering & Decorator Traps
+# cloakenv Secret Pipeline & Security Invariants
 
-This document records critical institutional memory of filter bypasses, decorator chain ordering bugs, and resolution regressions observed across `cloakenv` development and pull requests.
+This document records critical invariants and historical regression patterns across `cloakenv`'s read-only providers, declarative `RuleEngine`, template renderer, runner delivery, and zero-leak CLI.
 
-Reviewers must consult these patterns whenever evaluating changes to `internal/provider/` or `internal/engine/`.
-
----
-
-## 1. The Decorator Chain Order
-
-Vault providers in `internal/engine/provider_manager.go:initVaultProvider` must be wrapped in a deterministic sequence:
-
-```
-Base Provider (keepass / env / pass / search)
-  └── 1. FilteringProvider   (vault.IncludeFields, vault.ExcludeFields)
-        └── 2. MappingProvider     (vault.Mapping)
-              └── 3. KeyFormatProvider   (vault.KeyFormat)
-                    └── 4. AttributesProvider  (vault.Attributes)
-```
-
-### Invariants
-- **All Providers Decorated**: Both direct/configured providers (`keepass`, `env`, `pass`) and virtual providers (`search`) must be wrapped by this decorator chain.
-- **Attributes Last**: `AttributesProvider` must wrap the provider **strictly after** filtering, mapping, and key formatting. This ensures `.attributes` and `.entries` exposed to text templates contain only authorized, post-filter fields ([RSK-002](../../../../docs/plans/archive/2026-10-24-template-and-merge-consolidation.md#rsk-002-filter-bypass-via-meta-or-unfiltered-source-entries-in-templates-accepted), [REQ-005](../../../../docs/plans/archive/2026-10-24-template-and-merge-consolidation.md#req-005-per-entry-attributes-decorator-across-all-vaults-accepted--p0)).
+> **Historical Note (Epic #467):** The legacy 4-layer provider decorator chain (`FilteringProvider` -> `MappingProvider` -> `KeyFormatProvider` -> `AttributesProvider`), `custom_vault`, `search://`, Expr queries, and URI template interpolation (`get`/`entry`/`search`/`include`/`includeFile`/`exec`) were permanently retired in Epic #467. All transformation logic now lives exclusively in `internal/engine/rules.go` and `internal/engine/output_pipeline.go`.
 
 ---
 
-## 2. Wrapper-Replaces-Filter Regression (PR #210)
+## 1. Pure Read-Only Providers & Flat `Entry`
 
-### What Happened
-In PR #210, regex key mapping was introduced. `initVaultProvider` was modified to:
-```go
-// INCORRECT REGRESSION PATTERN:
-if len(vault.Mapping) > 0 {
-    p = provider.NewMappingProvider(p, vault.Mapping)
-} else if len(vault.IncludeFields) > 0 || len(vault.ExcludeFields) > 0 {
-    p = provider.NewFilteringProvider(p, vault.IncludeFields, vault.ExcludeFields)
-}
-```
-
-### The Failure Mode
-Whenever `mapping:` was configured on a vault, `FilteringProvider` was dropped completely. The new wrapper attempted to re-implement filtering on bare leaf keys, but its `GetSecret` fell through to `underlying.GetSecret` unfiltered. As a result, excluded keys and original unmapped keys remained readable.
-
-### Invariants
-1. Provider wrappers must **compose with `FilteringProvider`**, never replace it.
-2. There must be **no fallback to the unfiltered underlying `GetSecret`** after a miss.
-3. Mapped-key collisions must be deterministic and cannot earn an unauthorized filter exemption.
+- Vault backends (`keepass`, `pass`, `vault`, `env`, `keyring`) implement read-only `provider.SecretProvider` (`Scheme`, `Initialize`, `GetSecret`, `Validate`) and `provider.SearchableProvider` (`Search`, `GetEntry`).
+- Providers must return raw flat `Entry` (`map[string]any`) maps with canonical metadata (`title`, `path`, `uuid`, `tags`, `group`) untouched—never filtering, mapping, formatting keys, or running templates inside `internal/provider/`.
+- **`OSKeyringProvider` Isolation**: `isInternalKeyringAccount` and `GetEntry` must block internal credentials and cache keys (`cache_token`, `cache_disk_token`, `cache-master-key`, `provider/*`, `cache/*`, `cache_v2/*`). Configured `keyring` vaults must clone the underlying `KeyringStore` (`CloneWithStore()`) rather than mutating the shared built-in instance.
+- **Error Propagation**: Listing (`VaultProvider.Search` / `listKeys`) and authentication failures must propagate cleanly instead of silently returning empty entries.
 
 ---
 
-## 3. The Unfiltered Fallback Trap & Over-Correction (PR #212)
+## 2. Declarative `RuleEngine` Invariants (`internal/engine/rules.go`)
 
-### What Happened
-To fix the PR #210 fallback leak, the follow-up PR (#212) completely removed:
-```go
-return m.underlying.GetSecret(ctx, location)
-```
-from `MappingProvider.GetSecret`.
-
-### The Failure Mode
-While removing the fallback prevented secret leaks, deleting it outright broke two documented resolution paths:
-1. **Bare `provider://entity` URIs**: Lost per-scheme default attribute resolution (`effectiveAttr := "Password"` for `keepass` and `pass`).
-2. **Stored Search / Decorated Vault `GetSecret`**: Must preserve default `:Password` fallback and colon-qualified filtering without falling through to an unfiltered underlying provider.
-
-### Invariants
-- When removing a passthrough or fallback, explicitly enumerate all resolution paths it previously handled (default attributes, multi-entity dot paths, virtual metadata).
-- Write regression tests verifying each documented syntax variant before removing fallback code.
+- **Reserved Metadata Protection**: Wildcard rules (`pass`, `match`, `set`) must never emit or overwrite canonical entry metadata (`title`, `path`, `uuid`, `tags`, `group`, `vault`, `provider`) unless explicitly targeted by a rule key.
+- **Deterministic Last-Rule-Wins**: Multiple matching rules (`pass` -> `match` -> `set`) compose sequentially on the entry output map; later rules overwrite earlier keys deterministically.
+- **Safe Capture Expansion**: `match` rules supporting `$1` / `${1}` captures must evaluate regexes safely before template evaluation and rewrite capture placeholders into `index .__captures N` so capture values containing `{{` or `}}` cannot cause Go `text/template` syntax injection or parse errors.
+- **Strict Missing Key Mode**: Every `query:`, `match`, `set`, and template renders via Go `text/template` with `.Option("missingkey=error")` and pure helpers only (`ruleTemplateFuncs()` must match `config.StandardTemplateFuncs()`).
 
 ---
 
-## 4. Colon-Qualified vs Dot-Path Filter Candidates
+## 3. Output Delivery, Redaction & Child Process Security
 
-### What Happened
-In `internal/provider/filter.go`, `FilteringProvider.GetSecret` builds colon-qualified candidates:
-- `entryPath + ":" + effectiveAttr` (for `keepass` and `pass`)
-- `entryTitle + ":" + effectiveAttr` (for `keepass` and `pass`)
-
-However, generic helper `FilterEntryWithPath` and `projectRecursive` construct dot paths only (`entity.attribute`).
-
-### The Failure Mode
-If a provider wrapper authorizes access through the generic filter instead of the colon-qualified chain, the colon form of `exclude_fields` (documented in [Field Filtering](../../../../README.md#6-field-filtering-include_fields-and-exclude_fields), such as `website/Test Website:*` or `website/*:Password`) is silently unenforced the moment any wrapper is active.
-
-### Invariants
-- Any provider wrapper must either:
-  1. Emit the same colon-qualified candidate forms for path-based authorization, or
-  2. Retain `FilteringProvider.GetSecret` directly in the evaluation chain and map only the requested attribute name.
-
----
-
-## 5. Include Precedence & Mapped Field Visibility
-
-### Include Over Exclude Precedence
-When both `include_fields` and `exclude_fields` are configured on a vault:
-- `include_fields` rules are evaluated first and always take precedence over `exclude_fields` ("include should always be above exclude").
-- Any field explicitly matched by an include rule is permitted regardless of broad wildcard or glob exclude rules.
-
-### Mapped Field Visibility
-- When `mapping` is configured alongside `include_fields` or `exclude_fields`, mapped fields (and mapped default metadata fields) must always remain visible. Field filtering applies strictly to unmapped fields.
-- When `mapping` is configured without include/exclude rules, default metadata fields (`title`, `tags`, `uuid`, `group`, `group_name`, `group_uuid`, `group_path`, `path`, `vault`, `provider`) remain visible and are not stripped.
-
----
-
-## 6. Virtual Search Vault Invariants
-
-1. **Mapping Propagation**: When a `search` vault configures `mapping` with filter rules, `SearchProvider` must initialize with and propagate `mapping` into `FieldPolicy`.
-2. **Pre-Mapping Preservation**: In `ApplyToEntry`, attributes matching mapping rules must be preserved so mapped fields are not stripped before `MappingProvider` receives them.
-3. **Search Query Matching**: Candidate entry metadata (`Title`, `Tags`) must be preserved during search execution so that stored queries (`"tag" in tags`, `title == ...`) match as expected.
-
----
-
-## 7. Template Engine & Command Injection Invariants
-
-1. **Decorator Sequence**: Universal decorator `NewAttributesProvider` must wrap vaults strictly after filtering and mapping so that `.attributes` and `.entries` exposed to templates contain only authorized, post-filter fields.
-3. **Child Command Safety**: `resolveCmdArgs` in `internal/engine/env_builder.go` selectively evaluates only bare known URIs or templates containing cloakenv function invocations (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`, `exec`, `shquote`, `shellQuote`). Foreign templates (e.g. Docker format flags `'{{.State.Status}}'`, Helm templates, or kubectl queries) must pass through completely untouched.
+- **Unconditional `<REDACTED>` Inspection**: `cloakenv inspect` must replace every secret value with `<REDACTED>` and never expose a flag or code path to emit raw secret values.
+- **Template File Delivery**: Ephemeral template files prefer `/dev/shm` when no explicit `path` is set, enforce `0700` parent directories / `0600` file mode with symlink traversal checks (`O_NOFOLLOW` / `rejectSymlinkParent`), refuse to clobber pre-existing files unless configured, and overwrite with `0x00` + unlink on child exit.
+- **Stream Masking & Verbatim Args**: Child stdout/stderr streams through `MaskingWriter` (`MaskTrie` populated from env values, template contents, and template entry values); child command arguments pass through completely verbatim after autoload matching.

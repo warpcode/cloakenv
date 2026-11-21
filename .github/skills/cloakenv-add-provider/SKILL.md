@@ -5,13 +5,13 @@ description: SOP, standards, and verification checklist for adding a new secret 
 
 # Adding a Secret Provider to cloakenv
 
-Standard Operating Procedure for implementing, registering, testing, documenting, and mechanically verifying a new secret provider backend in `cloakenv`.
+Standard Operating Procedure for implementing, registering, testing, documenting, and mechanically verifying a new read-only secret provider backend in `cloakenv`.
 
 ---
 
 ## 1. Overview & Interface Contracts
 
-Every secret backend in `cloakenv` implements the core `SecretProvider` interface defined in `internal/provider/provider.go`.
+Every secret backend in `cloakenv` implements the read-only `SecretProvider` interface defined in `internal/provider/provider.go`.
 
 ### 1.1 Core Interface (`provider.SecretProvider`)
 
@@ -20,28 +20,27 @@ type SecretProvider interface {
     Scheme() string
     Initialize(ctx context.Context, config ProviderConfig) error
     GetSecret(ctx context.Context, location string) (string, error)
-    SetSecret(ctx context.Context, location string, value string) error
-    DeleteSecret(ctx context.Context, location string) error
     Validate(settings map[string]string) error
 }
 ```
 
-- **`Scheme()`**: Returns the URI scheme handled by this provider (e.g., `"keepass"`, `"env"`, `"pass"`, `"search"`).
+- **`Scheme()`**: Returns the provider scheme/type (e.g., `"keepass"`, `"pass"`, `"vault"`, `"env"`, `"keyring"`).
 - **`Initialize(ctx, config)`**: Prepares the provider instance using backend-specific settings from `config.Settings`. For stateless backends, this may be a no-op; for stateful backends, it initializes connections or decrypts databases.
-- **`GetSecret(ctx, location)`**: Resolves a secret value given a location string (the path following `scheme://`). Must return an error if the location does not resolve.
-- **`SetSecret(ctx, location, value)`**: Writes a secret value at the given location. Returns an error if the provider is read-only.
-- **`DeleteSecret(ctx, location)`**: Removes a secret from the given location. Returns an error if read-only or if deletion fails.
+- **`GetSecret(ctx, location)`**: Resolves a single secret value given a provider-specific location string. Must return an error if the location does not resolve.
 - **`Validate(settings)`**: Validates configuration parameters before initialization.
 
-### 1.2 Optional Interfaces
+### 1.2 Structured Entry Interface (`provider.SearchableProvider`)
 
-- **`SearchableProvider` (`internal/provider/provider.go`)**:
-  Implement if the backend supports listing or searching multiple structured entries:
-  - `Search(ctx context.Context, query SearchQuery) ([]SearchResult, error)`
-  - `GetEntry(ctx context.Context, location string) (Entry, error)`
-- **`ValueResolvableProvider` (`internal/provider/provider.go`)**:
-  Implement if the provider supports the `resolve_values` configuration flag:
-  - `SupportsValueResolution() bool` (returns `true` when honoring `resolve_values`).
+Vault providers expose raw secret records as uniform flat `Entry` (`map[string]any`) maps containing canonical metadata keys (`"title"`, `"path"`, `"uuid"`, `"tags"`, `"group"`) alongside raw secret fields:
+
+```go
+type SearchableProvider interface {
+    Search(ctx context.Context, query SearchQuery) ([]Entry, error)
+    GetEntry(ctx context.Context, location string) (Entry, error)
+}
+```
+
+Vault providers are pure read-only retrievers—they MUST NOT apply filtering, key remapping, key formatting, or template evaluation. All transformations happen declaratively in `internal/engine/rules.go` (`RuleEngine`) and `internal/engine/output_pipeline.go` (`EnvsBuilder`, `TemplatesRenderer`).
 
 ---
 
@@ -55,12 +54,11 @@ type SecretProvider interface {
    type MyProvider struct {
        // backend-specific fields
    }
-
    func NewMyProvider() *MyProvider {
        return &MyProvider{}
    }
    ```
-3. Implement all six methods of `provider.SecretProvider`.
+3. Implement all four methods of `provider.SecretProvider` and `provider.SearchableProvider`.
 4. Adhere to non-negotiable security & coding invariants:
    - **Zero-persistence**: Never write unencrypted secrets to disk.
    - **No secret logging**: Error messages and logs must never include secret values.
@@ -72,9 +70,8 @@ type SecretProvider interface {
 1. Create `internal/provider/<name>_test.go` in `package provider`.
 2. Write table-driven unit tests testing:
    - Successful initialization and configuration validation.
-   - Successful secret retrieval across expected location formats.
+   - Successful secret and flat `Entry` retrieval across expected location formats.
    - Error handling for invalid configuration, missing keys, or unauthorized paths.
-   - Read-only protection on `SetSecret` / `DeleteSecret` when applicable.
 3. Test isolation:
    - If interacting with keyring or cache, invoke `keyring.MockInit()` in test setup.
    - Use `t.TempDir()` for all temporary files or environment mocks (`HOME`, `XDG_CACHE_HOME`).
@@ -88,11 +85,7 @@ type SecretProvider interface {
        p, err = pm.init<Name>(ctx, vaultName, vault)
    ```
 3. Implement the helper `init<Name>(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error)` to instantiate and initialize the provider.
-4. **Decorator Invariant**: Ensure the provider instance `p` is wrapped by the standard decorator chain:
-   - `NewFilteringProvider(p, vault.IncludeFields, vault.ExcludeFields)`
-   - `NewMappingProvider(p, vault.Mapping)`
-   - `NewKeyFormatProvider(p, vault.KeyFormat)`
-   - `NewAttributesProvider(p, vault.Attributes)`
+4. Register the provider type in `internal/config/validate.go` so strict config validation accepts it.
 
 ### Step 4: Update Documentation
 
@@ -106,7 +99,7 @@ type SecretProvider interface {
 
 1. Prefer Go standard library over third-party dependencies.
 2. Do not introduce new dependencies in `go.mod` without explicit review.
-3. Ensure the project builds cleanly across platforms.
+3. Ensure the project builds cleanly across platforms (`GOOS=windows`, `GOOS=darwin`, `GOOS=linux`).
 
 ### Step 6: Automated Verification
 
@@ -133,7 +126,7 @@ The skill provides an automated verification script:
 
 1. **Source File**: Confirms `internal/provider/<name>.go` exists.
 2. **Test File**: Confirms `internal/provider/<name>_test.go` exists.
-3. **Interface Compliance**: Verifies declarations for `Scheme`, `Initialize`, `GetSecret`, `SetSecret`, `DeleteSecret`, and `Validate`.
+3. **Interface Compliance**: Verifies declarations for `Scheme`, `Initialize`, `GetSecret`, and `Validate`.
 4. **Engine Registration**: Checks `internal/engine/provider_manager.go` for `case "<name>":` in `initVaultProvider`.
 5. **README Documentation**: Verifies `README.md` documents `<name>`.
 6. **Example Configuration**: Verifies `examples/config.yaml` includes `<name>`.

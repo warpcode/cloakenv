@@ -349,26 +349,6 @@ func validateRawKeyringTarget(service, account string) error {
 	return nil
 }
 
-// SetSecret stores a secret in the OS keyring using "service/account" format.
-// Used internally by auth and keyring maintenance tooling.
-func (o *OSKeyringProvider) SetSecret(_ context.Context, location string, value string) error {
-	service, account, err := parseKeyringLocation(location)
-	if err != nil {
-		return err
-	}
-	return o.store.Set(service, account, value)
-}
-
-// DeleteSecret removes a secret from the OS keyring using "service/account" format.
-// Used internally by auth and keyring maintenance tooling.
-func (o *OSKeyringProvider) DeleteSecret(_ context.Context, location string) error {
-	service, account, err := parseKeyringLocation(location)
-	if err != nil {
-		return err
-	}
-	return o.store.Delete(service, account)
-}
-
 // SetRawSecret stores a secret in the OS keyring using raw service and account strings.
 // Used by the "auth login" subcommand.
 func (o *OSKeyringProvider) SetRawSecret(service, account, password string) error {

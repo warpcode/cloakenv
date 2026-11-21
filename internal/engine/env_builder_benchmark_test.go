@@ -56,24 +56,15 @@ func benchmarkFormatSizes(b *testing.B, size int) {
 	})
 }
 
-func BenchmarkFormatEnvMap_Size10(b *testing.B) {
-	benchmarkFormatSizes(b, 10)
-}
+func BenchmarkFormatEnvMap_Size10(b *testing.B)  { benchmarkFormatSizes(b, 10) }
+func BenchmarkFormatEnvMap_Size50(b *testing.B)  { benchmarkFormatSizes(b, 50) }
+func BenchmarkFormatEnvMap_Size100(b *testing.B) { benchmarkFormatSizes(b, 100) }
 
-func BenchmarkFormatEnvMap_Size50(b *testing.B) {
-	benchmarkFormatSizes(b, 50)
-}
-
-func BenchmarkFormatEnvMap_Size100(b *testing.B) {
-	benchmarkFormatSizes(b, 100)
-}
-
-func BenchmarkBuildEnvMerges(b *testing.B) {
+func BenchmarkBuildEnvForCommand(b *testing.B) {
 	b.ReportAllocs()
 	ctx := context.Background()
 
 	entities := make(map[string]provider.Entry)
-	var merges []string
 	for i := range 10 {
 		entityName := fmt.Sprintf("app_%d", i)
 		attrs := make(provider.Entry)
@@ -81,16 +72,28 @@ func BenchmarkBuildEnvMerges(b *testing.B) {
 			attrs[fmt.Sprintf("VAR_%d_%d", i, j)] = fmt.Sprintf("val_%d_%d", i, j)
 		}
 		entities[entityName] = attrs
-		merges = append(merges, fmt.Sprintf("bench_vault://%s", entityName))
 	}
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"bench_vault": {
-				Provider: "env",
+			"bench_vault": {Provider: "env"},
+		},
+		Envs: map[string][]config.VaultSourceConfig{
+			"bench_env": {
+				{
+					Vault: "bench_vault",
+					Rules: []config.RuleConfig{{Type: "pass"}},
+				},
+			},
+		},
+		Autoload: []config.AutoloadRule{
+			{
+				Match: "bench-app",
+				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("bench_env")},
 			},
 		},
 	}
+	cfg.CompileAutoloadRules()
 
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
@@ -100,49 +103,9 @@ func BenchmarkBuildEnvMerges(b *testing.B) {
 
 	b.ResetTimer()
 	for range b.N {
-		_, err := orch.BuildEnv(ctx, EnvConfig{Merges: merges, EmptyEnv: true})
+		_, _, err := orch.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: []string{"bench-app"}, EmptyEnv: true})
 		if err != nil {
 			b.Fatal(err)
 		}
 	}
-}
-
-var benchmarkHasCloakenvRes bool
-
-func BenchmarkHasCloakenvInvocation(b *testing.B) {
-	b.Run("PlainArg", func(b *testing.B) {
-		arg := "--config=/path/to/app.conf"
-		b.ReportAllocs()
-		b.ResetTimer()
-		for range b.N {
-			benchmarkHasCloakenvRes = hasCloakenvInvocation(arg)
-		}
-	})
-
-	b.Run("ForeignTemplate", func(b *testing.B) {
-		arg := "--format={{.State.Status}}:{{.Id}}"
-		b.ReportAllocs()
-		b.ResetTimer()
-		for range b.N {
-			benchmarkHasCloakenvRes = hasCloakenvInvocation(arg)
-		}
-	})
-
-	b.Run("CloakenvInvocation", func(b *testing.B) {
-		arg := "--token={{ get \"vault://app:token\" }}"
-		b.ReportAllocs()
-		b.ResetTimer()
-		for range b.N {
-			benchmarkHasCloakenvRes = hasCloakenvInvocation(arg)
-		}
-	})
-
-	b.Run("PipelineInvocation", func(b *testing.B) {
-		arg := "--token={{ .val | exec \"sh\" \"-c\" }}"
-		b.ReportAllocs()
-		b.ResetTimer()
-		for range b.N {
-			benchmarkHasCloakenvRes = hasCloakenvInvocation(arg)
-		}
-	})
 }

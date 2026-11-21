@@ -3,20 +3,20 @@
 > [!IMPORTANT]
 > These instructions apply to all AI agents working within `cloakenv`. They complement, and never override, global rules in `~/.agents/AGENTS.md`.
 
-`cloakenv` is a pluggable secret orchestrator and dynamic runtime environment injector written in Go.
-It resolves typed secret URIs from multiple backends into temporary execution memory with zero plaintext disk persistence.
+`cloakenv` is a declarative, zero-leak secret orchestrator and dynamic runtime environment injector written in Go.
+It resolves raw entries from read-only secret vaults through a declarative `RuleEngine` into named `envs` and `templates` with zero plaintext disk persistence and redacted inspection.
 
 ## Package Contracts
 
 | Package | Responsibility | Invariant / Must NOT |
 |---|---|---|
 | `internal/audit` | Structured JSON-lines audit logging for secret access attempts | No plaintext secret values or resolved payloads in log output |
-| `internal/cmd` | Top-level CLI subcommand dispatch and flag parsing | No secret resolution or direct backend provider instantiation |
-| `internal/config` | Parse and validate YAML configuration | No secret resolution or I/O beyond file reads |
-| `internal/engine` | Orchestrate URI resolution, caching, and env injection | No direct imports of backend-specific libraries |
-| `internal/provider` | Implement `provider.SecretProvider` per backend | No shared mutable state between providers |
-| `internal/runner` | Process execution wrapping and environment injection | No secret leakage into persistent state or child processes |
-| `internal/utils` | Shared string, slice, and formatting utilities | No business logic, config loading, or URI resolution |
+| `internal/cmd` | Top-level CLI subcommand dispatch (`run`, `inspect`, `auth`, `doctor`, `cache`, `completion`, `version`, `internal`) and flag parsing | No secret resolution, plaintext secret printing, or direct backend provider instantiation |
+| `internal/config` | Parse and validate YAML configuration (`vaults`, `envs`, `templates`, `autoload`) | No secret resolution or I/O beyond file reads |
+| `internal/engine` | Orchestrate vault loading, `RuleEngine` transforms, `EnvsBuilder`, `TemplatesRenderer`, autoload matching, and caching | No direct imports of backend-specific libraries |
+| `internal/provider` | Implement read-only `provider.SecretProvider` / `provider.SearchableProvider` per backend (`keepass`, `pass`, `vault`, `env`, `keyring`, `cache`) | No shared mutable state between providers; no filtering, mapping, or template transforms |
+| `internal/runner` | Process execution wrapping, environment injection, streaming Aho-Corasick output masking, and temp-file zeroing | No secret leakage into persistent state or unmasked child output |
+| `internal/utils` | Shared string, slice, YAML, and formatting utilities | No business logic, config loading, or secret resolution |
 
 ## Verification Gate
 
@@ -29,15 +29,15 @@ Equivalently, run `make verify` to execute this pipeline. Run `make agents-check
 ## 🔒 Security Constraints
 
 1. **Never log secret values**:
-   Debug output, test logs, and error messages must never contain resolved secret values.
+   Debug output, test logs, audit logs, traces, `cloakenv inspect`, and error messages must never contain resolved secret values.
 2. **Zero plaintext disk persistence**:
-   Secrets exist strictly in execution memory; encrypted cache (`cache://`) key lives in OS keyring.
+   Secrets exist strictly in execution memory (or mode-`0700`/`0600` `O_NOFOLLOW` temp files zeroed on child exit); encrypted cache (`cache://`) key lives in OS keyring.
 3. **Test credentials for testing only**:
    Fixture credentials (`testdata/testDB.kdbx`) must never appear in production examples.
 4. **No hardcoded credentials**:
    Never commit secrets, API keys, or passwords anywhere in source code or documentation.
 5. **Keyring isolation**:
-   Keyring operations go through `internal/provider/os_keyring.go`; tests must use `keyring.MockInit()` and temporary `HOME`/`XDG_CACHE_HOME`.
+   Keyring operations go through `internal/provider/os_keyring.go`; tests must use `keyring.MockInit()` and temporary `HOME`/`XDG_CACHE_HOME`. Internal keyring keys (`cache_token`, `cache_disk_token`, `cache-master-key`, `cache/*`, `cache_v2/*`, `provider/*`) must never be exposed through the built-in `keyring` vault.
 
 ## 🤖 AI Guardrails
 
@@ -52,20 +52,16 @@ Equivalently, run `make verify` to execute this pipeline. Run `make agents-check
 
 ## 🧬 Core Invariants
 
-- **Entry & Tag Immutability**:
-  `Entry.Tags` must never be mutated or lowercased at parse time; case-insensitive matching occurs strictly dynamically in `Search`.
-- **Provider Interface & Wrappers**:
-  Backends implement `provider.SecretProvider`. Wrappers (`FilteringProvider`, `MappingProvider`, etc.) must preserve optional interfaces (`SearchableProvider`, `ValueResolvableProvider`) by interface presence, not return value.
-- **Wrapper Ordering**:
-  Vault decorators wrap in strict order: `FilteringProvider` -> `MappingProvider` -> `KeyFormatProvider` -> `AttributesProvider`. Wrappers compose; they must never replace filtering or bypass to unfiltered underlying `GetSecret`.
-- **Filter Precedence & Exemptions**:
-  `include_fields` takes precedence over `exclude_fields`. Mapped fields always show regardless of include/exclude filters.
-- **Filter Authorization**:
-  `FilteringProvider.GetSecret` and `FilterEntryWithPath` evaluate canonical colon-qualified candidates (`entry:attr`, `title:attr`) and dot paths; single-entity and root-keyed vaults must not fall through to unredacted retrieval.
-- **Unified Templating**:
-  Templates evaluate Go `text/template` with `.Option("missingkey=error")` and recursion depth <= 5; legacy `${...}` interpolation is permanently removed (`docs/adr/0001-unify-templating-on-go-text-template-and-composed-custom-vaults.md`).
-- **Child Command Pass-Through**:
-  `resolveCmdArgs` evaluates only bare URIs or cloakenv template functions (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`, `exec`, `shquote`, `shellQuote`), preserving foreign format flags (e.g. Docker format).
+- **Pure Read-Only Vaults & Flat `Entry`**:
+  Vault backends implement read-only `provider.SecretProvider` (`Scheme`, `Initialize`, `GetSecret`, `Validate`) and `provider.SearchableProvider` (`Search`, `GetEntry`) returning raw flat `Entry` (`map[string]any`) maps containing canonical metadata (`title`, `path`, `uuid`, `tags`, `group`) alongside raw secret fields. `Entry.Tags` must never be mutated or lowercased at parse time; case-insensitive matching occurs strictly dynamically.
+- **Built-in `env` & `keyring` Vaults**:
+  `env` and `keyring` are implicitly available as read-only vaults in `envs:` and `templates:` without explicit `vaults:` blocks, while `vaults:` may only override `env` with `provider: env` or `keyring` with `provider: keyring`.
+- **Declarative `RuleEngine` Pipeline**:
+  All filtering, key remapping, formatting, and value transformation happen in `internal/engine/rules.go` (`pass`, `match`, `set` with last-rule-wins semantics and reserved metadata key protection) and `internal/engine/output_pipeline.go` (`EnvsBuilder`, `TemplatesRenderer`), never inside provider wrappers.
+- **Unified Pure Go Templating**:
+  Templates evaluate Go `text/template` with `.Option("missingkey=error")` and pure helper functions (`hasTag`, `default`, `coalesce`, `toEnv`, `toKv`, `toJSON`, `fromJSON`, `toYAML`, `fromYAML`, `upper`, `lower`, `env`, `snake`, `kebab`, `keys`, `values`, `join`, `shquote`). Legacy URI/exec/include template functions (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`, `exec`) and `${...}` interpolation are permanently removed.
+- **Zero-Leak CLI & Verbatim Child Command Pass-Through**:
+  The CLI exposes only `run`, `inspect` (unconditional `<REDACTED>`), `auth`, `doctor`, `cache`, `completion`, `version`, and `internal`. Child command arguments in `BuildEnvForCommand` pass through completely verbatim without template evaluation or secret expansion.
 
 ## 🧭 Skills & Documentation Pointers
 
@@ -132,4 +128,3 @@ function fixPEM(str) {
 Rather than ritualistic end-of-task review checklists, repository integrity is enforced automatically:
 - Run `make agents-check` to verify that Makefile targets, internal package contracts, and referenced skills remain synchronized.
 - Run `make test-all` for full local verification (formatting, vetting, unit tests with race detection, and benchmarks).
-

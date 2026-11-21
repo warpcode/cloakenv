@@ -7,76 +7,27 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/warpcode/cloakenv/internal/config"
-	"github.com/warpcode/cloakenv/internal/provider"
-	"github.com/warpcode/cloakenv/internal/utils"
 )
 
-// EnvResolver defines the interface for resolving URIs needed by EnvBuilder.
-type EnvResolver interface {
-	Resolve(ctx context.Context, uri string) (string, error)
-	ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error)
-	GetEntry(ctx context.Context, uri string) (provider.Entry, error)
-	GetEntries(ctx context.Context, uri string) ([]provider.Entry, error)
-}
-
-// maxResolveConcurrency bounds concurrent source resolutions spawned by the
-// EnvBuilder. It is deliberately independent from the Resolver's shared
-// semaphore: merge-source goroutines can nest into Resolver slice resolution,
-// which acquires additional slots — sharing one pool across nesting levels
-// could otherwise deadlock when all slots are held by parents waiting on
-// children.
-const maxResolveConcurrency = 16
-
-// EnvBuilder handles the construction of the environment block.
+// EnvBuilder constructs command environments and rendered templates from declarative
+// autoload rules, envs definitions, and template definitions.
 type EnvBuilder struct {
 	config            *config.Config
-	resolver          EnvResolver
 	envsBuilder       *EnvsBuilder
 	templatesRenderer *TemplatesRenderer
 	ruleEngine        *RuleEngine
-	sem               chan struct{}
 }
 
-// SetEnvsBuilder attaches the declarative EnvsBuilder used to resolve `autoload[].envs[]` items.
-func (eb *EnvBuilder) SetEnvsBuilder(b *EnvsBuilder) {
-	if eb != nil {
-		eb.envsBuilder = b
-	}
-}
-
-// SetTemplatesRenderer attaches the declarative TemplatesRenderer used to render `autoload[].templates[]` items.
-func (eb *EnvBuilder) SetTemplatesRenderer(tr *TemplatesRenderer) {
-	if eb != nil {
-		eb.templatesRenderer = tr
-	}
-}
-
-// SetRuleEngine attaches a RuleEngine used for inline autoload env templates.
-func (eb *EnvBuilder) SetRuleEngine(re *RuleEngine) {
-	if eb != nil {
-		eb.ruleEngine = re
-	}
-}
-
-// NewEnvBuilder creates a new EnvBuilder.
-func NewEnvBuilder(cfg *config.Config, r EnvResolver) *EnvBuilder {
+// NewEnvBuilder creates a new EnvBuilder wired to declarative pipeline components.
+func NewEnvBuilder(cfg *config.Config, eb *EnvsBuilder, tr *TemplatesRenderer, re *RuleEngine) *EnvBuilder {
 	return &EnvBuilder{
-		config:   cfg,
-		resolver: r,
-		sem:      make(chan struct{}, maxResolveConcurrency),
+		config:            cfg,
+		envsBuilder:       eb,
+		templatesRenderer: tr,
+		ruleEngine:        re,
 	}
-}
-
-// acquireSem acquires a concurrency slot and returns the release function.
-func (eb *EnvBuilder) acquireSem() func() {
-	if eb.sem == nil {
-		return func() {}
-	}
-	eb.sem <- struct{}{}
-	return func() { <-eb.sem }
 }
 
 func getParentEnv() map[string]string {
@@ -90,234 +41,11 @@ func getParentEnv() map[string]string {
 	return parentEnvMap
 }
 
-type envKV struct {
-	k string
-	v string
-}
-
-func (eb *EnvBuilder) resolveMergeSources(ctx context.Context, merges []string, whitelist []string) ([][]envKV, error) {
-	if len(merges) == 0 {
-		return nil, nil
-	}
-
-	whitelistSet := make(map[string]bool)
-	for _, k := range whitelist {
-		whitelistSet[k] = true
-		whitelistSet[utils.FormatKey(k)] = true
-		whitelistSet[strings.ToLower(k)] = true
-	}
-	hasWhitelist := len(whitelist) > 0
-
-	loaded := make([][]envKV, len(merges))
-	var wg sync.WaitGroup
-	var errOnce sync.Once
-	var firstErr error
-
-	for i, m := range merges {
-		release := eb.acquireSem()
-		wg.Add(1)
-		go func(idx int, uri string) {
-			defer wg.Done()
-			defer release()
-			entries, err := eb.resolver.GetEntries(ctx, uri)
-			if err != nil {
-				errOnce.Do(func() {
-					firstErr = fmt.Errorf("failed to get entries %s: %w", uri, err)
-				})
-				return
-			}
-			var keys []envKV
-			for _, entry := range entries {
-				for k, v := range entry {
-					if isReservedMetadataKey(k) {
-						continue
-					}
-					if strings.EqualFold(k, "title") || strings.EqualFold(k, "tags") {
-						continue
-					}
-					if hasWhitelist && !whitelistSet[k] && !whitelistSet[utils.FormatKey(k)] && !whitelistSet[strings.ToLower(k)] {
-						continue
-					}
-					strVal, err := utils.SerializeAttrValue(v)
-					if err != nil {
-						errOnce.Do(func() {
-							firstErr = fmt.Errorf("failed to serialize attribute %q in entry %s: %w", k, uri, err)
-						})
-						return
-					}
-					keys = append(keys, envKV{k: k, v: strVal})
-				}
-			}
-			loaded[idx] = keys
-		}(i, m)
-	}
-	wg.Wait()
-	if firstErr != nil {
-		return nil, firstErr
-	}
-	return loaded, nil
-}
-
-func (eb *EnvBuilder) resolveExplicitMappings(ctx context.Context, explicit map[string]string) (map[string]string, error) {
-	if len(explicit) == 0 {
-		return nil, nil
-	}
-
-	resolved := make(map[string]string)
-	var wg sync.WaitGroup
-	var errOnce sync.Once
-	var explicitErr error
-	var mu sync.Mutex
-
-	for k, uri := range explicit {
-		release := eb.acquireSem()
-		wg.Add(1)
-		go func(k, uri string) {
-			defer wg.Done()
-			defer release()
-			val, err := eb.resolver.ResolveWithKey(ctx, uri, k)
-			if err != nil {
-				errOnce.Do(func() {
-					explicitErr = fmt.Errorf("failed to resolve explicit env %s=%s: %w", k, uri, err)
-				})
-				return
-			}
-			mu.Lock()
-			resolved[k] = val
-			mu.Unlock()
-		}(k, uri)
-	}
-	wg.Wait()
-	if explicitErr != nil {
-		return nil, explicitErr
-	}
-	return resolved, nil
-}
-
-// MergedEntryConfig holds configuration parameters for building a merged entry.
-type MergedEntryConfig struct {
-	Merges    []string
-	Whitelist []string
-	Explicit  map[string]string
-}
-
-// BuildMergedEntry constructs a single merged entry by merging multiple entries
-// and resolving explicit mappings.
-func (eb *EnvBuilder) BuildMergedEntry(ctx context.Context, cfg MergedEntryConfig) (provider.Entry, error) {
-	entries, err := eb.resolveMergedEntries(ctx, cfg.Merges)
-	if err != nil {
-		return provider.Entry{}, err
-	}
-
-	tags, attributes := mergeTagsAndAttributes(entries, cfg.Whitelist)
-
-	explicitResolved, err := eb.resolveExplicitMappings(ctx, cfg.Explicit)
-	if err != nil {
-		return provider.Entry{}, err
-	}
-
-	for k, v := range explicitResolved {
-		attributes[k] = v
-	}
-
-	if tags == nil {
-		tags = []string{}
-	}
-
-	result := make(provider.Entry, len(attributes)+1)
-	for k, v := range attributes {
-		result[k] = v
-	}
-	result["tags"] = tags
-	return result, nil
-}
-
-func (eb *EnvBuilder) resolveMergedEntries(ctx context.Context, merges []string) ([]provider.Entry, error) {
-	if len(merges) == 0 {
-		return nil, nil
-	}
-
-	type loadedEntry struct {
-		entries []provider.Entry
-		err     error
-	}
-	loadedMerges := make([]loadedEntry, len(merges))
-	var mWg sync.WaitGroup
-	for idx, mURI := range merges {
-		release := eb.acquireSem()
-		mWg.Add(1)
-		go func(i int, uri string) {
-			defer mWg.Done()
-			defer release()
-			entries, err := eb.resolver.GetEntries(ctx, uri)
-			loadedMerges[i] = loadedEntry{entries: entries, err: err}
-		}(idx, mURI)
-	}
-	mWg.Wait()
-
-	var entries []provider.Entry
-	for _, lm := range loadedMerges {
-		if lm.err != nil {
-			return nil, fmt.Errorf("failed to retrieve entry: %w", lm.err)
-		}
-		entries = append(entries, lm.entries...)
-	}
-	return entries, nil
-}
-
-func mergeTagsAndAttributes(entries []provider.Entry, whitelist []string) ([]string, map[string]any) {
-	whitelistSet := make(map[string]bool)
-	for _, k := range whitelist {
-		whitelistSet[k] = true
-		whitelistSet[utils.FormatKey(k)] = true
-		whitelistSet[strings.ToLower(k)] = true
-	}
-	hasWhitelist := len(whitelist) > 0
-
-	tagSet := make(map[string]bool)
-	attributes := make(map[string]any)
-
-	for _, e := range entries {
-		for _, tag := range e.Tags() {
-			tagSet[tag] = true
-		}
-		for k, v := range e {
-			if isReservedMetadataKey(k) {
-				continue
-			}
-			if strings.EqualFold(k, "title") {
-				continue
-			}
-			if hasWhitelist && !whitelistSet[k] && !whitelistSet[utils.FormatKey(k)] && !whitelistSet[strings.ToLower(k)] {
-				continue
-			}
-			attributes[k] = v
-		}
-	}
-
-	var uniqueTags []string
-	for tag := range tagSet {
-		uniqueTags = append(uniqueTags, tag)
-	}
-
-	return uniqueTags, attributes
-}
-
-// EnvConfig holds configuration parameters for building the environment block.
+// EnvConfig holds configuration parameters for building a command environment block.
 type EnvConfig struct {
 	CmdArgs         []string
-	Explicit        map[string]string
-	Merges          []string
-	Whitelist       []string
 	EmptyEnv        bool
 	RedactedPreview bool
-}
-
-// BuildEnv constructs the full environment block without command autoloading.
-func (eb *EnvBuilder) BuildEnv(ctx context.Context, cfg EnvConfig) ([]string, error) {
-	cfg.CmdArgs = nil
-	_, env, err := eb.BuildEnvForCommand(ctx, cfg)
-	return env, err
 }
 
 // formatEnvMap converts an environment map to a slice of "KEY=VALUE" strings with deterministic sorting.
@@ -332,21 +60,6 @@ func formatEnvMap(envMap map[string]string) []string {
 		keys[i] = k + "=" + envMap[k]
 	}
 	return keys
-}
-
-// normalizeURIs trims whitespace, filters empty strings, and ensures URIs have a scheme suffix.
-func normalizeURIs(uris []string) []string {
-	result := make([]string, 0, len(uris))
-	for _, u := range uris {
-		u = strings.TrimSpace(u)
-		if u != "" {
-			if !strings.Contains(u, "://") {
-				u = u + "://"
-			}
-			result = append(result, u)
-		}
-	}
-	return result
 }
 
 // resolveAutoloadEnvs resolves an ordered slice of AutoloadEnvItem (named envs and inline maps)
@@ -404,97 +117,6 @@ func (eb *EnvBuilder) resolveAutoloadEnvs(ctx context.Context, items []config.Au
 	return resolved, nil
 }
 
-// cloakenvFnPrefixes contains candidate function invocation prefixes for detecting cloakenv template calls.
-// Hoisting these into a package-level slice eliminates repeated slice heap allocations inside the scan loop.
-var cloakenvFnPrefixes = []string{
-	"get ", "get\t", "get\"", "get`",
-	"tryGet ", "tryGet\t", "tryGet\"", "tryGet`",
-	"entry ", "entry\t", "entry\"", "entry`",
-	"search ", "search\t", "search\"", "search`",
-	"include ", "include\t", "include\"", "include`",
-	"includeFile ", "includeFile\t", "includeFile\"", "includeFile`",
-	"exec ", "exec\t", "exec\"", "exec`",
-	"shquote ", "shquote\t", "shquote\"", "shquote`",
-	"shellQuote ", "shellQuote\t", "shellQuote\"", "shellQuote`",
-}
-
-// hasCloakenvInvocation scans arg for cloakenv template function invocations.
-// Optimization: iterates through occurrences of "{{" using strings.Cut to avoid allocating
-// intermediate string slices on the heap via strings.Split (0 allocs/op).
-func hasCloakenvInvocation(arg string) bool {
-	if !strings.Contains(arg, "{{") {
-		return false
-	}
-
-	remaining := arg
-	for {
-		var found bool
-		_, remaining, found = strings.Cut(remaining, "{{")
-		if !found {
-			break
-		}
-
-		endIdx := strings.Index(remaining, "}}")
-		var block string
-		if endIdx >= 0 {
-			block = remaining[:endIdx]
-		} else {
-			block = remaining
-		}
-		trimmed := strings.TrimSpace(block)
-		trimmed = strings.TrimPrefix(trimmed, "-")
-		trimmed = strings.TrimSpace(trimmed)
-
-		for _, fn := range cloakenvFnPrefixes {
-			if strings.HasPrefix(trimmed, fn) || strings.Contains(trimmed, " "+fn) || strings.Contains(trimmed, "("+fn) || strings.Contains(trimmed, "| "+fn) || strings.Contains(trimmed, "|"+fn) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (eb *EnvBuilder) isKnownScheme(scheme string) bool {
-	if scheme == "env" || scheme == "cache" || scheme == "keyring" || scheme == "pass" || scheme == "search" {
-		return true
-	}
-	if eb.config != nil && eb.config.Vaults != nil {
-		_, ok := eb.config.Vaults[scheme]
-		return ok
-	}
-	return false
-}
-
-// shouldResolveCmdArg checks if a child command argument is a bare known URI
-// or contains a cloakenv template invocation. Arguments without cloakenv
-// invocations pass through untouched.
-func (eb *EnvBuilder) shouldResolveCmdArg(arg string) bool {
-	if !strings.Contains(arg, "{{") {
-		if scheme, _, err := utils.ParseURI(arg); err == nil && eb.isKnownScheme(scheme) {
-			return true
-		}
-		return false
-	}
-	return hasCloakenvInvocation(arg)
-}
-
-// resolveCmdArgs resolves secret URIs in command arguments.
-func (eb *EnvBuilder) resolveCmdArgs(ctx context.Context, cmdArgs []string) ([]string, error) {
-	resolvedCmdArgs := make([]string, len(cmdArgs))
-	for i, arg := range cmdArgs {
-		if !eb.shouldResolveCmdArg(arg) {
-			resolvedCmdArgs[i] = arg
-			continue
-		}
-		resolvedArg, err := eb.resolver.Resolve(ctx, arg)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve command argument %q: %w", arg, err)
-		}
-		resolvedCmdArgs[i] = resolvedArg
-	}
-	return resolvedCmdArgs, nil
-}
-
 // RenderedTemplateDelivery holds a rendered autoload template along with its
 // evaluated target delivery metadata and extracted secret values for masking.
 type RenderedTemplateDelivery struct {
@@ -538,7 +160,6 @@ func (eb *EnvBuilder) resolveAutoloadTemplates(ctx context.Context, templates []
 		if err != nil {
 			return nil, fmt.Errorf("autoload template #%d (%q): %w", idx+1, tpl.Template, err)
 		}
-
 		resolvedPath := tpl.Path
 		if resolvedPath != "" && strings.Contains(resolvedPath, "{{") {
 			resolvedPath, err = re.evalTemplate(fmt.Sprintf("autoload.template.%s.path", tpl.Template), resolvedPath, envCtx)
@@ -549,7 +170,6 @@ func (eb *EnvBuilder) resolveAutoloadTemplates(ctx context.Context, templates []
 		if strings.TrimSpace(tpl.Path) != "" && strings.TrimSpace(resolvedPath) == "" {
 			return nil, fmt.Errorf("autoload template #%d (%q): evaluated path is empty", idx+1, tpl.Template)
 		}
-
 		var secrets []string
 		if res.Content != "" {
 			secrets = append(secrets, res.Content)
@@ -561,7 +181,6 @@ func (eb *EnvBuilder) resolveAutoloadTemplates(ctx context.Context, templates []
 				}
 			}
 		}
-
 		out = append(out, RenderedTemplateDelivery{
 			TemplateName: tpl.Template,
 			Driver:       res.Driver,
@@ -590,6 +209,7 @@ type CommandEnvDetails struct {
 
 // BuildEnvForCommandDetails constructs the full environment block, evaluates autoload rules,
 // and returns execution details including the sorted list of injected variable keys.
+// Child command arguments are passed through verbatim without URI or template evaluation.
 func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConfig) (*CommandEnvDetails, error) {
 	autoEval, err := EvaluateAutoload(eb.config, cfg.CmdArgs)
 	if err != nil {
@@ -616,6 +236,7 @@ func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConf
 
 	injectedKeysSet := make(map[string]bool)
 	var maskSecrets []string
+
 	for k, v := range autoEnvs {
 		finalEnv[k] = v
 		injectedKeysSet[k] = true
@@ -635,26 +256,6 @@ func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConf
 		maskSecrets = append(maskSecrets, rt.Secrets...)
 	}
 
-	mergedSources, err := eb.resolveMergeSources(ctx, cfg.Merges, cfg.Whitelist)
-	if err != nil {
-		return nil, err
-	}
-	for _, src := range mergedSources {
-		for _, kv := range src {
-			finalEnv[kv.k] = kv.v
-			injectedKeysSet[kv.k] = true
-		}
-	}
-
-	explicitResolved, err := eb.resolveExplicitMappings(ctx, cfg.Explicit)
-	if err != nil {
-		return nil, err
-	}
-	for k, v := range explicitResolved {
-		finalEnv[k] = v
-		injectedKeysSet[k] = true
-	}
-
 	injectedKeys := make([]string, 0, len(injectedKeysSet))
 	for k := range injectedKeysSet {
 		injectedKeys = append(injectedKeys, k)
@@ -666,15 +267,11 @@ func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConf
 	if len(currentCmdArgs) == 0 {
 		currentCmdArgs = cfg.CmdArgs
 	}
-	rawCmdArgs := slices.Clone(currentCmdArgs)
-	resolvedCmdArgs, err := eb.resolveCmdArgs(ctx, currentCmdArgs)
-	if err != nil {
-		return nil, err
-	}
+	cmdCopy := slices.Clone(currentCmdArgs)
 
 	return &CommandEnvDetails{
-		Command:           resolvedCmdArgs,
-		RawCommand:        rawCmdArgs,
+		Command:           cmdCopy,
+		RawCommand:        slices.Clone(cmdCopy),
 		Env:               result,
 		InjectedKeys:      injectedKeys,
 		ResolvedEnvs:      autoEnvs,

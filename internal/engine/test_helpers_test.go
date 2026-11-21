@@ -54,9 +54,12 @@ func (p *testMemoryProvider) GetSecret(_ context.Context, location string) (stri
 	}
 	val, ok := entry[attrKey]
 	if !ok {
-		if v, found := findAttrCaseFold(entry, attrKey); found {
-			val = v
-			ok = true
+		for k, v := range entry {
+			if strings.EqualFold(k, attrKey) {
+				val = v
+				ok = true
+				break
+			}
 		}
 	}
 	if !ok {

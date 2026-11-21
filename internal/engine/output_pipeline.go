@@ -13,6 +13,7 @@ import (
 	"strings"
 	texttemplate "text/template"
 
+	"github.com/warpcode/cloakenv/internal/audit"
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/provider"
 	"github.com/warpcode/cloakenv/internal/utils"
@@ -58,7 +59,26 @@ type VaultEntryFetcher interface {
 }
 
 type providerManagerEntryFetcher struct {
-	pm *ProviderManager
+	pm          *ProviderManager
+	auditLogger *audit.Logger
+}
+
+func classifyAuditOutcome(err error) string {
+	if err == nil {
+		return "SUCCESS"
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "denied") || strings.Contains(msg, "permission") || strings.Contains(msg, "forbidden") || strings.Contains(msg, "access denied") {
+		return "DENIED"
+	}
+	return "ERROR"
+}
+
+func (f *providerManagerEntryFetcher) logAudit(vaultName string, err error) {
+	if f == nil || f.auditLogger == nil {
+		return
+	}
+	_ = f.auditLogger.Log(vaultName+"://", classifyAuditOutcome(err))
 }
 
 func (f *providerManagerEntryFetcher) FetchEntries(ctx context.Context, vaultName string) ([]SourceEntry, error) {
@@ -67,16 +87,21 @@ func (f *providerManagerEntryFetcher) FetchEntries(ctx context.Context, vaultNam
 	}
 	p, _, err := f.pm.GetProvider(ctx, vaultName)
 	if err != nil {
+		f.logAudit(vaultName, err)
 		return nil, err
 	}
 	sp, ok := p.(provider.SearchableProvider)
 	if !ok {
-		return nil, fmt.Errorf("vault %q (provider %q) does not support entry listing", vaultName, p.Scheme())
+		err := fmt.Errorf("vault %q (provider %q) does not support entry listing", vaultName, p.Scheme())
+		f.logAudit(vaultName, err)
+		return nil, err
 	}
 	entries, err := sp.Search(ctx, provider.SearchQuery{})
 	if err != nil {
+		f.logAudit(vaultName, err)
 		return nil, fmt.Errorf("failed to query vault %q: %w", vaultName, err)
 	}
+	f.logAudit(vaultName, nil)
 	out := make([]SourceEntry, 0, len(entries))
 	for _, entry := range entries {
 		entryPath := entry.Path()

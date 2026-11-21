@@ -1,157 +1,108 @@
 # cloakenv example configuration
 # Place this file at: ~/.config/cloakenv/config.yaml
 
-# Reusable Go text/template definitions available to `include "name" .`
-templates:
-  # Inline template definition:
-  dotenv:
-    template: "{{ .attributes | toEnv }}"
-  # External file template definition (resolves relative to config.yaml or expands ~/):
-  # app_config:
-  #   path: "~/.config/cloakenv/templates/app.tmpl"
-
 # Cache configurations
 cache:
-  # Default expiration TTL for cache:// sets if --ttl CLI flag is omitted
   default_ttl: "10m"
 
 # Keyring configurations
 keyring:
-  # The service prefix used in the OS keyring for master passwords & tokens
   prefix: "cloakenv"
-  # Isolate credentials by configuration file path.
-  # When set to true and a custom configuration file is loaded (via -c <config_path>),
-  # a 10-character SHA-256 hash of the configuration file's absolute path is appended
-  # to the keyring prefix (<prefix>_<hash>). This prevents credential and master
-  # password collisions across different projects, repositories, or environments.
-  # When using the default configuration path (~/.config/cloakenv/config.yaml), the prefix
-  # remains unhashed. Defaults to false.
   isolate: false
 
-# Audit logging for compliant secret access tracking. Records only the URI and metadata,
-# never the resolved secret payload itself.
+# Audit logging (records URI/vault access metadata, never secret values)
 audit:
-  enabled: true
+  enabled: false
   log_path: "~/.config/cloakenv/audit.jsonl"
   format: "jsonl"
 
-# Custom vault definitions. Each mapping key becomes a custom URI scheme (ref).
-# Supported provider types: keepass, pass, env, search, vault
+# Configured read-only vaults (pure retrieval backends; env and keyring are built-in)
 vaults:
-  # Defines the keepass_dev:// URI scheme (KeePass provider example using the provided database.kdbx)
-  keepass_dev:
-    provider: "keepass"
-    vault_path: "./examples/providers/keepass/database.kdbx"
-    # resolve_references: true  # Enables KeePass entry placeholder and cross-entry reference resolution ({TITLE}, {REF:...}, {T-CONV:...}, {URL:...})
-
-  # Defines the pass_store:// URI scheme (Standard Unix Password Store / pass)
-  pass_store:
-    provider: "pass"
-    vault_path: "~/.password-store"
-    searchable: true
-
-  # Defines the work:// URI scheme (KeePass provider, multiple-entity by default)
   work:
     provider: "keepass"
-    vault_path: "~/secrets/work_vault.kdbx"
-    # resolve_references: true
+    vault_path: "~/secrets/work.kdbx"
+    resolve_references: false
+    cache:
+      enabled: true
+      ttl: "15m"
+      mode: "keyring"
 
-  # Defines the home:// URI scheme (KeePass provider, excluded from dynamic searches)
-  home:
-    provider: "keepass"
-    vault_path: "~/.keepass/Accounts.kdbx"
-    searchable: false
+  unix_pass:
+    provider: "pass"
+    vault_path: "~/.password-store"
+    query: "work/"
 
-  # Example of generic field filtering on any vault provider using include_fields and exclude_fields:
-  # include_fields: limits returned entry attributes to field names matching glob patterns
-  # exclude_fields: removes entry attributes matching glob patterns before returning the entry
-  # Note: Default metadata fields (title, uuid, group, group_name, group_uuid, group_path, path) are included by default. Metadata (tags, vault, provider) is consolidated under _meta_ when --show-meta is requested.
-  # filtered_work:
-  #   provider: "keepass"
-  #   vault_path: "~/secrets/work_vault.kdbx"
-  #   include_fields:
-  #     - "env:*"
-  #     - "UserName"
-  #   exclude_fields:
-  #     - "*.notes"
-  #     - "secret:*"
+  hcp_vault:
+    provider: "vault"
+    address: "https://vault.example.com:8200"
+    mount_path: "secret"
+    engine_version: 2
+    query: "prod/"
 
-  # Example of field key mapping on any vault provider using regex rules:
-  # mapping: renames matched field keys while preserving original source field values as mapped values.
-  # Mapped fields always show regardless of include_fields or exclude_fields configured on the same vault. Field filtering applies to unmapped fields.
-  # mapped_work:
-  #   provider: "keepass"
-  #   vault_path: "~/secrets/work_vault.kdbx"
-  #   mapping:
-  #     - match: "env:(.*)"
-  #       key: "\1"
+  process_env:
+    provider: "env"
 
-  # Example of per-vault key formatting:
-  # key_format: transforms entry attribute names. Available options:
-  #   - none: (default) passes through original key name unmodified
-  #   - env: UPPERCASE_WITH_UNDERSCORES
-  #   - snake: lowercase_with_underscores
-  #   - kebab: lowercase-with-hyphens
-  # formatted_work:
-  #   provider: "keepass"
-  #   vault_path: "~/secrets/work_vault.kdbx"
-  #   key_format: "snake"
+  os_keyring:
+    provider: "keyring"
+    query: "OPENAI_API_KEY,NVIDIA_NIM_API_KEY"
 
-  # Example of universal per-entry attributes decorator on any vault provider:
-  # attributes: computes or overlays templated attributes on each entry after filtering,
-  # mapping, and key formatting. Templates have access to .meta and .attributes.
-  # decorated_work:
-  #   provider: "keepass"
-  #   vault_path: "~/secrets/work_vault.kdbx"
-  #   key_format: "env"
-  #   attributes:
-  #     EXPORT_ENV: "{{ .attributes | toEnv }}"
-  #     ENTRY_TITLE: "{{ .meta.Title }}"
+# Declarative environment sets with RuleEngine transformations
+envs:
+  aws_env:
+    - vault: "work"
+      query: '{{ hasTag "aws" .tags }}'
+      rules:
+        - type: pass
+          include: ["AWS_*"]
+          exclude: ["*_NOTES"]
+          key_format: "env"
 
-# Autoloading configuration: Automatically match commands, mask/transform command lines, and inject vault credentials
-autoload:
-  # Regex matching + command transformation (Alias masking):
-  # Running: `cloakenv run -- litellm --config ~/.config/litellm/config.yaml`
-  # Expands to: `uvx --with 'litellm[proxy]' --with 'fastapi<0.116' litellm --config ~/.config/litellm/config.yaml`
-  # while injecting credentials from litellm/keys vault.
-  - match: "^litellm\\s+(.*)$"
-    command: "uvx --with 'litellm[proxy]' --with 'fastapi<0.116' litellm \\1"
-    env:
-      OPENROUTER_API_KEY: "...."
-      NVIDIA_NIM_API_KEY: "...."
+  ai_env:
+    - vault: "os_keyring"
+      rules:
+        - type: pass
+          include: ["OPENAI_*", "NVIDIA_*"]
+        - type: set
+          values:
+            LITELLM_LOG: "INFO"
 
-  - match: "aws"
+# Declarative template artifact generators
+templates:
+  app_dotenv:
+    driver: "dotenv"
+    from_env: "ai_env"
+
+  service_json:
+    driver: "json"
     vaults:
-      - "keepass_dev://aws/credentials"
-    env:
-      AWS_DEFAULT_REGION: "env://DEFAULT_REGION"
-    whitelist:
-      - "AWS_ACCESS_KEY_ID"
-      - "AWS_SECRET_ACCESS_KEY"
-      - "AWS_DEFAULT_REGION"
+      - vault: "work"
+        query: '{{ eq .title "Service Account" }}'
+        rules:
+          - type: pass
+            exclude: ["Notes"]
 
-  - match: "kubectl*"
-    merge:
-      - "work://clusters/staging"
-    env:
-      KUBECONFIG_TOKEN: "keyring://k8s/token"
+  custom_env_file:
+    driver: "template"
+    path: "./template.env"
+    vaults:
+      - vault: "work"
+        query: '{{ hasTag "app" .tags }}'
+        rules:
+          - type: pass
+            include: ["title", "path", "UserName", "password"]
+            key_format: "none"
 
-# Note on Built-in Vaults:
-# The following schemes are built-in and do not need to be registered in the 'vaults' block:
-# - env://      (Resolves secret values from local environment variables, e.g. env://USER)
-# - keyring://  (Resolves secret values from the OS keyring/keychain, e.g. keyring://ssh/prod_pass)
-# - cache://    (Resolves secret values from the secure local file cache)
-# - pass://     (Resolves secret values from standard Unix password store, e.g. pass://development/db:password)
-#
-# Note on KeePass Authentication:
-# Master passwords are NOT stored in the configuration file.
-# You must authenticate and save them securely in the keyring before use:
-#   cloakenv auth login work
-#   cloakenv auth login home
-#
-# To check vault accessibility status:
-#   cloakenv auth status
-#
-# To forget/clear stored credentials:
-#   cloakenv auth forget work
-#   cloakenv auth forget home
+# Command autoloading rules
+autoload:
+  - match: '^litellm\s+(.*)$'
+    command: "uvx --with 'litellm[proxy]' litellm \\1"
+    envs:
+      - "ai_env"
+    templates:
+      - template: "app_dotenv"
+        env_path: "LITELLM_ENV_FILE"
+
+  - match: '^aws(\s|$)'
+    envs:
+      - "aws_env"
+      - AWS_DEFAULT_REGION: "us-east-1"

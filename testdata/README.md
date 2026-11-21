@@ -2,72 +2,33 @@
 
 > [!CAUTION]
 > **Testdata credentials are strictly for automated testing and local development.**
-> These credentials and certificates must NEVER be used in production environments or deployed infrastructure.
+> These credentials and fixtures must NEVER be used in production environments or deployed infrastructure.
 
-This directory houses encrypted database fixtures, sample configuration files, and environment templates used across `cloakenv` unit tests, integration tests, and performance benchmarks.
+This directory houses static fixtures used by `cloakenv` unit tests and benchmarks.
 
 ---
 
-## 🔑 Primary KeePass Fixture (`testDB.kdbx`)
+## Primary KeePass Fixture (`testDB.kdbx`)
 
-The KeePass 4 database fixture at `testdata/testDB.kdbx` provides a deterministic credential hierarchy for testing `keepass` provider resolution, placeholder references, file attachment extraction, and field filtering.
-
-### Fixture Credentials & Attributes
+The KeePass 4 database fixture at `testdata/testDB.kdbx` provides a deterministic credential hierarchy for testing `keepass` provider resolution, placeholder references, file attachment extraction, and `RuleEngine` transforms.
 
 | Property | Value | Description |
 |---|---|---|
 | **Database File** | `testdata/testDB.kdbx` | KeePass 4 encrypted database |
 | **Master Password** | `password123` | Master password for unlocking the database |
-| **Mock Keyring Target** | `service: cloakenv`, `account: provider/testdb` | Keyring entry used by unit tests (`keyring.Set`) |
+| **Mock Keyring Target** | `service: cloakenv`, `account: provider/testdb` | Keyring entry used by unit tests (`keyring.MockInit`) |
 | **Group Hierarchy** | `website` | Top-level group beneath root |
 | **Entry Title** | `Test Website` | Entry title attribute |
 | **Canonical Path** | `website/Test Website` | Relative path from root |
 | **Root-Prefixed Path** | `Root/website/Test Website` | Absolute group path supported by provider |
-| **Default Secret (`Password`)**| `testPassword123!` | Resolved when attribute selector is omitted |
-| **Standard Attribute (`UserName`)** | `user@email.com` | Resolved via `website/Test Website:UserName` |
-| **Attachment (`hello.txt`)** | `Hello, World! Extraction Test Successful.` | Resolved via `website/Test Website:hello.txt` |
-
-### Provider-Generated Metadata Fields
-
-When queried via `GetEntry` or templated in `.meta`, the provider dynamically exposes:
-- **`uuid` / `UUID`**: 32-character hexadecimal entry UUID.
-- **`group` / `group_name`**: `website`
-- **`group_uuid`**: 32-character hexadecimal group UUID.
-- **`group_path`**: `website`
+| **Password (`Password` / `password`)** | `testPassword123!` | Password attribute (exposed under both `Password` and `password`) |
+| **Standard Attribute (`UserName`)** | `user@email.com` | Username field |
+| **Attachment (`hello.txt`)** | `Hello, World! Extraction Test Successful.` | Raw binary attachment attribute |
 
 ---
 
-## 🧪 Quick Test Verification Commands
-
-You can verify local installation and authentication against `testDB.kdbx` using the CLI:
+## Quick Verification
 
 ```bash
-# 1. Unlock the test database in keyring
-echo "password123" | cloakenv -c testdata/test_config.yaml auth login testdb
-
-# 2. Resolve default Password attribute
-cloakenv -c testdata/test_config.yaml get "testdb://website/Test Website"
-
-# 3. Resolve UserName attribute
-cloakenv -c testdata/test_config.yaml get "testdb://website/Test Website:UserName"
-
-# 4. Extract attached file
-cloakenv -c testdata/test_config.yaml get "testdb://website/Test Website:hello.txt"
-
-# 5. Clear credentials
-cloakenv -c testdata/test_config.yaml auth forget testdb
+go test -race ./internal/provider -run TestKeePassProvider
 ```
-
----
-
-## 📁 Additional Fixture Files
-
-| File | Purpose |
-|---|---|
-| `test_config.yaml` | Sample configuration mapping `testdb` vault to `testDB.kdbx`. |
-| `test_keepass_config.yaml` | Minimal configuration for KeePass provider tests. |
-| `test_search_config.yaml` | Search provider configuration testing stored queries over `testdb`. |
-| `invalid_config.yaml` | Malformed YAML fixture testing config unmarshaling errors. |
-| `test_env.txt` | Environment variable template fixture. |
-| `test_env_override.txt` | Environment override test fixture. |
-| `test_template.env` | Template `.env` file testing variable interpolation. |

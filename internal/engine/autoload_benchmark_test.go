@@ -6,24 +6,7 @@ import (
 	"testing"
 
 	"github.com/warpcode/cloakenv/internal/config"
-	"github.com/warpcode/cloakenv/internal/provider"
 )
-
-type dummyResolver struct{}
-
-func (d *dummyResolver) Resolve(ctx context.Context, uri string) (string, error) {
-	return uri, nil
-}
-func (d *dummyResolver) ResolveWithKey(ctx context.Context, uri string, configKey string) (string, error) {
-	return uri, nil
-}
-func (d *dummyResolver) GetEntry(ctx context.Context, uri string) (provider.Entry, error) {
-	return provider.Entry{}, nil
-}
-
-func (d *dummyResolver) GetEntries(ctx context.Context, uri string) ([]provider.Entry, error) {
-	return []provider.Entry{}, nil
-}
 
 func BenchmarkMatchRunAlias(b *testing.B) {
 	rules := make([]config.AutoloadRule, 50)
@@ -33,7 +16,6 @@ func BenchmarkMatchRunAlias(b *testing.B) {
 			Envs:  []config.AutoloadEnvItem{config.InlineEnvItem(map[string]string{"FOO": "bar"})},
 		}
 	}
-	// Target command that matches the last rule
 	rules[49].Match = "target-cmd"
 
 	cfg := &config.Config{
@@ -41,68 +23,6 @@ func BenchmarkMatchRunAlias(b *testing.B) {
 	}
 	cfg.CompileAutoloadRules()
 	cmdArgs := []string{"target-cmd", "arg1", "arg2", "arg3"}
-
-	b.ResetTimer()
-	for range b.N {
-		_, _, err := MatchRunAlias(cfg, cmdArgs)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkBuildEnvForCommand_Autoload(b *testing.B) {
-	rules := make([]config.AutoloadRule, 50)
-	for i := range 50 {
-		rules[i] = config.AutoloadRule{
-			Match: fmt.Sprintf("tool-%d", i),
-			Envs:  []config.AutoloadEnvItem{config.InlineEnvItem(map[string]string{"FOO": "bar"})},
-		}
-	}
-	// Last rule matches
-	rules[49].Match = "target-cmd"
-
-	cfg := &config.Config{
-		Autoload: rules,
-	}
-	cfg.CompileAutoloadRules()
-	eb := NewEnvBuilder(cfg, &dummyResolver{})
-	cmdArgs := []string{"target-cmd", "arg1", "arg2", "arg3"}
-	ctx := context.Background()
-
-	b.ResetTimer()
-	for range b.N {
-		_, _, err := eb.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs, EmptyEnv: true})
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}
-
-func BenchmarkMatchRunAlias_Regex(b *testing.B) {
-	cfg := &config.Config{
-		Autoload: []config.AutoloadRule{
-			{
-				Match:   "^litellm\\s+(.*)$",
-				Command: "uvx --with 'litellm[proxy]' litellm \\1",
-			},
-			{
-				Match: "^aws\\s+(.*)$",
-				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("aws_prod")},
-			},
-			{
-				Match: "^kubectl-.*$",
-				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("k8s_prod")},
-			},
-			{
-				Match: "git push",
-				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("git_prod")},
-			},
-		},
-	}
-	cfg.CompileAutoloadRules()
-
-	cmdArgs := []string{"kubectl-prod", "get", "pods"}
 
 	b.ResetTimer()
 	for range b.N {
@@ -110,45 +30,19 @@ func BenchmarkMatchRunAlias_Regex(b *testing.B) {
 	}
 }
 
-func BenchmarkMatchCommandRule(b *testing.B) {
-	rule := config.AutoloadRule{
-		Match:   "^litellm\\s+(.*)$",
-		Command: "uvx --with 'litellm[proxy]' litellm \\1",
+func BenchmarkMatchRunAlias_NoMatch(b *testing.B) {
+	rules := make([]config.AutoloadRule, 50)
+	for i := range 50 {
+		rules[i] = config.AutoloadRule{
+			Match: fmt.Sprintf("^tool-%d\\s+(.*)$", i),
+			Envs:  []config.AutoloadEnvItem{config.InlineEnvItem(map[string]string{"FOO": "bar"})},
+		}
 	}
-	rule.Compile()
-
-	cmdArgs := []string{"litellm", "--config", "config.yaml"}
-
-	b.ResetTimer()
-	for range b.N {
-		_, _, _ = MatchCommandRule(rule, cmdArgs)
-	}
-}
-
-func BenchmarkMatchRunAlias_PureMatch(b *testing.B) {
 	cfg := &config.Config{
-		Autoload: []config.AutoloadRule{
-			{
-				Match: "^litellm\\s+(.*)$",
-				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("work_vault")},
-			},
-			{
-				Match: "^aws\\s+(.*)$",
-				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("aws_prod")},
-			},
-			{
-				Match: "^kubectl-.*$",
-				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("k8s_prod")},
-			},
-			{
-				Match: "git push",
-				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("git_prod")},
-			},
-		},
+		Autoload: rules,
 	}
 	cfg.CompileAutoloadRules()
-
-	cmdArgs := []string{"kubectl-prod", "get", "pods"}
+	cmdArgs := []string{"kubectl", "get", "pods"}
 
 	b.ResetTimer()
 	for range b.N {
@@ -177,5 +71,29 @@ func BenchmarkMatchCommand(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		MatchCommand(ruleMatch, cmdArgs)
+	}
+}
+
+func BenchmarkBuildEnvForCommand_AutoloadInline(b *testing.B) {
+	cfg := &config.Config{
+		Autoload: []config.AutoloadRule{
+			{
+				Match: "^deploy\\s+(.*)$",
+				Envs: []config.AutoloadEnvItem{
+					config.InlineEnvItem(map[string]string{"STAGE": "prod", "REGION": "us-east-1"}),
+				},
+			},
+		},
+	}
+	cfg.CompileAutoloadRules()
+	eb := NewEnvBuilder(cfg, nil, nil, NewRuleEngine())
+	ctx := context.Background()
+	cmdArgs := []string{"deploy", "--apply"}
+
+	b.ResetTimer()
+	for range b.N {
+		if _, _, err := eb.BuildEnvForCommand(ctx, EnvConfig{CmdArgs: cmdArgs, EmptyEnv: true}); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
