@@ -297,11 +297,12 @@ func mergeTagsAndAttributes(entries []provider.Entry, whitelist []string) ([]str
 
 // EnvConfig holds configuration parameters for building the environment block.
 type EnvConfig struct {
-	CmdArgs   []string
-	Explicit  map[string]string
-	Merges    []string
-	Whitelist []string
-	EmptyEnv  bool
+	CmdArgs         []string
+	Explicit        map[string]string
+	Merges          []string
+	Whitelist       []string
+	EmptyEnv        bool
+	RedactedPreview bool
 }
 
 // BuildEnv constructs the full environment block without command autoloading.
@@ -501,7 +502,9 @@ type RenderedTemplateDelivery struct {
 
 // resolveAutoloadTemplates renders each autoload template and evaluates any
 // templated target path against the resolved autoload envs map.
-func (eb *EnvBuilder) resolveAutoloadTemplates(ctx context.Context, templates []config.AutoloadTemplateConfig, resolvedEnvs map[string]string) ([]RenderedTemplateDelivery, error) {
+const redactedPathPlaceholder = "<REDACTED>"
+
+func (eb *EnvBuilder) resolveAutoloadTemplates(ctx context.Context, templates []config.AutoloadTemplateConfig, resolvedEnvs map[string]string, redactedPreview bool) ([]RenderedTemplateDelivery, error) {
 	if len(templates) == 0 {
 		return nil, nil
 	}
@@ -514,7 +517,11 @@ func (eb *EnvBuilder) resolveAutoloadTemplates(ctx context.Context, templates []
 	}
 	envCtx := make(map[string]any, len(resolvedEnvs))
 	for k, v := range resolvedEnvs {
-		envCtx[k] = v
+		if redactedPreview {
+			envCtx[k] = redactedPathPlaceholder
+		} else {
+			envCtx[k] = v
+		}
 	}
 
 	out := make([]RenderedTemplateDelivery, 0, len(templates))
@@ -587,7 +594,7 @@ func (eb *EnvBuilder) BuildEnvForCommandDetails(ctx context.Context, cfg EnvConf
 		return nil, err
 	}
 
-	renderedTemplates, err := eb.resolveAutoloadTemplates(ctx, autoEval.Templates, autoEnvs)
+	renderedTemplates, err := eb.resolveAutoloadTemplates(ctx, autoEval.Templates, autoEnvs, cfg.RedactedPreview)
 	if err != nil {
 		return nil, err
 	}

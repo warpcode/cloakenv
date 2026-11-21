@@ -135,6 +135,7 @@ func Inspect(args []string, cfg *config.Config, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "Config error: %v\n", err)
 		return 1
 	}
+	defer func() { _ = orch.Close() }()
 
 	ctx, stop := signalContext()
 	defer stop()
@@ -252,8 +253,9 @@ func runInspectTemplate(ctx context.Context, orch *engine.Orchestrator, name, fo
 
 func runInspectCommand(ctx context.Context, orch *engine.Orchestrator, cmdArgs []string, format string, stdout, stderr io.Writer) int {
 	details, err := orch.BuildEnvForCommandDetails(ctx, engine.EnvConfig{
-		CmdArgs:  cmdArgs,
-		EmptyEnv: true,
+		CmdArgs:         cmdArgs,
+		EmptyEnv:        true,
+		RedactedPreview: true,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "Inspect run failed: %v\n", err)
