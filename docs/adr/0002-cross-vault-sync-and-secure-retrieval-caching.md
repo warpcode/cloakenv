@@ -2,7 +2,7 @@
 
 | Metadata | Details |
 |---|---|
-| **Status** | Accepted |
+| **Status** | Accepted (partially superseded by [ADR-0003](0003-declarative-envs-templates-and-zero-leak-cli.md)) |
 | **Date** | 2026-11-04 |
 | **Deciders** | warpcode |
 | **Depends On** | ADR-0001 |
