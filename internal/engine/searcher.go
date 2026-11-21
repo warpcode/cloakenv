@@ -131,6 +131,10 @@ type queryCondition struct {
 	value string
 }
 
+func isMissingKeyError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "map has no entry for key")
+}
+
 func isTemplateQuery(query string) bool {
 	return strings.Contains(query, "{{")
 }
@@ -141,15 +145,26 @@ func parseQueryParams(queryPart string) ([]queryCondition, error) {
 	for len(remaining) > 0 {
 		var part string
 		part, remaining, _ = strings.Cut(remaining, "&")
-		if strings.Contains(part, "==") || strings.Contains(part, "!=") || strings.Contains(part, "<=") || strings.Contains(part, ">=") {
-			return nil, fmt.Errorf("invalid search parameter %q: use Go template '{{ ... }}' syntax for expressions", part)
-		}
 		k, v, found := strings.Cut(part, "=")
 		if !found {
-			if strings.TrimSpace(part) != "" {
+			trimmedPart := strings.TrimSpace(part)
+			if trimmedPart != "" {
+				if strings.ContainsAny(trimmedPart, "<>") {
+					return nil, fmt.Errorf("invalid search parameter %q: use Go template '{{ ... }}' syntax for expressions", part)
+				}
 				return nil, fmt.Errorf("invalid search parameter %q: expected key=value or Go template '{{ ... }}'", part)
 			}
 			continue
+		}
+		// Reject comparison operators around the first '=' delimiter (==, !=, <=, >=)
+		// while allowing literal operator sequences inside values (e.g., token=abc== or notes=v>=2).
+		rawKTrimmed := strings.TrimRight(k, " \t")
+		if strings.HasPrefix(v, "=") ||
+			strings.HasSuffix(rawKTrimmed, "!") ||
+			strings.HasSuffix(rawKTrimmed, "<") ||
+			strings.HasSuffix(rawKTrimmed, ">") ||
+			strings.HasSuffix(rawKTrimmed, "=") {
+			return nil, fmt.Errorf("invalid search parameter %q: use Go template '{{ ... }}' syntax for expressions", part)
 		}
 		k = strings.TrimSpace(k)
 		v = strings.TrimSpace(v)
@@ -370,12 +385,26 @@ func (s *Searcher) filterResultsByQuery(ctx context.Context, queryStr string, al
 			return nil, err
 		}
 		buf := bufPool.Get().(*bytes.Buffer)
-		defer bufPool.Put(buf)
+		buf.Reset()
+		defer func() {
+			b := buf.Bytes()
+			clear(b[:cap(b)])
+			if buf.Cap() <= 64*1024 {
+				buf.Reset()
+				bufPool.Put(buf)
+			}
+		}()
 
 		for _, r := range allResults {
 			buildSearchEntryEnv(r, fieldPolicy, env, groupMap, metaMap)
 			buf.Reset()
 			if err := tmpl.Execute(buf, env); err != nil {
+				// Entries in heterogeneous vaults may lack optional/entry-specific
+				// attributes referenced by a query predicate; treat per-entry
+				// missing-key errors as non-matching instead of aborting the search.
+				if isMissingKeyError(err) {
+					continue
+				}
 				return nil, fmt.Errorf("query execution failed: %w", err)
 			}
 			if strings.TrimSpace(buf.String()) == "true" {
