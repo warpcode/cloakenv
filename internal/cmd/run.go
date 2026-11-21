@@ -81,6 +81,7 @@ func Run(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
+	defer func() { _ = orch.Close() }()
 
 	ctx, stop := signalContext()
 	defer stop()
@@ -91,8 +92,9 @@ func Run(args []string, cfg *config.Config) int {
 	}
 
 	envDetails, err := orch.BuildEnvForCommandDetails(ctx, engine.EnvConfig{
-		CmdArgs:  activeCmdArgs,
-		EmptyEnv: emptyEnv,
+		CmdArgs:         activeCmdArgs,
+		EmptyEnv:        emptyEnv,
+		RedactedPreview: dryRun,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Secret resolution failed: %v\n", err)
@@ -148,6 +150,9 @@ func Run(args []string, cfg *config.Config) int {
 	if ctx.Err() != nil {
 		return exitCodeForContext(ctx, 1)
 	}
+
+	// Release audit log file descriptor before exec/supervision.
+	_ = orch.Close()
 
 	// Transfer signal ownership to runner without a gap: runner installs its own
 	// signal handler before invoking OnSignalsRegistered (stop).

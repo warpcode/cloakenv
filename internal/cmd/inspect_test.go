@@ -218,3 +218,65 @@ func TestInspect_RedactionAndModes(t *testing.T) {
 		}
 	})
 }
+
+func TestInspectRunRedactsShortAndTransformedSecretsInPath(t *testing.T) {
+	t.Setenv("TINY_SECRET", "xy")
+	t.Setenv("LONG_SECRET", "s3cr3tTokenVal")
+
+	cfg := &config.Config{
+		Envs: map[string][]config.VaultSourceConfig{
+			"app": {
+				{
+					Vault: "env",
+					Rules: []config.RuleConfig{
+						{Type: "pass", Include: []string{"TINY_SECRET", "LONG_SECRET"}},
+					},
+				},
+			},
+		},
+		Templates: map[string]config.TemplateConfig{
+			"out": {
+				Driver: "json",
+				Vaults: []config.VaultSourceConfig{
+					{
+						Vault: "env",
+						Rules: []config.RuleConfig{
+							{Type: "pass", Include: []string{"TINY_SECRET", "LONG_SECRET"}},
+						},
+					},
+				},
+			},
+		},
+		Autoload: []config.AutoloadRule{
+			{
+				Match: "mytool",
+				Envs:  []config.AutoloadEnvItem{{Name: "app"}},
+				Templates: []config.AutoloadTemplateConfig{
+					{
+						Template: "out",
+						Path:     `/tmp/{{ .TINY_SECRET }}-{{ upper .LONG_SECRET }}-{{ printf "%.6s" .LONG_SECRET }}.json`,
+					},
+				},
+			},
+		},
+	}
+
+	for _, format := range []string{"text", "json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := Inspect([]string{"run", "-o", format, "--", "mytool"}, cfg, &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("Inspect failed (code=%d): %s", code, stderr.String())
+			}
+			out := stdout.String()
+			for _, forbidden := range []string{"xy", "s3cr3t", "S3CR3T", "TokenVal", "TOKENVAL"} {
+				if strings.Contains(out, forbidden) {
+					t.Errorf("format=%s leaked secret fragment %q in output:\n%s", format, forbidden, out)
+				}
+			}
+			if !strings.Contains(out, runner.RedactedPlaceholder) {
+				t.Errorf("format=%s expected %q in output:\n%s", format, runner.RedactedPlaceholder, out)
+			}
+		})
+	}
+}

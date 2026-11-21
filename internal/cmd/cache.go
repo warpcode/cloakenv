@@ -41,6 +41,7 @@ func cacheClear(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
+	defer func() { _ = orch.Close() }()
 	ctx, stop := signalContext()
 	defer stop()
 
@@ -84,6 +85,7 @@ func cachePrune(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
+	defer func() { _ = orch.Close() }()
 	ctx, stop := signalContext()
 	defer stop()
 
