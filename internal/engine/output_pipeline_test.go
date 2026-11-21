@@ -642,7 +642,7 @@ func TestExamplesConfigCustomEnvFileRendersCleanly(t *testing.T) {
 						"title":    "Web App",
 						"path":     "apps/web",
 						"tags":     []string{"app"},
-						"username": "svc-user",
+						"UserName": "svc-user",
 						"password": "s3cr3t-value",
 					},
 				},

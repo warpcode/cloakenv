@@ -216,7 +216,7 @@ Every vault provider is strictly read-only and returns flat `Entry` maps contain
 
 Each named environment under `envs:` is an ordered list of vault sources (`vault`, optional Go `text/template` `query:` predicate, and ordered `rules:`).
 
-- **`type: pass`**: Copies entry attributes matching optional `include` globs while excluding `exclude` globs (`include` overrides `exclude`), formatting keys with `key_format` (`none`, `env`, `snake`, `kebab`). Reserved metadata keys (`title`, `path`, `uuid`, `tags`, `group`, `vault`, `provider`) are never emitted by wildcards.
+- **`type: pass`**: Copies entry attributes matching optional `include` globs while excluding `exclude` globs (`exclude` overrides `include`), formatting keys with `key_format` (`none`, `env`, `snake`, `kebab`). Reserved metadata keys (`title`, `path`, `uuid`, `tags`, `group`, `vault`, `provider`) are never emitted by wildcards.
 - **`type: match`**: Matches attribute key regex (`match`) and/or serialized value regex (`value_match`), and renders target `key` and `value` using Go `text/template` (with `$1` / `${1}` capture expansions evaluated safely before template parsing).
 - **`type: set`**: Evaluates a map of `values:` templates (`key: template`) with access to `.output` and entry fields, overwriting keys with last-rule-wins semantics.
 
@@ -224,10 +224,10 @@ Each named environment under `envs:` is an ordered list of vault sources (`vault
 
 Named templates under `templates:` produce structured payloads or hydrated files using four built-in drivers:
 
-- **`template`** (default when `template:` or `path:` is set, or scalar shorthand): Executes a Go `text/template` with `.entries` and `.vaults`.
-- **`json`**: Serializes the resolved key-value map as JSON (`Vaults` rules or `from_env`).
-- **`yaml`**: Serializes the resolved key-value map as YAML.
-- **`dotenv`**: Emits `KEY="VALUE"` lines with safe escaping (`$` and backticks escaped) and validates key names.
+- **`template`** (default when `template:` or `path:` is set, or scalar shorthand): Executes a Go `text/template` with `.entries` (the list of rule-transformed entry maps).
+- **`json`**: Serializes the resolved entries (`[]map[string]string` from `vaults:` rules) as JSON.
+- **`yaml`**: Serializes the resolved entries (`[]map[string]string` from `vaults:` rules) as YAML.
+- **`dotenv`**: Emits `KEY="VALUE"` lines from `vaults:` rules or `from_env:` with safe escaping (`$` and backticks escaped) and validates key names.
 
 ---
 
@@ -341,7 +341,7 @@ vaults:
     query: work/
 ```
 
-Decrypts GPG-encrypted `.gpg` entries via `pass`/`gpg`, exposing the first line as `password`/`Password` and structured `Key: Value` lines as flat attributes.
+Decrypts GPG-encrypted `.gpg` entries via `pass`/`gpg`, exposing the first line as `password`/`Password` and structured `Key: Value` lines as flat attributes. Supports optional `query:` to scope lookups to a subdirectory or entry prefix.
 
 ### HashiCorp Vault (`vault`)
 
@@ -356,7 +356,7 @@ vaults:
     query: prod/
 ```
 
-Supports KV v1 and KV v2 with token or AppRole (`role_id`/`secret_id`) authentication. Token credentials can be supplied via `VAULT_TOKEN` or stored with `cloakenv auth login <vault>`.
+Supports KV v1 and KV v2 with token (`token` / `VAULT_TOKEN`) or AppRole (`role_id`/`secret_id` or `VAULT_ROLE_ID`/`VAULT_SECRET_ID`) authentication.
 
 ### Process Environment (`env`)
 
