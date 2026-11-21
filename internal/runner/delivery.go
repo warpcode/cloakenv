@@ -141,6 +141,9 @@ func WriteTemplateFile(targetPath string, content []byte) (string, error) {
 	if strings.ContainsRune(targetPath, '\x00') {
 		return "", fmt.Errorf("template target path contains null byte")
 	}
+	if strings.HasSuffix(targetPath, "/") || strings.HasSuffix(targetPath, "\\") || os.IsPathSeparator(targetPath[len(targetPath)-1]) {
+		return "", fmt.Errorf("template target path %q must refer to a file, not a directory", targetPath)
+	}
 
 	expanded := targetPath
 	if expanded == "~" || strings.HasPrefix(expanded, "~/") || strings.HasPrefix(expanded, "~\\") {

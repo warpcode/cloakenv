@@ -19,6 +19,7 @@ type RunOptions struct {
 	MaskSecrets         []string
 	Cleanup             func()
 	OnSignalsRegistered func()
+	PreStartExitCode    func() (int, bool)
 	Stdin               io.Reader
 	Stdout              io.Writer
 	Stderr              io.Writer
@@ -41,6 +42,11 @@ func RunCommandWithOptions(ctx context.Context, cmdArgs []string, env []string, 
 
 	trie := NewMaskTrie(opts.MaskSecrets)
 	if trie == nil && opts.Cleanup == nil && opts.Stdin == nil && opts.Stdout == nil && opts.Stderr == nil {
+		if opts.PreStartExitCode != nil {
+			if code, abort := opts.PreStartExitCode(); abort {
+				return code
+			}
+		}
 		if opts.OnSignalsRegistered != nil {
 			opts.OnSignalsRegistered()
 		}
@@ -50,6 +56,11 @@ func RunCommandWithOptions(ctx context.Context, cmdArgs []string, env []string, 
 	sigCh := make(chan os.Signal, 2)
 	notifyForwardSignals(sigCh)
 	defer signal.Stop(sigCh)
+	if opts.PreStartExitCode != nil {
+		if code, abort := opts.PreStartExitCode(); abort {
+			return code
+		}
+	}
 	if opts.OnSignalsRegistered != nil {
 		opts.OnSignalsRegistered()
 	}

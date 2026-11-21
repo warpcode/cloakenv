@@ -283,3 +283,18 @@ func TestMaterializeTemplates_RejectsEmptyDeliveryTargets(t *testing.T) {
 		t.Fatal("expected error when env, env_path, and path are all empty")
 	}
 }
+
+func TestWriteTemplateFileRejectsTrailingPathSeparator(t *testing.T) {
+	dir := t.TempDir()
+	for _, target := range []string{
+		filepath.Join(dir, "newdir") + "/",
+		filepath.Join(dir, "newdir") + `\`,
+	} {
+		if _, err := WriteTemplateFile(target, []byte("secret")); err == nil {
+			t.Errorf("expected error for trailing separator path %q, got nil", target)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "newdir")); !os.IsNotExist(err) {
+		t.Fatalf("expected no file/dir created for trailing separator path, stat err: %v", err)
+	}
+}
