@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"reflect"
 	"strings"
 	"testing"
@@ -439,4 +440,96 @@ func TestRuleEngine_ReviewRegressionCoverage(t *testing.T) {
 			t.Fatal("expected error for invalid exclude glob")
 		}
 	})
+}
+
+func TestRuleEngine_MissingCanonicalMetadataDefaults(t *testing.T) {
+	re := NewRuleEngine()
+	// Sparse raw entry with no canonical metadata keys populated.
+	entry := map[string]any{"APP_TOKEN": "s3cr3t"}
+
+	rules := []config.RuleConfig{
+		{Type: "pass", KeyFormat: "none"},
+		{
+			Type:  "match",
+			Match: `^APP_(.*)$`,
+			Key:   `{{ if .group }}GRP_{{ end }}OUT_${1}`,
+			Value: `{{ default "n/a" .title }}:{{ if hasTag "prod" .tags }}prod{{ else }}dev{{ end }}:{{ .path }}:{{ .uuid }}:{{ .vault }}:{{ .provider }}`,
+		},
+		{
+			Type: "set",
+			Values: map[string]string{
+				"HAS_PROD":  `{{ if hasTag "prod" .tags }}yes{{ else }}no{{ end }}`,
+				"TITLE_OR":  `{{ default "untitled" .title }}`,
+				"HAS_GROUP": `{{ if .group }}yes{{ else }}no{{ end }}`,
+			},
+		},
+	}
+
+	out, err := re.Apply(entry, rules, "none")
+	if err != nil {
+		t.Fatalf("Apply failed on sparse entry: %v", err)
+	}
+
+	if out["APP_TOKEN"] != "s3cr3t" {
+		t.Errorf("expected APP_TOKEN=s3cr3t, got %q", out["APP_TOKEN"])
+	}
+	if out["OUT_TOKEN"] != "n/a:dev::::" {
+		t.Errorf("expected OUT_TOKEN=n/a:dev::::, got %q", out["OUT_TOKEN"])
+	}
+	if out["HAS_PROD"] != "no" || out["TITLE_OR"] != "untitled" || out["HAS_GROUP"] != "no" {
+		t.Errorf("unexpected set outputs: %#v", out)
+	}
+	// Ensure defaulting canonical keys in template context did not pollute entry or pass output.
+	for _, metaKey := range []string{"title", "path", "uuid", "tags", "vault", "provider", "group"} {
+		if _, exists := entry[metaKey]; exists {
+			t.Errorf("entry was mutated with metadata key %q", metaKey)
+		}
+		if _, exists := out[metaKey]; exists {
+			t.Errorf("pass output unexpectedly emitted metadata key %q", metaKey)
+		}
+	}
+
+	// Also verify an EntryToRawMap output with empty metadata fields works identically.
+	rawFromEntry := EntryToRawMap(provider.Entry{
+		Attributes: map[string]any{"APP_TOKEN": "s3cr3t"},
+	}, "", "", "")
+	out2, err := re.Apply(rawFromEntry, rules, "none")
+	if err != nil {
+		t.Fatalf("Apply failed on EntryToRawMap sparse entry: %v", err)
+	}
+	if out2["OUT_TOKEN"] != "n/a:dev::::" || out2["HAS_PROD"] != "no" || out2["TITLE_OR"] != "untitled" || out2["HAS_GROUP"] != "no" {
+		t.Errorf("unexpected outputs from EntryToRawMap sparse entry: %#v", out2)
+	}
+}
+
+func TestRuleEngine_EvalTemplateZeroesAndCapsBufPool(t *testing.T) {
+	re := NewRuleEngine()
+
+	// Verify oversized rendered output (> 64 KiB) succeeds and does not panic on pool cleanup.
+	bigVal := strings.Repeat("S", 70*1024)
+	out, err := re.Apply(map[string]any{"SECRET": bigVal}, []config.RuleConfig{
+		{Type: "set", Values: map[string]string{"BIG": "{{ .SECRET }}"}},
+	}, "none")
+	if err != nil {
+		t.Fatalf("Apply with oversized template value failed: %v", err)
+	}
+	if out["BIG"] != bigVal {
+		t.Fatalf("unexpected BIG output length: got %d, want %d", len(out["BIG"]), len(bigVal))
+	}
+
+	// Verify small buffer backing array is zeroed before reuse in bufPool.
+	secret := "SUPER_SENSITIVE_RULE_SECRET"
+	got, err := re.evalTemplate("zero_check", "{{ .VAL }}", map[string]any{"VAL": secret})
+	if err != nil {
+		t.Fatalf("evalTemplate failed: %v", err)
+	}
+	if got != secret {
+		t.Fatalf("got %q, want %q", got, secret)
+	}
+	buf := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(buf)
+	rawCap := buf.Bytes()[:cap(buf.Bytes())]
+	if strings.Contains(string(rawCap), secret) {
+		t.Fatalf("pooled buffer still contains secret bytes after evalTemplate")
+	}
 }

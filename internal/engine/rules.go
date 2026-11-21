@@ -344,7 +344,14 @@ func (re *RuleEngine) evalTemplate(name, tmplStr string, ctx map[string]any) (st
 	}
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
-	defer bufPool.Put(buf)
+	defer func() {
+		b := buf.Bytes()
+		clear(b[:cap(b)])
+		if buf.Cap() <= 64*1024 {
+			buf.Reset()
+			bufPool.Put(buf)
+		}
+	}()
 
 	if err := t.Execute(buf, ctx); err != nil {
 		return "", fmt.Errorf("failed to execute template in %s: %w", name, err)
@@ -353,9 +360,23 @@ func (re *RuleEngine) evalTemplate(name, tmplStr string, ctx map[string]any) (st
 }
 
 func makeRuleTemplateContext(entry map[string]any, output map[string]string) map[string]any {
-	ctx := make(map[string]any, len(entry)+2)
+	ctx := make(map[string]any, len(entry)+8)
 	for k, v := range entry {
 		ctx[k] = v
+	}
+	// Default absent canonical metadata keys so rule templates referencing
+	// .title, .path, .uuid, .vault, .provider, .tags, or .group do not fail
+	// under missingkey=error while keeping entry unpolluted for pass/match.
+	for _, k := range []string{"title", "path", "uuid", "vault", "provider"} {
+		if _, exists := ctx[k]; !exists {
+			ctx[k] = ""
+		}
+	}
+	if _, exists := ctx["tags"]; !exists {
+		ctx["tags"] = []string(nil)
+	}
+	if _, exists := ctx["group"]; !exists {
+		ctx["group"] = nil
 	}
 	outCopy := make(map[string]string, len(output))
 	maps.Copy(outCopy, output)
