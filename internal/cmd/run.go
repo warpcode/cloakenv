@@ -196,6 +196,12 @@ func Run(args []string, cfg *config.Config) int {
 		MaskSecrets:         envDetails.MaskSecrets,
 		Cleanup:             cleanup,
 		OnSignalsRegistered: stop,
+		PreStartExitCode: func() (int, bool) {
+			if ctx.Err() != nil {
+				return exitCodeForContext(ctx, 1), true
+			}
+			return 0, false
+		},
 	})
 }
 

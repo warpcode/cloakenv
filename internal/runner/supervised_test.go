@@ -267,3 +267,23 @@ func TestRunCommandWithOptions_PreStartSignalExitCode(t *testing.T) {
 		})
 	}
 }
+
+func TestRunCommandWithOptionsPreStartExitCodeAbortsBeforeStart(t *testing.T) {
+	cleaned := false
+	marker := filepath.Join(t.TempDir(), "should_not_exist")
+	code := RunCommandWithOptions(context.Background(), []string{"sh", "-c", "touch " + marker}, nil, RunOptions{
+		Cleanup: func() { cleaned = true },
+		PreStartExitCode: func() (int, bool) {
+			return 130, true
+		},
+	})
+	if code != 130 {
+		t.Fatalf("expected exit code 130, got %d", code)
+	}
+	if !cleaned {
+		t.Fatalf("expected Cleanup to run when PreStartExitCode aborts")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("command should not have executed when PreStartExitCode aborted")
+	}
+}
