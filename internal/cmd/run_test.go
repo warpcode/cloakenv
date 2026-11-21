@@ -18,16 +18,14 @@ import (
 )
 
 // TestHelperProcess is a fake command used by TestRunCommandExecution
-// to verify that the environment variables are correctly passed down.
+// to verify that environment variables are passed down and masked on stdout.
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
 
-	// Dump specific environment variables and their SHA-256 digests so tests can verify
-	// both actual child injection (via digest) and stdout masking of raw secret values.
 	for _, env := range os.Environ() {
-		if strings.HasPrefix(env, "CLOAKENV_TEST") || strings.HasPrefix(env, "TEST_TEMPLATE_") || strings.HasPrefix(env, "TEST_LITERAL_") {
+		if strings.HasPrefix(env, "CLOAKENV_TEST") {
 			fmt.Println(env)
 			if k, v, ok := strings.Cut(env, "="); ok {
 				sum := sha256.Sum256([]byte(v))
@@ -57,27 +55,45 @@ func TestRun_Errors(t *testing.T) {
 		},
 		{
 			name:     "No Command",
-			args:     []string{"-e", `A={{ get "env://B" }}`, "--"},
+			args:     []string{"-E", "--"},
 			wantExit: 1,
 			wantErr:  "No command specified",
 		},
 		{
-			name:     "Invalid Key Format",
-			args:     []string{"-f", "camel", "--", "echo", "1"},
+			name:     "Removed -e Flag Rejected",
+			args:     []string{"-e", "A=B", "--", "echo", "1"},
 			wantExit: 1,
-			wantErr:  "invalid key format",
+			wantErr:  "unknown flag: -e",
 		},
 		{
-			name:     "Invalid -e Format",
-			args:     []string{"-e", "INVALID_FORMAT", "--", "echo", "1"},
+			name:     "Removed -m Flag Rejected",
+			args:     []string{"-m", "vault://entry", "--", "echo", "1"},
 			wantExit: 1,
-			wantErr:  "invalid -e format",
+			wantErr:  "unknown flag: -m",
 		},
 		{
-			name:     "Invalid -t Template File",
-			args:     []string{"-t", "nonexistent_file.yaml", "--", "echo", "1"},
+			name:     "Removed -t Flag Rejected",
+			args:     []string{"-t", "file.env", "--", "echo", "1"},
 			wantExit: 1,
-			wantErr:  "error parsing template file",
+			wantErr:  "unknown flag: -t",
+		},
+		{
+			name:     "Removed -i Flag Rejected",
+			args:     []string{"-i", "KEY", "--", "echo", "1"},
+			wantExit: 1,
+			wantErr:  "unknown flag: -i",
+		},
+		{
+			name:     "Removed -f Flag Rejected",
+			args:     []string{"-f", "env", "--", "echo", "1"},
+			wantExit: 1,
+			wantErr:  "unknown flag: -f",
+		},
+		{
+			name:     "Removed --key-format Flag Rejected",
+			args:     []string{"--key-format", "env", "--", "echo", "1"},
+			wantExit: 1,
+			wantErr:  "unknown flag: --key-format",
 		},
 		{
 			name:     "Non-existent Command",
@@ -113,7 +129,6 @@ func TestRun_Errors(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			// Capture stderr
 			oldStderr := os.Stderr
 			defer func() { os.Stderr = oldStderr }()
 
@@ -132,17 +147,16 @@ func TestRun_Errors(t *testing.T) {
 
 			exitCode := Run(tc.args, cfg)
 
-			_ = w.Close() // Close write end so read can finish
+			_ = w.Close()
 			var buf bytes.Buffer
 			if _, err := io.Copy(&buf, r); err != nil {
 				t.Errorf("failed to read from pipe: %v", err)
 			}
-			os.Stderr = oldStderr // Restore early so test failure output isn't captured
+			os.Stderr = oldStderr
 
 			if exitCode != tc.wantExit {
 				t.Errorf("expected exit code %d, got %d", tc.wantExit, exitCode)
 			}
-
 			if tc.wantErr != "" && !strings.Contains(buf.String(), tc.wantErr) {
 				t.Errorf("expected stderr to contain %q, got %q", tc.wantErr, buf.String())
 			}
@@ -151,7 +165,6 @@ func TestRun_Errors(t *testing.T) {
 }
 
 func TestRunCommandExecution(t *testing.T) {
-	// Re-exec the test binary if we are in the subprocess
 	if os.Getenv("GO_WANT_RUN_SUBPROCESS") == "1" {
 		var args []string
 		if err := json.Unmarshal([]byte(os.Getenv("RUN_ARGS")), &args); err != nil {
@@ -160,137 +173,73 @@ func TestRunCommandExecution(t *testing.T) {
 		}
 
 		cfg := &config.Config{
-			Vaults: make(map[string]config.VaultConfig),
+			Autoload: []config.AutoloadRule{
+				{
+					Match: "*TestHelperProcess*",
+					Envs: []config.AutoloadEnvItem{
+						config.InlineEnvItem(map[string]string{
+							"GO_WANT_HELPER_PROCESS": "1",
+							"CLOAKENV_TEST_INJECTED": "injected_from_autoload",
+						}),
+					},
+				},
+			},
 		}
+		cfg.CompileAutoloadRules()
 
-		// Execute Run and exit with its return value
 		exitCode := Run(args, cfg)
 		os.Exit(exitCode)
 	}
 
-	// Create a temporary template file instead of depending on the external one
-	tmpFile, err := os.CreateTemp(t.TempDir(), "test_template_*.env")
-	if err != nil {
-		t.Fatalf("Failed to create temp template file: %v", err)
-	}
-	defer func() { _ = os.Remove(tmpFile.Name()) }()
+	t.Run("Positional arguments after dash dash execute normally", func(t *testing.T) {
+		runArgs := []string{
+			"--",
+			os.Args[0], "-test.run=TestHelperProcess", "--", "CLOAKENV_ARG_POS=passed",
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=TestRunCommandExecution")
+		argsData, _ := json.Marshal(runArgs)
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_RUN_SUBPROCESS=1",
+			"RUN_ARGS="+string(argsData),
+			"GO_WANT_HELPER_PROCESS=1",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
+		}
+		output := string(out)
+		if !strings.Contains(output, "CLOAKENV_ARG_POS=passed") {
+			t.Errorf("Expected CLOAKENV_ARG_POS=passed, got:\n%s", output)
+		}
+	})
 
-	templateContent := `
-TEST_TEMPLATE_A={{ get "env://SHOW_TEST_VAR_A" }}
-TEST_TEMPLATE_B={{ get "env://SHOW_TEST_VAR_B" }}
-TEST_LITERAL_VAL=literal_value_here
-`
-	if _, err := tmpFile.WriteString(templateContent); err != nil {
-		t.Fatalf("Failed to write to temp template file: %v", err)
-	}
-	_ = tmpFile.Close()
-
-	tests := []struct {
-		name             string
-		envVars          map[string]string
-		runArgs          []string
-		expectedOutput   []string
-		unexpectedOutput []string
-	}{
-		{
-			name: "Direct env var resolution via -e",
-			envVars: map[string]string{
-				"CLOAKENV_TEST_B": "value_from_env_b",
-			},
-			runArgs: []string{
-				"-e", `CLOAKENV_TEST_A={{ get "env://CLOAKENV_TEST_B" }}`,
-				"--",
-				os.Args[0], "-test.run=TestHelperProcess",
-			},
-			expectedOutput: []string{
-				"CLOAKENV_TEST_A=value_from_env_b",
-			},
-		},
-		{
-			name: "Positional arguments and flags after dash dash execute normally",
-			envVars: map[string]string{
-				"CLOAKENV_TEST_B": "value_from_env_b",
-			},
-			runArgs: []string{
-				"-e", `CLOAKENV_TEST_A={{ get "env://CLOAKENV_TEST_B" }}`,
-				"--",
-				os.Args[0], "-test.run=TestHelperProcess", "--", "CLOAKENV_ARG_POS=passed",
-			},
-			expectedOutput: []string{
-				"CLOAKENV_TEST_A=value_from_env_b",
-				"CLOAKENV_ARG_POS=passed",
-			},
-		},
-		{
-			name: "Template resolution via -t",
-			envVars: map[string]string{
-				"SHOW_TEST_VAR_A": "template_val_a",
-				"SHOW_TEST_VAR_B": "template_val_b",
-			},
-			runArgs: []string{
-				"-t", tmpFile.Name(),
-				"--",
-				os.Args[0], "-test.run=TestHelperProcess",
-			},
-			expectedOutput: []string{
-				"TEST_TEMPLATE_A=template_val_a",
-				"TEST_TEMPLATE_B=template_val_b",
-				"TEST_LITERAL_VAL=literal_value_here",
-			},
-		},
-		{
-			name: "Empty environment with -E skips parent environment",
-			envVars: map[string]string{
-				"CLOAKENV_TEST_PARENT": "should_be_skipped",
-			},
-			runArgs: []string{
-				"-E",
-				"-e", "GO_WANT_HELPER_PROCESS=1",
-				"-e", "CLOAKENV_TEST_EXPLICIT=explicit_val",
-				"--",
-				os.Args[0], "-test.run=TestHelperProcess",
-			},
-			expectedOutput: []string{
-				"CLOAKENV_TEST_EXPLICIT=explicit_val",
-			},
-			unexpectedOutput: []string{
-				"CLOAKENV_TEST_PARENT",
-			},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			for k, v := range tc.envVars {
-				t.Setenv(k, v)
-			}
-
-			cmd := exec.Command(os.Args[0], "-test.run=TestRunCommandExecution")
-			argsData, _ := json.Marshal(tc.runArgs)
-			cmd.Env = append(os.Environ(),
-				"GO_WANT_RUN_SUBPROCESS=1",
-				"RUN_ARGS="+string(argsData),
-				"GO_WANT_HELPER_PROCESS=1",
-			)
-
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
-			}
-
-			output := string(out)
-			for _, expected := range tc.expectedOutput {
-				if !strings.Contains(output, expected) {
-					t.Errorf("Expected output to contain %q, but got:\n%s", expected, output)
-				}
-			}
-			for _, unexpected := range tc.unexpectedOutput {
-				if strings.Contains(output, unexpected) {
-					t.Errorf("Expected output NOT to contain %q, but got:\n%s", unexpected, output)
-				}
-			}
-		})
-	}
+	t.Run("Empty environment with -E skips parent environment", func(t *testing.T) {
+		t.Setenv("CLOAKENV_TEST_PARENT", "should_be_skipped")
+		runArgs := []string{
+			"-E",
+			"--",
+			os.Args[0], "-test.run=TestHelperProcess",
+		}
+		cmd := exec.Command(os.Args[0], "-test.run=TestRunCommandExecution")
+		argsData, _ := json.Marshal(runArgs)
+		cmd.Env = append(os.Environ(),
+			"GO_WANT_RUN_SUBPROCESS=1",
+			"RUN_ARGS="+string(argsData),
+			"GO_WANT_HELPER_PROCESS=1",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
+		}
+		output := string(out)
+		wantHash := sha256.Sum256([]byte("injected_from_autoload"))
+		if !strings.Contains(output, "SHA256:CLOAKENV_TEST_INJECTED="+hex.EncodeToString(wantHash[:])) {
+			t.Errorf("Expected autoloaded var hash in output:\n%s", output)
+		}
+		if strings.Contains(output, "CLOAKENV_TEST_PARENT") {
+			t.Errorf("Expected parent env variable to be skipped with -E, got:\n%s", output)
+		}
+	})
 }
 
 func TestRun_Autoload(t *testing.T) {
@@ -340,7 +289,7 @@ func TestRun_Autoload(t *testing.T) {
 		os.Exit(Run(args, cfg))
 	}
 
-	t.Run("Autoloads config vault for matching command", func(t *testing.T) {
+	t.Run("Autoloads config env for matching command and masks stdout", func(t *testing.T) {
 		runArgs := []string{
 			"--",
 			os.Args[0], "-test.run=TestHelperProcess",
@@ -456,7 +405,6 @@ func TestRun_Autoload(t *testing.T) {
 }
 
 func TestRun_DryRun(t *testing.T) {
-	// Helper subprocess handler for dry-run tests
 	if os.Getenv("GO_WANT_RUN_DRYRUN_SUBPROCESS") == "1" {
 		var args []string
 		if err := json.Unmarshal([]byte(os.Getenv("RUN_ARGS")), &args); err != nil {
@@ -464,20 +412,7 @@ func TestRun_DryRun(t *testing.T) {
 			os.Exit(1)
 		}
 
-		dbPath := writeTestKDBX(t, "merge_vault", "testpass", testKDBXEntry{
-			Title: "entry",
-			Attributes: map[string]string{
-				"CLOAKENV_TEST_ALLOWED": "secret_allowed_val",
-				"CLOAKENV_TEST_FILTER":  "secret_filter_val",
-			},
-		})
 		cfg := &config.Config{
-			Vaults: map[string]config.VaultConfig{
-				"merge_vault": {
-					Provider:  "keepass",
-					VaultPath: dbPath,
-				},
-			},
 			Autoload: []config.AutoloadRule{
 				{
 					Match:   `^my-alias\s+(.*)$`,
@@ -497,62 +432,9 @@ func TestRun_DryRun(t *testing.T) {
 		os.Exit(exitCode)
 	}
 
-	t.Run("Previews explicit mappings and command without executing", func(t *testing.T) {
-		t.Setenv("CLOAKENV_SRC_VAR", "super_secret_value_xyz")
-
+	t.Run("Previews autoloaded transformations without leaking values", func(t *testing.T) {
 		runArgs := []string{
 			"--dry-run",
-			"-e", `CLOAKENV_TARGET={{ get "env://CLOAKENV_SRC_VAR" }}`,
-			"--",
-			os.Args[0], "-test.run=TestHelperProcess",
-		}
-
-		cmd := exec.Command(os.Args[0], "-test.run=TestRun_DryRun")
-		argsData, _ := json.Marshal(runArgs)
-		cmd.Env = append(os.Environ(),
-			"GO_WANT_RUN_DRYRUN_SUBPROCESS=1",
-			"RUN_ARGS="+string(argsData),
-			"GO_WANT_HELPER_PROCESS=1",
-		)
-
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
-		}
-
-		output := string(out)
-
-		// 1. Must display dry-run preview header and command line
-		if !strings.Contains(output, "[DRY RUN] Command execution preview:") {
-			t.Errorf("Expected preview header, got:\n%s", output)
-		}
-		expectedCmd := "Command: " + os.Args[0] + " -test.run=TestHelperProcess"
-		if !strings.Contains(output, expectedCmd) {
-			t.Errorf("Expected command line %q, got:\n%s", expectedCmd, output)
-		}
-
-		// 2. Must display injected variable names
-		if !strings.Contains(output, "Injected variables:") {
-			t.Errorf("Expected 'Injected variables:' section, got:\n%s", output)
-		}
-		if !strings.Contains(output, "CLOAKENV_TARGET") {
-			t.Errorf("Expected injected variable name CLOAKENV_TARGET, got:\n%s", output)
-		}
-
-		// 3. Must NEVER execute the target process or leak secret values
-		if strings.Contains(output, "super_secret_value_xyz") {
-			t.Errorf("SECURITY LEAK: secret value was displayed in dry-run output:\n%s", output)
-		}
-		if strings.Contains(output, "CLOAKENV_TARGET=super_secret_value_xyz") {
-			t.Errorf("Target process was executed despite --dry-run:\n%s", output)
-		}
-	})
-
-	t.Run("Previews autoloaded transformations and merges with whitelist", func(t *testing.T) {
-		runArgs := []string{
-			"--dry-run",
-			"-m", "merge_vault://entry",
-			"-i", "CLOAKENV_TEST_ALLOWED",
 			"--",
 			"my-alias", "subcommand", "--verbose",
 		}
@@ -571,26 +453,18 @@ func TestRun_DryRun(t *testing.T) {
 		}
 
 		output := string(out)
-
-		// Transformed command line from autoload rule
+		if !strings.Contains(output, "[DRY RUN] Command execution preview:") {
+			t.Errorf("Expected preview header, got:\n%s", output)
+		}
 		if !strings.Contains(output, "Command: expanded-tool subcommand --verbose") {
 			t.Errorf("Expected transformed command line, got:\n%s", output)
 		}
-
-		// Autoload envs and whitelisted merge key must be shown
-		for _, wantKey := range []string{"CLOAKENV_TEST_USER", "CLOAKENV_TEST_PASS", "CLOAKENV_TEST_ALLOWED"} {
+		for _, wantKey := range []string{"CLOAKENV_TEST_USER", "CLOAKENV_TEST_PASS"} {
 			if !strings.Contains(output, wantKey) {
 				t.Errorf("Expected key %s, got:\n%s", wantKey, output)
 			}
 		}
-
-		// Filtered merge key must NOT be shown
-		if strings.Contains(output, "CLOAKENV_TEST_FILTER") {
-			t.Errorf("Expected CLOAKENV_TEST_FILTER to be filtered out by -i, but found in:\n%s", output)
-		}
-
-		// Secret values must NEVER be displayed
-		if strings.Contains(output, "secret_admin_user") || strings.Contains(output, "super_secret_password_12345") || strings.Contains(output, "secret_allowed_val") || strings.Contains(output, "secret_filter_val") {
+		if strings.Contains(output, "secret_admin_user") || strings.Contains(output, "super_secret_password_12345") {
 			t.Errorf("SECURITY LEAK: secret values displayed in dry-run output:\n%s", output)
 		}
 	})
@@ -601,7 +475,6 @@ func TestRun_DryRun(t *testing.T) {
 			"--",
 			"echo", "hello", "world",
 		}
-
 		cmd := exec.Command(os.Args[0], "-test.run=TestRun_DryRun")
 		argsData, _ := json.Marshal(runArgs)
 		cmd.Env = append(os.Environ(),
@@ -615,35 +488,11 @@ func TestRun_DryRun(t *testing.T) {
 		}
 
 		output := string(out)
-		if !strings.Contains(output, "Command: echo hello world") {
-			t.Errorf("Expected 'Command: echo hello world', got:\n%s", output)
-		}
 		if !strings.Contains(output, "Injected variables: (none)") {
 			t.Errorf("Expected 'Injected variables: (none)', got:\n%s", output)
 		}
-	})
-
-	t.Run("Handles positional command without dash-dash separator", func(t *testing.T) {
-		runArgs := []string{
-			"--dry-run",
-			"echo", "plain_arg",
-		}
-
-		cmd := exec.Command(os.Args[0], "-test.run=TestRun_DryRun")
-		argsData, _ := json.Marshal(runArgs)
-		cmd.Env = append(os.Environ(),
-			"GO_WANT_RUN_DRYRUN_SUBPROCESS=1",
-			"RUN_ARGS="+string(argsData),
-		)
-
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
-		}
-
-		output := string(out)
-		if !strings.Contains(output, "Command: echo plain_arg") {
-			t.Errorf("Expected 'Command: echo plain_arg', got:\n%s", output)
+		if !strings.Contains(output, "Command: echo hello world") {
+			t.Errorf("Expected 'Command: echo hello world', got:\n%s", output)
 		}
 	})
 }
@@ -661,28 +510,40 @@ func TestRun_HelpFlag(t *testing.T) {
 		os.Exit(exitCode)
 	}
 
-	t.Run("Does not hijack child command help flags when -- is absent", func(t *testing.T) {
-		runArgs := []string{
-			"--dry-run", "echo", "--help",
-		}
+	tests := []struct {
+		name         string
+		runArgs      []string
+		wantContains string
+	}{
+		{
+			name:         "Short help flag -h before dash-dash",
+			runArgs:      []string{"-h", "--", "echo", "hello"},
+			wantContains: "cloakenv run",
+		},
+		{
+			name:         "Long help flag --help without dash-dash",
+			runArgs:      []string{"--help"},
+			wantContains: "cloakenv run",
+		},
+	}
 
-		cmd := exec.Command(os.Args[0], "-test.run=TestRun_HelpFlag")
-		argsData, _ := json.Marshal(runArgs)
-		cmd.Env = append(os.Environ(),
-			"GO_WANT_RUN_HELP_SUBPROCESS=1",
-			"RUN_ARGS="+string(argsData),
-		)
-
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
-		}
-
-		output := string(out)
-		if !strings.Contains(output, "Command: echo --help") {
-			t.Errorf("Expected 'Command: echo --help', got:\n%s", output)
-		}
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=TestRun_HelpFlag")
+			argsData, _ := json.Marshal(tc.runArgs)
+			cmd.Env = append(os.Environ(),
+				"GO_WANT_RUN_HELP_SUBPROCESS=1",
+				"RUN_ARGS="+string(argsData),
+			)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("Subprocess failed: %v, output: %s", err, string(out))
+			}
+			if !strings.Contains(string(out), tc.wantContains) {
+				t.Errorf("expected output to contain %q, got:\n%s", tc.wantContains, string(out))
+			}
+		})
+	}
 }
 
 func TestRun_TemplateDeliveryAndMasking(t *testing.T) {
@@ -836,7 +697,6 @@ func TestRun_TemplateDeliveryAndMasking(t *testing.T) {
 		}
 	}
 
-	// Secret and full rendered content must be masked when echoed by child.
 	if strings.Contains(output, "sk-delivery-super-secret-7777") {
 		t.Errorf("SECURITY LEAK: template secret appeared unmasked in output:\n%s", output)
 	}
@@ -844,7 +704,6 @@ func TestRun_TemplateDeliveryAndMasking(t *testing.T) {
 		t.Errorf("expected echoed template contents to be masked as <REDACTED>, got:\n%s", output)
 	}
 
-	// Extract AUTO_PATH to verify ephemeral file was unlinked on exit.
 	var autoPath string
 	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "AUTO_PATH=") {
@@ -855,14 +714,12 @@ func TestRun_TemplateDeliveryAndMasking(t *testing.T) {
 		t.Fatalf("AUTO_PATH not reported in output:\n%s", output)
 	}
 
-	// Non-persistent files must be zeroed and unlinked after exit.
 	for _, p := range []string{autoPath, explicitFile, pathOnlyFile} {
 		if _, statErr := os.Lstat(p); !os.IsNotExist(statErr) {
 			t.Errorf("expected non-persistent template file %q to be deleted after exit, statErr=%v", p, statErr)
 		}
 	}
 
-	// Persisted file must remain on disk with the expected content.
 	data, readErr := os.ReadFile(persistedFile)
 	if readErr != nil {
 		t.Fatalf("expected persisted file %q to remain after exit, err=%v", persistedFile, readErr)
