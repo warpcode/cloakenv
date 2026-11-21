@@ -89,7 +89,7 @@ templates:
         query: '{{ hasTag "app" .tags }}'
         rules:
           - type: pass
-            include: ["title", "path", "username", "password"]
+            include: ["title", "path", "UserName", "password"]
             key_format: "none"
 
 # Command autoloading rules
