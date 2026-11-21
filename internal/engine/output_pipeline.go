@@ -373,9 +373,13 @@ func resolveSources(
 			}
 		}
 
-		// Deterministic ordering within a source: Path, then Title.
+		// Deterministic ordering within a source: Path, Title, then UUID.
 		slices.SortStableFunc(matched, func(a, b SourceEntry) int {
-			return cmp.Or(cmp.Compare(a.Path, b.Path), cmp.Compare(a.Title, b.Title))
+			return cmp.Or(
+				cmp.Compare(a.Path, b.Path),
+				cmp.Compare(a.Title, b.Title),
+				cmp.Compare(sourceEntryUUID(a), sourceEntryUUID(b)),
+			)
 		})
 
 		for _, entry := range matched {
@@ -440,4 +444,18 @@ func formatDotenvValue(v string) string {
 	v = strings.ReplaceAll(v, "\r", `\r`)
 	v = strings.ReplaceAll(v, "\t", `\t`)
 	return `"` + v + `"`
+}
+
+func sourceEntryUUID(e SourceEntry) string {
+	if e.Raw == nil {
+		return ""
+	}
+	v, ok := e.Raw["uuid"]
+	if !ok || v == nil {
+		return ""
+	}
+	if str, ok := v.(string); ok {
+		return str
+	}
+	return fmt.Sprint(v)
 }

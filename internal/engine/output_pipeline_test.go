@@ -581,3 +581,39 @@ func TestOutputPipeline_ReviewRegressionCoverage(t *testing.T) {
 		}
 	})
 }
+
+func TestEnvsBuilderDeterministicSortUUIDTieBreaker(t *testing.T) {
+	ctx := context.Background()
+	fetcher := &stubVaultFetcher{
+		vaults: map[string][]SourceEntry{
+			"work": {
+				{
+					Vault: "work",
+					Path:  "prod/db",
+					Title: "db",
+					Raw:   map[string]any{"title": "db", "path": "prod/db", "uuid": "uuid-b", "HOST": "second.example"},
+				},
+				{
+					Vault: "work",
+					Path:  "prod/db",
+					Title: "db",
+					Raw:   map[string]any{"title": "db", "path": "prod/db", "uuid": "uuid-a", "HOST": "first.example"},
+				},
+			},
+		},
+	}
+	cfg := &config.Config{
+		Envs: map[string][]config.VaultSourceConfig{
+			"app": {{Vault: "work"}},
+		},
+	}
+	builder := NewEnvsBuilderWithFetcher(cfg, fetcher, NewRuleEngine())
+	env, err := builder.Build(ctx, "app")
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+	// uuid-a sorts before uuid-b, so last-entry-wins resolves to uuid-b regardless of input slice order.
+	if env["HOST"] != "second.example" {
+		t.Fatalf("expected HOST=second.example (uuid-b wins after uuid-a), got %q", env["HOST"])
+	}
+}
