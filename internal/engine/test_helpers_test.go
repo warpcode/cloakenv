@@ -17,12 +17,14 @@ type mockVaultProvider struct {
 	rootPrefixes []string
 }
 
-func (m *mockVaultProvider) Scheme() string                                           { return "search" }
-func (m *mockVaultProvider) Initialize(_ context.Context, _ provider.ProviderConfig) error { return nil }
-func (m *mockVaultProvider) SetSecret(_ context.Context, _, _ string) error           { return nil }
-func (m *mockVaultProvider) DeleteSecret(_ context.Context, _ string) error           { return nil }
-func (m *mockVaultProvider) Validate(_ map[string]string) error                       { return nil }
-func (m *mockVaultProvider) RootPrefixes() []string                                   { return m.rootPrefixes }
+func (m *mockVaultProvider) Scheme() string { return "search" }
+func (m *mockVaultProvider) Initialize(_ context.Context, _ provider.ProviderConfig) error {
+	return nil
+}
+func (m *mockVaultProvider) SetSecret(_ context.Context, _, _ string) error { return nil }
+func (m *mockVaultProvider) DeleteSecret(_ context.Context, _ string) error { return nil }
+func (m *mockVaultProvider) Validate(_ map[string]string) error             { return nil }
+func (m *mockVaultProvider) RootPrefixes() []string                         { return m.rootPrefixes }
 
 func (m *mockVaultProvider) Search(_ context.Context, _ provider.SearchQuery) ([]provider.SearchResult, error) {
 	out := make([]provider.SearchResult, len(m.results))
