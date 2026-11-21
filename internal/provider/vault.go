@@ -18,7 +18,7 @@ import (
 	"github.com/warpcode/cloakenv/internal/utils"
 )
 
-// VaultProvider implements SecretProvider, ValueResolvableProvider, SearchableProvider,
+// VaultProvider implements SecretProvider, SearchableProvider,
 // and WritableProvider for HashiCorp Vault KV secret engines (v1 and v2).
 type VaultProvider struct {
 	client        *http.Client
@@ -46,11 +46,6 @@ func NewVaultProvider() *VaultProvider {
 // Scheme returns "vault".
 func (v *VaultProvider) Scheme() string {
 	return "vault"
-}
-
-// SupportsValueResolution confirms VaultProvider supports the resolve_values config flag.
-func (v *VaultProvider) SupportsValueResolution() bool {
-	return true
 }
 
 // Validate validates HashiCorp Vault configuration settings before initialization.

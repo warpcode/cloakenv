@@ -40,10 +40,7 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 				Searchable: &boolTrue,
 			},
 			"vault_a": {
-				Provider:      "search",
-				SourceVaults:  []string{"vault_a_src"},
-				Sources:       []string{"vault_a_src://"},
-				ResolveValues: true,
+				Provider: "env",
 			},
 		},
 	}
@@ -52,7 +49,7 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := orch.InjectMockVaultForTest("vault_a_src", []provider.SearchResult{
+	if err := orch.InjectMockVaultForTest("vault_a", []provider.SearchResult{
 		{
 			Provider: "search", Vault: "vault_a", Path: "myentity",
 			Entry: provider.Entry{
@@ -98,7 +95,7 @@ func TestTemplateEngine_FuncMap(t *testing.T) {
 		},
 		{
 			name: "search",
-			tmpl: `{{ (index (search "\"test\" in tags") 0).Attributes.Password }}`,
+			tmpl: `{{ (index (search "{{ hasTag \"test\" .tags }}") 0).Attributes.Password }}`,
 			want: "secret_pass",
 		},
 		{

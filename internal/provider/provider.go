@@ -62,8 +62,6 @@ type ProviderConfig struct {
 	Searchable        bool
 	Tags              []string
 	EntitiesRootKey   string
-	SourceVaults      []string
-	Sources           []string
 	Query             string
 	IncludeFields     []string
 	ExcludeFields     []string
@@ -263,16 +261,6 @@ type SearchableProvider interface {
 
 	// GetEntry retrieves a complete structured entry by location.
 	GetEntry(ctx context.Context, location string) (Entry, error)
-}
-
-// ValueResolvableProvider is implemented by providers that support the
-// resolve_values config flag. When a provider implements this interface,
-// the engine gates URI resolution of attribute values on the flag; when it
-// does not, the engine resolves URI values unconditionally (legacy default).
-type ValueResolvableProvider interface {
-	// SupportsValueResolution returns true, confirming the provider honours
-	// the resolve_values config option.
-	SupportsValueResolution() bool
 }
 
 // WritableProvider is an interface implemented by secret providers that support

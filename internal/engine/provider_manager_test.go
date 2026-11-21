@@ -152,10 +152,8 @@ func TestOrchestrator_MultiStagePipelineWithOriginalState(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"backend": {Provider: "env"},
 			"app": {
-				Provider:      "search",
-				Sources:       []string{"backend://db"},
+				Provider:      "env",
 				ExcludeFields: []string{"db_*"},
 				Mapping: []config.MappingRule{
 					{
@@ -176,10 +174,10 @@ func TestOrchestrator_MultiStagePipelineWithOriginalState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewOrchestrator failed: %v", err)
 	}
-	if err := injectMockVault(orch, "backend", []provider.SearchResult{
+	if err := injectMockVault(orch, "app", []provider.SearchResult{
 		{
-			Provider: "search",
-			Vault:    "backend",
+			Provider: "env",
+			Vault:    "app",
 			Path:     "db",
 			Entry: provider.Entry{
 				Title: "Database Cluster",
@@ -367,10 +365,8 @@ func TestProviderManager_MappingIntegration(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"src": {Provider: "env"},
 			"mapped_vault": {
-				Provider: "search",
-				Sources:  []string{"src://app"},
+				Provider: "env",
 				Mapping:  []config.MappingRule{rule1},
 			},
 		},
@@ -380,9 +376,9 @@ func TestProviderManager_MappingIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "src", []provider.SearchResult{
+	if err := injectMockVault(orch, "mapped_vault", []provider.SearchResult{
 		{
-			Provider: "search", Vault: "src", Path: "app",
+			Provider: "env", Vault: "mapped_vault", Path: "app",
 			Entry: provider.Entry{
 				Title: "app",
 				Attributes: map[string]any{
@@ -436,10 +432,8 @@ func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"src": {Provider: "env"},
 			"composed_vault": {
-				Provider:      "search",
-				Sources:       []string{"src://app"},
+				Provider:      "env",
 				Mapping:       []config.MappingRule{rule1},
 				IncludeFields: []string{"OPENROUTER_API_KEY", "test:foo", "INCLUDED_FIELD"},
 				ExcludeFields: []string{"EXCLUDED_FIELD"},
@@ -451,9 +445,9 @@ func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "src", []provider.SearchResult{
+	if err := injectMockVault(orch, "composed_vault", []provider.SearchResult{
 		{
-			Provider: "search", Vault: "src", Path: "app",
+			Provider: "env", Vault: "composed_vault", Path: "app",
 			Entry: provider.Entry{
 				Title: "app",
 				Attributes: map[string]any{
@@ -522,10 +516,8 @@ func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
 	// 5. Verify that colon-qualified candidate filtering provided by FilteringProvider is active in the composed chain
 	cfg2 := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"src2": {Provider: "env"},
 			"colon_vault": {
-				Provider:      "search",
-				Sources:       []string{"src2://app"},
+				Provider:      "env",
 				Mapping:       []config.MappingRule{rule1},
 				ExcludeFields: []string{"app:*"},
 			},
@@ -535,9 +527,9 @@ func TestProviderManager_MappingAndFilteringComposition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch2, "src2", []provider.SearchResult{
+	if err := injectMockVault(orch2, "colon_vault", []provider.SearchResult{
 		{
-			Provider: "search", Vault: "src2", Path: "app",
+			Provider: "env", Vault: "colon_vault", Path: "app",
 			Entry: provider.Entry{Title: "app", Attributes: map[string]any{"Password": "pass_val"}},
 		},
 	}); err != nil {
@@ -559,10 +551,8 @@ func TestProviderManager_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"src": {Provider: "env"},
 			"override_vault": {
-				Provider:      "search",
-				Sources:       []string{"src://service"},
+				Provider:      "env",
 				Mapping:       []config.MappingRule{rule1},
 				IncludeFields: []string{"UNMAPPED_KEPT"},
 				ExcludeFields: []string{"UNMAPPED_DROPPED", "MAPPED_KEY"},
@@ -574,9 +564,9 @@ func TestProviderManager_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orch, "src", []provider.SearchResult{
+	if err := injectMockVault(orch, "override_vault", []provider.SearchResult{
 		{
-			Provider: "search", Vault: "src", Path: "service",
+			Provider: "env", Vault: "override_vault", Path: "service",
 			Entry: provider.Entry{
 				Title: "service",
 				Attributes: map[string]any{
@@ -630,10 +620,8 @@ func TestProviderManager_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 	// 5. When exclude_fields is wildcard "*", mapped key STILL shows and resolves
 	cfgWildcard := &config.Config{
 		Vaults: map[string]config.VaultConfig{
-			"src_wc": {Provider: "env"},
 			"wildcard_vault": {
-				Provider:      "search",
-				Sources:       []string{"src_wc://service"},
+				Provider:      "env",
 				Mapping:       []config.MappingRule{rule1},
 				ExcludeFields: []string{"*"},
 			},
@@ -643,9 +631,9 @@ func TestProviderManager_MappedFieldsAlwaysShowRegardlessOfFilters(t *testing.T)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
-	if err := injectMockVault(orchWildcard, "src_wc", []provider.SearchResult{
+	if err := injectMockVault(orchWildcard, "wildcard_vault", []provider.SearchResult{
 		{
-			Provider: "search", Vault: "src_wc", Path: "service",
+			Provider: "env", Vault: "wildcard_vault", Path: "service",
 			Entry: provider.Entry{
 				Title: "service",
 				Attributes: map[string]any{
@@ -813,13 +801,11 @@ func TestProviderManager_KeyFormatOverride(t *testing.T) {
 		KeyFormatOverride: "snake",
 		Vaults: map[string]config.VaultConfig{
 			"vault_env": {
-				Provider:  "search",
-				Sources:   []string{"env://"},
+				Provider:  "env",
 				KeyFormat: "env",
 			},
 			"vault_none": {
-				Provider:  "search",
-				Sources:   []string{"env://"},
+				Provider:  "env",
 				KeyFormat: "env",
 			},
 		},
@@ -835,7 +821,7 @@ func TestProviderManager_KeyFormatOverride(t *testing.T) {
 		t.Fatalf("failed to get vault provider: %v", err)
 	}
 
-	_, isKFP := p.(*provider.SearchableValueResolvableKeyFormatProvider)
+	_, isKFP := p.(*provider.SearchableKeyFormatProvider)
 	if isKFP {
 		t.Errorf("expected provider not to be wrapped in KeyFormatProvider when override is 'none'")
 	}
@@ -859,98 +845,11 @@ func TestProviderManager_KeyFormatOverride(t *testing.T) {
 	}
 }
 
-func TestProviderManager_SetGetEntriesFunc_And_SetRenderTemplateFunc(t *testing.T) {
-	keyring.MockInit()
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("LocalAppData", t.TempDir())
-
+func TestProviderManager_RejectsRemovedProviders(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("getEntriesFunc and renderTemplateFunc are propagated to search provider", func(t *testing.T) {
-		cfg := &config.Config{
-			Vaults: map[string]config.VaultConfig{
-				"src": {Provider: "env"},
-				"search_vault": {
-					Provider: "search",
-					Sources:  []string{"src://app"},
-					Attributes: map[string]any{
-						"RENDERED_KEY": "{{ .attributes.SRC_KEY }}",
-					},
-				},
-			},
-		}
-
-		pm := NewProviderManager(cfg, nil, nil)
-		var getEntriesCalled bool
-		var renderTemplateCalled bool
-
-		pm.SetGetEntriesFunc(func(ctx context.Context, uri string) ([]provider.Entry, error) {
-			getEntriesCalled = true
-			return []provider.Entry{
-				{
-					Title: "app",
-					Attributes: map[string]any{
-						"SRC_KEY": "src_val",
-					},
-				},
-			}, nil
-		})
-		pm.SetRenderTemplateFunc(func(ctx context.Context, tmplStr string, data any) (string, error) {
-			renderTemplateCalled = true
-			return "rendered:src_val", nil
-		})
-
-		p, _, err := pm.GetProvider(ctx, "search_vault")
-		if err != nil {
-			t.Fatalf("GetProvider failed: %v", err)
-		}
-		sp, ok := p.(provider.SearchableProvider)
-		if !ok {
-			t.Fatalf("provider does not implement SearchableProvider")
-		}
-		entry, err := sp.GetEntry(ctx, "app")
-		if err != nil {
-			t.Fatalf("GetEntry failed: %v", err)
-		}
-		if !getEntriesCalled {
-			t.Errorf("expected getEntriesFunc to have been called")
-		}
-		if !renderTemplateCalled {
-			t.Errorf("expected renderTemplateFunc to have been called")
-		}
-		if entry.Attributes["RENDERED_KEY"] != "rendered:src_val" {
-			t.Errorf("RENDERED_KEY = %v, want 'rendered:src_val'", entry.Attributes["RENDERED_KEY"])
-		}
-	})
-
-	t.Run("missing getEntriesFunc returns error when search source has entry URI", func(t *testing.T) {
-		cfg := &config.Config{
-			Vaults: map[string]config.VaultConfig{
-				"src": {Provider: "env"},
-				"search_vault": {
-					Provider: "search",
-					Sources:  []string{"src://app"},
-				},
-			},
-		}
-
-		pm := NewProviderManager(cfg, nil, nil)
-		p, _, err := pm.GetProvider(ctx, "search_vault")
-		if err != nil {
-			t.Fatalf("GetProvider failed: %v", err)
-		}
-		sp, ok := p.(provider.SearchableProvider)
-		if !ok {
-			t.Fatalf("provider does not implement SearchableProvider")
-		}
-		if _, err := sp.GetEntry(ctx, "app"); err == nil || !strings.Contains(err.Error(), "entry retrieval function not configured") {
-			t.Fatalf("expected entry retrieval error, got %v", err)
-		}
-	})
-
-	t.Run("initVaultProvider and newBareProvider reject removed static providers", func(t *testing.T) {
-		for _, prov := range []string{"yaml", "json", "custom_vault"} {
+	t.Run("initVaultProvider and newBareProvider reject removed providers", func(t *testing.T) {
+		for _, prov := range []string{"yaml", "json", "custom_vault", "search"} {
 			cfg := &config.Config{
 				Vaults: map[string]config.VaultConfig{
 					"bad": {Provider: prov},

@@ -391,12 +391,8 @@ func TestApplyMappingAndFilteringToAttributes(t *testing.T) {
 	})
 }
 
-func newMappingTestSearchProvider(results ...SearchResult) *SearchProvider {
-	sp := NewSearchProvider()
-	sp.SetSearchExecutor(func(_ context.Context, _ string, _ []string, _ int) ([]SearchResult, error) {
-		return results, nil
-	})
-	return sp
+func newMappingTestSearchProvider(results ...SearchResult) *mockResultsProvider {
+	return &mockResultsProvider{results: results}
 }
 
 func TestMappingProvider_SearchProvider(t *testing.T) {
@@ -577,61 +573,6 @@ func TestMappingProvider_ColonQualifiedExcludeFields(t *testing.T) {
 	}
 }
 
-func TestMappingProvider_SearchVaultMappedKeyLookupAndRawKeyRejection(t *testing.T) {
-	ctx := context.Background()
-
-	sp := NewSearchProvider()
-	sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
-		return []SearchResult{
-			{
-				Path: "entry1",
-				Entry: Entry{
-					Title: "entry1",
-					Attributes: map[string]any{
-						"env:API_KEY": "pass1",
-					},
-				},
-			},
-		}, nil
-	})
-	_ = sp.Initialize(ctx, ProviderConfig{
-		Settings: map[string]string{
-			"query": "tag:test",
-		},
-		SourceVaults: []string{"source1"},
-		Query:        "tag:test",
-	})
-
-	rule := config.MappingRule{Match: "env:(.*)", Key: "$1"}
-	_ = rule.Compile()
-
-	mp, err := NewMappingProvider(sp, []config.MappingRule{rule})
-	if err != nil {
-		t.Fatalf("NewMappingProvider failed: %v", err)
-	}
-
-	// 1. Mapped key lookup succeeds
-	val, err := mp.GetSecret(ctx, "entry1:API_KEY")
-	if err != nil {
-		t.Fatalf("expected GetSecret for mapped key API_KEY to succeed, got %v", err)
-	}
-	if val == "" {
-		t.Error("expected non-empty secret value")
-	}
-
-	// 2. Original raw key lookup fails
-	_, err = mp.GetSecret(ctx, "entry1:env:API_KEY")
-	if err == nil {
-		t.Fatal("expected GetSecret for raw pre-mapping key 'env:API_KEY' to fail, got nil error")
-	}
-
-	// 3. Absent entry lookup fails
-	_, err = mp.GetSecret(ctx, "absent_entry:API_KEY")
-	if err == nil {
-		t.Fatal("expected search URI with absent entry to return error, got nil")
-	}
-}
-
 func TestMappingProvider_FilteringParityForNestedAndArrayPaths(t *testing.T) {
 	ctx := context.Background()
 
@@ -726,7 +667,7 @@ func TestMappingProvider_SerializationErrorPropagated(t *testing.T) {
 }
 
 func TestMappingProvider_InterfaceCapabilities(t *testing.T) {
-	sp := NewSearchProvider()
+	sp := newTestSearchProvider()
 	rule := config.MappingRule{Match: "(.*)", Key: "$1"}
 	if err := rule.Compile(); err != nil {
 		t.Fatalf("rule.Compile failed: %v", err)
@@ -738,19 +679,16 @@ func TestMappingProvider_InterfaceCapabilities(t *testing.T) {
 	}
 
 	if _, ok := p.(SearchableProvider); !ok {
-		t.Error("expected MappingProvider around SearchProvider to implement SearchableProvider")
-	}
-	if vr, ok := p.(ValueResolvableProvider); !ok || !vr.SupportsValueResolution() {
-		t.Error("expected MappingProvider around SearchProvider to implement ValueResolvableProvider")
+		t.Error("expected MappingProvider around SearchableProvider to implement SearchableProvider")
 	}
 
 	if unwrap, ok := p.(interface{ Underlying() SecretProvider }); !ok || unwrap.Underlying() != sp {
-		t.Error("expected Underlying() to return wrapped SearchProvider")
+		t.Error("expected Underlying() to return wrapped provider")
 	}
 }
 
 func TestMappingProvider_NewMappingProvider_CompileError(t *testing.T) {
-	sp := NewSearchProvider()
+	sp := newTestSearchProvider()
 	invalidRule := config.MappingRule{Match: "[invalid_regex"}
 
 	_, err := NewMappingProvider(sp, []config.MappingRule{invalidRule})
@@ -763,7 +701,7 @@ func TestMappingIsolationForDefaultFields(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("DefaultFieldsPreservedWhenMappingOnly", func(t *testing.T) {
-		sp := NewSearchProvider()
+		sp := newTestSearchProvider()
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
@@ -801,7 +739,7 @@ func TestMappingIsolationForDefaultFields(t *testing.T) {
 		}
 
 		res := results[0]
-		if res.Provider != "search" || res.Path != "services/api" || res.Entry.Title != "API Key Service" || len(res.Entry.Tags) != 2 {
+		if res.Provider != "keepass" || res.Path != "services/api" || res.Entry.Title != "API Key Service" || len(res.Entry.Tags) != 2 {
 			t.Errorf("expected all default fields preserved when mapping without field filtering, got Provider=%q Vault=%q Path=%q Title=%q Tags=%v",
 				res.Provider, res.Vault, res.Path, res.Entry.Title, res.Entry.Tags)
 		}
@@ -820,7 +758,7 @@ func TestMappingIsolationForDefaultFields(t *testing.T) {
 	})
 
 	t.Run("DefaultFieldsExcludedWhenExcludeFieldsSet", func(t *testing.T) {
-		sp := NewSearchProvider()
+		sp := newTestSearchProvider()
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
@@ -875,7 +813,7 @@ func TestMappingIsolationForDefaultFields(t *testing.T) {
 	})
 
 	t.Run("DefaultFieldsPreservedWhenMappedOrIncluded", func(t *testing.T) {
-		sp := NewSearchProvider()
+		sp := newTestSearchProvider()
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
@@ -919,7 +857,7 @@ func TestMappingIsolationForDefaultFields(t *testing.T) {
 	})
 
 	t.Run("MappedDefaultFieldsAlwaysShowRegardlessOfIncludeOrExcludeFields", func(t *testing.T) {
-		sp := NewSearchProvider()
+		sp := newTestSearchProvider()
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
@@ -1218,8 +1156,8 @@ func TestFieldPolicy_ApplyToEntry_PreservesUUIDAndGroup(t *testing.T) {
 func TestMappingProvider_UUIDAndGroup(t *testing.T) {
 	ctx := context.Background()
 
-	newMockProvider := func(attrs map[string]any) *SearchProvider {
-		sp := NewSearchProvider()
+	newMockProvider := func(attrs map[string]any) *mockResultsProvider {
+		sp := newTestSearchProvider()
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
@@ -1534,7 +1472,7 @@ func TestMappingProvider_MetadataTemplate(t *testing.T) {
 			t.Fatalf("rule.Compile failed: %v", err)
 		}
 
-		sp := NewSearchProvider()
+		sp := newTestSearchProvider()
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
@@ -1581,7 +1519,7 @@ func TestMappingProvider_MetadataTemplate(t *testing.T) {
 			t.Fatalf("rule.Compile failed: %v", err)
 		}
 
-		sp := NewSearchProvider()
+		sp := newTestSearchProvider()
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
@@ -1640,7 +1578,7 @@ func TestMappingProvider_MetadataTemplate(t *testing.T) {
 			Attributes: rawAttrs,
 		}
 
-		sp := NewSearchProvider()
+		sp := newTestSearchProvider()
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{

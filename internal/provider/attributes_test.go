@@ -260,34 +260,8 @@ func TestAttributesProvider_InterfacePreservation(t *testing.T) {
 		if _, ok := p.(SearchableProvider); !ok {
 			t.Error("expected SearchableProvider interface to be preserved")
 		}
-		if _, ok := p.(ValueResolvableProvider); ok {
-			t.Error("did not expect ValueResolvableProvider interface")
-		}
 	})
 
-	t.Run("only value resolvable", func(t *testing.T) {
-		underlying := &mockValueResolvableProvider{}
-		p := NewAttributesProvider(underlying, attributes)
-
-		if _, ok := p.(SearchableProvider); ok {
-			t.Error("did not expect SearchableProvider interface")
-		}
-		if _, ok := p.(ValueResolvableProvider); !ok {
-			t.Error("expected ValueResolvableProvider interface to be preserved")
-		}
-	})
-
-	t.Run("both interfaces", func(t *testing.T) {
-		underlying := &mockSearchableValueResolvableProvider{}
-		p := NewAttributesProvider(underlying, attributes)
-
-		if _, ok := p.(SearchableProvider); !ok {
-			t.Error("expected SearchableProvider interface to be preserved")
-		}
-		if _, ok := p.(ValueResolvableProvider); !ok {
-			t.Error("expected ValueResolvableProvider interface to be preserved")
-		}
-	})
 }
 
 func TestAttributesProvider_OriginalStateAccess(t *testing.T) {
@@ -604,15 +578,3 @@ func (m *mockSearchableProvider) GetEntry(ctx context.Context, location string) 
 func (m *mockSearchableProvider) Search(ctx context.Context, query SearchQuery) ([]SearchResult, error) {
 	return m.results, nil
 }
-
-type mockValueResolvableProvider struct {
-	mockSecretProvider
-}
-
-func (m *mockValueResolvableProvider) SupportsValueResolution() bool { return true }
-
-type mockSearchableValueResolvableProvider struct {
-	mockSearchableProvider
-}
-
-func (m *mockSearchableValueResolvableProvider) SupportsValueResolution() bool { return true }

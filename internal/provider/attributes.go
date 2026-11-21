@@ -276,60 +276,18 @@ func (s *SearchableAttributesProvider) Search(ctx context.Context, query SearchQ
 	return results, nil
 }
 
-// ValueResolvableAttributesProvider implements ValueResolvableProvider when underlying implements it.
-type ValueResolvableAttributesProvider struct {
-	AttributesProvider
-}
-
-// SupportsValueResolution delegates to the underlying ValueResolvableProvider.
-func (v *ValueResolvableAttributesProvider) SupportsValueResolution() bool {
-	if vr, ok := v.underlying.(ValueResolvableProvider); ok {
-		return vr.SupportsValueResolution()
-	}
-	return false
-}
-
-// SearchableValueResolvableAttributesProvider implements both SearchableProvider and ValueResolvableProvider.
-type SearchableValueResolvableAttributesProvider struct {
-	SearchableAttributesProvider
-}
-
-// SupportsValueResolution delegates to the underlying ValueResolvableProvider.
-func (s *SearchableValueResolvableAttributesProvider) SupportsValueResolution() bool {
-	if vr, ok := s.underlying.(ValueResolvableProvider); ok {
-		return vr.SupportsValueResolution()
-	}
-	return false
-}
-
 // NewAttributesProvider constructs an AttributesProvider wrapper preserving optional provider interfaces.
 func NewAttributesProvider(p SecretProvider, attributes map[string]any) SecretProvider {
 	if len(attributes) == 0 {
 		return p
 	}
-
 	base := AttributesProvider{
 		underlying: p,
 		attributes: attributes,
 	}
 
-	_, isSearchable := p.(SearchableProvider)
-	_, isValueResolvable := p.(ValueResolvableProvider)
-
-	if isSearchable && isValueResolvable {
-		return &SearchableValueResolvableAttributesProvider{
-			SearchableAttributesProvider: SearchableAttributesProvider{
-				AttributesProvider: base,
-			},
-		}
-	}
-	if isSearchable {
+	if _, isSearchable := p.(SearchableProvider); isSearchable {
 		return &SearchableAttributesProvider{
-			AttributesProvider: base,
-		}
-	}
-	if isValueResolvable {
-		return &ValueResolvableAttributesProvider{
 			AttributesProvider: base,
 		}
 	}

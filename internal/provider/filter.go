@@ -736,35 +736,8 @@ func (s *SearchableFilteringProvider) Search(ctx context.Context, query SearchQu
 	return filteredResults, nil
 }
 
-// ValueResolvableFilteringProvider implements ValueResolvableProvider when underlying implements it.
-type ValueResolvableFilteringProvider struct {
-	FilteringProvider
-}
-
-// SupportsValueResolution delegates to the underlying provider.
-func (v *ValueResolvableFilteringProvider) SupportsValueResolution() bool {
-	if vr, ok := v.underlying.(ValueResolvableProvider); ok {
-		return vr.SupportsValueResolution()
-	}
-	return false
-}
-
-// SearchableValueResolvableFilteringProvider implements both SearchableProvider and ValueResolvableProvider.
-type SearchableValueResolvableFilteringProvider struct {
-	SearchableFilteringProvider
-}
-
-// SupportsValueResolution delegates to the underlying provider.
-func (s *SearchableValueResolvableFilteringProvider) SupportsValueResolution() bool {
-	if vr, ok := s.underlying.(ValueResolvableProvider); ok {
-		return vr.SupportsValueResolution()
-	}
-	return false
-}
-
 // NewFilteringProvider constructs a new filtering provider wrapper, preserving optional
-// interfaces (SearchableProvider, ValueResolvableProvider) only when the underlying provider
-// implements them.
+// interfaces (SearchableProvider) only when the underlying provider implements them.
 func NewFilteringProvider(p SecretProvider, includeFields, excludeFields []string) SecretProvider {
 	base := FilteringProvider{
 		underlying:    p,
@@ -774,23 +747,8 @@ func NewFilteringProvider(p SecretProvider, includeFields, excludeFields []strin
 		titleMu:       &sync.RWMutex{},
 	}
 
-	_, isSearchable := p.(SearchableProvider)
-	_, isValResolvable := p.(ValueResolvableProvider)
-
-	if isSearchable && isValResolvable {
-		return &SearchableValueResolvableFilteringProvider{
-			SearchableFilteringProvider: SearchableFilteringProvider{
-				FilteringProvider: base,
-			},
-		}
-	}
-	if isSearchable {
+	if _, isSearchable := p.(SearchableProvider); isSearchable {
 		return &SearchableFilteringProvider{
-			FilteringProvider: base,
-		}
-	}
-	if isValResolvable {
-		return &ValueResolvableFilteringProvider{
 			FilteringProvider: base,
 		}
 	}
