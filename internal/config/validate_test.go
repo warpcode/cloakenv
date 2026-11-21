@@ -959,3 +959,77 @@ autoload:
 		}
 	})
 }
+
+func TestValidateAutoloadTemplateReviewFixes(t *testing.T) {
+	tempDir := t.TempDir()
+	base := "templates:\n  cfg:\n    driver: json\n    vaults:\n      - vault: env\n        rules:\n          - type: pass\n            include: [\"A\"]\n"
+
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name:    "padded template name rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: \" cfg \"\n        env: APP_CFG\n",
+			wantErr: "must not have leading or trailing whitespace",
+		},
+		{
+			name:    "whitespace-only env with path rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        env: \"   \"\n        path: /tmp/out.json\n",
+			wantErr: "invalid 'env' variable name",
+		},
+		{
+			name:    "env with equals sign rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        env: \"FOO=BAR\"\n",
+			wantErr: "invalid 'env' variable name",
+		},
+		{
+			name:    "env_path with whitespace rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        env_path: \" CFG_PATH \"\n",
+			wantErr: "invalid 'env_path' variable name",
+		},
+		{
+			name:    "path with leading trailing whitespace rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        path: \" /tmp/out.json \"\n",
+			wantErr: "invalid 'path'",
+		},
+		{
+			name:    "persist true with env rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        env: APP_CFG\n        persist: true\n",
+			wantErr: "'persist: true' cannot be combined with 'env'",
+		},
+		{
+			name:    "duplicate env target rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        env: APP_CFG\n      - template: cfg\n        env: APP_CFG\n",
+			wantErr: `duplicate environment variable target "APP_CFG"`,
+		},
+		{
+			name:    "duplicate env and env_path target rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        env: APP_CFG\n      - template: cfg\n        env_path: APP_CFG\n",
+			wantErr: `duplicate environment variable target "APP_CFG"`,
+		},
+		{
+			name:    "duplicate literal path target rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        path: /tmp/out.json\n      - template: cfg\n        path: /tmp/./out.json\n",
+			wantErr: "duplicate literal path target",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(tempDir, strings.ReplaceAll(tc.name, " ", "_")+".yaml")
+			if err := os.WriteFile(p, []byte(tc.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			res, err := Validate(p, true)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			joined := strings.Join(res.Errors, "\n")
+			if !strings.Contains(joined, tc.wantErr) {
+				t.Errorf("expected error containing %q, got:\n%s", tc.wantErr, joined)
+			}
+		})
+	}
+}
