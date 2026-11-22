@@ -11,6 +11,7 @@
 
 ## Table of Contents
 
+- [Documentation Hub (`docs/`)](#documentation-hub-docs)
 - [Why cloakenv?](#why-cloakenv)
 - [How It Works](#how-it-works)
 - [Prerequisites](#prerequisites)
@@ -42,6 +43,22 @@
 - [Headless & CI/CD Usage](#headless--cicd-usage)
 - [Development & Testing](#development--testing)
 - [License](#license)
+
+---
+
+## Documentation Hub (`docs/`)
+
+For full guides, provider deep-dives, rule engine examples, cookbooks, and configuration references, visit the **[Documentation Portal](docs/README.md)**:
+
+| Section | Highlights |
+|---|---|
+| **[Getting Started](docs/getting-started/quickstart.md)** | [Installation & Cosign/SLSA Verification](docs/getting-started/installation.md), [Quick Start](docs/getting-started/quickstart.md), [Core Concepts](docs/getting-started/core-concepts.md) |
+| **[Secret Providers](docs/providers/README.md)** | [KeePass](docs/providers/keepass.md), [Pass](docs/providers/pass.md), [HashiCorp Vault](docs/providers/vault.md), [Env](docs/providers/env.md), [OS Keyring](docs/providers/keyring.md), [Caching](docs/providers/caching.md) |
+| **[Transformation Pipeline](docs/pipeline/README.md)** | [Queries](docs/pipeline/queries.md), [Rules (`pass`/`match`/`set`)](docs/pipeline/rules.md), [Envs](docs/pipeline/envs.md), [Templates](docs/pipeline/templates.md), [Template Functions](docs/pipeline/template-functions.md) |
+| **[Execution & Delivery](docs/execution/autoload.md)** | [Autoloading](docs/execution/autoload.md), [Ephemeral Delivery](docs/execution/template-delivery.md), [Stream Masking](docs/execution/stream-masking.md) |
+| **[CLI & Security](docs/cli/README.md)** | [CLI Reference](docs/cli/README.md), [Threat Model](docs/security/threat-model.md), [Audit Logging](docs/security/audit-logging.md) |
+| **[Usage Guides](docs/guides/ai-agents-and-litellm.md)** | [AI Agents & LiteLLM](docs/guides/ai-agents-and-litellm.md), [Cloud & Kubernetes](docs/guides/cloud-and-kubernetes.md), [Shell Integration](docs/guides/shell-integration.md), [CI/CD](docs/guides/cicd-and-headless.md), [Troubleshooting](docs/guides/troubleshooting.md) |
+| **[Reference](docs/reference/config-schema.md)** | [Config Schema](docs/reference/config-schema.md), [Migration Guide](docs/reference/migration-guide.md), [ADRs](docs/adr/README.md), [Plans](docs/plans/README.md) |
 
 ---
 

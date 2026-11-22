@@ -8,6 +8,11 @@
 | **Depends On** | `REQ-001`, `REQ-002`, `REQ-003`, `REQ-004` |
 | **Reversibility** | One-way |
 
+> [!NOTE]
+> **Partially Superseded by [ADR-0003](0003-declarative-envs-templates-and-zero-leak-cli.md)**:
+> - **Still Active**: Unified Go `text/template` engine (`missingkey=error`), pure key/value transformation helpers (`toEnv`, `toKv`, `toJSON`, `toYAML`, `upper`, `lower`, `env`, `snake`, `kebab`, `keys`, `values`, `join`), and verbatim child-command argument pass-through safety.
+> - **Superseded / Retired**: `custom_vault`, `search` vaults, per-vault `include_fields`/`exclude_fields`/`mapping`/`key_format`/`attributes`/`resolve_values`, impure template functions (`get`, `entry`, `search`, `include`, `includeFile`), and CLI `get`/`show`/`run -m`. See the [Migration Guide](../reference/migration-guide.md).
+
 ---
 
 ## 1. Context and Problem Statement

@@ -1,6 +1,6 @@
 ---
 name: cloakenv-pr-review
-description: Review SOP and automated bundle check layered on github-pr-review for cloakenv pull requests. Use when reviewing, auditing, or evaluating pull requests or Jules automated changes for cloakenv.
+description: Review SOP and automated bundle check layered on github-pr-review for cloakenv pull requests. Use when reviewing, auditing, or evaluating pull requests for cloakenv.
 ---
 
 # cloakenv Pull Request Review SOP

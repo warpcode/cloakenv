@@ -31,7 +31,7 @@ Equivalently, run `make verify` to execute this pipeline. Run `make agents-check
 1. **Never log secret values**:
    Debug output, test logs, audit logs, traces, `cloakenv inspect`, and error messages must never contain resolved secret values.
 2. **Zero plaintext disk persistence**:
-   Secrets exist strictly in execution memory (or mode-`0700`/`0600` `O_NOFOLLOW` temp files zeroed on child exit); encrypted cache (`cache://`) key lives in OS keyring.
+   Secrets exist strictly in execution memory (or mode-`0700`/`0600` `O_NOFOLLOW` temp files zeroed on child exit); per-vault encrypted disk cache (`cache.mode: encrypted_disk`) key lives in OS keyring.
 3. **Test credentials for testing only**:
    Fixture credentials (`testdata/testDB.kdbx`) must never appear in production examples.
 4. **No hardcoded credentials**:
@@ -49,6 +49,8 @@ Equivalently, run `make verify` to execute this pipeline. Run `make agents-check
   Never add external dependencies to `go.mod` without explicit user approval.
 - **Workspace hygiene**:
   Never write temporary, review, or scratch files to the workspace root; use `/tmp/` or conversation scratch dirs.
+- **Documentation synchronization**:
+  Whenever any feature, provider, rule, template function, configuration key, or CLI command/flag is added, modified, or removed, audit and update the affected guides in `docs/` (see `docs/README.md`), `README.md`, `examples/config.yaml`, `AGENTS.md`, and `docs/adr/` / `docs/plans/` in the same change so documentation never drifts from code ground truth.
 
 ## 🧬 Core Invariants
 
@@ -68,63 +70,17 @@ Equivalently, run `make verify` to execute this pipeline. Run `make agents-check
 | Task / Domain | Target Resource | Purpose |
 |---|---|---|
 | Implement a secret backend | `.github/skills/cloakenv-add-provider` | Provider SOP, checklist, and `provider_checklist.sh` |
-| Review PRs & Jules runs | `.github/skills/cloakenv-pr-review` | PR audit SOP, review traps, and `pr_review_bundle.sh` |
-| Session health & stuck runners | `google-jules-triage` | Nudge-first protocol, stalled VM triage, and recovery |
+| Review pull requests | `.github/skills/cloakenv-pr-review` | PR audit SOP, review traps, and `pr_review_bundle.sh` |
 | Author pull requests | `github-pr` | Conventional commits, PR creation, and lifecycle |
 | Git workflow & commits | `CONTRIBUTING.md` | Branching, rebasing, and Conventional Commit format |
 | Test fixtures & credentials | `testdata/README.md` | Test database schema, entries, and master passwords |
-| Architecture decisions | `docs/adr/`, `docs/plans/` | ADR-0001 (templating/merge), RFCs, and design specs |
-| Build targets & user docs | `README.md`, `Makefile` | CLI documentation, configuration reference, and targets |
-
-## 🔑 GitHub App Authentication & Token Resolution
-
-When operating in containerized or hosted environments (such as AI Studio or Cloud Run sandboxes), GitHub App credentials may be injected into the application process environment rather than the root shell daemon.
-
-### Discovery & Extraction
-1. Check the active environment variables for `GH_APP_ID`, `GH_APP_INSTALLATION_ID`, and `GH_APP_PRIVATE_KEY`.
-2. If absent from the current shell, inspect the environment of running application processes (e.g., `/proc/<pid>/environ` after a dev server restart).
-
-### Private Key PEM Normalization
-When PEM keys are entered via single-line or flattened inputs, newlines may be converted into spaces. Reconstruct the standard RFC 7468 PEM format before decoding:
-```javascript
-function fixPEM(str) {
-  const match = str.match(/-----BEGIN [^-]+-----([\s\S]+)-----END [^-]+-----/);
-  if (!match) return str;
-  const header = str.match(/(-----BEGIN [^-]+-----)/)[1];
-  const footer = str.match(/(-----END [^-]+-----)/)[1];
-  const body = match[1].replace(/\s+/g, '');
-  const chunks = body.match(/.{1,64}/g).join('\n');
-  return `${header}\n${chunks}\n${footer}\n`;
-}
-```
-
-### Installation Token Exchange
-1. Generate an RS256-signed JWT:
-   - Header: `{"alg": "RS256", "typ": "JWT"}`
-   - Payload: `{"iat": now - 60, "exp": now + 540, "iss": GH_APP_ID}`
-   - Sign using `crypto.createSign("RSA-SHA256")` with the normalized private key.
-2. Exchange the JWT for an installation access token:
-   ```bash
-   POST https://api.github.com/app/installations/${GH_APP_INSTALLATION_ID}/access_tokens
-   Authorization: Bearer <JWT>
-   Accept: application/vnd.github+json
-   ```
-3. Authenticate `gh` and Git:
-   ```bash
-   echo "${TOKEN}" | gh auth login --with-token
-   gh auth setup-git
-   ```
-4. Automated Helper Script:
-   An automated helper script is provided at `.github/scripts/get_github_app_token.mjs` that discovers credentials, exchanges them for an installation token, and optionally configures `gh` and Git:
-   ```bash
-   node .github/scripts/get_github_app_token.mjs --setup-git
-   ```
-5. Security & Hygiene:
-   - Never log private keys or generated access tokens.
-   - Immediately delete any temporary scripts or token files from `/tmp/`.
+| Architecture decisions | `docs/adr/`, `docs/plans/` | ADR-0001 to ADR-0003, RFCs, and design specs |
+| User & operator guides | `docs/README.md` | Full documentation portal, provider guides, pipeline, and cookbooks |
+| Build targets & user docs | `README.md`, `Makefile` | CLI overview, configuration reference, and targets |
 
 ## 🛠️ Automated Maintenance
 
 Rather than ritualistic end-of-task review checklists, repository integrity is enforced automatically:
 - Run `make agents-check` to verify that Makefile targets, internal package contracts, and referenced skills remain synchronized.
+- Audit `docs/`, `README.md`, and `examples/config.yaml` alongside `make agents-check` whenever behavior, CLI flags, or configuration schemas change.
 - Run `make test-all` for full local verification (formatting, vetting, unit tests with race detection, and benchmarks).
