@@ -214,12 +214,167 @@ func TestFilterAttributesAndEntry(t *testing.T) {
 	}
 }
 
-func newFilterTestSearchProvider(results ...SearchResult) *SearchProvider {
-	sp := NewSearchProvider()
-	sp.SetSearchExecutor(func(_ context.Context, _ string, _ []string, _ int) ([]SearchResult, error) {
-		return results, nil
-	})
-	return sp
+type mockResultsProvider struct {
+	mockSecretProvider
+	vaultName      string
+	results        []SearchResult
+	searchExecutor func(context.Context, string, []string, int) ([]SearchResult, error)
+}
+
+func (m *mockResultsProvider) Scheme() string { return "search" }
+
+func (m *mockResultsProvider) SetSearchExecutor(exec func(context.Context, string, []string, int) ([]SearchResult, error)) {
+	m.searchExecutor = exec
+	if res, err := exec(context.Background(), "", nil, 0); err == nil {
+		m.results = res
+	}
+}
+
+func (m *mockResultsProvider) Initialize(ctx context.Context, _ ProviderConfig) error {
+	if m.searchExecutor != nil {
+		res, err := m.searchExecutor(ctx, "", nil, 0)
+		if err != nil {
+			return err
+		}
+		m.results = res
+	}
+	return nil
+}
+
+func (m *mockResultsProvider) Search(ctx context.Context, _ SearchQuery) ([]SearchResult, error) {
+	if m.searchExecutor != nil {
+		return m.searchExecutor(ctx, "", nil, 0)
+	}
+	return m.results, nil
+}
+
+func (m *mockResultsProvider) currentResults(ctx context.Context) []SearchResult {
+	if len(m.results) == 0 && m.searchExecutor != nil {
+		if res, err := m.searchExecutor(ctx, "", nil, 0); err == nil {
+			m.results = res
+		}
+	}
+	return m.results
+}
+
+func (m *mockResultsProvider) GetEntryWithPath(ctx context.Context, location string) (Entry, string, error) {
+	res := m.currentResults(ctx)
+	for _, r := range res {
+		if r.Path == location || r.Entry.Title == location {
+			return r.Entry, r.Path, nil
+		}
+	}
+	if len(res) == 1 {
+		return res[0].Entry, res[0].Path, nil
+	}
+	return Entry{}, "", fmt.Errorf("entry %q not found", location)
+}
+
+func (m *mockResultsProvider) GetEntry(ctx context.Context, location string) (Entry, error) {
+	e, _, err := m.GetEntryWithPath(ctx, location)
+	return e, err
+}
+
+func (m *mockResultsProvider) lookupAttr(r SearchResult, attr string) (string, any, bool) {
+	if attr == "" {
+		attr = "Password"
+	}
+	switch strings.ToLower(attr) {
+	case "title":
+		return "title", r.Entry.Title, true
+	case "tags":
+		return "tags", strings.Join(r.Entry.Tags, ","), true
+	case "path":
+		return "path", r.Path, true
+	case "vault":
+		return "vault", r.Vault, true
+	case "provider":
+		return "provider", r.Provider, true
+	case "uuid":
+		return "uuid", r.Entry.UUID, true
+	case "group":
+		if r.Entry.Group != nil {
+			return "group", r.Entry.Group.Name, true
+		}
+	case "group_uuid":
+		if r.Entry.Group != nil {
+			return "group_uuid", r.Entry.Group.UUID, true
+		}
+	case "group_path":
+		if r.Entry.Group != nil {
+			return "group_path", r.Entry.Group.Path, true
+		}
+	case "group_name":
+		if r.Entry.Group != nil {
+			return "group_name", r.Entry.Group.Name, true
+		}
+	}
+	if v, ok := r.Entry.Attributes[attr]; ok {
+		return attr, v, true
+	}
+	for k, v := range r.Entry.Attributes {
+		if strings.EqualFold(k, attr) {
+			return k, v, true
+		}
+	}
+	return "", nil, false
+}
+
+func (m *mockResultsProvider) GetSecretWithRaw(ctx context.Context, location string) (string, any, string, string, error) {
+	res := m.currentResults(ctx)
+	if entryLoc, attr, ok := strings.Cut(location, ":"); ok {
+		var matches []SearchResult
+		for _, r := range res {
+			if r.Path == entryLoc || r.Entry.Title == entryLoc {
+				matches = append(matches, r)
+			}
+		}
+		if len(matches) == 0 && len(res) == 1 && (entryLoc == "" || entryLoc == "default") {
+			matches = res
+		}
+		for _, r := range matches {
+			if ck, v, found := m.lookupAttr(r, attr); found {
+				return ck, v, r.Path, r.Entry.Title, nil
+			}
+		}
+		if len(matches) == 0 {
+			return "", nil, "", "", fmt.Errorf("entry %q not found", entryLoc)
+		}
+		return "", nil, "", "", fmt.Errorf("attribute %q not found in %q", attr, entryLoc)
+	}
+	if len(res) == 1 {
+		attr := location
+		if location == "default" || location == res[0].Path || location == res[0].Entry.Title {
+			attr = "Password"
+		}
+		if ck, v, found := m.lookupAttr(res[0], attr); found {
+			return ck, v, res[0].Path, res[0].Entry.Title, nil
+		}
+	}
+	for _, r := range res {
+		if r.Path == location || r.Entry.Title == location {
+			if ck, v, found := m.lookupAttr(r, "Password"); found {
+				return ck, v, r.Path, r.Entry.Title, nil
+			}
+		}
+	}
+	return "", nil, "", "", fmt.Errorf("secret %q not found", location)
+}
+
+func (m *mockResultsProvider) GetSecret(ctx context.Context, location string) (string, error) {
+	_, v, _, _, err := m.GetSecretWithRaw(ctx, location)
+	if err != nil {
+		return "", err
+	}
+	return serializeVal(v)
+}
+
+func newTestSearchProvider() *mockResultsProvider {
+	return &mockResultsProvider{}
+}
+
+func newFilterTestSearchProvider(results ...SearchResult) *mockResultsProvider {
+	return &mockResultsProvider{results: results}
 }
 
 func TestFilteringProvider(t *testing.T) {
@@ -248,11 +403,6 @@ func TestFilteringProvider(t *testing.T) {
 
 	if fp.Scheme() != "search" {
 		t.Errorf("Scheme() = %q, want %q", fp.Scheme(), "search")
-	}
-
-	vr, ok := fp.(ValueResolvableProvider)
-	if !ok || !vr.SupportsValueResolution() {
-		t.Errorf("expected SupportsValueResolution() = true")
 	}
 
 	searchable, ok := fp.(SearchableProvider)
@@ -378,7 +528,7 @@ func TestFilteringProvider_BareLocation_Password(t *testing.T) {
 
 func TestFilteringProvider_SearchVault(t *testing.T) {
 	ctx := context.Background()
-	sp := NewSearchProvider()
+	sp := newTestSearchProvider()
 	sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 		return []SearchResult{
 			{
@@ -438,33 +588,6 @@ func TestFilteringProvider_SearchVault(t *testing.T) {
 	})
 }
 
-func TestFilteringProvider_InterfaceShape(t *testing.T) {
-	// 1. SearchProvider implements ValueResolvableProvider -> wrapper must implement it
-	sp := NewSearchProvider()
-	fpSP := NewFilteringProvider(sp, nil, nil)
-	vrSP, ok := fpSP.(ValueResolvableProvider)
-	if !ok {
-		t.Fatalf("expected fpSP to implement ValueResolvableProvider")
-	}
-	if !vrSP.SupportsValueResolution() {
-		t.Errorf("expected SupportsValueResolution() = true")
-	}
-
-	// 2. EnvProvider does NOT implement ValueResolvableProvider -> wrapper must NOT implement it
-	ep := NewEnvProvider()
-	fpEP := NewFilteringProvider(ep, nil, nil)
-	if _, ok := fpEP.(ValueResolvableProvider); ok {
-		t.Errorf("expected fpEP to NOT implement ValueResolvableProvider")
-	}
-
-	// 3. KeePassProvider does NOT implement ValueResolvableProvider -> wrapper must NOT implement it
-	kp := NewKeePassProvider()
-	fpKP := NewFilteringProvider(kp, nil, nil)
-	if _, ok := fpKP.(ValueResolvableProvider); ok {
-		t.Errorf("expected fpKP to NOT implement ValueResolvableProvider")
-	}
-}
-
 func TestFilteringProvider_KeePass_ColonEmptySelector(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
@@ -522,7 +645,7 @@ func TestFilteringProvider_KeePass_ColonEmptySelector(t *testing.T) {
 
 func TestFilteringProvider_Search_CaseInsensitiveBypass(t *testing.T) {
 	ctx := context.Background()
-	sp := NewSearchProvider()
+	sp := newTestSearchProvider()
 	sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 		return []SearchResult{
 			{
@@ -581,7 +704,7 @@ func TestFilteringProvider_Search_DuplicatePath_MultiResult_MixedCase(t *testing
 	t.Run("DuplicatePath_FieldExclusionOnCanonicalKey", func(t *testing.T) {
 		// Two results with identical Path "app/config".
 		// First result lacks the requested field, second result supplies it.
-		sp := NewSearchProvider()
+		sp := newTestSearchProvider()
 		sp.searchExecutor = func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
@@ -648,7 +771,7 @@ func TestFilteringProvider_Search_DuplicatePath_MultiResult_MixedCase(t *testing
 	})
 
 	t.Run("MultiResult_DifferentPaths", func(t *testing.T) {
-		sp := NewSearchProvider()
+		sp := newTestSearchProvider()
 		sp.searchExecutor = func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
@@ -702,7 +825,7 @@ func TestFilteringProvider_Search_DuplicatePath_MultiResult_MixedCase(t *testing
 	})
 
 	t.Run("MixedCase_DeterministicResolution", func(t *testing.T) {
-		sp := NewSearchProvider()
+		sp := newTestSearchProvider()
 		sp.searchExecutor = func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
@@ -751,7 +874,7 @@ func TestFilteringProvider_Search_SinglePassConsistency(t *testing.T) {
 
 	// Stateful search executor that returns different results on each successive call
 	callCount := 0
-	sp := NewSearchProvider()
+	sp := newTestSearchProvider()
 	sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 		callCount++
 		return []SearchResult{
@@ -931,7 +1054,7 @@ func TestFilteringProvider_Search_EntryPathCandidates(t *testing.T) {
 func TestFilteringProvider_Search_PathQualifiedAndSnapshot(t *testing.T) {
 	ctx := context.Background()
 
-	sp := NewSearchProvider()
+	sp := newTestSearchProvider()
 	sp.vaultName = "search_vault"
 	sp.searchExecutor = func(_ context.Context, _ string, _ []string, _ int) ([]SearchResult, error) {
 		return []SearchResult{
@@ -991,7 +1114,7 @@ func TestFilteringProvider_Search_PathQualifiedAndSnapshot(t *testing.T) {
 
 func TestFilteringProvider_Search_StructuredProjection(t *testing.T) {
 	ctx := context.Background()
-	sp := NewSearchProvider()
+	sp := newTestSearchProvider()
 	sp.SetSearchExecutor(func(_ context.Context, _ string, _ []string, _ int) ([]SearchResult, error) {
 		return []SearchResult{
 			{
@@ -1030,7 +1153,7 @@ func TestSearchableFilteringProvider_GetEntry_AuthoritativePathVsCallerAlias(t *
 	// Single-result SearchProvider:
 	// Result path is "guest/account". Allowlist includes only "admin/*".
 	// Caller requesting "admin/account" must NOT inherit inclusion.
-	sp := NewSearchProvider()
+	sp := newTestSearchProvider()
 	sp.SetSearchExecutor(func(_ context.Context, _ string, _ []string, _ int) ([]SearchResult, error) {
 		return []SearchResult{
 			{
@@ -1285,7 +1408,7 @@ func TestDefaultFieldsFiltering(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("ExcludeFields_DefaultMetadataFields", func(t *testing.T) {
-		sp := NewSearchProvider()
+		sp := newTestSearchProvider()
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
@@ -1337,7 +1460,7 @@ func TestDefaultFieldsFiltering(t *testing.T) {
 	})
 
 	t.Run("IncludeFields_StripsDefaultFieldsIfNotMatched", func(t *testing.T) {
-		sp := NewSearchProvider()
+		sp := newTestSearchProvider()
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
@@ -1389,7 +1512,7 @@ func TestDefaultFieldsFiltering(t *testing.T) {
 	})
 
 	t.Run("GetSecret_RejectsExcludedTitleAndTags", func(t *testing.T) {
-		sp := NewSearchProvider()
+		sp := newTestSearchProvider()
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{
@@ -1641,8 +1764,8 @@ func TestFilteringProvider_KeePass_UUIDAndGroup(t *testing.T) {
 func TestFilteringProvider_Search_UUIDAndGroup(t *testing.T) {
 	ctx := context.Background()
 
-	newMockSearchProvider := func() *SearchProvider {
-		sp := NewSearchProvider()
+	newMockSearchProvider := func() *mockResultsProvider {
+		sp := newTestSearchProvider()
 		sp.SetSearchExecutor(func(ctx context.Context, query string, sourceVaults []string, depth int) ([]SearchResult, error) {
 			return []SearchResult{
 				{

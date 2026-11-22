@@ -457,7 +457,12 @@ func hasTagFunc(tag string, tags any) bool {
 		return false
 	}
 	parsed := utils.ParseTags(tags)
-	return slices.Contains(parsed, tag)
+	for _, candidate := range parsed {
+		if strings.EqualFold(candidate, tag) {
+			return true
+		}
+	}
+	return false
 }
 
 func ruleTemplateFuncs() texttemplate.FuncMap {

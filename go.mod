@@ -3,7 +3,6 @@ module github.com/warpcode/cloakenv
 go 1.26.6
 
 require (
-	github.com/expr-lang/expr v1.17.8
 	github.com/tobischo/gokeepasslib/v3 v3.7.1
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/term v0.47.0

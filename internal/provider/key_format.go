@@ -189,60 +189,18 @@ func (s *SearchableKeyFormatProvider) Search(ctx context.Context, query SearchQu
 	return formattedResults, nil
 }
 
-// ValueResolvableKeyFormatProvider implements ValueResolvableProvider when underlying implements it.
-type ValueResolvableKeyFormatProvider struct {
-	KeyFormatProvider
-}
-
-// SupportsValueResolution delegates to the underlying ValueResolvableProvider.
-func (v *ValueResolvableKeyFormatProvider) SupportsValueResolution() bool {
-	if vr, ok := v.underlying.(ValueResolvableProvider); ok {
-		return vr.SupportsValueResolution()
-	}
-	return false
-}
-
-// SearchableValueResolvableKeyFormatProvider implements both SearchableProvider and ValueResolvableProvider.
-type SearchableValueResolvableKeyFormatProvider struct {
-	SearchableKeyFormatProvider
-}
-
-// SupportsValueResolution delegates to the underlying ValueResolvableProvider.
-func (s *SearchableValueResolvableKeyFormatProvider) SupportsValueResolution() bool {
-	if vr, ok := s.underlying.(ValueResolvableProvider); ok {
-		return vr.SupportsValueResolution()
-	}
-	return false
-}
-
 // NewKeyFormatProvider constructs a KeyFormatProvider wrapper preserving optional provider interfaces.
 func NewKeyFormatProvider(p SecretProvider, format string) SecretProvider {
 	if format == "" || format == utils.KeyFormatNone {
 		return p
 	}
-
 	base := KeyFormatProvider{
 		underlying: p,
 		format:     format,
 	}
 
-	_, isSearchable := p.(SearchableProvider)
-	_, isValueResolvable := p.(ValueResolvableProvider)
-
-	if isSearchable && isValueResolvable {
-		return &SearchableValueResolvableKeyFormatProvider{
-			SearchableKeyFormatProvider: SearchableKeyFormatProvider{
-				KeyFormatProvider: base,
-			},
-		}
-	}
-	if isSearchable {
+	if _, isSearchable := p.(SearchableProvider); isSearchable {
 		return &SearchableKeyFormatProvider{
-			KeyFormatProvider: base,
-		}
-	}
-	if isValueResolvable {
-		return &ValueResolvableKeyFormatProvider{
 			KeyFormatProvider: base,
 		}
 	}

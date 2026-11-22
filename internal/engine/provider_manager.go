@@ -20,7 +20,6 @@ type ProviderManager struct {
 	vaultCache          map[string]provider.SecretProvider
 	initLocks           map[string]*sync.Mutex
 	keyring             *provider.OSKeyringProvider
-	searchExecutor      provider.SearchExecutor
 	getEntriesFunc      provider.GetEntriesFunc
 	renderTemplateFunc  provider.TemplateRenderFunc
 	mu                  sync.Mutex
@@ -47,30 +46,7 @@ func (pm *ProviderManager) Keyring() *provider.OSKeyringProvider {
 	return pm.keyring
 }
 
-// SetSearchExecutor sets the callback function for search provider queries.
-func (pm *ProviderManager) SetSearchExecutor(exec provider.SearchExecutor) {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-	pm.searchExecutor = exec
-	for _, p := range pm.vaultCache {
-		for curr := p; curr != nil; {
-			if sp, ok := curr.(interface {
-				SetSearchExecutor(provider.SearchExecutor)
-			}); ok {
-				sp.SetSearchExecutor(exec)
-			}
-			if u, ok := curr.(interface {
-				Underlying() provider.SecretProvider
-			}); ok {
-				curr = u.Underlying()
-			} else {
-				break
-			}
-		}
-	}
-}
-
-// SetGetEntriesFunc sets the callback for resolving entry/vault URIs.
+// SetGetEntriesFunc sets the callback for resolving multi-entry vaults.
 func (pm *ProviderManager) SetGetEntriesFunc(exec provider.GetEntriesFunc) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
@@ -231,8 +207,6 @@ func (pm *ProviderManager) initVaultProvider(ctx context.Context, vaultName stri
 		p, err = pm.initEnv(ctx, vaultName, vault)
 	case "pass":
 		p, err = pm.initPass(ctx, vaultName, vault)
-	case "search":
-		p, err = pm.initSearch(ctx, vaultName, vault)
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %q", vault.Provider)
 	}
@@ -365,44 +339,6 @@ func (pm *ProviderManager) initPass(ctx context.Context, vaultName string, vault
 		return nil, err
 	}
 	return pp, nil
-}
-
-// initSearch bootstraps a Search provider using config settings.
-func (pm *ProviderManager) initSearch(ctx context.Context, vaultName string, vault config.VaultConfig) (provider.SecretProvider, error) {
-	if vault.Searchable != nil {
-		return nil, fmt.Errorf("search provider does not support the searchable flag")
-	}
-
-	sp := provider.NewSearchProvider()
-
-	pm.mu.Lock()
-	exec := pm.searchExecutor
-	getEntries := pm.getEntriesFunc
-	pm.mu.Unlock()
-
-	if exec != nil {
-		sp.SetSearchExecutor(exec)
-	}
-	if getEntries != nil {
-		sp.SetGetEntriesFunc(getEntries)
-	}
-
-	err := sp.Initialize(ctx, provider.ProviderConfig{
-		Settings: map[string]string{
-			"vault_name": vaultName,
-			"query":      vault.Query,
-		},
-		SourceVaults:  vault.SourceVaults,
-		Sources:       vault.Sources,
-		Query:         vault.Query,
-		IncludeFields: vault.IncludeFields,
-		ExcludeFields: vault.ExcludeFields,
-		Mapping:       vault.Mapping,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return sp, nil
 }
 
 // EnsureInitialized initializes a built-in provider if it hasn't been already.
@@ -647,8 +583,6 @@ func newBareProvider(providerType string) (provider.SecretProvider, error) {
 		return provider.NewEnvProvider(), nil
 	case "pass":
 		return provider.NewPassProvider(), nil
-	case "search":
-		return provider.NewSearchProvider(), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider type %q", providerType)
 	}

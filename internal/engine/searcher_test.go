@@ -3,244 +3,17 @@ package engine
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/expr-lang/expr/ast"
 	"github.com/zalando/go-keyring"
 
 	"github.com/warpcode/cloakenv/internal/config"
 	"github.com/warpcode/cloakenv/internal/provider"
 )
-
-func TestOrchestratorRecursiveAndSearch(t *testing.T) {
-	// Set up environment variable for testing env:// resolution
-	t.Setenv("ORCH_TEST_USER", "env_user")
-
-	boolTrue := true
-	cfg := &config.Config{
-		Vaults: map[string]config.VaultConfig{
-			"env_vault": {
-				Provider:   "env",
-				Searchable: &boolTrue,
-			},
-			"my_repo": {
-				Provider:      "search",
-				SourceVaults:  []string{"env_vault"},
-				Sources:       []string{"env_vault://"},
-				ResolveValues: true,
-			},
-		},
-	}
-
-	orch, err := NewOrchestrator(cfg)
-	if err != nil {
-		t.Fatalf("failed to create orchestrator: %v", err)
-	}
-	if err := injectMockVault(orch, "env_vault", []provider.SearchResult{
-		{
-			Provider: "env", Vault: "env_vault", Path: "ssh_prod",
-			Entry: provider.Entry{
-				Title: "Production SSH Key",
-				Tags:  []string{"auth:ssh", "env:prod"},
-				Attributes: map[string]any{
-					"username":     `{{ get "env://ORCH_TEST_USER" }}`,
-					"password":     "my_raw_password",
-					"bit_strength": 4096,
-				},
-			},
-		},
-		{
-			Provider: "env", Vault: "env_vault", Path: "ssh_staging",
-			Entry: provider.Entry{
-				Title: "Staging SSH Key",
-				Tags:  []string{"auth:ssh", "env:staging", "deprecated"},
-				Attributes: map[string]any{
-					"username":     "stage_user",
-					"password":     "stage_password",
-					"bit_strength": 2048,
-				},
-			},
-		},
-		{
-			Provider: "env", Vault: "env_vault", Path: "ssh_minimal",
-			Entry: provider.Entry{
-				Title: "Minimal Key",
-				Tags:  []string{"auth:ssh"},
-			},
-		},
-	}); err != nil {
-		t.Fatalf("injectMockVault(my_repo) failed: %v", err)
-	}
-
-	ctx := context.Background()
-
-	t.Run("RecursiveResolution", func(t *testing.T) {
-		// 1. Test recursive resolution
-		// {{ get "my_repo://entries.ssh_prod.username" }} should resolve to {{ get "env://ORCH_TEST_USER" }} which resolves to "env_user"
-		val, err := orch.Resolve(ctx, `{{ get "my_repo://ssh_prod:username" }}`)
-		if err != nil {
-			t.Fatalf("failed to resolve: %v", err)
-		}
-		if val != "env_user" {
-			t.Errorf("expected 'env_user', got %q", val)
-		}
-	})
-
-	t.Run("GetEntry", func(t *testing.T) {
-		// 2. Test GetEntry with recursive resolution inside attributes
-		entry, err := orch.GetEntry(ctx, "my_repo://ssh_prod")
-		if err != nil {
-			t.Fatalf("failed to GetEntry: %v", err)
-		}
-		if entry.Attributes["username"] != "env_user" {
-			t.Errorf("expected resolved username 'env_user', got %v", entry.Attributes["username"])
-		}
-	})
-
-	t.Run("SearchExprByTag", func(t *testing.T) {
-		// 3. Test Search matching using expr
-		// Match both tag "auth:ssh" and not tag "deprecated"
-		results, err := orch.Search(ctx, `"auth:ssh" in tags and not ("deprecated" in tags)`, nil)
-		if err != nil {
-			t.Fatalf("Search failed: %v", err)
-		}
-		if len(results) != 2 {
-			t.Errorf("expected 2 matches (ssh_prod, ssh_minimal), got %d", len(results))
-		}
-	})
-
-	t.Run("SearchExprByAttribute", func(t *testing.T) {
-		// Match query on attributes
-		results, err := orch.Search(ctx, `bit_strength == 2048`, nil)
-		if err != nil {
-			t.Fatalf("Search failed: %v", err)
-		}
-		if len(results) != 1 {
-			t.Errorf("expected 1 match (ssh_staging), got %d", len(results))
-		} else if results[0].Path != "ssh_staging" {
-			t.Errorf("expected 'ssh_staging', got %q", results[0].Path)
-		}
-	})
-
-	t.Run("SearchURI", func(t *testing.T) {
-		// 4. Test search:// URI scheme in Resolve
-		// Resolves Hostname or Password dynamically
-		val, err := orch.Resolve(ctx, `{{ get "search://tags=auth:ssh,env:prod/password" }}`)
-		if err != nil {
-			t.Fatalf("failed to resolve search:// URI: %v", err)
-		}
-		if val != "my_raw_password" {
-			t.Errorf("expected 'my_raw_password', got %q", val)
-		}
-	})
-
-	t.Run("SearchExprByMetaTags", func(t *testing.T) {
-		results, err := orch.Search(ctx, `"auth:ssh" in _meta_.tags and not ("deprecated" in _meta_.tags)`, nil)
-		if err != nil {
-			t.Fatalf("Search failed: %v", err)
-		}
-		if len(results) != 2 {
-			t.Errorf("expected 2 matches using _meta_.tags, got %d", len(results))
-		}
-	})
-
-	t.Run("SearchExprByMetaProviderAndVault", func(t *testing.T) {
-		results, err := orch.Search(ctx, `_meta_.provider == "search" and _meta_.vault == "env_vault" and "env:prod" in _meta_.tags`, nil)
-		if err != nil {
-			t.Fatalf("Search failed: %v", err)
-		}
-		if len(results) != 1 {
-			t.Errorf("expected 1 match using _meta_.provider and _meta_.vault, got %d", len(results))
-		} else if results[0].Path != "ssh_prod" {
-			t.Errorf("expected 'ssh_prod', got %q", results[0].Path)
-		}
-	})
-
-	t.Run("SearchURIMetaTags", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, `{{ get "search://_meta_.tags=auth:ssh,env:prod/password" }}`)
-		if err != nil {
-			t.Fatalf("failed to resolve search://_meta_.tags URI: %v", err)
-		}
-		if val != "my_raw_password" {
-			t.Errorf("expected 'my_raw_password', got %q", val)
-		}
-	})
-
-	t.Run("SearchURIExprIn", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, `{{ get "search://\"auth:ssh\" in tags and \"env:prod\" in tags/password" }}`)
-		if err != nil {
-			t.Fatalf("failed to resolve search:// with Expr 'in' query: %v", err)
-		}
-		if val != "my_raw_password" {
-			t.Errorf("expected 'my_raw_password', got %q", val)
-		}
-	})
-
-	t.Run("SearchURIExprEquality", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, `{{ get "search://path == \"ssh_prod\"/password" }}`)
-		if err != nil {
-			t.Fatalf("failed to resolve search:// with Expr '==' query: %v", err)
-		}
-		if val != "my_raw_password" {
-			t.Errorf("expected 'my_raw_password', got %q", val)
-		}
-	})
-
-	t.Run("SearchURIExprNotEquals", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, `{{ get "search://path != \"ssh_staging\" and \"env:prod\" in tags/password" }}`)
-		if err != nil {
-			t.Fatalf("failed to resolve search:// with Expr '!=' query: %v", err)
-		}
-		if val != "my_raw_password" {
-			t.Errorf("expected 'my_raw_password', got %q", val)
-		}
-	})
-
-	t.Run("SearchDirectURLQueryParams", func(t *testing.T) {
-		results, err := orch.Search(ctx, "tags=auth:ssh,env:prod", nil)
-		if err != nil {
-			t.Fatalf("Search with URL query params failed: %v", err)
-		}
-		if len(results) != 1 {
-			t.Fatalf("expected 1 result, got %d", len(results))
-		}
-		if results[0].Path != "ssh_prod" {
-			t.Errorf("expected path 'ssh_prod', got %q", results[0].Path)
-		}
-	})
-	t.Run("MissingFields", func(t *testing.T) {
-		// 5. Test missing fields gracefulness: ssh_minimal does not have bit_strength,
-		// so evaluating bit_strength > 3000 should fail evaluation on it but pass
-		// overall and return ssh_prod.
-		results, err := orch.Search(ctx, `bit_strength > 3000`, nil)
-		if err != nil {
-			t.Fatalf("Search with missing fields query failed: %v", err)
-		}
-		if len(results) != 1 {
-			t.Errorf("expected 1 match, got %d", len(results))
-		} else if results[0].Path != "ssh_prod" {
-			t.Errorf("expected 'ssh_prod', got %q", results[0].Path)
-		}
-	})
-
-	t.Run("SecurityValidation", func(t *testing.T) {
-		// 6. Test security validation: disallow function calls and method calls
-		_, err := orch.Search(ctx, `print(tags)`, nil)
-		if err == nil || !strings.Contains(err.Error(), "function calls are not allowed") {
-			t.Errorf("expected error about function calls, got: %v", err)
-		}
-
-		_, err = orch.Search(ctx, `title.ToUpper() == "TEST"`, nil)
-		if err == nil || !strings.Contains(err.Error(), "method calls are not allowed") {
-			t.Errorf("expected error about method calls, got: %v", err)
-		}
-	})
-}
 
 type delayedSearchableProvider struct {
 	delay       time.Duration
@@ -251,53 +24,355 @@ type delayedSearchableProvider struct {
 }
 
 func (d *delayedSearchableProvider) Scheme() string { return "delayed" }
-func (d *delayedSearchableProvider) Initialize(ctx context.Context, cfg provider.ProviderConfig) error {
+func (d *delayedSearchableProvider) Initialize(_ context.Context, _ provider.ProviderConfig) error {
 	return nil
 }
-func (d *delayedSearchableProvider) GetSecret(ctx context.Context, location string) (string, error) {
+func (d *delayedSearchableProvider) GetSecret(_ context.Context, _ string) (string, error) {
 	return "", nil
 }
-func (d *delayedSearchableProvider) SetSecret(ctx context.Context, location, value string) error {
+func (d *delayedSearchableProvider) SetSecret(_ context.Context, _, _ string) error {
 	return nil
 }
-func (d *delayedSearchableProvider) DeleteSecret(ctx context.Context, location string) error {
+func (d *delayedSearchableProvider) DeleteSecret(_ context.Context, _ string) error {
 	return nil
 }
-func (d *delayedSearchableProvider) Validate(settings map[string]string) error {
+func (d *delayedSearchableProvider) Validate(_ map[string]string) error {
 	return nil
 }
-func (d *delayedSearchableProvider) Search(ctx context.Context, query provider.SearchQuery) ([]provider.SearchResult, error) {
+func (d *delayedSearchableProvider) Search(ctx context.Context, _ provider.SearchQuery) ([]provider.SearchResult, error) {
 	if d.inFlight != nil && d.maxInFlight != nil {
 		current := d.inFlight.Add(1)
 		defer d.inFlight.Add(-1)
 
 		for {
-			max := d.maxInFlight.Load()
-			if current <= max {
-				break
-			}
-			if d.maxInFlight.CompareAndSwap(max, current) {
+			curMax := d.maxInFlight.Load()
+			if current <= curMax || d.maxInFlight.CompareAndSwap(curMax, current) {
 				break
 			}
 		}
 	}
 
-	select {
-	case <-time.After(d.delay):
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if d.delay > 0 {
+		select {
+		case <-time.After(d.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	if d.err != nil {
 		return nil, d.err
 	}
 	return d.items, nil
 }
-func (d *delayedSearchableProvider) GetEntry(ctx context.Context, location string) (provider.Entry, error) {
+func (d *delayedSearchableProvider) GetEntry(_ context.Context, _ string) (provider.Entry, error) {
 	return provider.Entry{}, nil
 }
 
+func TestSearcher_GoTemplatePredicates(t *testing.T) {
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"vault_a": {Provider: "env"},
+		},
+	}
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("NewOrchestrator failed: %v", err)
+	}
+
+	orch.providerManager.vaultCache["vault_a"] = &delayedSearchableProvider{
+		items: []provider.SearchResult{
+			{
+				Provider: "keepass",
+				Vault:    "vault_a",
+				Path:     "prod/db",
+				Entry: provider.Entry{
+					Title: "Primary DB",
+					UUID:  "uuid-1",
+					Tags:  []string{"LiteLLM", "prod"},
+					Group: &provider.GroupInfo{Name: "prod", Path: "infra/prod", UUID: "g-1"},
+					Attributes: map[string]any{
+						"host": "db.internal",
+						"port": "5432",
+					},
+				},
+			},
+			{
+				Provider: "keepass",
+				Vault:    "vault_a",
+				Path:     "staging/api",
+				Entry: provider.Entry{
+					Title: "Staging API",
+					UUID:  "uuid-2",
+					Tags:  []string{"staging"},
+					Group: &provider.GroupInfo{Name: "staging", Path: "infra/staging", UUID: "g-2"},
+					Attributes: map[string]any{
+						"host": "api.staging",
+						"port": "8080",
+					},
+				},
+			},
+			{
+				Provider: "keepass",
+				Vault:    "vault_a",
+				Path:     "misc/note",
+				Entry: provider.Entry{
+					Title: "Generic Note",
+					UUID:  "uuid-3",
+					Tags:  []string{"misc"},
+					Attributes: map[string]any{
+						"notes": "no port attribute here",
+					},
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+
+	t.Run("hasTag case-insensitive", func(t *testing.T) {
+		res, err := orch.Search(ctx, `{{ hasTag "litellm" .tags }}`, []string{"vault_a"})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(res) != 1 || res[0].Entry.Title != "Primary DB" {
+			t.Fatalf("unexpected results: %+v", res)
+		}
+	})
+
+	t.Run("group.name equality", func(t *testing.T) {
+		res, err := orch.Search(ctx, `{{ eq .group.name "staging" }}`, []string{"vault_a"})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(res) != 1 || res[0].Entry.Title != "Staging API" {
+			t.Fatalf("unexpected results: %+v", res)
+		}
+	})
+
+	t.Run("combined predicate with attribute", func(t *testing.T) {
+		res, err := orch.Search(ctx, `{{ and (hasTag "prod" .tags) (eq .port "5432") }}`, []string{"vault_a"})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(res) != 1 || res[0].Path != "prod/db" {
+			t.Fatalf("unexpected results: %+v", res)
+		}
+	})
+
+	t.Run("empty query returns all entries deterministically sorted", func(t *testing.T) {
+		res, err := orch.Search(ctx, "", []string{"vault_a"})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(res) != 3 || res[0].Path != "misc/note" || res[1].Path != "prod/db" || res[2].Path != "staging/api" {
+			t.Fatalf("unexpected results: %+v", res)
+		}
+	})
+
+	t.Run("non-true template output skips entries", func(t *testing.T) {
+		res, err := orch.Search(ctx, `{{ .title }}`, []string{"vault_a"})
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(res) != 0 {
+			t.Fatalf("expected 0 results for non-true template output, got %d", len(res))
+		}
+	})
+
+	t.Run("invalid template syntax returns error", func(t *testing.T) {
+		_, err := orch.Search(ctx, `{{ eq .title "unclosed`, []string{"vault_a"})
+		if err == nil || !strings.Contains(err.Error(), "invalid query template") {
+			t.Fatalf("expected invalid query template error, got: %v", err)
+		}
+	})
+
+	t.Run("heterogeneous entry lacking queried attribute evaluates as non-matching", func(t *testing.T) {
+		res, err := orch.Search(ctx, `{{ eq .port "5432" }}`, []string{"vault_a"})
+		if err != nil {
+			t.Fatalf("Search on heterogeneous entries failed: %v", err)
+		}
+		if len(res) != 1 || res[0].Path != "prod/db" {
+			t.Fatalf("expected only prod/db, got: %+v", res)
+		}
+	})
+
+	t.Run("missing attribute across all entries returns zero results cleanly", func(t *testing.T) {
+		res, err := orch.Search(ctx, `{{ eq .nonexistent_field "x" }}`, []string{"vault_a"})
+		if err != nil {
+			t.Fatalf("Search for missing attribute failed: %v", err)
+		}
+		if len(res) != 0 {
+			t.Fatalf("expected 0 results for missing attribute, got %d", len(res))
+		}
+	})
+
+	t.Run("type mismatch error fails execution", func(t *testing.T) {
+		_, err := orch.Search(ctx, `{{ eq .group "staging" }}`, []string{"vault_a"})
+		if err == nil || !strings.Contains(err.Error(), "query execution failed") {
+			t.Fatalf("expected query execution error for incomparable map type, got: %v", err)
+		}
+	})
+}
+
+func TestSearcher_URLQueryParams(t *testing.T) {
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"vault_a": {Provider: "env"},
+		},
+	}
+	orch, err := NewOrchestrator(cfg)
+	if err != nil {
+		t.Fatalf("NewOrchestrator failed: %v", err)
+	}
+
+	orch.providerManager.vaultCache["vault_a"] = &delayedSearchableProvider{
+		items: []provider.SearchResult{
+			{
+				Provider: "keepass",
+				Vault:    "vault_a",
+				Path:     "servers/ssh/bastion",
+				Entry: provider.Entry{
+					Title: "Bastion Host",
+					Tags:  []string{"auth:ssh", "env:prod"},
+					Group: &provider.GroupInfo{Name: "Production", Path: "infra/Production"},
+					Attributes: map[string]any{
+						"username": "admin",
+						"url":      "https://example.com/path",
+						"notes":    "",
+						"token":    "abc==",
+						"version":  "v>=2",
+						"expr":     "a!=b",
+					},
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+
+	cases := []struct {
+		name      string
+		query     string
+		wantCount int
+		wantErr   bool
+	}{
+		{name: "tags and title", query: "tags=auth:ssh,env:prod&title=Bastion", wantCount: 1},
+		{name: "group name match", query: "group=Production&username=admin", wantCount: 1},
+		{name: "group path match", query: "group=infra/Production", wantCount: 1},
+		{name: "percent-decoded attribute", query: "url=https://example.com%2Fpath", wantCount: 1},
+		{name: "empty attribute value", query: "notes=", wantCount: 1},
+		{name: "nested group.name", query: "group.name=Production&_meta_.vault=vault_a", wantCount: 1},
+		{name: "non-matching tag", query: "tags=nonexistent", wantCount: 0},
+		{name: "malformed empty key", query: "=value", wantErr: true},
+		{name: "invalid search key", query: "123bad=value", wantErr: true},
+		{name: "value with base64 == padding", query: "token=abc==", wantCount: 1},
+		{name: "value with >= sequence", query: "version=v>=2", wantCount: 1},
+		{name: "value with != sequence", query: "expr=a!=b", wantCount: 1},
+		{name: "comparison == operator rejected", query: `title == "Bastion"`, wantErr: true},
+		{name: "comparison != operator rejected", query: `title != "Other"`, wantErr: true},
+		{name: "comparison <= operator rejected", query: "port <= 80", wantErr: true},
+		{name: "comparison >= operator rejected", query: "port >= 80", wantErr: true},
+		{name: "bare expr without template braces rejected", query: `"prod" in tags`, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := orch.Search(ctx, tc.query, []string{"vault_a"})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for query %q, got nil", tc.query)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Search(%q) failed: %v", tc.query, err)
+			}
+			if len(res) != tc.wantCount {
+				t.Fatalf("Search(%q) returned %d results, want %d", tc.query, len(res), tc.wantCount)
+			}
+		})
+	}
+}
+
+func TestParseSearchURI(t *testing.T) {
+	tests := []struct {
+		name      string
+		location  string
+		wantQuery string
+		wantAttr  string
+		wantErr   bool
+	}{
+		{
+			name:      "url params with attr",
+			location:  "tags=auth:ssh,env:prod&title=bastion/Password",
+			wantQuery: "tags=auth:ssh,env:prod&title=bastion",
+			wantAttr:  "Password",
+		},
+		{
+			name:      "url params default Password attr",
+			location:  "group=Production&username=admin",
+			wantQuery: "group=Production&username=admin",
+			wantAttr:  "Password",
+		},
+		{
+			name:      "template query with attr",
+			location:  `{{ hasTag "api" .tags }}/Token`,
+			wantQuery: `{{ hasTag "api" .tags }}`,
+			wantAttr:  "Token",
+		},
+		{
+			name:      "template query default Password attr",
+			location:  `{{ eq .title "api" }}`,
+			wantQuery: `{{ eq .title "api" }}`,
+			wantAttr:  "Password",
+		},
+		{
+			name:     "empty location",
+			location: "",
+			wantErr:  true,
+		},
+		{
+			name:     "empty key parameter",
+			location: "=value/Password",
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, attr, err := parseSearchURI(tt.location)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q, got nil", tt.location)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseSearchURI(%q) error = %v", tt.location, err)
+			}
+			if q != tt.wantQuery || attr != tt.wantAttr {
+				t.Fatalf("parseSearchURI(%q) = (%q, %q), want (%q, %q)", tt.location, q, attr, tt.wantQuery, tt.wantAttr)
+			}
+		})
+	}
+}
+
+func TestSearcher_RejectsSearchProviderType(t *testing.T) {
+	cfg := &config.Config{
+		Vaults: map[string]config.VaultConfig{
+			"virtual": {
+				Provider: "search",
+			},
+		},
+	}
+	_, err := NewOrchestrator(cfg)
+	if err == nil || !strings.Contains(err.Error(), "unsupported provider type") {
+		t.Fatalf("expected unsupported provider type error for search vault, got: %v", err)
+	}
+}
+
 func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
-	t.Run("ConcurrentMultiVaultExecution", func(t *testing.T) {
+	t.Run("ConcurrentExecution", func(t *testing.T) {
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
 				"v1": {Provider: "env"},
@@ -305,7 +380,6 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 				"v3": {Provider: "env"},
 			},
 		}
-
 		orch, err := NewOrchestrator(cfg)
 		if err != nil {
 			t.Fatalf("failed to create orchestrator: %v", err)
@@ -313,7 +387,6 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 
 		delay := 50 * time.Millisecond
 		var inFlight, maxInFlight atomic.Int64
-
 		p1 := &delayedSearchableProvider{
 			delay:       delay,
 			inFlight:    &inFlight,
@@ -344,14 +417,12 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 		orch.providerManager.vaultCache["v3"] = p3
 
 		results, err := orch.Search(context.Background(), "", nil)
-
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
 		if len(results) != 3 {
 			t.Fatalf("expected 3 results, got %d", len(results))
 		}
-
 		if maxInFlight.Load() < 2 {
 			t.Errorf("multi-vault search executed sequentially: max in-flight = %d, expected >= 2", maxInFlight.Load())
 		}
@@ -364,7 +435,6 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 				"v_fail": {Provider: "env"},
 			},
 		}
-
 		orch, err := NewOrchestrator(cfg)
 		if err != nil {
 			t.Fatalf("failed to create orchestrator: %v", err)
@@ -380,7 +450,6 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 			delay: 10 * time.Millisecond,
 			err:   errors.New("db decryption failure"),
 		}
-
 		orch.providerManager.vaultCache["v_ok"] = pOK
 		orch.providerManager.vaultCache["v_fail"] = pFail
 
@@ -388,7 +457,7 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
-		if !strings.Contains(err.Error(), "failed to retrieve entries from repo \"v_fail\"") {
+		if !strings.Contains(err.Error(), `failed to retrieve entries from repo "v_fail"`) {
 			t.Errorf("unexpected error message: %v", err)
 		}
 		if !strings.Contains(err.Error(), "db decryption failure") {
@@ -397,436 +466,15 @@ func TestSearcher_MultiVaultConcurrencyAndError(t *testing.T) {
 	})
 }
 
-func TestSearchURIEncoding(t *testing.T) {
-	t.Run("Valid", func(t *testing.T) {
-		exprQuery, attr, err := parseSearchURI("tags=auth:ssh,env:prod&title=bastion/Password")
-		if err != nil {
-			t.Fatalf("failed to parse: %v", err)
-		}
-		expectedExpr := `"auth:ssh" in tags and "env:prod" in tags and title contains "bastion"`
-		if exprQuery != expectedExpr {
-			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
-		}
-		if attr != "Password" {
-			t.Errorf("expected attribute 'Password', got %q", attr)
-		}
-	})
-
-	t.Run("DynamicAttributes", func(t *testing.T) {
-		// Note: the attribute section starts at the LAST "/" of the location,
-		// so a literal "/" inside a value truncates it here. Values containing
-		// "/" or "&" must be percent-encoded (see PercentEscapedValues below).
-		exprQuery, attr, err := parseSearchURI("username=admin&url=https://example.com/api_key")
-		if err != nil {
-			t.Fatalf("failed to parse: %v", err)
-		}
-		expectedExpr := `username == "admin" and url == "https://example.com"`
-		if exprQuery != expectedExpr {
-			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
-		}
-		if attr != "api_key" {
-			t.Errorf("expected attribute 'api_key', got %q", attr)
-		}
-	})
-
-	t.Run("GroupParameter", func(t *testing.T) {
-		exprQuery, attr, err := parseSearchURI("group=Production&username=admin/Password")
-		if err != nil {
-			t.Fatalf("failed to parse: %v", err)
-		}
-		expectedExpr := `(group.name == "Production" or group.path == "Production") and username == "admin"`
-		if exprQuery != expectedExpr {
-			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
-		}
-		if attr != "Password" {
-			t.Errorf("expected attribute 'Password', got %q", attr)
-		}
-	})
-
-	t.Run("MemberAttributes", func(t *testing.T) {
-		exprQuery, attr, err := parseSearchURI("_meta_.vault=testdb&group.name=website/token")
-		if err != nil {
-			t.Fatalf("failed to parse: %v", err)
-		}
-		expectedExpr := `_meta_.vault == "testdb" and group.name == "website"`
-		if exprQuery != expectedExpr {
-			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
-		}
-		if attr != "token" {
-			t.Errorf("expected attribute 'token', got %q", attr)
-		}
-	})
-
-	t.Run("DefaultPasswordAttribute", func(t *testing.T) {
-		exprQuery, attr, err := parseSearchURI("group=Production&username=admin")
-		if err != nil {
-			t.Fatalf("failed to parse: %v", err)
-		}
-		expectedExpr := `(group.name == "Production" or group.path == "Production") and username == "admin"`
-		if exprQuery != expectedExpr {
-			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
-		}
-		if attr != "Password" {
-			t.Errorf("expected attribute 'Password', got %q", attr)
-		}
-	})
-
-	t.Run("PercentEscapedValues", func(t *testing.T) {
-		exprQuery, attr, err := parseSearchURI("url=https://example.com%2Fpath&tag=a%26b/Password")
-		if err != nil {
-			t.Fatalf("failed to parse: %v", err)
-		}
-		expectedExpr := `url == "https://example.com/path" and tag == "a&b"`
-		if exprQuery != expectedExpr {
-			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
-		}
-		if attr != "Password" {
-			t.Errorf("expected attribute 'Password', got %q", attr)
-		}
-	})
-
-	t.Run("PercentEscapeInvalidSequenceKeptVerbatim", func(t *testing.T) {
-		exprQuery, _, err := parseSearchURI("note=100%/Password")
-		if err != nil {
-			t.Fatalf("failed to parse: %v", err)
-		}
-		expectedExpr := `note == "100%"`
-		if exprQuery != expectedExpr {
-			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
-		}
-	})
-
-	t.Run("EmptyValueCondition", func(t *testing.T) {
-		exprQuery, attr, err := parseSearchURI("notes=&port=/Password")
-		if err != nil {
-			t.Fatalf("failed to parse: %v", err)
-		}
-		expectedExpr := `notes == "" and port == ""`
-		if exprQuery != expectedExpr {
-			t.Errorf("expected query %q, got %q", expectedExpr, exprQuery)
-		}
-		if attr != "Password" {
-			t.Errorf("expected attribute 'Password', got %q", attr)
-		}
-	})
-
-	t.Run("InvalidParamKeys", func(t *testing.T) {
-		invalidCases := []string{
-			"invalid key=value/Password",
-			"bad(key)=value/Password",
-			"123key=value/Password",
-			"key..dot=value/Password",
-			"a-b=value/Password",
-			".leading=value/Password",
-			"trailing.=value/Password",
-			"=value/Password",
-		}
-		for _, uri := range invalidCases {
-			_, _, err := parseSearchURI(uri)
-			if err == nil {
-				t.Errorf("expected error for invalid key in %q, got nil", uri)
-			}
-			if !strings.Contains(err.Error(), "invalid search parameter") {
-				t.Errorf("unexpected error message for %q: %v", uri, err)
-			}
-		}
-	})
-
-	t.Run("EmptyConditions", func(t *testing.T) {
-		emptyCases := []string{
-			"/Password",
-			// "=", "tags=" and contains-style "title="/"path=" remain skipped
-			// when empty, so these still produce no query conditions.
-			"=&tags=/Password",
-			"path=&title=/Password",
-		}
-		for _, uri := range emptyCases {
-			_, _, err := parseSearchURI(uri)
-			if err == nil {
-				t.Errorf("expected error for empty conditions in %q, got nil", uri)
-			}
-			if !strings.Contains(err.Error(), "no query conditions specified") {
-				t.Errorf("unexpected error message for %q: %v", uri, err)
-			}
-		}
-	})
-
-	t.Run("ExprSyntaxOperators", func(t *testing.T) {
-		tests := []struct {
-			name      string
-			input     string
-			wantQuery string
-			wantAttr  string
-		}{
-			{
-				name:      "InOperatorWithAttr",
-				input:     `"api" in tags/Password`,
-				wantQuery: `"api" in tags`,
-				wantAttr:  "Password",
-			},
-			{
-				name:      "InOperatorWithoutAttr",
-				input:     `"api" in tags`,
-				wantQuery: `"api" in tags`,
-				wantAttr:  "Password",
-			},
-			{
-				name:      "EqualityOperatorWithAttr",
-				input:     `title == "bastion"/Password`,
-				wantQuery: `title == "bastion"`,
-				wantAttr:  "Password",
-			},
-			{
-				name:      "EqualityOperatorWithoutAttr",
-				input:     `title == "bastion"`,
-				wantQuery: `title == "bastion"`,
-				wantAttr:  "Password",
-			},
-			{
-				name:      "NotEqualsOperatorWithAttr",
-				input:     `tags != "deprecated"/api_key`,
-				wantQuery: `tags != "deprecated"`,
-				wantAttr:  "api_key",
-			},
-			{
-				name:      "ContainsOperatorWithAttr",
-				input:     `title contains "Cluster"/token`,
-				wantQuery: `title contains "Cluster"`,
-				wantAttr:  "token",
-			},
-			{
-				name:      "SlashInStringLiteralWithAttr",
-				input:     `path == "servers/ssh"/Password`,
-				wantQuery: `path == "servers/ssh"`,
-				wantAttr:  "Password",
-			},
-			{
-				name:      "SlashInStringLiteralWithoutAttr",
-				input:     `path == "servers/ssh"`,
-				wantQuery: `path == "servers/ssh"`,
-				wantAttr:  "Password",
-			},
-			{
-				name:      "URLParamsWithAndKeyword",
-				input:     `title=Production and Staging/Password`,
-				wantQuery: `title contains "Production and Staging"`,
-				wantAttr:  "Password",
-			},
-			{
-				name:      "URLParamsWithInequalityCharacter",
-				input:     `notes=version<2.0/Password`,
-				wantQuery: `notes == "version<2.0"`,
-				wantAttr:  "Password",
-			},
-		}
-
-		for _, tc := range tests {
-			t.Run(tc.name, func(t *testing.T) {
-				gotQuery, gotAttr, err := parseSearchURI(tc.input)
-				if err != nil {
-					t.Fatalf("parseSearchURI(%q) unexpected error: %v", tc.input, err)
-				}
-				if gotQuery != tc.wantQuery {
-					t.Errorf("parseSearchURI(%q) query = %q, want %q", tc.input, gotQuery, tc.wantQuery)
-				}
-				if gotAttr != tc.wantAttr {
-					t.Errorf("parseSearchURI(%q) attr = %q, want %q", tc.input, gotAttr, tc.wantAttr)
-				}
-			})
-		}
-	})
-}
-
-func TestOrchestratorVaultsAndSearch(t *testing.T) {
-	isFalse := false
-
-	cfg := &config.Config{
-		Vaults: map[string]config.VaultConfig{
-			"custom_static":  {Provider: "env"},
-			"custom_single":  {Provider: "env"},
-			"flat_file":      {Provider: "env"},
-			"non_searchable": {Provider: "env", Searchable: &isFalse},
-		},
-	}
-
-	orch, err := NewOrchestrator(cfg)
-	if err != nil {
-		t.Fatalf("failed to create orchestrator: %v", err)
-	}
-	_ = injectMockVault(orch, "custom_static", []provider.SearchResult{
-		{Provider: "search", Vault: "custom_static", Path: "custom1", Entry: provider.Entry{Title: "custom1", Attributes: map[string]any{"username": "custom_user", "Password": "custom_password"}}},
-	})
-	_ = injectMockVault(orch, "custom_single", []provider.SearchResult{
-		{Provider: "search", Vault: "custom_single", Path: "Static_Flat", Entry: provider.Entry{Title: "Static_Flat", Tags: []string{"static", "local"}, Attributes: map[string]any{"db_user": "postgres", "db_port": 5432}}},
-	})
-	_ = injectMockVault(orch, "flat_file", []provider.SearchResult{
-		{Provider: "search", Vault: "flat_file", Path: "Prod Flat File", Entry: provider.Entry{
-			Title: "Prod Flat File",
-			Tags:  []string{"flat", "prod"},
-			Attributes: map[string]any{
-				"api_key":  "super_secret_api_token",
-				"port":     8080,
-				"metadata": map[string]any{"owner": "devops", "cluster": "us-east-1"},
-				"servers":  []any{"bastion.example.com", "app.example.com"},
-			},
-		}},
-	})
-	_ = injectMockVault(orch, "non_searchable", []provider.SearchResult{
-		{Provider: "search", Vault: "non_searchable", Path: "secret_entry", Entry: provider.Entry{Title: "secret_entry", Attributes: map[string]any{"Password": "hidden_pass"}}},
-	})
-
-	ctx := context.Background()
-
-	// 1. Verify CheckAccess
-	t.Run("CheckAccess", func(t *testing.T) {
-		for _, vaultName := range []string{"custom_static", "custom_single", "flat_file", "non_searchable"} {
-			if err := orch.CheckAccess(ctx, vaultName); err != nil {
-				t.Errorf("expected access to vault %q, got error: %v", vaultName, err)
-			}
-		}
-
-		if err := orch.CheckAccess(ctx, "non_existent"); err == nil {
-			t.Error("expected error for non_existent vault access, got nil")
-		}
-	})
-
-	// 2. Verify Retrievals
-	t.Run("RetrieveSecrets", func(t *testing.T) {
-		// Custom static default Password
-		val, err := orch.Resolve(ctx, `{{ get "custom_static://custom1" }}`)
-		if err != nil || val != "custom_password" {
-			t.Errorf("expected 'custom_password', got: %v (err: %v)", val, err)
-		}
-
-		// Custom static specific key
-		val, err = orch.Resolve(ctx, `{{ get "custom_static://custom1:username" }}`)
-		if err != nil || val != "custom_user" {
-			t.Errorf("expected 'custom_user', got: %v (err: %v)", val, err)
-		}
-
-		// Custom single — entity named "Static_Flat", access specific attribute
-		val, err = orch.Resolve(ctx, `{{ get "custom_single://Static_Flat:db_user" }}`)
-		if err != nil || val != "postgres" {
-			t.Errorf("expected 'postgres', got: %v (err: %v)", val, err)
-		}
-
-		// Flat file attributes
-		val, err = orch.Resolve(ctx, `{{ get "flat_file://api_key" }}`)
-		if err != nil || val != "super_secret_api_token" {
-			t.Errorf("expected 'super_secret_api_token', got: %v (err: %v)", val, err)
-		}
-	})
-
-	// 3. Verify Serialization of structured values
-	t.Run("ValueSerialization", func(t *testing.T) {
-		// Metadata (should be serialized YAML)
-		val, err := orch.Resolve(ctx, `{{ get "flat_file://metadata" }}`)
-		if err != nil {
-			t.Fatalf("failed to resolve metadata: %v", err)
-		}
-		expectedYAML := "cluster: us-east-1\nowner: devops"
-		if val != expectedYAML {
-			t.Errorf("expected serialized metadata YAML, got %q", val)
-		}
-
-		// Servers (should be serialized YAML array)
-		val, err = orch.Resolve(ctx, `{{ get "flat_file://servers" }}`)
-		if err != nil {
-			t.Fatalf("failed to resolve servers: %v", err)
-		}
-		expectedArrayYAML := "- bastion.example.com\n- app.example.com"
-		if val != expectedArrayYAML {
-			t.Errorf("expected serialized servers YAML, got %q", val)
-		}
-	})
-
-	// 4. Verify Entry Structure and Searches
-	t.Run("EntryShowAndSearch", func(t *testing.T) {
-		// GetEntry for single entity flat file (ignores location, returns single entry)
-		entry, err := orch.GetEntry(ctx, "flat_file://")
-		if err != nil {
-			t.Fatalf("failed to GetEntry: %v", err)
-		}
-		if entry.Title != "Prod Flat File" {
-			t.Errorf("expected title 'Prod Flat File', got %q", entry.Title)
-		}
-
-		// Search title substring (matches flat_file's "Prod Flat File" and custom_single's "Static_Flat")
-		results, err := orch.Search(ctx, `title contains "Flat"`, nil)
-		if err != nil {
-			t.Fatalf("Search failed: %v", err)
-		}
-		if len(results) != 2 {
-			t.Errorf("expected 2 results (flat_file, custom_single/Static_Flat), got %d", len(results))
-		}
-
-		// Search tag membership
-		results, err = orch.Search(ctx, `"local" in tags`, nil)
-		if err != nil {
-			t.Fatalf("Search failed: %v", err)
-		}
-		if len(results) != 1 || results[0].Vault != "custom_single" {
-			t.Errorf("expected 1 result from custom_single, got %v", results)
-		}
-
-		// Search excluded non-searchable vault
-		results, err = orch.Search(ctx, `Password == "hidden_pass"`, nil)
-		if err != nil {
-			t.Fatalf("Search failed: %v", err)
-		}
-		if len(results) != 0 {
-			t.Errorf("expected 0 results, got %d", len(results))
-		}
-
-		// Scoped search on non-searchable vault (should return error)
-		_, err = orch.Search(ctx, `Password == "hidden_pass"`, []string{"non_searchable"})
-		if err == nil || !strings.Contains(err.Error(), "is not searchable") {
-			t.Errorf("expected searchable error, got: %v", err)
-		}
-	})
-
-	// 5. Verify dynamic search:// resolution with arbitrary entry attributes
-	t.Run("SearchURISchemeWithArbitraryAttributes", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, `{{ get "search://username=custom_user/Password" }}`)
-		if err != nil || val != "custom_password" {
-			t.Errorf("expected 'custom_password', got: %v (err: %v)", val, err)
-		}
-
-		val, err = orch.Resolve(ctx, `{{ get "search://db_user=postgres/db_port" }}`)
-		if err != nil || val != "5432" {
-			t.Errorf("expected '5432', got: %v (err: %v)", val, err)
-		}
-
-		val, err = orch.Resolve(ctx, `{{ get "search://port=8080/api_key" }}`)
-		if err != nil || val != "super_secret_api_token" {
-			t.Errorf("expected 'super_secret_api_token', got: %v (err: %v)", val, err)
-		}
-
-		val, err = orch.Resolve(ctx, `{{ get "search://tags=local&db_user=postgres/db_port" }}`)
-		if err != nil || val != "5432" {
-			t.Errorf("expected '5432', got: %v (err: %v)", val, err)
-		}
-
-		_, err = orch.Resolve(ctx, `{{ get "search://username=nonexistent/Password" }}`)
-		if err == nil || !strings.Contains(err.Error(), "no secrets found matching search query") {
-			t.Errorf("expected no secrets found error, got: %v", err)
-		}
-	})
-}
-
 func TestBuiltinsNonSearchable(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("CollisionValidation", func(t *testing.T) {
-		// Vault configuration trying to use a built-in name "env"
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{
-				"env": {
-					Provider: "keepass",
-				},
+				"env": {Provider: "keepass"},
 			},
 		}
-
 		_, err := NewOrchestrator(cfg)
 		if err == nil {
 			t.Fatal("expected error when vault name conflicts with built-in scheme, got nil")
@@ -835,12 +483,9 @@ func TestBuiltinsNonSearchable(t *testing.T) {
 			t.Errorf("expected conflict error, got: %v", err)
 		}
 
-		// Vault configuration trying to use reserved scheme "search"
 		cfgSearch := &config.Config{
 			Vaults: map[string]config.VaultConfig{
-				"search": {
-					Provider: "env",
-				},
+				"search": {Provider: "env"},
 			},
 		}
 		_, err = NewOrchestrator(cfgSearch)
@@ -856,14 +501,11 @@ func TestBuiltinsNonSearchable(t *testing.T) {
 		cfg := &config.Config{
 			Vaults: map[string]config.VaultConfig{},
 		}
-
 		orch, err := NewOrchestrator(cfg)
 		if err != nil {
 			t.Fatalf("failed to create orchestrator: %v", err)
 		}
-
-		// Searching with "keyring" scope should fail as keyring does not support searching.
-		_, err = orch.Search(ctx, `title == "test"`, []string{"keyring"})
+		_, err = orch.Search(ctx, `{{ eq .title "test" }}`, []string{"keyring"})
 		if err == nil {
 			t.Fatal("expected error searching keyring, got nil")
 		}
@@ -880,13 +522,12 @@ func TestSearchConcurrentCompilation(t *testing.T) {
 			"vault1": {Provider: "env"},
 		},
 	}
-
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
 	if err := injectMockVault(orch, "vault1", []provider.SearchResult{
-		{Provider: "search", Vault: "vault1", Path: "item1", Entry: provider.Entry{Title: "item1", Attributes: map[string]any{"Password": "pass"}}},
+		{Provider: "keepass", Vault: "vault1", Path: "item1", Entry: provider.Entry{Title: "item1", Attributes: map[string]any{"Password": "pass"}}},
 	}); err != nil {
 		t.Fatalf("injectMockVault failed: %v", err)
 	}
@@ -894,11 +535,10 @@ func TestSearchConcurrentCompilation(t *testing.T) {
 	const numGoroutines = 30
 	var wg sync.WaitGroup
 	wg.Add(numGoroutines)
-
 	for range numGoroutines {
 		go func() {
 			defer wg.Done()
-			results, err := orch.Search(ctx, `Password == "pass"`, nil)
+			results, err := orch.Search(ctx, `{{ eq .Password "pass" }}`, nil)
 			if err != nil {
 				t.Errorf("concurrent search failed: %v", err)
 				return
@@ -908,151 +548,7 @@ func TestSearchConcurrentCompilation(t *testing.T) {
 			}
 		}()
 	}
-
 	wg.Wait()
-}
-
-type dummyNode struct {
-	ast.Node
-}
-
-func TestVisitorVisit(t *testing.T) {
-	t.Run("ExistingErrorShortCircuit", func(t *testing.T) {
-		origErr := fmt.Errorf("existing error")
-		vErr := origErr
-		v := &visitor{err: &vErr}
-
-		var callNode ast.Node = &ast.CallNode{}
-		v.Visit(&callNode)
-
-		if !errors.Is(vErr, origErr) {
-			t.Errorf("expected vErr to remain %v, got %v", origErr, vErr)
-		}
-	})
-
-	t.Run("AllowedNodes", func(t *testing.T) {
-		allowedNodes := []struct {
-			name string
-			node ast.Node
-		}{
-			{"IdentifierNode", &ast.IdentifierNode{}},
-			{"IntegerNode", &ast.IntegerNode{}},
-			{"FloatNode", &ast.FloatNode{}},
-			{"BoolNode", &ast.BoolNode{}},
-			{"StringNode", &ast.StringNode{}},
-			{"BytesNode", &ast.BytesNode{}},
-			{"ConstantNode", &ast.ConstantNode{}},
-			{"UnaryNode", &ast.UnaryNode{}},
-			{"BinaryNode", &ast.BinaryNode{}},
-			{"ArrayNode", &ast.ArrayNode{}},
-			{"MapNode", &ast.MapNode{}},
-			{"PairNode", &ast.PairNode{}},
-			{"NilNode", &ast.NilNode{}},
-			{"SliceNode", &ast.SliceNode{}},
-			{"BuiltinNode", &ast.BuiltinNode{}},
-			{"PredicateNode", &ast.PredicateNode{}},
-			{"PointerNode", &ast.PointerNode{}},
-			{"ConditionalNode", &ast.ConditionalNode{}},
-			{"ChainNode", &ast.ChainNode{}},
-			{"VariableDeclaratorNode", &ast.VariableDeclaratorNode{}},
-			{"SequenceNode", &ast.SequenceNode{}},
-			{"MemberNodeNonMethod", &ast.MemberNode{Method: false}},
-		}
-
-		for _, tc := range allowedNodes {
-			t.Run(tc.name, func(t *testing.T) {
-				var vErr error
-				v := &visitor{err: &vErr}
-				v.Visit(&tc.node)
-				if vErr != nil {
-					t.Errorf("expected no error for safe node type %s, got: %v", tc.name, vErr)
-				}
-			})
-		}
-	})
-
-	t.Run("DisallowedNodes", func(t *testing.T) {
-		disallowedNodes := []struct {
-			name        string
-			node        ast.Node
-			errContains string
-		}{
-			{
-				name:        "CallNode",
-				node:        &ast.CallNode{},
-				errContains: "function calls are not allowed in search expressions",
-			},
-			{
-				name:        "MemberNodeMethod",
-				node:        &ast.MemberNode{Method: true},
-				errContains: "method calls are not allowed in search expressions",
-			},
-			{
-				name:        "UnsupportedNode",
-				node:        &dummyNode{},
-				errContains: "expression node type *engine.dummyNode is not allowed",
-			},
-		}
-
-		for _, tc := range disallowedNodes {
-			t.Run(tc.name, func(t *testing.T) {
-				var vErr error
-				v := &visitor{err: &vErr}
-				v.Visit(&tc.node)
-				if vErr == nil {
-					t.Fatalf("expected error for node %s, got nil", tc.name)
-				}
-				if !strings.Contains(vErr.Error(), tc.errContains) {
-					t.Errorf("expected error containing %q, got: %v", tc.errContains, vErr)
-				}
-			})
-		}
-	})
-}
-
-func TestValidateExpression(t *testing.T) {
-	tests := []struct {
-		name        string
-		expr        string
-		wantErr     bool
-		errContains string
-	}{
-		{
-			name:    "ValidExpression",
-			expr:    `title == "test" and "tag1" in tags`,
-			wantErr: false,
-		},
-		{
-			name:        "ParseError",
-			expr:        `1 +`,
-			wantErr:     true,
-			errContains: "failed to parse expression",
-		},
-		{
-			name:        "ForbiddenFunctionCall",
-			expr:        `foo()`,
-			wantErr:     true,
-			errContains: "function calls are not allowed in search expressions",
-		},
-		{
-			name:        "ForbiddenMethodCall",
-			expr:        `title.Upper()`,
-			wantErr:     true,
-			errContains: "method calls are not allowed in search expressions",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateExpression(tt.expr)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateExpression(%q) error = %v, wantErr = %v", tt.expr, err, tt.wantErr)
-			}
-			if tt.wantErr && !strings.Contains(err.Error(), tt.errContains) {
-				t.Errorf("expected error containing %q, got: %v", tt.errContains, err)
-			}
-		})
-	}
 }
 
 func TestSearchNilConfig(t *testing.T) {
@@ -1060,9 +556,9 @@ func TestSearchNilConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create orchestrator with nil config: %v", err)
 	}
-
 	ctx := context.Background()
-	_, err = orch.Search(ctx, `title == "test"`, nil)
+
+	_, err = orch.Search(ctx, `{{ eq .title "test" }}`, nil)
 	if err == nil {
 		t.Fatal("expected error searching with nil config, got nil")
 	}
@@ -1070,7 +566,7 @@ func TestSearchNilConfig(t *testing.T) {
 		t.Errorf("expected 'no configuration loaded' error, got %v", err)
 	}
 
-	_, err = orch.Search(ctx, `title == "test"`, []string{"keyring"})
+	_, err = orch.Search(ctx, `{{ eq .title "test" }}`, []string{"keyring"})
 	if err == nil {
 		t.Fatal("expected error searching with nil config and builtin scope, got nil")
 	}
@@ -1079,225 +575,20 @@ func TestSearchNilConfig(t *testing.T) {
 	}
 }
 
-func TestSearcher_InferredRoot_PreResolutionExclusion(t *testing.T) {
-	cfg := &config.Config{
-		Vaults: map[string]config.VaultConfig{
-			"rooted_vault": {
-				Provider: "env",
-			},
-			"virtual_search": {
-				Provider:      "search",
-				SourceVaults:  []string{"rooted_vault"},
-				ResolveValues: true,
-				ExcludeFields: []string{"entities.*.secret_ref"},
-			},
-		},
-	}
-
-	orch, err := NewOrchestrator(cfg)
-	if err != nil {
-		t.Fatalf("failed to create orchestrator: %v", err)
-	}
-	if err := injectMockVault(orch, "rooted_vault", []provider.SearchResult{
-		{
-			Provider: "search", Vault: "rooted_vault", Path: "api",
-			Entry: provider.Entry{
-				Title: "api_service",
-				Attributes: map[string]any{
-					"username":   "api_user",
-					"secret_ref": `{{ get "tripwire://must_not_be_called" }}`,
-				},
-			},
-		},
-	}, "entities"); err != nil {
-		t.Fatalf("injectMockVault(rooted_vault) failed: %v", err)
-	}
-
-	tw := &tripwireProvider{}
-	orch.providerManager.vaultCache["tripwire"] = tw
-
-	ctx := context.Background()
-
-	// With exclude_fields: ["entities.*.secret_ref"] on virtual_search, the inferred root key
-	// "entities" must be passed to ApplyToEntry before resolution, causing secret_ref to be stripped
-	// so the tripwire provider is never called.
-	results, err := orch.Search(ctx, `title == "api_service"`, []string{"virtual_search"})
-	if err != nil {
-		t.Fatalf("Search failed: %v", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-
-	entry := results[0].Entry
-	if _, ok := entry.Attributes["secret_ref"]; ok {
-		t.Errorf("expected secret_ref to be excluded before resolution, but it was present: %v", entry.Attributes["secret_ref"])
-	}
-	if entry.Attributes["username"] != "api_user" {
-		t.Errorf("expected username 'api_user', got %v", entry.Attributes["username"])
-	}
-	if tw.called {
-		t.Errorf("pre-resolution isolation violated during search: tripwire was dereferenced for excluded field")
-	}
-
-	// Also verify that GetEntry on virtual_search strips the field before dynamic attribute resolution
-	entryRes, err := orch.GetEntry(ctx, "virtual_search://api")
-	if err != nil {
-		t.Fatalf("GetEntry failed: %v", err)
-	}
-	if _, ok := entryRes.Attributes["secret_ref"]; ok {
-		t.Errorf("expected secret_ref to be excluded in GetEntry, but it was present: %v", entryRes.Attributes["secret_ref"])
-	}
-	if tw.called {
-		t.Errorf("pre-resolution isolation violated during GetEntry: tripwire was dereferenced for excluded field")
-	}
-}
-
-func TestSearcher_OverlappingIncludeLayers(t *testing.T) {
-	entry := provider.Entry{
-		Title: "test_entry",
-		Attributes: map[string]any{
-			"env:PROD":  "prod_val",
-			"env:DEV":   "dev_val",
-			"app:PROD":  "app_val",
-			"something": "other",
-		},
-	}
-
-	// Layer 1: include_fields: ["env:*"]
-	// Layer 2: include_fields: ["*:PROD"]
-	ctx := provider.WithFieldPolicy(context.Background(), []string{"env:*"}, nil)
-	ctx = provider.WithFieldPolicy(ctx, []string{"*:PROD"}, nil)
-
-	fp := provider.FieldPolicyFromContext(ctx)
-	if fp == nil {
-		t.Fatal("expected non-nil FieldPolicy")
-	}
-
-	filtered := fp.ApplyToEntry(entry, "test_entry", nil)
-
-	// "env:PROD" matches both layers and must be kept.
-	if filtered.Attributes["env:PROD"] != "prod_val" {
-		t.Errorf("expected env:PROD to be kept, got: %v", filtered.Attributes["env:PROD"])
-	}
-	// "env:DEV" fails layer 2 ("*:PROD") and must be excluded.
-	if _, ok := filtered.Attributes["env:DEV"]; ok {
-		t.Errorf("expected env:DEV to be excluded by layer 2")
-	}
-	// "app:PROD" fails layer 1 ("env:*") and must be excluded.
-	if _, ok := filtered.Attributes["app:PROD"]; ok {
-		t.Errorf("expected app:PROD to be excluded by layer 1")
-	}
-	// "something" fails both layers and must be excluded.
-	if _, ok := filtered.Attributes["something"]; ok {
-		t.Errorf("expected something to be excluded")
-	}
-}
-
-func TestSearcher_UUIDAndGroupExpression(t *testing.T) {
-	keyring.MockInit()
-	if err := keyring.Set("cloakenv", "provider/testdb", "password123"); err != nil {
-		t.Fatalf("failed to set mock credentials: %v", err)
-	}
-
-	tempDir := t.TempDir()
-	t.Setenv("HOME", tempDir)
-	t.Setenv("XDG_CACHE_HOME", tempDir)
-	t.Setenv("LocalAppData", tempDir)
-
-	cfg := &config.Config{
-		Vaults: map[string]config.VaultConfig{
-			"testdb": {
-				Provider:  "keepass",
-				VaultPath: "../../testdata/testDB.kdbx",
-			},
-		},
-	}
-
-	orch, err := NewOrchestrator(cfg)
-	if err != nil {
-		t.Fatalf("failed to create orchestrator: %v", err)
-	}
-
-	ctx := context.Background()
-
-	t.Run("SearchByUUID", func(t *testing.T) {
-		results, err := orch.Search(ctx, `uuid != ""`, nil)
-		if err != nil {
-			t.Fatalf("Search by uuid failed: %v", err)
-		}
-		if len(results) == 0 {
-			t.Errorf("expected results matching uuid != \"\", got 0")
-		}
-	})
-
-	t.Run("SearchByGroup", func(t *testing.T) {
-		results, err := orch.Search(ctx, `group.name == "website"`, nil)
-		if err != nil {
-			t.Fatalf("Search by group.name failed: %v", err)
-		}
-		if len(results) == 0 {
-			t.Errorf("expected results matching group.name == \"website\", got 0")
-		}
-	})
-
-	t.Run("SearchURIByGroup", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, `{{ get "search://group=website/Password" }}`)
-		if err != nil {
-			t.Fatalf("failed to resolve by group: %v", err)
-		}
-		if val != "testPassword123!" {
-			t.Errorf("expected 'testPassword123!', got %q", val)
-		}
-	})
-
-	t.Run("SearchURIByGroupAndUsername", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, `{{ get "search://group=website&username=user@email.com/Password" }}`)
-		if err != nil {
-			t.Fatalf("failed to resolve by group and username: %v", err)
-		}
-		if val != "testPassword123!" {
-			t.Errorf("expected 'testPassword123!', got %q", val)
-		}
-	})
-
-	t.Run("SearchURIByUsernameAttachment", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, `{{ get "search://username=user@email.com/hello.txt" }}`)
-		if err != nil {
-			t.Fatalf("failed to resolve attachment by username: %v", err)
-		}
-		if val != "Hello, World! Extraction Test Successful." {
-			t.Errorf("expected attachment content, got %q", val)
-		}
-	})
-
-	t.Run("SearchURIByGroupPath", func(t *testing.T) {
-		val, err := orch.Resolve(ctx, `{{ get "search://group.path=website/Password" }}`)
-		if err != nil {
-			t.Fatalf("failed to resolve by group.path: %v", err)
-		}
-		if val != "testPassword123!" {
-			t.Errorf("expected 'testPassword123!', got %q", val)
-		}
-	})
-}
-
 func TestSearcher_GroupAttributeFallback(t *testing.T) {
 	keyring.MockInit()
-
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"grp": {Provider: "env"},
 		},
 	}
-
 	orch, err := NewOrchestrator(cfg)
 	if err != nil {
 		t.Fatalf("failed to create orchestrator: %v", err)
 	}
 	if err := injectMockVault(orch, "grp", []provider.SearchResult{
-		{Provider: "search", Vault: "grp", Path: "svc1", Entry: provider.Entry{Title: "svc1", Attributes: map[string]any{"Group": "Production", "Password": "p1"}}},
-		{Provider: "search", Vault: "grp", Path: "svc2", Entry: provider.Entry{Title: "svc2", Attributes: map[string]any{"group": map[string]any{"name": "Staging", "path": "Infra/Staging"}, "Password": "p2"}}},
+		{Provider: "keepass", Vault: "grp", Path: "svc1", Entry: provider.Entry{Title: "svc1", Attributes: map[string]any{"Group": "Production", "Password": "p1"}}},
+		{Provider: "keepass", Vault: "grp", Path: "svc2", Entry: provider.Entry{Title: "svc2", Attributes: map[string]any{"group": map[string]any{"name": "Staging", "path": "Infra/Staging"}, "Password": "p2"}}},
 	}); err != nil {
 		t.Fatalf("injectMockVault(grp) failed: %v", err)
 	}
@@ -1305,7 +596,7 @@ func TestSearcher_GroupAttributeFallback(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("GroupAttrCaseInsensitive_MatchesGroupName", func(t *testing.T) {
-		results, err := orch.Search(ctx, `group.name == "Production"`, nil)
+		results, err := orch.Search(ctx, `{{ eq .group.name "Production" }}`, nil)
 		if err != nil {
 			t.Fatalf("Search by group.name failed: %v", err)
 		}
@@ -1315,7 +606,7 @@ func TestSearcher_GroupAttributeFallback(t *testing.T) {
 	})
 
 	t.Run("GroupAttrStructuredMap_MatchesPath", func(t *testing.T) {
-		results, err := orch.Search(ctx, `group.path == "Infra/Staging"`, nil)
+		results, err := orch.Search(ctx, `{{ eq .group.path "Infra/Staging" }}`, nil)
 		if err != nil {
 			t.Fatalf("Search by group.path failed: %v", err)
 		}
@@ -1335,15 +626,11 @@ func TestSearcher_GroupAttributeFallback(t *testing.T) {
 	})
 
 	t.Run("RawGroupEquality_TypeMismatchErrors", func(t *testing.T) {
-		// Semantics change: an entry-attribute `group` is now exposed as the
-		// structured name/path map (not the raw string), so legacy raw
-		// expressions comparing `group` to a string fail loudly with a type
-		// mismatch instead of silently matching.
-		_, err := orch.Search(ctx, `group == "Production"`, nil)
+		_, err := orch.Search(ctx, `{{ eq .group "Production" }}`, nil)
 		if err == nil {
-			t.Fatal("expected type-mismatch error for raw group string equality after structured group change, got nil")
+			t.Fatal("expected error for raw group string equality after structured group change, got nil")
 		}
-		if !strings.Contains(err.Error(), "mismatched types") {
+		if !strings.Contains(err.Error(), "query execution failed") {
 			t.Errorf("unexpected error for raw group string equality: %v", err)
 		}
 	})

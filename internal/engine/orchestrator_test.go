@@ -128,7 +128,7 @@ func TestOrchestratorFacade(t *testing.T) {
 	})
 
 	t.Run("Search", func(t *testing.T) {
-		results, err := orch.Search(ctx, `"prod" in tags`, nil)
+		results, err := orch.Search(ctx, `{{ hasTag "prod" .tags }}`, nil)
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
@@ -375,9 +375,7 @@ func TestOrchestrator_FieldFiltering_WrappedDirectProviderResolution(t *testing.
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"filtered_src": {
-				Provider:      "search",
-				Sources:       []string{"env://"},
-				ResolveValues: true,
+				Provider:      "env",
 				IncludeFields: []string{"api_key"},
 			},
 		},
@@ -430,239 +428,6 @@ func TestOrchestrator_FieldFiltering_WrappedDirectProviderResolution(t *testing.
 	}
 }
 
-type tripwireProvider struct {
-	called bool
-}
-
-func (t *tripwireProvider) Scheme() string                                                { return "tripwire" }
-func (t *tripwireProvider) Initialize(_ context.Context, _ provider.ProviderConfig) error { return nil }
-func (t *tripwireProvider) GetSecret(_ context.Context, _ string) (string, error) {
-	t.called = true
-	return "tripwire_triggered", nil
-}
-func (t *tripwireProvider) SetSecret(_ context.Context, _, _ string) error { return nil }
-func (t *tripwireProvider) DeleteSecret(_ context.Context, _ string) error { return nil }
-func (t *tripwireProvider) Validate(_ map[string]string) error             { return nil }
-
-func TestOrchestrator_FieldFiltering_SearchPreResolutionIsolation(t *testing.T) {
-	ctx := context.Background()
-
-	cfg := &config.Config{
-		Vaults: map[string]config.VaultConfig{
-			"source_vault": {
-				Provider:        "search",
-				Sources:         []string{"env://"},
-				ResolveValues:   true,
-				EntitiesRootKey: "entities",
-			},
-			"virtual_search": {
-				Provider:      "search",
-				Query:         "safe_field == 'safe_value'",
-				SourceVaults:  []string{"source_vault"},
-				ExcludeFields: []string{"excluded_field", "entities.entry1.rooted_excluded_field"},
-			},
-		},
-	}
-
-	orch, err := NewOrchestrator(cfg)
-	if err != nil {
-		t.Fatalf("failed to create orchestrator: %v", err)
-	}
-	if err := injectMockVault(orch, "source_vault", []provider.SearchResult{
-		{
-			Provider: "search", Vault: "source_vault", Path: "entry1",
-			Entry: provider.Entry{
-				Title: "entry1",
-				Attributes: map[string]any{
-					"safe_field":            "safe_value",
-					"excluded_field":        `{{ get "tripwire://must_not_be_called" }}`,
-					"rooted_excluded_field": `{{ get "tripwire://must_not_be_called_rooted" }}`,
-				},
-			},
-		},
-	}); err != nil {
-		t.Fatalf("injectMockVault(source_vault) failed: %v", err)
-	}
-
-	tw := &tripwireProvider{}
-	orch.providerManager.vaultCache["tripwire"] = tw
-
-	// Resolve through the virtual search provider
-	val, err := orch.Resolve(ctx, `{{ get "virtual_search://entry1:safe_field" }}`)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
-	}
-	if val != "safe_value" {
-		t.Errorf("Resolve = %q, want 'safe_value'", val)
-	}
-
-	// Verify that neither the excluded field nor the rooted excluded field was ever dereferenced
-	if tw.called {
-		t.Errorf("pre-resolution isolation violated: excluded URI value tripwire://... was dereferenced")
-	}
-
-	// Also verify that a search vault whose query references the excluded field fails to match
-	cfgQueryLeak := &config.Config{
-		Vaults: map[string]config.VaultConfig{
-			"source_vault": {
-				Provider:        "search",
-				Sources:         []string{"env://"},
-				ResolveValues:   true,
-				EntitiesRootKey: "entities",
-			},
-			"query_leak_search": {
-				Provider:      "search",
-				Query:         "excluded_field == 'tripwire_triggered'",
-				SourceVaults:  []string{"source_vault"},
-				ExcludeFields: []string{"excluded_field"},
-			},
-		},
-	}
-
-	orchLeak, err := NewOrchestrator(cfgQueryLeak)
-	if err != nil {
-		t.Fatalf("failed to create orchestrator: %v", err)
-	}
-	if err := injectMockVault(orchLeak, "source_vault", []provider.SearchResult{
-		{
-			Provider: "search", Vault: "source_vault", Path: "entry1",
-			Entry: provider.Entry{
-				Title: "entry1",
-				Attributes: map[string]any{
-					"safe_field":     "safe_value",
-					"excluded_field": `{{ get "tripwire://must_not_be_called" }}`,
-				},
-			},
-		},
-	}); err != nil {
-		t.Fatalf("injectMockVault(source_vault) failed: %v", err)
-	}
-	orchLeak.providerManager.vaultCache["tripwire"] = tw
-
-	// Since excluded_field was stripped before query evaluation, it cannot match
-	_, errMatch := orchLeak.Resolve(ctx, `{{ get "query_leak_search://entry1:safe_field" }}`)
-	if errMatch == nil {
-		t.Errorf("expected query match to fail when query references an excluded field, got nil")
-	}
-	if tw.called {
-		t.Errorf("excluded URI was dereferenced during query evaluation")
-	}
-}
-
-func TestOrchestrator_FieldFiltering_NestedVirtualSearchIsolation(t *testing.T) {
-	ctx := context.Background()
-
-	cfg := &config.Config{
-		Vaults: map[string]config.VaultConfig{
-			"source_vault": {
-				Provider:      "search",
-				Sources:       []string{"env://"},
-				ResolveValues: true,
-			},
-			"inner_search": {
-				Provider:      "search",
-				Query:         "safe_field == 'safe_value'",
-				SourceVaults:  []string{"source_vault"},
-				ExcludeFields: []string{"inner_excluded"},
-			},
-			"outer_search": {
-				Provider:      "search",
-				Query:         "safe_field == 'safe_value'",
-				SourceVaults:  []string{"inner_search"},
-				ExcludeFields: []string{"outer_excluded"},
-			},
-		},
-	}
-
-	orch, err := NewOrchestrator(cfg)
-	if err != nil {
-		t.Fatalf("failed to create orchestrator: %v", err)
-	}
-	if err := injectMockVault(orch, "source_vault", []provider.SearchResult{
-		{
-			Provider: "search", Vault: "source_vault", Path: "entry1",
-			Entry: provider.Entry{
-				Title: "entry1",
-				Attributes: map[string]any{
-					"safe_field":     "safe_value",
-					"outer_excluded": `{{ get "tripwire://outer_leak" }}`,
-					"inner_excluded": `{{ get "tripwire://inner_leak" }}`,
-				},
-			},
-		},
-	}); err != nil {
-		t.Fatalf("injectMockVault(source_vault) failed: %v", err)
-	}
-
-	tw := &tripwireProvider{}
-	orch.providerManager.vaultCache["tripwire"] = tw
-
-	// Resolve through the outer virtual search provider
-	val, err := orch.Resolve(ctx, `{{ get "outer_search://entry1:safe_field" }}`)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
-	}
-	if val != "safe_value" {
-		t.Errorf("Resolve = %q, want 'safe_value'", val)
-	}
-
-	// Verify that outer-excluded and inner-excluded URI values were never dereferenced
-	if tw.called {
-		t.Errorf("nested virtual search isolation violated: excluded URI value tripwire://... was dereferenced")
-	}
-
-	// Also verify that an inner search vault whose query attempts to match on outer_excluded fails
-	tw.called = false
-	cfgQueryLeak := &config.Config{
-		Vaults: map[string]config.VaultConfig{
-			"source_vault": {
-				Provider:      "search",
-				Sources:       []string{"env://"},
-				ResolveValues: true,
-			},
-			"inner_search_leak": {
-				Provider:     "search",
-				Query:        "outer_excluded == 'tripwire_triggered'",
-				SourceVaults: []string{"source_vault"},
-			},
-			"outer_search_leak": {
-				Provider:      "search",
-				Query:         "safe_field == 'safe_value'",
-				SourceVaults:  []string{"inner_search_leak"},
-				ExcludeFields: []string{"outer_excluded"},
-			},
-		},
-	}
-
-	orchLeak, err := NewOrchestrator(cfgQueryLeak)
-	if err != nil {
-		t.Fatalf("failed to create orchestrator: %v", err)
-	}
-	if err := injectMockVault(orchLeak, "source_vault", []provider.SearchResult{
-		{
-			Provider: "search", Vault: "source_vault", Path: "entry1",
-			Entry: provider.Entry{
-				Title: "entry1",
-				Attributes: map[string]any{
-					"safe_field":     "safe_value",
-					"outer_excluded": `{{ get "tripwire://outer_leak" }}`,
-				},
-			},
-		},
-	}); err != nil {
-		t.Fatalf("injectMockVault(source_vault) failed: %v", err)
-	}
-	orchLeak.providerManager.vaultCache["tripwire"] = tw
-
-	_, errMatch := orchLeak.Resolve(ctx, `{{ get "outer_search_leak://entry1:safe_field" }}`)
-	if errMatch == nil {
-		t.Errorf("expected inner search query match on outer-excluded field to fail, got nil")
-	}
-	if tw.called {
-		t.Errorf("outer-excluded URI was dereferenced during inner query evaluation")
-	}
-}
-
 func TestOrchestrator_GetEntries(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
@@ -674,17 +439,6 @@ func TestOrchestrator_GetEntries(t *testing.T) {
 	cfg := &config.Config{
 		Vaults: map[string]config.VaultConfig{
 			"test_vault": {Provider: "env"},
-			"grouped_search": {
-				Provider:     "search",
-				SourceVaults: []string{"test_vault"},
-				Sources: []string{
-					"test_vault://flat_entry",
-					`"tag1" in tags`,
-				},
-				Attributes: map[string]any{
-					"EXTRA": "extra_val",
-				},
-			},
 		},
 	}
 
@@ -731,20 +485,6 @@ func TestOrchestrator_GetEntries(t *testing.T) {
 			},
 		},
 		{
-			name:      "search sources entry lookup returns grouped entry with attributes",
-			uri:       "grouped_search://flat_entry",
-			wantCount: 1,
-			wantErr:   false,
-			checkFn: func(t *testing.T, entries []provider.Entry) {
-				if entries[0].Attributes["KEY1"] != "val1" {
-					t.Errorf("KEY1 = %v, want 'val1'", entries[0].Attributes["KEY1"])
-				}
-				if entries[0].Attributes["EXTRA"] != "extra_val" {
-					t.Errorf("EXTRA = %v, want 'extra_val'", entries[0].Attributes["EXTRA"])
-				}
-			},
-		},
-		{
 			name:      "direct GetEntries with search URL parameters",
 			uri:       "search://title=Flat Entry",
 			wantCount: 1,
@@ -757,7 +497,7 @@ func TestOrchestrator_GetEntries(t *testing.T) {
 		},
 		{
 			name:      "direct GetEntries with search Expr '==' equality expression",
-			uri:       `search://title == "Flat Entry"`,
+			uri:       `search://{{ eq .title "Flat Entry" }}`,
 			wantCount: 1,
 			wantErr:   false,
 			checkFn: func(t *testing.T, entries []provider.Entry) {
@@ -813,9 +553,7 @@ func TestOrchestrator_CyclicMergeDepthError(t *testing.T) {
 			name: "two entities mutually merging cause max depth error",
 			vaults: map[string]config.VaultConfig{
 				"loop_vault": {
-					Provider:      "search",
-					Sources:       []string{"search://true"},
-					ResolveValues: true,
+					Provider: "env",
 				},
 			},
 			mockVault: "loop_vault",
@@ -846,9 +584,7 @@ func TestOrchestrator_CyclicMergeDepthError(t *testing.T) {
 			name: "self-merging composed entity causes max depth error",
 			vaults: map[string]config.VaultConfig{
 				"self_vault": {
-					Provider:      "search",
-					Sources:       []string{"search://true"},
-					ResolveValues: true,
+					Provider: "env",
 				},
 			},
 			mockVault: "self_vault",

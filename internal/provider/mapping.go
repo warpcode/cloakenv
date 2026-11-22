@@ -372,12 +372,6 @@ func getFilteringParams(p SecretProvider) ([]string, []string) {
 		if sfp, ok := curr.(*SearchableFilteringProvider); ok {
 			return sfp.includeFields, sfp.excludeFields
 		}
-		if vfp, ok := curr.(*ValueResolvableFilteringProvider); ok {
-			return vfp.includeFields, vfp.excludeFields
-		}
-		if svfp, ok := curr.(*SearchableValueResolvableFilteringProvider); ok {
-			return svfp.includeFields, svfp.excludeFields
-		}
 		if inner, ok := curr.(interface{ Underlying() SecretProvider }); ok {
 			curr = inner.Underlying()
 		} else {
@@ -906,34 +900,8 @@ func (s *SearchableMappingProvider) Search(ctx context.Context, query SearchQuer
 	return mappedResults, nil
 }
 
-// ValueResolvableMappingProvider implements ValueResolvableProvider when underlying implements it.
-type ValueResolvableMappingProvider struct {
-	MappingProvider
-}
-
-// SupportsValueResolution delegates to the underlying provider.
-func (v *ValueResolvableMappingProvider) SupportsValueResolution() bool {
-	if vr, ok := v.underlying.(ValueResolvableProvider); ok {
-		return vr.SupportsValueResolution()
-	}
-	return false
-}
-
-// SearchableValueResolvableMappingProvider implements both SearchableProvider and ValueResolvableProvider.
-type SearchableValueResolvableMappingProvider struct {
-	SearchableMappingProvider
-}
-
-// SupportsValueResolution delegates to the underlying provider.
-func (s *SearchableValueResolvableMappingProvider) SupportsValueResolution() bool {
-	if vr, ok := s.underlying.(ValueResolvableProvider); ok {
-		return vr.SupportsValueResolution()
-	}
-	return false
-}
-
 // NewMappingProvider constructs a new mapping provider wrapper, precompiling rules and
-// preserving optional interfaces (SearchableProvider, ValueResolvableProvider) when supported.
+// preserving optional interfaces (SearchableProvider) when supported.
 func NewMappingProvider(p SecretProvider, rules []config.MappingRule) (SecretProvider, error) {
 	compiledRules := make([]config.MappingRule, len(rules))
 	for i, r := range rules {
@@ -948,23 +916,8 @@ func NewMappingProvider(p SecretProvider, rules []config.MappingRule) (SecretPro
 		rules:      compiledRules,
 	}
 
-	_, isSearchable := p.(SearchableProvider)
-	_, isValResolvable := p.(ValueResolvableProvider)
-
-	if isSearchable && isValResolvable {
-		return &SearchableValueResolvableMappingProvider{
-			SearchableMappingProvider: SearchableMappingProvider{
-				MappingProvider: base,
-			},
-		}, nil
-	}
-	if isSearchable {
+	if _, isSearchable := p.(SearchableProvider); isSearchable {
 		return &SearchableMappingProvider{
-			MappingProvider: base,
-		}, nil
-	}
-	if isValResolvable {
-		return &ValueResolvableMappingProvider{
 			MappingProvider: base,
 		}, nil
 	}
