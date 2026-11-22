@@ -3,71 +3,54 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/warpcode/cloakenv)](https://goreportcard.com/report/github.com/warpcode/cloakenv)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Pluggable secret orchestrator and dynamic runtime environment injector.**
+**Pluggable secret orchestrator and declarative runtime environment injector.**
 
-`cloakenv` eliminates plaintext secret sprawl. Instead of writing credentials to unencrypted `.env` files or committing secrets to git, `cloakenv` resolves secret URIs on demand from multiple backends (KeePass, OS Keyring, encrypted cache, YAML, JSON, environment) and injects them strictly into temporary execution memory right when your command runs.
+`cloakenv` eliminates plaintext secret sprawl. Instead of writing credentials to unencrypted `.env` files or exposing secrets via raw CLI getters, `cloakenv` reads entries from pure read-only backends (KeePass, `pass`, HashiCorp Vault, OS Keyring, process environment, and encrypted cache), transforms them declaratively through `envs:` and `templates:` pipelines, masks secrets in child process output, and delivers them strictly for child command execution.
 
 ---
 
-## 📑 Table of Contents
+## Table of Contents
 
 - [Why cloakenv?](#why-cloakenv)
 - [How It Works](#how-it-works)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
-- [Quick Start (Zero to Running in 2 Minutes)](#quick-start-zero-to-running-in-2-minutes)
+- [Quick Start](#quick-start)
 - [Core Concepts](#core-concepts)
-  - [URI Addressing](#uri-addressing)
-  - [Template & Secret Expansion Syntax (`{{ ... }}`)](#template--secret-expansion-syntax-)
-  - [Vault Key Formatting (`key_format`)](#vault-key-formatting-key_format)
+  - [Read-Only Vaults & Flat `Entry` Model](#read-only-vaults--flat-entry-model)
+  - [Declarative `envs:` & `RuleEngine` (`pass`, `match`, `set`)](#declarative-envs--ruleengine-pass-match-set)
+  - [Declarative `templates:` & Delivery](#declarative-templates--delivery)
 - [CLI Command Reference](#cli-command-reference)
-  - [`run` — Wrap Processes & Inject Secrets](#run--wrap-processes--inject-secrets)
-  - [`get` — Extract Single Secret Raw to Stdout](#get--extract-single-secret-raw-to-stdout)
-  - [`set` — Write to Keyring or Cache](#set--write-to-keyring-or-cache)
-  - [`delete` — Remove from Keyring or Cache](#delete--remove-from-keyring-or-cache)
-  - [`cache` — Local Encrypted Cache Management](#cache--local-encrypted-cache-management)
-  - [`show` — Inspect & Export Structured Records](#show--inspect--export-structured-records)
-  - [`search` — Dynamic Querying Across Vaults](#search--dynamic-querying-across-vaults)
+  - [`run` — Execute Commands with Autoloaded Secrets](#run--execute-commands-with-autoloaded-secrets)
+  - [`inspect` — Preview Resolved Envs & Templates (`<REDACTED>`)](#inspect--preview-resolved-envs--templates-redacted)
   - [`auth` — Manage Vault Authentication](#auth--manage-vault-authentication)
-  - [`sync` — Cross-Vault Secret Synchronization](#sync--cross-vault-secret-synchronization)
-  - [`doctor` — Diagnose Environment & Vaults](#doctor--diagnose-environment--vaults)
+  - [`cache` — Local Encrypted Cache Management](#cache--local-encrypted-cache-management)
+  - [`doctor` — Diagnose Environment & Config](#doctor--diagnose-environment--config)
   - [`completion` — Generate Shell Autocompletion Scripts](#completion--generate-shell-autocompletion-scripts)
   - [`version` — Print Build & Runtime Version](#version--print-build--runtime-version)
   - [`internal` — Developer & Hook Helpers](#internal--developer--hook-helpers)
-- [Secret Providers & Schemes](#secret-providers--schemes)
-  - [Built-In Providers (Zero Setup)](#built-in-providers-zero-setup)
-  - [Configured Vaults](#configured-vaults)
-    - [1. KeePass (`keepass`)](#1-keepass-keepass)
-    - [2. Password Store (`pass`)](#2-password-store-pass)
-    - [3. Stored Search Vault (`search`)](#3-stored-search-vault-search)
-    - [4. Field Filtering (`include_fields` and `exclude_fields`)](#4-field-filtering-include_fields-and-exclude_fields)
-    - [5. Field Key Mapping (`mapping`)](#5-field-key-mapping-mapping)
-    - [6. Key Formatting (`key_format`)](#6-key-formatting-key_format)
-    - [7. Universal Per-Entry Attributes Decorator (`attributes`)](#7-universal-per-entry-attributes-decorator-attributes)
-    - [8. KeePass Placeholders & Cross-Entry References (`resolve_references`)](#8-keepass-placeholders--cross-entry-references-resolve_references)
-    - [9. Transparent Per-Vault Caching (`cache`)](#9-transparent-per-vault-caching-cache)
-- [Template Engine & FuncMap Reference](#template-engine--funcmap-reference)
-- [Command Autoloading & Alias Masking](#command-autoloading--alias-masking)
-- [Search Query Language Reference](#search-query-language-reference)
+- [Secret Providers](#secret-providers)
+  - [KeePass (`keepass`)](#keepass-keepass)
+  - [Password Store (`pass`)](#password-store-pass)
+  - [HashiCorp Vault (`vault`)](#hashicorp-vault-vault)
+  - [Process Environment (`env`)](#process-environment-env)
+  - [OS Keyring (`keyring`)](#os-keyring-keyring)
+  - [Transparent Per-Vault Caching (`cache`)](#transparent-per-vault-caching-cache)
+- [Pure Go Template Functions Reference](#pure-go-template-functions-reference)
+- [Command Autoloading & Ephemeral File Delivery](#command-autoloading--ephemeral-file-delivery)
 - [Configuration Reference (`config.yaml`)](#configuration-reference-configyaml)
 - [Headless & CI/CD Usage](#headless--cicd-usage)
 - [Development & Testing](#development--testing)
+- [License](#license)
 
 ---
 
 ## Why cloakenv?
 
-Managing application credentials usually forces bad trade-offs:
-- **Plaintext `.env` files**: Vulnerable to accidental git commits, log file leaks, and disk snooping.
-- **Multiple password managers & stores**: Secrets scattered across KeePass `.kdbx` files, OS keychains, cloud vaults, and config files with no unified access pattern.
-- **Verbose boilerplate**: Writing custom scripts just to decrypt a password and export it as an environment variable before starting a service.
-
-`cloakenv` provides a single, uniform abstraction:
-- **Zero Disk Persistence**: Secrets are decrypted into process memory only for the duration of the child process.
-- **Universal URI Scheme**: Access any backend with the same syntax (`keyring://...`, `keepass://...`, `pass://...`, `env://...`, `cache://...`).
-- **Template Hydration**: Inject whole `.env` templates containing `{{ ... }}` secret expansions and Go templates on the fly.
-- **Command Autoloading**: Automatically attach the right credentials whenever specific CLI commands (like `aws`, `kubectl`, or custom tools) run.
-- **Cross-Platform**: Full support for Linux, macOS, and Windows.
+- **Zero-Leak CLI**: `cloakenv` never prints raw secrets to stdout—there are no `get`, `show`, `search`, `set`, `delete`, or `sync` commands. `cloakenv inspect` unconditionally emits `<REDACTED>` for every secret value.
+- **Declarative Config Governance**: All filtering, key renaming, formatting, and templated file generation live inside `config.yaml` under `envs:`, `templates:`, and `autoload:`.
+- **Stream Masking & Ephemeral Cleanup**: Child process stdout/stderr is scrubbed via an Aho-Corasick masking trie (`MaskingWriter`), and ephemeral template files prefer `/dev/shm` (`0700` dirs / `0600` files, `O_NOFOLLOW`) and are zero-filled and unlinked on exit.
+- **Cross-Platform**: Supported on Linux, macOS, and Windows.
 
 ---
 
@@ -75,32 +58,25 @@ Managing application credentials usually forces bad trade-offs:
 
 ```mermaid
 flowchart TD
-    subgraph CLI ["1. You run a command wrapped with cloakenv"]
-        Cmd["cloakenv run -e DB_PASS='{{ get #quot;keyring://db/prod#quot; }}' -- ./my-app"]
+    subgraph CLI ["1. Run or Inspect via CLI"]
+        Cmd["cloakenv run -- python app.py"]
     end
 
-    subgraph Engine ["2. cloakenv Orchestrator"]
-        Router["URI Router & Template Parser"]
-        AuthCheck["Keyring / Cache Auth"]
+    subgraph Pipeline ["2. Declarative Secret Pipeline"]
+        Vaults["Read-Only Vaults (KeePass / pass / Vault / env / keyring)"]
+        Rules["RuleEngine (pass / match / set)"]
+        Templates["TemplatesRenderer (template / json / yaml / dotenv)"]
     end
 
-    subgraph Backends ["3. Pluggable Secret Providers"]
-        OSKeyring["OS Keyring (Keychain / Secret Service / Credential Mgr)"]
-        KeePass["KeePass .kdbx (AES Decryption)"]
-        EncCache["Local AES-256 GCM Cache"]
-        Pass["Unix Password Store (pass / GPG)"]
-        Env["Process Environment"]
+    subgraph Runner ["3. Masked Child Execution"]
+        Memory["Child Env + Ephemeral Temp Files (0600, zeroed on exit) + Stream Masker"]
     end
 
-    subgraph ChildProcess ["4. Target Application Execution"]
-        Memory["Process Memory: DB_PASS=supersecret ./my-app"]
-    end
-
-    Cmd --> Router
-    Router --> AuthCheck
-    AuthCheck --> Backends
-    Backends --> Router
-    Router --> Memory
+    Cmd --> Vaults
+    Vaults --> Rules
+    Rules --> Templates
+    Rules --> Memory
+    Templates --> Memory
 ```
 
 ---
@@ -145,6 +121,7 @@ Pre-compiled release archives (`.tar.gz` for Linux/macOS and `.zip` for Windows)
 Every release artifact includes a `checksums.txt` file, cryptographic keyless signatures (`.sigstore.json`, `.sig`, `.pem`) signed by Sigstore/Cosign via GitHub Actions OIDC, and verifiable SLSA Level 3 build provenance attestations.
 
 #### 1. Verify `checksums.txt` with Cosign
+
 ```bash
 # Keyless verification using the self-contained Sigstore bundle
 cosign verify-blob \
@@ -163,1264 +140,324 @@ cosign verify-blob \
 ```
 
 #### 2. Verify Archive Checksum
+
 ```bash
 sha256sum --ignore-missing -c checksums.txt
 ```
 
 #### 3. Verify SLSA Level 3 Provenance with GitHub CLI
+
 ```bash
 gh attestation verify cloakenv-linux-amd64.tar.gz --owner warpcode
 ```
 
 ---
 
-## Quick Start (Zero to Running in 2 Minutes)
+## Quick Start
 
-You can start using `cloakenv` immediately with the built-in providers—**no configuration file required**!
+1. Declare your read-only vault, environment rule set, and command binding in `~/.config/cloakenv/config.yaml`:
 
-### 1. Store a secret securely in your OS Keyring
+```yaml
+vaults:
+  work:
+    provider: keepass
+    vault_path: ~/secrets/work.kdbx
 
-```bash
-# Store an API key in your OS keyring (reads securely from stdin or interactive prompt)
-echo -n "sk-proj-1234567890abcdef" | cloakenv set keyring://openai/dev_key
+envs:
+  app_env:
+    - vault: work
+      query: '{{ eq .title "OpenAI" }}'
+      rules:
+        - type: pass
+          include: ["API_KEY"]
+          key_format: env
+
+autoload:
+  - match: "^python app\\.py$"
+    envs:
+      - app_env
 ```
 
-### 2. Retrieve a secret for a script or subshell
+2. Authenticate your KeePass database once in the OS keyring:
 
 ```bash
-# Retrieve raw value directly to stdout (no trailing newline)
-cloakenv get keyring://openai/dev_key
+cloakenv auth login work
 ```
 
-### 3. Run an application with injected secrets
+3. Safely audit resolved variable names and delivery targets without exposing secrets:
 
 ```bash
-# Injects OPENAI_API_KEY into the Python script's memory
-cloakenv run -e OPENAI_API_KEY=keyring://openai/dev_key -- python app.py
+cloakenv inspect run -- python app.py
 ```
 
-`app.py` reads `os.environ["OPENAI_API_KEY"]` normally. When `app.py` exits, the secret is gone from memory, and nothing was ever written to disk!
+4. Run the command with in-memory secret injection and automatic stream masking:
+
+```bash
+cloakenv run -- python app.py
+```
 
 ---
 
 ## Core Concepts
 
-### URI Addressing
+### Read-Only Vaults & Flat `Entry` Model
 
-Every secret is referenced through a typed URI formatted as:
+Every vault provider is strictly read-only and returns flat `Entry` maps containing raw secret attributes alongside canonical lowercase metadata keys:
 
-$$\text{scheme://path/to/entry[:attribute]}$$
+- `title` — Entry title
+- `path` — Canonical entry path within the vault
+- `uuid` — Entry identifier (where supported)
+- `tags` — List of tags (case-preserved; matched dynamically by `hasTag`)
+- `group` — Group metadata map (`name`, `path`, `uuid`) when present
 
-- **Scheme**: Identifies either a built-in provider (`keyring`, `env`, `cache`, `pass`, `search`) or a user-defined vault name from `config.yaml` (`work`, `home`, `staging_db`).
-- **Path**: Location of the credential within that provider (e.g. `service/account` for keyrings, `Group/Entry` for KeePass, `folder/entry` for pass).
-- **Attribute** *(optional)*: Specific field to retrieve (e.g., `:Password`, `:UserName`, `:api_token`, or `:attachment.txt`). Defaults to `:Password` if omitted for KeePass, `pass`, and `search` vaults.
+`env` and `keyring` are implicitly available by name without needing `vaults:` blocks, or can be explicitly declared to scope keys with `query:`.
 
-Examples:
-```text
-keyring://github/personal_access_token
-env://CI_JOB_TOKEN
-cache://session_token
-my_vault://Production/Database:Password
-my_vault://Production/Database:UserName
-my_vault://Production/SSH_Keys:id_rsa.pub
-pass://production/database:username
-```
+### Declarative `envs:` & `RuleEngine` (`pass`, `match`, `set`)
 
----
+Each named environment under `envs:` is an ordered list of vault sources (`vault`, optional Go `text/template` `query:` predicate, and ordered `rules:`).
 
-### Template & Secret Expansion Syntax (`{{ ... }}`)
+- **`type: pass`**: Copies entry attributes matching optional `include` globs while excluding `exclude` globs (`exclude` overrides `include`), formatting keys with `key_format` (`none`, `env`, `snake`, `kebab`). Reserved metadata keys (`title`, `path`, `uuid`, `tags`, `group`, `vault`, `provider`) are never emitted by wildcards.
+- **`type: match`**: Matches attribute key regex (`match`) and/or serialized value regex (`value_match`), and renders target `key` and `value` using Go `text/template` (with `$1` / `${1}` capture expansions evaluated safely before template parsing).
+- **`type: set`**: Evaluates a map of `values:` templates (`key: template`) with access to `.output` and entry fields, overwriting keys with last-rule-wins semantics.
 
-`cloakenv` provides a unified templating engine powered by Go's standard library `text/template` with `.Option("missingkey=error")`. When `resolve_values: true` is configured or when evaluating template contexts, secret URIs and expressions can be embedded directly into connection strings, URLs, configuration files, and attribute templates:
+### Declarative `templates:` & Delivery
 
-```bash
-cloakenv run -e DATABASE_URL='postgres://{{ get "env://DB_USER" }}:{{ get "keyring://pg/password" }}@localhost:5432/mydb' -- ./server
-```
+Named templates under `templates:` produce structured payloads or hydrated files using four built-in drivers:
 
-#### Core Template Mechanics:
-1. **Unified Go `text/template` Engine**: Expressions use standard Go template syntax `{{ ... }}` with strict key checking (`missingkey=error`). Referencing an undefined attribute or field aborts with a descriptive error instead of outputting `<no value>`.
-2. **Explicit Secret Retrieval**: Use `{{ get "scheme://..." }}` to fetch a secret string from any vault or built-in provider.
-3. **Structured Context (`.`)**: Per-vault `attributes:` templates receive a structured dot context containing:
-   - **`.meta` / `.Meta`**: Entry metadata map (`Title`/`title`, `Tags`/`tags`, `UUID`/`uuid`, `Vault`/`vault`, `Provider`/`provider`, `Path`/`path`, `Group`/`group`).
-   - **`.attributes` / `.Attributes`**: Entry attributes after field filtering, mapping, and key formatting.
-4. **Child Command Argument Pass-Through Safety (`resolveCmdArgs`)**:
-   When `cloakenv run` executes child processes, command-line arguments are safely inspected:
-   - Arguments that are bare known `scheme://...` URIs or templates invoking `cloakenv` functions (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`, `exec`, `shquote`, `shellQuote`) are resolved before process execution.
-   - Foreign templates (such as Docker format strings `'{{.State.Status}}'`, Helm templates, or Kubernetes format strings) pass through to the child command untouched without evaluation errors.
-5. **Recursion Limit**: Dynamic resolution and template inclusion are capped at depth 5 (`maxDepth = 5`) to prevent circular evaluation or infinite recursion.
-6. **Legacy `${...}` Removed**: The legacy `${scheme://...}` syntax has been completely removed in favor of `{{ get "scheme://..." }}`. Bare `scheme://...` URIs remain supported in explicit CLI contexts (`get`, `show`, `-e`, `-m`), `merge:`, and `autoload.env`.
-
----
-
-### Vault Key Formatting (`key_format`)
-
-By default (`none`), `cloakenv` passes through original attribute key names unmodified as stored in the vault backend.
-
-Per vault, you can configure `key_format` in `config.yaml` to standardize attribute keys. You can also override this format at runtime using the `-f` or `--key-format` flag on `cloakenv run`, `cloakenv show`, or `cloakenv search`.
-- **`none`** (default): Passes through the original key name unmodified.
-- **`env`**: Uppercase with non-alphanumeric runs collapsed to a single underscore (`_`).
-- **`snake`**: Lowercase with non-alphanumeric runs collapsed to a single underscore (`_`).
-- **`kebab`**: Lowercase with non-alphanumeric runs collapsed to a single hyphen (`-`).
-
-| Original Attribute Name | `none` (Default) | `env` | `snake` | `kebab` |
-|---|---|---|---|---|
-| `api-key` | `api-key` | `API_KEY` | `api_key` | `api-key` |
-| `database.user_name` | `database.user_name` | `DATABASE_USER_NAME` | `database_user_name` | `database-user-name` |
-| `UserName` | `UserName` | `USERNAME` | `username` | `username` |
-| `custom---token` | `custom---token` | `CUSTOM_TOKEN` | `custom_token` | `custom-token` |
+- **`template`** (default when `template:` or `path:` is set, or scalar shorthand): Executes a Go `text/template` with `.entries` (the list of rule-transformed entry maps).
+- **`json`**: Serializes the resolved entries (`[]map[string]string` from `vaults:` rules) as JSON.
+- **`yaml`**: Serializes the resolved entries (`[]map[string]string` from `vaults:` rules) as YAML.
+- **`dotenv`**: Emits `KEY="VALUE"` lines from `vaults:` rules or `from_env:` with safe escaping (`$` and backticks escaped) and validates key names.
 
 ---
 
 ## CLI Command Reference
 
-Global flags:
-- `-c <config_path>`: Path to custom configuration file (defaults to `~/.config/cloakenv/config.yaml`).
-- `-h`, `--help`: Display usage instructions.
-- `-v`, `--version`: Print build and runtime version information.
+Global flags available before subcommands:
+- `-c <config_path>` — Load an alternate configuration file (default: `~/.config/cloakenv/config.yaml`)
+- `-h, --help` — Display help information
+- `-v, --version` — Print version information
 
-```
-Usage:
-  cloakenv [-c config_path] <command> [flags] [args]
-
-Commands:
-  run     Wrap a binary with injected environment variables
-  get     Retrieve and print a single secret value raw to stdout
-  set     Store a secret value at a writable URI (keyring://, cache://)
-  delete  Remove a secret from a writable URI (keyring://, cache://)
-  cache   Manage local encrypted cache (subcommands: clear, prune)
-  sync    Unidirectional cross-vault secret synchronization
-  show    Retrieve and display a structured entry
-  search  Search for structured entries across vaults
-  auth    Manage vault credentials and status (login, forget, status)
-  doctor  Diagnose environment, validate config, and check vault reachability
-  completion  Generate shell autocompletion script (bash, zsh, fish, powershell)
-  version Print build and runtime version information
-  internal  Developer & hook helpers (match-alias, list-vaults)
-```
-
-Signal & exit code behavior:
-- `cloakenv run` forwards the wrapped child process exit code cleanly.
-- Cancelling commands during secret resolution or prompts via `SIGINT` or `SIGTERM` exits with standard POSIX signal codes (`130` for `SIGINT`, `143` for `SIGTERM`).
-
----
-
-### `run` — Wrap Processes & Inject Secrets
-
-Wraps and executes a target command, injecting resolved environment variables directly into its process environment.
+### `run` — Execute Commands with Autoloaded Secrets
 
 ```bash
-cloakenv run [-E] [flags] -- <command> [args...]
+cloakenv [-c config_path] run [-E] [--no-autoload] [--dry-run] -- <command> [args]
 ```
 
-> [!TIP]
-> If the `--` separator is omitted, all remaining positional arguments are treated as the command.
+**Flags:**
+- `-E` — Start with an empty environment (do not inherit parent process environment)
+- `--no-autoload` — Disable command autoloading rules for this execution
+- `--dry-run` — Preview resolved environment keys, templates (redacted), and command without executing
 
-#### Flags:
-- `-E`: Start with an empty environment (do not inherit from parent process). Useful for wrapping untrusted processes or preventing secret leakage from the parent shell.
-- `-e KEY=uri`: Explicitly map an environment variable to a secret URI (repeatable).
-- `-t template_path`: Load a `.env` template file containing `KEY=uri` or literal definitions (repeatable).
-- `-m entry-uri`: Merge all attributes from a structured entry into the environment (repeatable). Can target a single attribute using `:attribute`.
-- `-i KEY`: Whitelist key filter (repeatable). When `-i` is specified, only the whitelisted keys from `-m` merges are injected. (`-e` mappings always bypass whitelist filtering).
-- `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
-- `--no-autoload`: Bypass configuration `autoload:` rules for this execution.
-- `--dry-run`: Preview injected environment variable keys and transformed command without executing.
-
-#### Examples:
+### `inspect` — Preview Resolved Envs & Templates (`<REDACTED>`)
 
 ```bash
-# 1. Map single environment variables explicitly
-cloakenv run -e API_KEY=keyring://stripe/secret_key -- node server.js
-
-# 2. Merge an entire KeePass entry (injects all attributes)
-cloakenv run -m "work://Production/PostgreSQL" -- ./migrate-db
-
-# 3. Merge an entry but whitelist only specific fields
-cloakenv run -m "work://Production/PostgreSQL" -i USERNAME -i PASSWORD -- ./migrate-db
-
-# 4. Override the vault key format to export kebab-case variables
-cloakenv run -f kebab -m "work://Production/PostgreSQL" -- ./deploy
-
-# 5. Load a template .env file
-cloakenv run -t ./deploy.env -- terraform apply
-
-# 6. Combine template, merge, and explicit overrides
-cloakenv run \
-  -t .env.template \
-  -m "work://Cloud/AWS_Production" \
-  -e REGION="us-east-1" \
-  -- aws s3 ls
-
-# 7. Preview injected variables and transformed command without executing
-cloakenv run --dry-run \
-  -m "work://Cloud/AWS_Production" \
-  -e REGION="us-east-1" \
-  -- aws s3 ls
+cloakenv [-c config_path] inspect [-o text|json|yaml]
+cloakenv [-c config_path] inspect env <name> [-o text|json|yaml]
+cloakenv [-c config_path] inspect template <name> [-o text|json|yaml]
+cloakenv [-c config_path] inspect [-o text|json|yaml] run -- <command> [args]
 ```
 
----
+Evaluates queries, `RuleEngine` transforms, template drivers, and autoload matching to preview matched entry metadata, generated variable names, and delivery targets. All resolved secret values are unconditionally replaced with `<REDACTED>`.
 
-### `get` — Extract Single Secret Raw to Stdout
-
-Resolves and outputs a single secret value raw to standard output with **no trailing newline**. Ideal for piping into clipboards, shells, and other CLI utilities.
-
-```bash
-cloakenv get <uri>
-```
-
-#### Examples:
-
-```bash
-# Copy secret directly to macOS clipboard
-cloakenv get keyring://github/token | pbcopy
-
-# Capture into shell variable in a bash script
-export GITHUB_TOKEN=$(cloakenv get keyring://github/token)
-
-# Retrieve a specific KeePass attribute
-cloakenv get "work://Servers/Bastion:UserName"
-
-# Stream a KeePass file attachment (e.g. private key or certificate)
-cloakenv get "work://Infrastructure/SSH:id_rsa" > ~/.ssh/id_rsa_temp
-```
-
----
-
-### `set` — Write to Keyring or Cache
-
-Writes a secret to a writable provider (`keyring://` or `cache://`). The secret value is read securely from standard input (stdin) or an interactive masked prompt, preventing exposure in shell history or process lists.
-
-```bash
-cloakenv set <uri> [--ttl <duration>]
-```
-
-- The secret value is securely read from standard input (stdin) or prompted interactively if running in a terminal.
-- Bounded input: Reading from stdin enforces a maximum size limit of 10 MiB to prevent memory exhaustion from unbounded input streams.
-- `--ttl <duration>`: Optional Time-To-Live expiration (e.g. `5m`, `1h`, `24h`) for `cache://` secrets.
-
-#### Examples:
-
-```bash
-# 1. Interactive masked terminal prompt (no secret in bash history!)
-cloakenv set keyring://aws/secret_access_key
-
-# 2. Pipe secret from another CLI tool or file
-cat ~/.my_token | cloakenv set keyring://app/token
-
-# 3. Store a temporary session token in cache for 30 minutes
-echo -n "temp_jwt_token_xyz" | cloakenv set cache://session_token --ttl 30m
-```
-
----
-
-### `delete` — Remove from Keyring or Cache
-
-Deletes a secret from a writable backend (`keyring://` or `cache://`).
-
-```bash
-cloakenv delete <uri>
-```
-
-#### Examples:
-
-```bash
-cloakenv delete keyring://aws/secret_access_key
-cloakenv delete cache://session_token
-```
-
----
-
-### `cache` — Local Encrypted Cache Management
-
-`cloakenv` provides a local, file-based encrypted cache (`cache://`). Cached files are encrypted on disk with **AES-256-GCM**, using an encryption key generated and stored inside your native OS keyring.
-
-```bash
-# Clear all cached items immediately
-cloakenv cache clear
-
-# Remove expired entries from cache
-cloakenv cache prune
-```
-
----
-
-### `show` — Inspect & Export Structured Records
-
-Retrieves and formats a structured credential record (or multiple merged records).
-KeePass entries include `uuid` and `group` (`name`, `uuid`, `path`) in search results and `show -o yaml|json` outputs, and support selection via `-i uuid`, `-i group_name`, `-i group_uuid`, `-i group_path`.
-
-```bash
-cloakenv show <entry-uri> [flags]
-# or
-cloakenv show -m <entry-uri> [-m <entry-uri> ...] [flags]
-```
-
-#### Flags:
-- `-o, --output`: Output format: `yaml` (default), `json`, `env` (dotenv), or `keys`.
-- `-m entry-uri`: Merge additional entries (repeatable).
-- `-e KEY=uri`: Explicit key override (repeatable).
-- `-t template_path`: Load template `.env` file (repeatable).
-- `-i KEY`: Whitelist filter keys (repeatable).
-- `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
-- `--raw`: Display unmodified raw entry attributes (`Original` state) before filtering, mapping, key formatting, and computed attributes.
-- `--explain`: Display structured transformation trace across all 5 entry processing pipeline stages (`original`, `filtered`, `mapped`, `key_formatted`, `final_output`) in `yaml` or `json`.
-- `--show-meta`: Include vault, provider, and tags metadata in a `_meta_` object (`yaml` and `json` output only).
-
-#### Output Formats:
-1. **`yaml`** (Default): Formatted YAML document.
-2. **`json`**: Formatted, indented JSON object.
-3. **`env`**: Valid dotenv formatted lines with appropriate escaping and quotes (`KEY="value"`).
-4. **`keys`**: Plain list of exported environment variable names (one per line).
-
-#### Examples:
-
-```bash
-# Inspect KeePass record as YAML
-cloakenv show "work://Production/Database"
-
-# Inspect raw entry before filters, mapping, key formatting, and computed attributes
-cloakenv show "work://Production/Database" --raw
-
-# Trace all 5 entry processing pipeline stages as YAML
-cloakenv show "work://Production/Database" --explain
-
-# Trace pipeline stages as JSON
-cloakenv show "work://Production/Database" --explain -o json
-
-# Export record as a .env file
-cloakenv show "work://Production/Database" -o env > .env.local
-
-# View all available key names in an entry
-cloakenv show "work://Production/Database" -o keys
-
-# Merge multiple sources and export as JSON
-cloakenv show \
-  -m "work://Production/Database" \
-  -e DB_PORT="5432" \
-  -o json
-```
-
----
-
-### `search` — Dynamic Querying Across Vaults
-
-Searches for structured entries across all configured searchable vaults using Go `expr` query syntax. `uuid` and `group` (`name`, `uuid`, `path`) are included in search results, can be selected via `-i uuid`, `-i group_name`, `-i group_uuid`, `-i group_path`, and can be queried in search expressions (e.g. `uuid == '...'`, `group.name == '...'`, `group.path == '...'`).
-
-```bash
-cloakenv search "[query_expression]" [flags]
-```
-
-#### Flags:
-- `--vault <vault_name>`: Scope the search to one or more specific vaults (repeatable).
-- `-i KEY`: Select only specific attributes/fields in the output (repeatable).
-- `-f, --key-format format`: Override attribute key formatting (`none`, `env`, `snake`, `kebab`).
-- `--show-meta`: Include vault, provider, and tags metadata in a `_meta_` object (`yaml` and `json` output only).
-- `-o, --output`: Output format: `yaml` (default) or `json`.
-
-#### Examples:
-
-```bash
-# Search for entries with a specific tag
-cloakenv search '"auth:ssh" in tags'
-
-# Search for RSA keys with 4096-bit strength
-cloakenv search 'bit_strength == 4096'
-
-# Search by title prefix across a specific vault
-cloakenv search 'title startsWith "Staging"' --vault work
-
-# Return only the hostnames and usernames from matching entries
-cloakenv search '"env:prod" in tags' -i title -i hostname -i username -o yaml
-```
-
----
+**Flags:**
+- `-o, --output <format>` — Output format: `text` (default), `json`, or `yaml`
 
 ### `auth` — Manage Vault Authentication
 
-Manages master passwords and access verification for vaults requiring credentials (such as KeePass databases).
-
 ```bash
-cloakenv auth <login|forget|status> [vault_name]
+cloakenv [-c config_path] auth login <vault>
+cloakenv [-c config_path] auth forget <vault>
+cloakenv [-c config_path] auth status [vault] [-o text|json|yaml]
 ```
 
-- **`login <vault>`**: Prompts for the vault master password and securely stores it in your OS Keyring under the `cloakenv` service prefix.
-- **`forget <vault>`**: Clears the saved master password from the OS Keyring.
-- **`status [vault] [-o text|json|yaml]`**: Tests if configured vaults are currently unlocked and accessible. Supports structured output via `-o, --output` (`text`, `json`, `yaml`).
+Prompts securely (or reads from stdin) to save vault unlock credentials in the OS keyring (`login`), remove stored credentials (`forget`), or check vault unlock and connection readiness (`status`).
 
-#### Flags:
-- `-o, --output`: Output format: `text` (default), `json`, or `yaml` (`auth status` only).
-
-#### Examples:
+### `cache` — Local Encrypted Cache Management
 
 ```bash
-# 1. Unlock your work KeePass database once
-cloakenv auth login work
-
-# 2. Verify all vaults are active (default text format)
-cloakenv auth status
-# Output:
-# work: ACTIVE
-# home: ACTIVE
-
-# 3. Check vault status with structured JSON output for monitoring
-cloakenv auth status -o json
-# Output:
-# [
-#   {
-#     "vault": "home",
-#     "status": "ACTIVE",
-#     "vault_path": "/path/to/home.kdbx",
-#     "latency": "1.234ms"
-#   },
-#   {
-#     "vault": "work",
-#     "status": "ACTIVE",
-#     "vault_path": "/path/to/work.kdbx",
-#     "latency": "2.345ms"
-#   }
-# ]
-
-# 4. Clear credentials when locking down
-cloakenv auth forget work
+cloakenv [-c config_path] cache clear
+cloakenv [-c config_path] cache prune
 ```
 
----
+Clears all cached vault entries or prunes expired cache records from the encrypted local cache.
 
-### `sync` — Cross-Vault Secret Synchronization
-
-Unidirectionally copies secrets from a source vault or URI to a target writable vault (`keyring://` or `cache://`). Zero plaintext persistence to disk; all operations occur in memory.
-
-```bash
-cloakenv sync <source> <target> [flags]
-```
-
-#### Flags:
-- `--dry-run`: Preview additions, updates, and skips without writing to target.
-- `--tags <tags>`: Filter source entries by tag (comma-separated, e.g. `sync:keyring`).
-- `--prefix <prefix>`: Filter secret keys by prefix.
-- `-r, --regex <pattern>`: Filter secret keys using regular expressions.
-
-#### Examples:
-
-```bash
-# 1. Preview synchronizing KeePass entries with tag "sync:keyring" to local keyring
-cloakenv sync --dry-run --tags sync:keyring "work://" "keyring://local"
-
-# 2. Synchronize secrets matching a prefix to OS keyring
-cloakenv sync --prefix "api/" "work://" "keyring://services"
-
-# 3. Synchronize a single entry directly
-cloakenv sync "work://production/db" "keyring://prod_db"
-```
-
----
-
-### `doctor` — Diagnose Environment & Vaults
-
-Validates YAML syntax, schema conformity, file existence, regexes, and template expressions, checks cache directory permissions (`0700` under `<UserCacheDir>/<keyring_prefix>`), and inspects provider dependencies and configured vault reachability without exposing secret values.
+### `doctor` — Diagnose Environment & Config
 
 ```bash
 cloakenv [-c config_path] doctor [--strict]
 ```
 
-#### Flags:
-- `--strict`: Enforce strict schema checking (reject unknown fields) and exit non-zero on warnings.
-
-#### Examples:
-
-```bash
-# Run diagnostics and validate default configuration (~/.config/cloakenv/config.yaml)
-cloakenv doctor
-
-# Validate a specific configuration file with strict schema and warning enforcement
-cloakenv -c ./config.yaml doctor --strict
-```
-
----
+Validates `config.yaml` schema, template syntax and function signatures, autoload regexes, stale ephemeral files, keyring availability, and vault reachability (`--strict` treats warnings as errors).
 
 ### `completion` — Generate Shell Autocompletion Scripts
-
-Outputs shell autocompletion code for supported shells (`bash`, `zsh`, `fish`, `powershell`).
 
 ```bash
 cloakenv completion <bash|zsh|fish|powershell>
 ```
 
-#### Examples:
-
-```bash
-# Bash (eval in ~/.bashrc)
-source <(cloakenv completion bash)
-
-# Zsh (install into completion directory)
-cloakenv completion zsh > ~/.zsh/completion/_cloakenv
-
-# Fish (install into fish completions directory)
-cloakenv completion fish > ~/.config/fish/completions/cloakenv.fish
-
-# PowerShell (add to your PowerShell profile)
-cloakenv completion powershell | Out-String | Invoke-Expression
-```
-
----
-
 ### `version` — Print Build & Runtime Version
-
-Prints the application version, git commit, build timestamp, Go runtime version, and OS/architecture platform. Equivalent to passing `-v` or `--version`.
 
 ```bash
 cloakenv version
 ```
 
----
-
 ### `internal` — Developer & Hook Helpers
 
-Internal helper commands for scripting and automation. These are not intended for direct end-user usage.
-
-```
-Usage:
-  cloakenv internal <subcommand> [args]
-```
-
-#### `match-alias` — Check Autoload Rule Matches
-
-Tests whether a command matches any configured `autoload:` rule without resolving secrets or triggering side effects. Useful for external shell hooks that need to detect whether `cloakenv run` would apply autoload rules to a given command.
-
 ```bash
-cloakenv internal match-alias [--json] -- <command> [args]
+cloakenv [-c config_path] internal match-alias -- <command> [args]
+cloakenv [-c config_path] internal list-vaults
 ```
 
-- Exits with code **0** if a match is found, **1** if no match.
-- `--json`: Output structured JSON with the matched rule details (`matched`, `match`, `command`, `vaults`, `merge`, `env`, `whitelist`).
-
-#### Examples:
-
-```bash
-# Check if "aws s3 ls" matches any autoload rule
-cloakenv internal match-alias -- aws s3 ls
-
-# Get structured JSON output for scripting
-cloakenv internal match-alias --json -- kubectl get pods
-```
-
-#### `list-vaults` — List Configured Vault Names
-
-Outputs all configured vault names from the configuration file, sorted deterministically. Used by autocompletion scripts and integrations.
-
-```bash
-cloakenv internal list-vaults
-```
+Used by shell integration hooks to inspect alias matches and configured vault names.
 
 ---
 
-## Secret Providers & Schemes
+## Secret Providers
 
-### Built-In Providers (Zero Setup)
+All providers implement pure read-only retrieval via `provider.SecretProvider` and `provider.SearchableProvider`:
 
-These providers are always available and do not require registration in `config.yaml`:
-
-| URI Scheme | Type | Description |
-|---|---|---|
-| `keyring://service/account` | Read / Write | OS native secure credential store (macOS Keychain, Linux D-Bus, Windows Credential Manager). |
-| `env://VAR_NAME` | Read-Only | Values from the parent process environment. Great for CI/CD pipelines. |
-| `cache://KEY` | Read / Write | Local AES-256-GCM encrypted filesystem cache with optional TTL. Encryption key is in OS Keyring. |
-| `pass://path/to/entry[:attribute]` | Read-Only | Standard Unix password store (`pass`). Resolves password on first line and multi-line `Key: Value` attributes. |
-| `search://query/attribute` | Read-Only | Dynamic URI resolution! Executes a search query on the fly and retrieves the matching attribute. |
-
-#### Dynamic `search://` URI Scheme Example:
-
-`search://` queries support both URL parameter syntax and Go Expr syntax (`in`, `==`, `!=`) interchangeably across `cloakenv get`, `cloakenv search`, and `search` vault `sources:`.
-
-```bash
-# Dynamically finds the entry with tags "env:prod" and "service:redis" and extracts its Password (URL query parameters)
-cloakenv get "search://tags=env:prod,service:redis&title=Cluster/Password"
-
-# Using Go Expr syntax (e.g. "in", "==", "!=" operators):
-cloakenv get 'search://"service:redis" in tags and title == "Cluster"/Password'
-
-# Match entries dynamically by arbitrary entry attributes (e.g. group, username, url, custom fields)
-cloakenv get "search://group=Production&username=admin/Password"
-
-# Query values containing reserved characters by percent-encoding them (%2F = "/", %26 = "&", %25 = "%")
-cloakenv get "search://url=https://example.com%2Fpath%2Fapi/Password"
-
-# Query empty attribute values explicitly ("key=" is an empty-string condition)
-cloakenv get "search://notes=/Password"
-```
-
-> [!NOTE]
-> The query section ends at the **last** `/` of the URI, which starts the requested
-> attribute (defaulting to `Password` if omitted). Both URL parameter and Expr expressions
-> work interchangeably in `get`, `search`, and `search` vault `sources:`. Literal `/` and `&` inside a URL query
-> value must be percent-encoded as `%2F` and `%26` (and a literal `%` as `%25`). In URL parameter
-> queries, `title` and `path` parameters use substring matching; all other parameters (including
-> `group`) match exactly, with numeric and boolean values compared type-coerced.
-
----
-
-### Configured Vaults
-
-Configure external databases in `~/.config/cloakenv/config.yaml`:
+### KeePass (`keepass`)
 
 ```yaml
 vaults:
   work:
-    provider: "keepass"
-    vault_path: "~/secrets/work.kdbx"
-
-  pass_store:
-    provider: "pass"
-    vault_path: "~/.password-store"
-
-  openrouter:
-    provider: "search"
-    source_vaults: ["work"]
-    query: '"service:openrouter" in tags'
-
-  proc_env:
-    provider: "env"
-    include_fields: ["APP_*"]
+    provider: keepass
+    vault_path: ~/secrets/work.kdbx
+    key_file: ~/secrets/work.keyx        # optional key file
+    key_file_env: WORK_KEEPASS_KEYFILE   # optional env var holding key file path
+    resolve_references: false            # enable KeePass {REF:...} expansion
 ```
 
-> [!NOTE]
-> **`env` provider (`provider: "env"`)**: Wraps the built-in `env://` process environment provider so you can apply `include_fields`, `exclude_fields`, `mapping`, `key_format`, `attributes`, and `cache` decorators to environment variables.
-> **HashiCorp Vault (`provider: "vault"`)**: `internal/provider/vault.go` and `VaultConfig` fields exist as an experimental, unregistered implementation and are not currently wired into `ProviderManager` or `cloakenv doctor`.
+Exposes entry attributes (including `Password` and lowercase `password`), attachments, and canonical metadata (`title`, `path`, `uuid`, `tags`, `group`). Supports optional `query:` to prefilter KeePass group/entry paths.
 
-#### 1. KeePass (`keepass`)
-- Points to any KeePass 2.x `.kdbx` file.
-- Path traversal: `vault://Folder/SubFolder/EntryName[:Attribute]`.
-- Defaults to `:Password` attribute if omitted.
-- **Virtual Metadata Attributes**: KeePass entries expose virtual metadata attributes via `GetSecret` (e.g. `work://website/Test Website:UUID`, `work://website/Test Website:uuid`, `work://website/Test Website:group`, `work://website/Test Website:group_name`, `work://website/Test Website:group_uuid`, `work://website/Test Website:group_path`). Custom string fields take precedence over virtual metadata attributes.
-- **Key Files (`key_file` / `key_file_env`)**: Configure `key_file` with a path to a `.key`, `.keyx`, or raw KeePass key file, or set `key_file_env` to the name of an environment variable holding that path (overrides `key_file` when non-empty).
-- **File Attachments**: Directly stream binary attachments by name (e.g. `vault://SSH/Keys:id_rsa`).
-- **Placeholder & Reference Resolution**: Set `resolve_references: true` in `config.yaml` to enable `{TITLE}`, `{REF:...}`, `{T-CONV:...}`, `{URL:...}`, and date/time expansion (see [KeePass Placeholders & Cross-Entry References](#8-keepass-placeholders--cross-entry-references-resolve_references)).
+### Password Store (`pass`)
 
-##### Placeholder Expansion & Field References
-`cloakenv` supports resolving field placeholders and cross-entry references embedded inside KeePass field values:
-
-1. **Standard KeePass Placeholders** (Upstream Compatible):
-   - **Standard Fields**: `{TITLE}`, `{USERNAME}`, `{PASSWORD}`, `{URL}`, `{NOTES}`.
-   - **Custom String Attributes**: `{S:<AttributeName>}` (e.g., `{S:api_key}`).
-   - **Date/Time Placeholders**: Local (`{DT_SIMPLE}`, `{DT_YEAR}`, `{DT_MONTH}`, `{DT_DAY}`, `{DT_HOUR}`, `{DT_MINUTE}`, `{DT_SECOND}`) and UTC (`{DT_UTC_SIMPLE}`, `{DT_UTC_YEAR}`, `{DT_UTC_MONTH}`, `{DT_UTC_DAY}`, `{DT_UTC_HOUR}`, `{DT_UTC_MINUTE}`, `{DT_UTC_SECOND}`).
-   - **Cross-Entry References**: `{REF:<WantedField>@<SearchIn>:<SearchText>}` where `WantedField` uses single-letter codes (`T` Title, `U` Username, `P` Password, `A` URL, `N` Notes) or `{REF:S:<custom>@...}`. `SearchIn` can be `I` (UUID), `T`, `U`, `P`, `A`, `N`, or `O` (Custom/Other fields).
-
-2. **`cloakenv` Placeholder Extensions** (Divergence from Upstream KeePass):
-   - **Text Transformation**: `{T-CONV:<sep><text><sep><method><sep>}` (e.g., `{T-CONV:/{USERNAME}/UPPER/}`). The character following `{T-CONV:` acts as a configurable delimiter (such as `/` or `!`). Supported methods include `UPPER` (`U`), `LOWER` (`L`), `BASE64`, `HEX`, `URI`, `URI-DEC`, and `RAW`.
-   - **Same-Entry URL Component Extraction**: `{URL:<component>}` (e.g., `{URL:HOST}`, `{URL:PORT}`, `{URL:SCHEME}`, `{URL:PATH}`).
-   - **Cross-Entry URL Component Extraction**: `{REF:A:<component>@<SearchIn>:<SearchText>}` or `{REF:URL:<component>@<SearchIn>:<SearchText>}` (e.g., `{REF:A:HOST@T:DatabaseEntry}`).
-
-3. **Field Disambiguation Rule (`URL` vs `S:URL`)**:
-   - In cross-references, `{REF:URL@<SearchIn>:<SearchText>}` (or `{REF:A@...}`) always resolves to the standard KeePass `URL` field.
-   - If a KeePass entry defines a custom string attribute whose name is literally `URL`, you **must** use `{REF:S:URL@<SearchIn>:<SearchText>}` to target the custom attribute.
-
-> [!WARNING]
-> **Portability Warning & Authoring Tips (see #234)**:
-> `cloakenv` extensions (`{T-CONV:...}`, `{URL:<component>}`, `{REF:A:<component>@...}`, `{REF:URL:<component>@...}`) are non-standard constructs with no upstream counterpart in KeePass or KeePassXC.
-> - **Silent Expansion Failure**: Databases containing these extensions will silently fail to expand them when opened in KeePass or KeePassXC, leaving the literal placeholder text.
-> - **Accidental Overwrite Risk**: Users opening the database in KeePass/KeePassXC may see unexpanded text and attempt to "correct" or overwrite the field, accidentally destroying the placeholder logic.
-> - **Authoring Recommendation**: Keep `cloakenv`-specific extension placeholders out of fields that you also view or edit interactively within KeePass or KeePassXC.
-
-#### 2. Password Store (`pass`)
-- Points to a standard Unix password store (`pass`) directory (defaults to `~/.password-store` or `$PASSWORD_STORE_DIR`).
-- Reads GPG-encrypted `.gpg` password files.
-- Resolves password from the first line and multi-line `Key: Value` attributes from subsequent lines.
-- Example config:
 ```yaml
 vaults:
   pass_store:
-    provider: "pass"
-    vault_path: "~/.password-store"
-    searchable: true
+    provider: pass
+    vault_path: ~/.password-store
+    query: work/
 ```
 
-#### 3. Stored Search Vault (`search`)
-- Acts as a stored search view over one or more real vault providers, returning a filtered synthetic entry view.
-- Non-searchable and read-only by design (does not support the `searchable` flag).
-- Supports **`source_vaults` + `query`** (evaluate a stored search query across listed vaults) and **`sources`** (group multiple entry URIs such as `work://infra/db`, `search://...`, or search query expressions into one virtual vault with deduplication).
-- Supports `resolve_values: true` to enable recursive `{{ ... }}` template evaluation on returned entries.
-- Example config:
+Decrypts GPG-encrypted `.gpg` entries via `pass`/`gpg`, exposing the first line as `password`/`Password` and structured `Key: Value` lines as flat attributes. Supports optional `query:` to scope lookups to a subdirectory or entry prefix.
+
+### HashiCorp Vault (`vault`)
+
 ```yaml
 vaults:
-  openrouter:
-    provider: "search"
-    source_vaults: ["work"]
-    query: '"service:openrouter" in tags'
-
-  app_stack:
-    provider: "search"
-    resolve_values: true
-    sources:
-      - "work://infra/db"
-      - 'search://"api" in tags'
-    include_fields: ["DB_*", "API_*"]
-    key_format: "env"
+  hcp_vault:
+    provider: vault
+    address: https://vault.example.com:8200
+    mount_path: secret
+    engine_version: 2       # 1 or 2 (default 2)
+    namespace: admin        # optional Enterprise namespace
+    query: prod/
 ```
 
-#### 4. Field Filtering (`include_fields` and `exclude_fields`)
-- Supported across structured vault providers (`keepass`, `env`, `pass`, `search`).
-- **Default Metadata Fields**: Default metadata fields (`title`, `uuid`, `group`, `group_name`, `group_uuid`, `group_path`, `path`) are included by default alongside entry attributes. Entry classification metadata (`tags`) along with vault and provider metadata are consolidated into the `_meta_` object and can be requested via `--show-meta` or explicitly via `-i tags`, `-i _meta_.tags`, `-i _meta_.provider`, or `-i _meta_.vault`.
-- **`include_fields`**: When configured, restricts returned entry attributes to fields matching at least one glob pattern. **Include rules always take precedence over exclude rules** (evaluated first). An **empty list means filtering is disabled** (all unexcluded attributes allowed), not deny-all.
-- **`exclude_fields`**: Drops attributes matching any configured glob pattern before returning secrets when not explicitly permitted by include rules.
-- **Case-Sensitivity**: Glob patterns are evaluated **case-sensitively** (via Go's `path.Match`). A pattern like `"password"` will not match an attribute named `"Password"`. Ensure pattern casing matches the provider's attribute names.
-- **Candidate Matching Scope**: Pattern matching is not limited to bare attribute names; it evaluates multiple candidate representations:
-  - **Bare field names**: e.g., `UserName`, `password`, `notes`.
-  - **Full static dot paths**: e.g., `entities.db.password`, `db.password`.
-  - **Numeric array indices**: e.g., `users.0.token`, `config.servers.1.host`.
-  - **Entry titles & qualified attributes**: e.g., `Test Website.notes`, `Test Website:notes`.
-  - **Subtree exclusions via ancestor segments**: e.g., `exclude_fields: ["db"]` or `["entities.db"]` blocks all attributes beneath that container. Directly requesting and including a container grants its unexcluded nested attributes.
-- **Path Separators (`/` vs `.`) and Wildcards**:
-  - In Go's `path.Match`, the `*` wildcard does not match across `/` directory separators. However, for hierarchical vaults (`keepass`, `pass`), each `/`-separated group prefix is also generated as a candidate path. For example, resolving `keepass://website/Test Website:Password` generates the candidate prefix `website`. Because `path.Match("*", "website")` is true, an exclude pattern like `exclude_fields: ["*"]` matches the top-level group prefix and **excludes every secret in all top-level groups**.
-  - In contrast, the `*.notes` pattern below targets title-qualified attribute candidates (e.g. `Test Website.notes`), matching any entry's notes attribute without matching slashed group prefixes. To exclude specific hierarchical groups or subtrees safely without blocking entire vaults, use qualified patterns (e.g. `website/*` or `group/subgroup/*`).
-- Filters apply consistently across `GetEntry`, `Search`, and scalar `GetSecret` resolution.
-- Example config:
+Supports KV v1 and KV v2 with token (`token` / `VAULT_TOKEN`) or AppRole (`role_id`/`secret_id` or `VAULT_ROLE_ID`/`VAULT_SECRET_ID`) authentication.
+
+### Process Environment (`env`)
+
 ```yaml
 vaults:
-  work:
-    provider: "keepass"
-    vault_path: "~/secrets/work_vault.kdbx"
-    include_fields:
-      - "env:*"
-      - "UserName"
-    exclude_fields:
-      - "*.notes"
-      - "secret:*"
+  local_env:
+    provider: env
 ```
 
-#### 5. Field Key Mapping (`mapping`)
-- Supported across vault providers (`keepass`, `env`, `pass`, `search`).
-- **`match`**: Regex pattern matched against raw attribute field names. Supports capture groups (e.g., `env:(.*)`).
-- **`key`**: Target output field name template using capture group references (e.g., `$1` or `\1`).
-- **Metadata Interpolation in `key`**: Target key names support Go `text/template` syntax referencing the entry's `.meta` context (such as `{{ .meta.Title | env }}_$1`). Case helper functions (`env`, `snake`, `kebab`, `upper`, `lower`) can be piped into capture groups and metadata values.
-- **Preserved Values**: Mapped fields retain the original field value.
-- **Filter Exemption**: Mapped fields always show regardless of `include_fields` or `exclude_fields` configured on the same vault. Field filtering (`include_fields` and `exclude_fields`) applies to unmapped fields.
-- Example config:
+Available implicitly as `vault: env` (or explicitly configured under `vaults:`). Returns a single flat `Entry` containing current process environment variables; use `rules:` with explicit `include:` globs (for example, `include: ["AWS_*"]`) to select specific variables.
+
+### OS Keyring (`keyring`)
+
 ```yaml
 vaults:
-  mapped_work:
-    provider: "keepass"
-    vault_path: "~/secrets/work_vault.kdbx"
-    mapping:
-      - match: "^Password$"
-        key: "{{ .meta.Title | env }}_API_KEY"
-      - match: "env:(.*)"
-        key: "\\1"
+  os_secrets:
+    provider: keyring
+    query: "OPENAI_API_KEY,ANTHROPIC_API_KEY"
 ```
 
-#### 6. Key Formatting (`key_format`)
-Supported across all configured vault providers (`keepass`, `env`, `pass`, `search`). Transforms entry attribute keys to a consistent casing and separator format:
-- `none` (default): Passes through the original key name unmodified.
-- `env`: UPPERCASE_WITH_UNDERSCORES.
-- `snake`: lowercase_with_underscores.
-- `kebab`: lowercase-with-hyphens.
-- Example config:
-```yaml
-vaults:
-  snake_vault:
-    provider: "keepass"
-    vault_path: "~/secrets/work_vault.kdbx"
-    key_format: "snake"
-```
+Available implicitly as `vault: keyring` or configured explicitly with `provider: keyring` and `query:` key names. Non-enumerable OS keyring backends require explicit key names via `query:`. Internal cloakenv cache and provider master keys (`cache_token`, `cache_disk_token`, `cache-master-key`, `provider/*`, `cache/*`, `cache_v2/*`) are strictly isolated and blocked from flat entry lookups.
 
-#### 7. Universal Per-Entry Attributes Decorator (`attributes`)
-Supported across all configured vault providers (`keepass`, `env`, `pass`, `search`). Computes or overlays templated attributes onto every entry.
+### Transparent Per-Vault Caching (`cache`)
 
-- **Execution Order**: Wrapped strictly after `FilteringProvider` (`include_fields`, `exclude_fields`), `MappingProvider` (`mapping`), and `KeyFormatProvider` (`key_format`).
-- **Post-Filter Guarantee**: Templates in `attributes:` only see authorized, formatted attributes in `.attributes`, ensuring field filters cannot be bypassed by template evaluation ([RSK-002](docs/plans/archive/2026-10-24-template-and-merge-consolidation.md#rsk-002-filter-bypass-via-meta-or-unfiltered-source-entries-in-templates-accepted), [REQ-005](docs/plans/archive/2026-10-24-template-and-merge-consolidation.md#req-005-per-entry-attributes-decorator-across-all-vaults-accepted--p0)).
-- **Template Context**: Templates have access to `.meta` (`Title`, `Tags`, `UUID`, `Vault`, `Provider`, `Path`, `Group`) and post-filter `.attributes`.
-- **Queryable**: Computed attributes are immediately available via `cloakenv get <vault>://<entry>:<attribute>`, `cloakenv show <vault>://<entry>`, and `cloakenv search`.
-- Example config:
-```yaml
-vaults:
-  decorated_keepass:
-    provider: "keepass"
-    vault_path: "~/secrets/work.kdbx"
-    key_format: "env"
-    attributes:
-      DOTENV: "{{ .attributes | toEnv }}"
-      SERVICE_NAME: "{{ .meta.Title | lower }}"
-```
-
-#### 8. KeePass Placeholders & Cross-Entry References (`resolve_references`)
-Supported on `keepass` vaults when `resolve_references: true` is configured in `config.yaml`. Allows KeePass entries to dynamically reference fields within the same entry, calculate timestamps, perform text transformations, parse URL components, or pull attributes from other entries across the database.
-
-##### Enabling Placeholder Resolution
-Placeholder resolution is disabled by default (`false`) to ensure string literals containing `{...}` remain untouched. Enable it per-vault in `config.yaml`:
 ```yaml
 vaults:
   work:
-    provider: "keepass"
-    vault_path: "~/secrets/work_vault.kdbx"
-    resolve_references: true
-```
-
-##### Same-Entry Placeholders
-Interpolates standard or custom fields from the current entry:
-| Placeholder | Description | Example Output |
-|---|---|---|
-| `{TITLE}` | Entry Title | `Database Server` |
-| `{USERNAME}` | Entry UserName | `admin_user` |
-| `{PASSWORD}` | Entry Password | `s3cr3t_p@ss` |
-| `{URL}` | Entry URL | `https://db.example.com:5432/mydb` |
-| `{NOTES}` | Entry Notes | `Production DB notes` |
-| `{S:<custom>}` | Custom string attribute named `<custom>` | `{S:api_key}` $\rightarrow$ `sk_live_12345` |
-
-##### Date/Time Placeholders
-Generates current timestamp components. Local variants (`DT_*`) use the host system's local timezone (`time.Now()`), while `DT_UTC_*` variants use UTC.
-| Local Placeholder | UTC Placeholder | Format / Description | Example Output |
-|---|---|---|---|
-| `{DT_SIMPLE}` | `{DT_UTC_SIMPLE}` | Full timestamp (`YYYYMMDDHHMMSS`) | `20260330143000` |
-| `{DT_YEAR}` | `{DT_UTC_YEAR}` | 4-digit year (`YYYY`) | `2026` |
-| `{DT_MONTH}` | `{DT_UTC_MONTH}` | 2-digit month (`MM`) | `03` |
-| `{DT_DAY}` | `{DT_UTC_DAY}` | 2-digit day (`DD`) | `30` |
-| `{DT_HOUR}` | `{DT_UTC_HOUR}` | 2-digit 24-hour (`HH`) | `14` |
-| `{DT_MINUTE}` | `{DT_UTC_MINUTE}` | 2-digit minute (`MM`) | `30` |
-| `{DT_SECOND}` | `{DT_UTC_SECOND}` | 2-digit second (`SS`) | `00` |
-
-##### Text Transformations (`T-CONV`)
-Transforms inner text using a specified method.
-- **Syntax**: `{T-CONV:<sep><text><sep><METHOD><sep>}`
-- **Configurable Separator**: The character `<sep>` following `T-CONV:` defines the delimiter (e.g. `/`, `!`, `#`). This allows transforming text containing slashes without syntax errors (e.g., `{T-CONV:!usr/bin!UPPER!}`).
-- **Examples**:
-  - `{T-CONV:/hello world/UPPER/}` $\rightarrow$ `HELLO WORLD`
-  - `{T-CONV:!admin:secret!BASE64!}` $\rightarrow$ `YWRtaW46c2VjcmV0`
-
-| Method / Aliases | Description | Example Input $\rightarrow$ Output |
-|---|---|---|
-| `UPPER`, `U` | Convert text to uppercase | `foo` $\rightarrow$ `FOO` |
-| `LOWER`, `L` | Convert text to lowercase | `FOO` $\rightarrow$ `foo` |
-| `BASE64` | Standard Base64 encode | `admin:pass` $\rightarrow$ `YWRtaW46cGFzcw==` |
-| `HEX` | Lowercase hexadecimal encode | `abc` $\rightarrow$ `616263` |
-| `URI` | Percent-encode for URI queries | `user@host` $\rightarrow$ `user%40host` |
-| `URI-DEC`, `URIDEC`, `URI-DECODE` | Percent-decode URI query text | `user%40host` $\rightarrow$ `user@host` |
-| `RAW` | Return raw text unchanged | `text` $\rightarrow$ `text` |
-
-##### URL Component Extraction
-Extracts individual URL components from an entry's `URL` field using `{URL:<component>}` for the current entry, or `{REF:A:<component>@...}` / `{REF:URL:<component>@...}` for cross-entry references.
-
-Given an entry URL `https://admin:secret123@db.example.com:5432/app_db?ssl=true#main`:
-| Component / Aliases | Extracted Part | Example Output |
-|---|---|---|
-| `SCM`, `SCHEME` | Scheme | `https` |
-| `HOST` | Hostname (excluding port) | `db.example.com` |
-| `PORT` | Port number | `5432` |
-| `PATH` | Path | `/app_db` |
-| `QUERY` | Query string | `ssl=true` |
-| `FRAGMENT` | Fragment / anchor | `main` |
-| `USERINFO` | User info (`username:password`) | `admin:secret123` |
-| `USERNAME` | Username from userinfo | `admin` |
-| `PASSWORD` | Password from userinfo | `secret123` |
-| `RMVSCM`, `WITHOUTSCHEME` | URL with `scheme:` prefix removed | `//admin:secret123@db.example.com:5432/app_db?ssl=true#main` |
-
-##### Cross-Entry Field References (`REF`)
-References field values from another entry in the database.
-- **Syntax**: `{REF:<WantedField>@<SearchIn>:<SearchText>}`
-
-**`WantedField` Codes (Field to Extract)**:
-- `T`: Title
-- `U`: UserName
-- `P`: Password
-- `A` or `URL`: URL (or `A:<component>` / `URL:<component>`, e.g. `A:HOST`, `URL:PORT`)
-- `N`: Notes
-- `S:<custom>`: Custom string attribute named `<custom>`
-
-**`SearchIn` Codes (Field to Search In)**:
-- `I`: Entry UUID (32-character hex string, with or without hyphens)
-- `T`: Title
-- `U`: UserName
-- `P`: Password
-- `A`: URL
-- `N`: Notes
-- `O`: Custom attributes ("Other")
-
-**Entry Search Matching**:
-`cloakenv` performs a two-pass search across all entries in the database:
-1. **Pass 1 (Exact Match)**: Checks for an exact string match in `SearchIn`.
-2. **Pass 2 (Case-Insensitive Substring Match)**: If no exact match is found, falls back to a case-insensitive substring search in `SearchIn`.
-
-**Examples**:
-- `{REF:P@T:PostgreSQL Production}`: Fetches Password of entry titled `PostgreSQL Production`.
-- `{REF:U@I:10203040-5060-7080-90a0-b0c0d0e0f001}`: Fetches UserName of entry with specified UUID.
-- `{REF:S:api_key@U:service_acct}`: Fetches custom attribute `api_key` from entry with UserName `service_acct`.
-- `{REF:A:HOST@T:Staging DB}`: Extracts `HOST` component from URL of `Staging DB` entry.
-
-##### Recursion Depth Limits & Circular Reference Protection
-- **Max Depth Limit**: References and placeholders can be chained up to a maximum recursion depth of **10**. Exceeding depth 10 returns an error (`maximum recursion depth (10) exceeded`).
-- **Circular Reference Detection**: `cloakenv` tracks visited entry fields (`<UUID>:<fieldKey>`). If circular dependencies are detected (e.g. Entry A $\rightarrow$ Entry B $\rightarrow$ Entry A), an error is raised immediately.
-
-##### Security Warning & Secret Exposure Caveat
-> [!CAUTION]
-> **Secret Exposure Warning**:
-> Extracting sensitive URL components (such as `{URL:PASSWORD}`, `{URL:USERINFO}`), transforming passwords (e.g. `{T-CONV:/{PASSWORD}/BASE64/}`), or referencing passwords across entries (`{REF:P@...}`) in non-sensitive or exposed fields (such as `Notes`, `URL`, or custom fields) causes entry secrets to be evaluated and stored in those derived fields.
->
-> When entries are exported or merged (e.g. via `cloakenv show` or `cloakenv run -m`), all attributes are exposed by default.
->
-> **Mitigation**: Combine `resolve_references: true` with [Field Filtering](#4-field-filtering-include_fields-and-exclude_fields) (`exclude_fields` / `include_fields`) to constrain the blast radius and prevent secret fields from being exported:
-> ```yaml
-> vaults:
->   work:
->     provider: "keepass"
->     vault_path: "~/secrets/work_vault.kdbx"
->     resolve_references: true
->     exclude_fields:
->       - "*.notes"
->       - "raw_*"
-> ```
-
-#### 9. Transparent Per-Vault Caching (`cache`)
-Opt-in per-vault caching speeds up expensive secret lookups (such as Argon2 KeePass decryption or nested template/search resolution) while keeping zero plaintext secrets on disk.
-
-- **Wrapper Placement**: `CachingProvider` wraps as the outermost vault decorator (outside `FilteringProvider`, `MappingProvider`, `KeyFormatProvider`, and `AttributesProvider`), so only authorized, transformed payloads are cached.
-- **Shorthand & Structured Config**:
-  - `cache: true`: Enables caching in `keyring` mode using `cache.default_ttl` (or no expiry if unset).
-  - `cache: "15m"`: Enables caching in `keyring` mode with a `15m` TTL.
-  - Mapping `{ enabled, ttl, mode }`: Full explicit configuration.
-- **Storage Modes**:
-  - `keyring` (default): Stores payloads in the OS keyring under service `<prefix>_vault_cache` and account `cache_v2/<hash>`. Zero disk persistence.
-  - `encrypted_disk`: Encrypts payloads with AES-256-GCM under `<UserCacheDir>/<prefix>/vaults/<vault_hash>/<entry_hash>` (`0700` dir, `0600` file), storing the encryption key in the OS keyring (`<prefix>` / `cache_disk_token`).
-- Example config:
-```yaml
-vaults:
-  work:
-    provider: "keepass"
-    vault_path: "~/secrets/work_vault.kdbx"
+    provider: keepass
+    vault_path: ~/secrets/work.kdbx
     cache:
-      enabled: true
+      enabled: true       # or shorthand: `cache: true` or `cache: "15m"`
       ttl: "15m"
-      mode: "keyring"   # Options: "keyring" (default) or "encrypted_disk"
+      mode: "keyring"     # "keyring" (default) or "encrypted_disk"
 ```
 
 ---
 
-## Template Engine & FuncMap Reference
+## Pure Go Template Functions Reference
 
-`cloakenv` embeds Go's standard library `text/template` engine with `.Option("missingkey=error")` and recursion depth tracking. When `resolve_values: true` is enabled on a `search` vault (or evaluated in built-in providers and `attributes:` decorators), string attribute values containing `{{ ... }}` are dynamically rendered with access to entry metadata, attributes, and 31 built-in template functions and aliases.
+All template expressions compile with `.Option("missingkey=error")` and accept only pure functions validated statically by `config.Validate` / `cloakenv doctor`:
 
-### Top-Level Templates (`templates:`)
+- **Tag & Fallback Helpers**:
+  - `hasTag "prod" .tags` — Case-insensitive tag membership test
+  - `default <fallback> <val...>` — Returns first non-empty value or fallback
+  - `coalesce <val...>` — Returns first non-empty string representation
+- **Serialization & Formatting**:
+  - `toEnv` / `toKv` — Formats a map (`map[string]any` or `map[string]string`) as sorted `KEY=VALUE` lines, skipping reserved metadata keys
+  - `toJSON` / `toJson` / `json` — Serializes value to compact JSON
+  - `fromJSON` / `fromJson` — Parses JSON string
+  - `toYAML` / `toYaml` / `yaml` — Serializes value to YAML
+  - `fromYAML` / `fromYaml` — Parses YAML string
+- **Key & String Transforms**:
+  - `upper`, `lower` — Uppercase / lowercase string
+  - `env` — Formats key as `UPPER_SNAKE_CASE`
+  - `snake` — Formats key as `lower_snake_case`
+  - `kebab` — Formats key as `lower-kebab-case`
+  - `keys` — Returns sorted key slice for a map (`map[string]any` or `map[string]string`)
+  - `values` — Returns values ordered by sorted keys for a map
+  - `join <sep> <slice>` — Joins string or any slices
+  - `shquote` / `shellQuote` — POSIX single-quote escapes a string
 
-Centralize reusable templates in `~/.config/cloakenv/config.yaml`. Templates can be defined inline or point to external files:
-
-```yaml
-templates:
-  # Scalar shorthand (equivalent to { template: "..." }):
-  simple_env: "{{ .attributes | toEnv }}"
-
-  # Inline template object:
-  dotenv:
-    template: "{{ .attributes | toEnv }}"
-
-  # External file template (resolves relative to config.yaml directory or expands ~/):
-  app_config:
-    path: "~/.config/cloakenv/templates/app.tmpl"
-```
-
-Evaluate configured templates using `{{ include "name" . }}` or evaluate external template files directly using `{{ includeFile "path/to/file.tmpl" . }}`. Template authors are the configuration owner, and template file paths are unrestricted by design.
-
-### Built-In Template Functions (`FuncMap`)
-
-| Function | Signature | Description | Example |
-|---|---|---|---|
-| `get` | `(uri string) (string, error)` | Resolves a single secret value from any vault or provider | `{{ get "keyring://pg/pass" }}` |
-| `tryGet` | `(uris ...string) string` | Resolves the first available secret across candidate URIs without failing on missing entries | `{{ tryGet "env://GH_TOKEN" "keyring://github/pat" }}` |
-| `default` | `(fallback any, given ...any) any` | Returns the first non-empty value in `given`, or `fallback` if all are empty | `{{ tryGet "env://TOKEN" \| default "fallback" }}` |
-| `coalesce` | `(vals ...any) string` | Returns the first non-empty string argument | `{{ coalesce (tryGet "env://A") (tryGet "env://B") "default" }}` |
-| `entry` | `(uri string) (map[string]any, error)` | Resolves a complete entry into a structured context map (`.meta`, `.attributes`) | `{{ (entry "work://db").attributes.Password }}` |
-| `search` | `(query string) ([]map[string]any, error)` | Executes a search query across vaults and returns a slice of entry context maps | `{{ range search "\"db\" in tags" }}{{ .meta.Title }}: {{ .attributes.HOST }}{{ end }}` |
-| `toEnv` | `(attrs any) (string, error)` | Serializes an attributes map into dotenv key-value format (sorted, excluding metadata) | `{{ .attributes \| toEnv }}` |
-| `toKv` | `(attrs any) (string, error)` | Alias for `toEnv` | `{{ .attributes \| toKv }}` |
-| `toJson` / `toJSON` / `json` | `(v any) (string, error)` | Serializes a value or map to a compact JSON string | `{{ .attributes \| toJson }}` |
-| `toYaml` / `toYAML` / `yaml` | `(v any) (string, error)` | Serializes a value or map to a YAML string | `{{ .attributes \| toYaml }}` |
-| `fromJSON` / `fromJson` | `(str string) (any, error)` | Unmarshals a JSON string into an object (`map[string]any`) or slice (`[]any`) | `{{ (fromJSON .attributes.json_data).field }}` |
-| `fromYAML` / `fromYaml` | `(str string) (any, error)` | Unmarshals a YAML string into an object (`map[string]any`) or slice (`[]any`) | `{{ (fromYAML .attributes.yaml_data).field }}` |
-| `upper` | `(s string) string` | Converts a string to UPPERCASE | `{{ .meta.Title \| upper }}` |
-| `lower` | `(s string) string` | Converts a string to lowercase | `{{ .meta.Title \| lower }}` |
-| `env` | `(s string) string` | Formats a string to `UPPERCASE_WITH_UNDERSCORES` | `{{ .meta.Title \| env }}_API_KEY` |
-| `snake` | `(s string) string` | Formats a string to `lowercase_with_underscores` | `{{ .meta.Title \| snake }}` |
-| `kebab` | `(s string) string` | Formats a string to `lowercase-with-hyphens` | `{{ .meta.Title \| kebab }}` |
-| `keys` | `(m map[string]any) []string` | Returns a sorted slice of map keys | `{{ range keys .attributes }}{{ . }}{{ end }}` |
-| `values` | `(m map[string]any) []any` | Returns a slice of map values in sorted key order | `{{ range values .attributes }}{{ . }}{{ end }}` |
-| `join` | `(sep string, slice any) (string, error)` | Joins slice elements with a separator string | `{{ join "," .meta.Tags }}` |
-| `include` | `(name string, ctx any) (string, error)` | Renders a named top-level template defined under `templates:` | `{{ include "dotenv" . }}` |
-| `includeFile` | `(path string, ctx any) (string, error)` | Renders an external template file relative to `config.yaml` or `~/` | `{{ includeFile "templates/dotenv.tmpl" . }}` |
-| `exec` | `(name string, args ...any) (string, error)` | Executes an external CLI command with direct argv isolation, zero shell interpolation, and trailing newline trimming | `{{ exec "gh" "auth" "token" }}` |
-| `shquote` | `(s string) string` | Safely quotes a string in POSIX single quotes (`'...'`, escaping `'` as `'\''`) | `{{ shquote .attributes.Password }}` |
-| `shellQuote` | `(s string) string` | Alias for `shquote` | `{{ shellQuote .attributes.Password }}` |
-
-### Template Context (`.`)
-
-Templates rendered within `search` vaults (`resolve_values: true`) and per-entry `attributes:` decorators receive a root dot context (`.`):
-
-| Context Variable | Description |
-|---|---|
-| `.meta` / `.Meta` / `._meta_` | Entry metadata: `Title`/`title`, `Tags`/`tags`, `UUID`/`uuid`, `Vault`/`vault`, `Provider`/`provider`, `Path`/`path`, `Group`/`group` (with `.group.name`, `.group.uuid`, `.group.path`). Both lowercase and PascalCase access are supported. |
-| `.attributes` / `.Attributes` | Post-filter, post-map, post-format entry attributes map. Excluded fields are never accessible in `.attributes`. |
-| `.original` / `.Original` | Pre-filter/pre-format snapshot exposing `.meta` / `.attributes` prior to decorator transforms when available. |
-| `.output` / `.Output` | Current output entry snapshot exposing `.meta` / `.attributes`. |
-
-### Error Handling & Safety
-- **Strict Key Checking (`missingkey=error`)**: Accessing an unmapped or misspelled attribute key (e.g. `{{ .attributes.MissingKey }}`) triggers an immediate evaluation error, preventing silent generation of broken configurations.
-- **Bounded Recursion (`maxDepth = 5`)**: Resolution through `get`, `entry`, `search`, `include`, and `includeFile` tracks execution depth and aborts if recursion exceeds 5 levels.
-- **`exec` Memoisation & Encrypted Caching**: Identical `{{ exec ... }}` invocations within a single `Orchestrator` run are deduplicated in memory via singleflight (executing at most once per run, including sticky error memoisation to prevent duplicate side effects). When `cache.default_ttl` is configured with a positive duration, successful `exec` outputs up to 1 MiB are persisted in the encrypted `cache://` layer keyed by the canonical binary path, arguments, working directory, and environment digest.
+Legacy URI/file/command template functions (`get`, `tryGet`, `entry`, `search`, `include`, `includeFile`, `exec`) are permanently removed.
 
 ---
 
-## Command Autoloading & Alias Masking
+## Command Autoloading & Ephemeral File Delivery
 
-`cloakenv` can automatically match commands executed via `cloakenv run -- <command>` and inject credentials, merge vaults, or transform the command line before execution.
-
-Define `autoload:` rules in `~/.config/cloakenv/config.yaml`:
+`autoload:` binds shell commands executed via `cloakenv run -- <cmd>` to declarative `envs:` and `templates:`:
 
 ```yaml
 autoload:
-  # Example 1: Command Transformation / Alias Masking
-  # Running: `cloakenv run -- litellm --config config.yaml`
-  # Expands to: `uvx --with 'litellm[proxy]' litellm --config config.yaml`
-  # while injecting LITELLM_MASTER_KEY!
-  - match: "^litellm\\s+(.*)$"
-    command: "uvx --with 'litellm[proxy]' litellm \\1"
-    env:
-      LITELLM_MASTER_KEY: "keyring://litellm/master_key"
-
-  # Example 2: AWS CLI Autoloading
-  - match: "aws"
-    vaults:
-      - "work://Cloud/AWS_Production"
-    env:
-      AWS_DEFAULT_REGION: "env://DEFAULT_REGION"
-    whitelist:
-      - "AWS_ACCESS_KEY_ID"
-      - "AWS_SECRET_ACCESS_KEY"
-      - "AWS_DEFAULT_REGION"
-
-  # Example 3: Wildcard / Glob Matching
-  - match: "kubectl*"
-    merge:
-      - "work://clusters/staging"
-    env:
-      KUBECONFIG_TOKEN: "keyring://k8s/token"
+  - match: "^deploy\\s+(.*)$"
+    command: "./scripts/deploy.sh \\1"
+    envs:
+      - prod_env
+      - DEPLOY_ENV: "production"
+    templates:
+      - template: service_json
+        env_path: SERVICE_CONFIG_PATH
+        persist: false
 ```
 
-> [!WARNING]
-> **Windows Batch Script Restriction**: Execution of `.bat` and `.cmd` scripts is explicitly blocked on Windows for security reasons due to vulnerabilities in how arguments are escaped by `cmd.exe`. If you must run a batch wrapper (e.g., `npm.cmd`, `gradlew.bat`), please invoke it explicitly using a shell, such as `cloakenv run -- bash -c "npm ..."` or invoke the underlying executable directly.
-
-### Pattern Matching Types:
-1. **Regular Expressions**: `match: "^(aws|terraform)\\s+(.*)$"` with capture group substitutions (`\1`..`\9` or `$1`..`$9`) in `command:`.
-2. **Executable Basename & Path**: `match: "aws"` matches `aws`, `/usr/local/bin/aws`, or `aws s3 ls`.
-3. **Glob Patterns**: `match: "npm run *"` or `match: "*.sh"`.
-
----
-
-## Search Query Language Reference
-
-`cloakenv search` evaluates queries using the fast, safe [Go expr](https://github.com/expr-lang/expr) engine. Queries run against flattened entry objects containing `title`, `path`, `tags`, `_meta_` (including `_meta_.tags`, `_meta_.provider`, `_meta_.vault`), and all custom attributes.
-
-### 1. Tag & Array Membership (`in`, `not in`)
-
-```bash
-# Entry must contain tag "auth:ssh" (evaluates _meta_.tags or tags)
-cloakenv search '"auth:ssh" in _meta_.tags'
-cloakenv search '"auth:ssh" in tags'
-
-# Entry must NOT contain tag "deprecated"
-cloakenv search 'not ("deprecated" in _meta_.tags)'
-
-# Combined tags
-cloakenv search '"env:prod" in _meta_.tags and "role:db" in _meta_.tags'
-```
-
-### 2. Numbers & Comparisons
-
-```bash
-cloakenv search 'bit_strength == 4096'
-cloakenv search 'port >= 8000 and port <= 9000'
-```
-
-### 3. String Functions
-
-```bash
-# Substring search
-cloakenv search 'title contains "Bastion"'
-
-# Prefix and Suffix matching
-cloakenv search 'title startsWith "Prod-"'
-cloakenv search 'hostname endsWith ".internal.net"'
-
-# Regular expression matching
-cloakenv search 'hostname matches "db-[0-9]+\\.example\\.com"'
-```
-
-### 4. Boolean Combinations
-
-```bash
-cloakenv search '("auth:ssh" in tags or "auth:tls" in tags) and bit_strength >= 2048'
-```
-
-### 5. UUID & Group Querying
-
-```bash
-# Query by exact entry UUID
-cloakenv search 'uuid == "10203040-5060-7080-90a0-b0c0d0e0f001"'
-
-# Query by KeePass group name or path
-cloakenv search 'group.name == "website"'
-cloakenv search 'group.path startsWith "website"'
-```
-
-> [!NOTE]
-> If an entry lacks a field referenced in the search query (e.g. searching `bit_strength == 4096` when some entries have no `bit_strength` attribute), `cloakenv` **gracefully skips** non-matching entries without raising runtime errors.
-
-> [!NOTE]
-> The search engine uses a **strict allowlist** for expression nodes. Only safe primitives, builtins, comparisons, and boolean logic are permitted. Arbitrary function calls and method invocations on entries are blocked for security.
+- `envs[]` items accept named `envs:` keys or inline `KEY: VALUE` maps (values may reference previously resolved variables via pure Go templates).
+- `templates[]` deliveries support:
+  - `env`: Export rendered content directly into an environment variable
+  - `env_path`: Write rendered content to a secure `0600` file (preferring `/dev/shm` when `path` is omitted), export its path in the target variable, and zero + unlink on exit unless `persist: true`
+  - `path`: Explicit destination path (supports templates, checked against symlinks and pre-existing files unless safe creation applies)
 
 ---
 
 ## Configuration Reference (`config.yaml`)
 
-Default path: `~/.config/cloakenv/config.yaml` (override with `-c <path>`).
-
-```yaml
-# ==========================================
-# Reusable Templates
-# ==========================================
-templates:
-  # Also accepts scalar shorthand: `dotenv: "{{ .attributes | toEnv }}"`
-  dotenv:
-    template: "{{ .attributes | toEnv }}"
-  # app_config:
-  #   path: "~/.config/cloakenv/templates/app.tmpl"
-
-# ==========================================
-# Cache Configuration
-# ==========================================
-cache:
-  # Default TTL duration for cache:// sets if --ttl is omitted
-  default_ttl: "10m"
-
-# ==========================================
-# Keyring Configuration
-# ==========================================
-keyring:
-  # Service prefix used in the OS keyring
-  prefix: "cloakenv"
-  # Isolate credentials by configuration file path (defaults to false).
-  # When set to true and a custom configuration file is loaded (via -c <config_path>),
-  # a 10-character SHA-256 hash of the configuration file's absolute path is appended
-  # to the keyring prefix (<prefix>_<hash>). This prevents credential and master password
-  # collisions across different projects, repositories, or environments.
-  # When using the default configuration path (~/.config/cloakenv/config.yaml), the prefix
-  # remains unhashed.
-  isolate: true
-
-# ==========================================
-# Audit Logging Configuration
-# ==========================================
-# Disabled by default (enabled: false). When enabled, log directories and files
-# are created with 0700 and 0600 permissions, and each record includes:
-# timestamp, uri, target, caller, pid, uid, subcommand, and outcome (never secret values).
-audit:
-  # Opt-in compliance audit trail for secret access events (defaults to false).
-  enabled: true
-  # Defaults to ~/.config/cloakenv/audit.jsonl when omitted.
-  log_path: "~/.config/cloakenv/audit.jsonl"
-  # JSON-lines output format; supports "jsonl" (default) and "json".
-  format: "jsonl"
-
-# ==========================================
-# Configured Vaults
-# ==========================================
-vaults:
-  # KeePass .kdbx Vault
-  work:
-    provider: "keepass"
-    vault_path: "~/secrets/work.kdbx"
-    # key_file: "~/secrets/work.keyx"       # Optional KeePass key file (.key / .keyx / raw key)
-    # key_file_env: "CLOAKENV_KEY_FILE"     # Optional env var holding key file path (overrides key_file)
-    searchable: true
-    resolve_references: true # Enable KeePass entry placeholder & cross-entry reference resolution
-    # cache:                    # Optional per-vault caching (also supports `cache: true` or `cache: "15m"`)
-    #   enabled: true
-    #   ttl: "15m"
-    #   mode: "keyring"         # "keyring" (default) or "encrypted_disk"
-
-  # Unix Password Store Vault (pass / GPG)
-  pass_store:
-    provider: "pass"
-    vault_path: "~/.password-store"
-    searchable: true
-
-  # Stored Search Vault (filtered view over source vaults)
-  openrouter:
-    provider: "search"
-    source_vaults: ["work"]
-    query: '"service:openrouter" in tags'
-
-  # Stored Search Vault with sources (grouping entry URIs & search queries)
-  jules_stack:
-    provider: "search"
-    resolve_values: true
-    sources:
-      - "work://ai/keys"
-      - 'search://"service:openrouter" in tags'
-    include_fields:
-      - "API_*"
-    mapping:
-      - match: "^API_(.*)"
-        key: "{{ .meta.Title | env }}_API_$1"
-    key_format: "env"
-    attributes:
-      DOTENV: "{{ .attributes | toEnv }}"
-
-  # Vault with Regex Field Key Mapping & Key Formatting
-  mapped_vault:
-    provider: "keepass"
-    vault_path: "~/secrets/work.kdbx"
-    key_format: "env"
-    mapping:
-      - match: "env:(.*)"
-        key: "\\1"
-
-  # Vault with Universal Per-Entry Attributes Decorator
-  decorated_vault:
-    provider: "keepass"
-    vault_path: "~/secrets/work.kdbx"
-    key_format: "env"
-    attributes:
-      DOTENV: "{{ .attributes | toEnv }}"
-      TITLE_UPPER: "{{ .meta.Title | upper }}"
-
-# ==========================================
-# Command Autoloading Rules
-# ==========================================
-autoload:
-  - match: "^litellm\\s+(.*)$"
-    command: "uvx --with 'litellm[proxy]' litellm \\1"
-    env:
-      LITELLM_MASTER_KEY: "keyring://litellm/master_key"
-
-  - match: "aws"
-    vaults:
-      - "work://Cloud/AWS_Production"
-    whitelist:
-      - "AWS_ACCESS_KEY_ID"
-      - "AWS_SECRET_ACCESS_KEY"
-```
+See [`examples/config.yaml`](examples/config.yaml) for a complete, validated configuration example covering `cache`, `keyring`, `audit`, `vaults`, `envs`, `templates`, and `autoload`.
 
 ---
 
 ## Headless & CI/CD Usage
 
-`cloakenv` is built to run seamlessly in continuous integration (GitHub Actions, GitLab CI) and headless Docker containers:
-
-1. **Use `env://` mappings**: Point secrets to CI environment variables:
-   ```yaml
-   # .github/workflows/deploy.yml
-   - name: Deploy
-     run: |
-       cloakenv run \
-         -e DB_PASS=env://SECRET_DB_PASSWORD \
-         -e API_KEY=env://SECRET_API_KEY \
-         -- ./deploy.sh
-   ```
-2. **Environment & encrypted vaults**: Read CI environment variables via `env://` or encrypted `.kdbx` / `.gpg` stores without interactive master password prompts (use `CLOAKENV_MASTER_PASSWORD` or OS keyring when needed).
-3. **Zero Interactive Prompts**: When secrets are supplied via `env://` or files, `cloakenv` never prompts for terminal input.
+1. Supply credentials via process environment (`vault: env` with `pass` `include:` globs) or Vault AppRole (`role_id`/`secret_id` or `VAULT_TOKEN`).
+2. Bind CI deployment commands via `autoload:` and execute with `cloakenv run -- ./deploy.sh` (or `--dry-run` / `cloakenv inspect` in CI sanity checks).
+3. Set `audit.enabled: true` when non-secret access telemetry (`jsonl` or `json`) is required.
 
 ---
 
@@ -1444,23 +481,12 @@ make verify        # Run complete verification: build, vet, format check, race t
 make agents-check  # Run automated documentation & repository consistency checks
 ```
 
-> [!NOTE]
-> CI runs lint, cross-platform tests (Linux, macOS, Windows), and [Semgrep](https://semgrep.dev/) static analysis for code scanning. All checks must pass before merge.
-
 ### Running Test Verification with Test Fixture
 
-> See [testdata/README.md](testdata/README.md) for full fixture documentation, attribute reference, and credentials.
-
-A pre-built KeePass database fixture is available at `testdata/testDB.kdbx`:
-- **Master Password**: `password123`
-- **Group**: `website` $\rightarrow$ **Entry**: `Test Website`
-- **Attributes**: `Password` (`testPassword123!`), `UserName` (`user@email.com`), Attachment `hello.txt`
+See [`testdata/README.md`](testdata/README.md) for KeePass fixture details (`testdata/testDB.kdbx`).
 
 ```bash
-# Test KeePass authentication and attribute resolution
-echo "password123" | ./bin/cloakenv -c testdata/test_config.yaml auth login testdb
-./bin/cloakenv -c testdata/test_config.yaml get "testdb://website/Test Website:UserName"
-./bin/cloakenv -c testdata/test_config.yaml auth forget testdb
+make verify lint agents-check
 ```
 
 ---

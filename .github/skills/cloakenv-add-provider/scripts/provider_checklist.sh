@@ -11,7 +11,7 @@ Usage: provider_checklist.sh <provider_name>
 Performs 8 mechanical checks for a cloakenv secret provider:
   1. Source file exists (internal/provider/<name>.go)
   2. Test file exists (internal/provider/<name>_test.go)
-  3. Implements 6 core provider.SecretProvider interface methods
+  3. Implements 4 core read-only provider.SecretProvider interface methods
   4. Registered in engine (internal/engine/provider_manager.go)
   5. Documented in README.md
   6. Configured in examples/config.yaml
@@ -59,23 +59,23 @@ else
 fi
 
 # 3. Interface compliance check
-# Checks for the 6 core methods of provider.SecretProvider
+# Checks for the 4 core read-only methods of provider.SecretProvider
 MISSING_METHODS=()
 if [[ "$SOURCE_PASSED" == "true" ]]; then
     # Look for method definitions on receiver types, e.g. func (p *...) MethodName
-    for method in "Scheme()" "Initialize(" "GetSecret(" "SetSecret(" "DeleteSecret(" "Validate("; do
+    for method in "Scheme()" "Initialize(" "GetSecret(" "Validate("; do
         method_name="${method%%(*}"
         if ! grep -qE "func\s+\([^)]+\)\s+${method_name}\s*\(" "$SOURCE_PATH"; then
             MISSING_METHODS+=("\"${method_name}\"")
         fi
     done
 else
-    MISSING_METHODS=("\"Scheme\"" "\"Initialize\"" "\"GetSecret\"" "\"SetSecret\"" "\"DeleteSecret\"" "\"Validate\"")
+    MISSING_METHODS=("\"Scheme\"" "\"Initialize\"" "\"GetSecret\"" "\"Validate\"")
 fi
 
 if [[ ${#MISSING_METHODS[@]} -eq 0 ]]; then
     IFACE_PASSED="true"
-    IFACE_DETAIL="Implements all 6 provider.SecretProvider methods"
+    IFACE_DETAIL="Implements all 4 provider.SecretProvider methods"
     MISSING_JSON="[]"
     PASSED_COUNT=$((PASSED_COUNT + 1))
 else

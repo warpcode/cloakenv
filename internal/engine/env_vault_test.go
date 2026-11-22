@@ -143,38 +143,3 @@ func TestImplicitBuiltinKeyringVault_EnvsAndTemplates(t *testing.T) {
 		t.Fatalf("internal keyring keys leaked into template output:\n%s", tplRes)
 	}
 }
-
-func TestEnvVault_ReadOnlyDirectResolution(t *testing.T) {
-	t.Setenv("CLOAKENV_ENVTEST_SECRET_API_KEY", "sk-12345")
-
-	cfg := &config.Config{
-		Vaults: map[string]config.VaultConfig{
-			"env": {
-				Provider: "env",
-			},
-		},
-	}
-
-	orch, err := NewOrchestrator(cfg)
-	if err != nil {
-		t.Fatalf("failed to create orchestrator: %v", err)
-	}
-
-	ctx := context.Background()
-
-	val, err := orch.Resolve(ctx, `{{ get "env://CLOAKENV_ENVTEST_SECRET_API_KEY" }}`)
-	if err != nil {
-		t.Fatalf("Resolve failed: %v", err)
-	}
-	if val != "sk-12345" {
-		t.Errorf("expected 'sk-12345', got %q", val)
-	}
-
-	entry, err := orch.GetEntry(ctx, "env://")
-	if err != nil {
-		t.Fatalf("GetEntry('env://') failed: %v", err)
-	}
-	if entry["CLOAKENV_ENVTEST_SECRET_API_KEY"] != "sk-12345" {
-		t.Errorf("expected raw flat key CLOAKENV_ENVTEST_SECRET_API_KEY='sk-12345', got %v", entry["CLOAKENV_ENVTEST_SECRET_API_KEY"])
-	}
-}

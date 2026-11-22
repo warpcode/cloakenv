@@ -741,3 +741,73 @@ func TestOutputPipeline_BufPoolScrubAndCap(t *testing.T) {
 		t.Fatalf("pooled buffer still contains secret payload after RenderDetailed")
 	}
 }
+
+func TestExamplesConfigCustomEnvFileRendersCleanly(t *testing.T) {
+	examplesPath := filepath.Join("..", "..", "examples", "config.yaml")
+	valRes, err := config.Validate(examplesPath, false)
+	if err != nil {
+		t.Fatalf("config.Validate(examples/config.yaml) error: %v", err)
+	}
+	for _, e := range valRes.Errors {
+		if !strings.Contains(e, "vault_path does not exist") {
+			t.Fatalf("examples/config.yaml has non-path validation error: %s (all: %v)", e, valRes.Errors)
+		}
+	}
+	if len(valRes.Warnings) > 0 {
+		t.Fatalf("examples/config.yaml produced unexpected validation warnings: %v", valRes.Warnings)
+	}
+	cfg, err := config.Load(examplesPath)
+	if err != nil {
+		t.Fatalf("config.Load(examples/config.yaml) failed: %v", err)
+	}
+
+	fetcher := &stubVaultFetcher{
+		vaults: map[string][]SourceEntry{
+			"work": {
+				{
+					Vault: "work",
+					Path:  "apps/web",
+					Title: "Web App",
+					Raw: map[string]any{
+						"title":    "Web App",
+						"path":     "apps/web",
+						"tags":     []string{"app"},
+						"UserName": "svc-user",
+						"password": "s3cr3t-value",
+					},
+				},
+				{
+					Vault: "work",
+					Path:  "apps/worker",
+					Title: "Worker",
+					Raw: map[string]any{
+						"title":    "Worker",
+						"path":     "apps/worker",
+						"tags":     []string{"app"},
+						"password": "worker-secret",
+					},
+				},
+			},
+		},
+	}
+
+	re := NewRuleEngine()
+	eb := NewEnvsBuilderWithFetcher(cfg, fetcher, re)
+	tr := NewTemplatesRendererWithFetcher(cfg, fetcher, re, eb)
+
+	res, err := tr.RenderDetailed(context.Background(), "custom_env_file")
+	if err != nil {
+		t.Fatalf("RenderDetailed(custom_env_file) failed: %v", err)
+	}
+	for _, want := range []string{
+		"# Entry: Web App (apps/web)",
+		"APP_USER=svc-user",
+		"APP_PASSWORD=s3cr3t-value",
+		"# Entry: Worker (apps/worker)",
+		"APP_PASSWORD=worker-secret",
+	} {
+		if !strings.Contains(res.Content, want) {
+			t.Errorf("rendered template missing %q:\n%s", want, res.Content)
+		}
+	}
+}
