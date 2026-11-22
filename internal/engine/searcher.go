@@ -131,10 +131,6 @@ type queryCondition struct {
 	value string
 }
 
-func isMissingKeyError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "map has no entry for key")
-}
-
 func isTemplateQuery(query string) bool {
 	return strings.Contains(query, "{{")
 }
