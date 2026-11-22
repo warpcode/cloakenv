@@ -502,25 +502,42 @@ func validateVaultSources(owner string, sources []VaultSourceConfig, cfg *Config
 				if rule.Match == "" && rule.ValueMatch == "" {
 					res.Errors = append(res.Errors, fmt.Sprintf("%s: match rule requires 'match' or 'value_match'", ruleLabel))
 				}
+				var keyCapCount, valCapCount int
 				if rule.Match != "" {
-					if _, err := regexp.Compile(rule.Match); err != nil {
+					if re, err := regexp.Compile(rule.Match); err != nil {
 						res.Errors = append(res.Errors, fmt.Sprintf("%s: invalid match regex %q: %v", ruleLabel, rule.Match, err))
+						keyCapCount = -1
+					} else {
+						keyCapCount = re.NumSubexp() + 1
 					}
 				}
 				if rule.ValueMatch != "" {
-					if _, err := regexp.Compile(rule.ValueMatch); err != nil {
+					if re, err := regexp.Compile(rule.ValueMatch); err != nil {
 						res.Errors = append(res.Errors, fmt.Sprintf("%s: invalid value_match regex %q: %v", ruleLabel, rule.ValueMatch, err))
+						valCapCount = -1
+					} else {
+						valCapCount = re.NumSubexp() + 1
 					}
+				}
+				keyPrimaryCapCount := keyCapCount
+				if keyPrimaryCapCount == 0 {
+					keyPrimaryCapCount = valCapCount
+				}
+				valPrimaryCapCount := valCapCount
+				if valPrimaryCapCount == 0 {
+					valPrimaryCapCount = keyCapCount
 				}
 				if rule.Key == "" {
 					res.Errors = append(res.Errors, fmt.Sprintf("%s: match rule missing 'key'", ruleLabel))
 				} else if strings.Contains(rule.Key, "{{") {
-					if err := validateTemplateSyntax(fmt.Sprintf("%s key", ruleLabel), rule.Key); err != nil {
+					safeKey := RewriteCapturePlaceholdersForTemplate(rule.Key, keyPrimaryCapCount)
+					if err := validateTemplateSyntax(fmt.Sprintf("%s key", ruleLabel), safeKey); err != nil {
 						res.Errors = append(res.Errors, err.Error())
 					}
 				}
 				if strings.Contains(rule.Value, "{{") {
-					if err := validateTemplateSyntax(fmt.Sprintf("%s value", ruleLabel), rule.Value); err != nil {
+					safeVal := RewriteCapturePlaceholdersForTemplate(rule.Value, valPrimaryCapCount)
+					if err := validateTemplateSyntax(fmt.Sprintf("%s value", ruleLabel), safeVal); err != nil {
 						res.Errors = append(res.Errors, err.Error())
 					}
 				}
