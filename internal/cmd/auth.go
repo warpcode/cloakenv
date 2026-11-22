@@ -52,6 +52,7 @@ func authLogin(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
+	defer func() { _ = orch.Close() }()
 	ctx, stop := signalContext()
 	defer stop()
 	if err := orch.Login(ctx, vault); err != nil {
@@ -80,6 +81,7 @@ func authForget(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
+	defer func() { _ = orch.Close() }()
 	ctx, stop := signalContext()
 	defer stop()
 	if err := orch.Forget(ctx, vault); err != nil {
@@ -154,6 +156,7 @@ func authStatus(args []string, cfg *config.Config) int {
 		fmt.Fprintf(os.Stderr, "Config error: %v\n", err)
 		return 1
 	}
+	defer func() { _ = orch.Close() }()
 	ctx, stop := signalContext()
 	defer stop()
 
