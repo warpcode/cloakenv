@@ -105,10 +105,8 @@ unknown_key: "error"
 	}
 
 	warningYAML := `
-vaults:
-  empty_search:
-    provider: "search"
-    query: '"env:prod" in tags'
+envs:
+  empty_env: []
 `
 	warningPath := filepath.Join(tempDir, "warning.yaml")
 	if err := os.WriteFile(warningPath, []byte(warningYAML), 0600); err != nil {

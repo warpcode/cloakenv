@@ -1092,3 +1092,77 @@ vaults:
 		})
 	}
 }
+
+func TestLoad_EnvsAndTemplateDrivers(t *testing.T) {
+	tempDir := t.TempDir()
+	yamlContent := `vaults:
+  work:
+    provider: keepass
+    vault_path: /tmp/work.kdbx
+
+envs:
+  litellm_env:
+    - vault: work
+      query: '{{ hasTag "litellm" .tags }}'
+      rules:
+        - type: pass
+          include: ["*"]
+          exclude: ["notes"]
+          key_format: env
+        - type: match
+          match: "^OPENAI_(.*)$"
+          value_match: "^sk-.*"
+          key: "LLM_$1"
+          value: "{{ .value }}"
+        - type: set
+          values:
+            APP_ENV: "production"
+
+templates:
+  litellm_cfg:
+    driver: yaml
+    vaults:
+      - vault: work
+        query: '{{ hasTag "litellm" .tags }}'
+  api_json:
+    driver: json
+    vaults:
+      - vault: work
+  dotenv_export:
+    driver: dotenv
+    from_env: litellm_env`
+
+	configPath := filepath.Join(tempDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	sources, ok := cfg.Envs["litellm_env"]
+	if !ok || len(sources) != 1 {
+		t.Fatalf("expected 1 source in litellm_env, got %+v", sources)
+	}
+	if sources[0].Vault != "work" || sources[0].Query != `{{ hasTag "litellm" .tags }}` {
+		t.Errorf("unexpected source: %+v", sources[0])
+	}
+	if len(sources[0].Rules) != 3 {
+		t.Fatalf("expected 3 rules, got %d", len(sources[0].Rules))
+	}
+	if sources[0].Rules[1].CompiledMatch == nil || sources[0].Rules[1].CompiledValueMatch == nil {
+		t.Error("expected match rule regexes to be precompiled on Load")
+	}
+
+	if cfg.Templates["litellm_cfg"].EffectiveDriver() != "yaml" {
+		t.Errorf("expected yaml driver, got %q", cfg.Templates["litellm_cfg"].EffectiveDriver())
+	}
+	if cfg.Templates["api_json"].EffectiveDriver() != "json" {
+		t.Errorf("expected json driver, got %q", cfg.Templates["api_json"].EffectiveDriver())
+	}
+	if cfg.Templates["dotenv_export"].EffectiveDriver() != "dotenv" || cfg.Templates["dotenv_export"].FromEnv != "litellm_env" {
+		t.Errorf("unexpected dotenv template config: %+v", cfg.Templates["dotenv_export"])
+	}
+}
