@@ -97,9 +97,15 @@ func (f *providerManagerEntryFetcher) FetchEntries(ctx context.Context, vaultNam
 	return out, nil
 }
 
+func isMissingKeyError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "map has no entry for key")
+}
+
 // EvaluateQueryPredicate evaluates a Go text/template boolean predicate against rawEntry.
 // Selection is strictly true iff trimmed template output equals "true".
-// Template parse or execution errors (including missingkey=error) are returned directly.
+// Absent canonical metadata keys are defaulted on a shallow copy, and per-entry
+// missing-key lookups evaluate as non-matching (false, nil) while syntax and
+// genuine execution/type errors are returned directly.
 func EvaluateQueryPredicate(query string, rawEntry map[string]any) (bool, error) {
 	if strings.TrimSpace(query) == "" {
 		return true, nil
@@ -108,11 +114,36 @@ func EvaluateQueryPredicate(query string, rawEntry map[string]any) (bool, error)
 	if err != nil {
 		return false, fmt.Errorf("invalid query template: %w", err)
 	}
+
+	queryCtx := make(map[string]any, len(rawEntry)+7)
+	maps.Copy(queryCtx, rawEntry)
+	for _, k := range []string{"title", "path", "uuid", "vault", "provider"} {
+		if _, exists := queryCtx[k]; !exists {
+			queryCtx[k] = ""
+		}
+	}
+	if _, exists := queryCtx["tags"]; !exists {
+		queryCtx["tags"] = []string{}
+	}
+	if _, exists := queryCtx["group"]; !exists {
+		queryCtx["group"] = nil
+	}
+
 	buf := bufPool.Get().(*bytes.Buffer)
 	buf.Reset()
-	defer bufPool.Put(buf)
+	defer func() {
+		b := buf.Bytes()
+		clear(b[:cap(b)])
+		if buf.Cap() <= 64*1024 {
+			buf.Reset()
+			bufPool.Put(buf)
+		}
+	}()
 
-	if err := t.Execute(buf, rawEntry); err != nil {
+	if err := t.Execute(buf, queryCtx); err != nil {
+		if isMissingKeyError(err) {
+			return false, nil
+		}
 		return false, fmt.Errorf("query execution failed: %w", err)
 	}
 	return strings.TrimSpace(buf.String()) == "true", nil
@@ -278,7 +309,14 @@ func (r *TemplatesRenderer) RenderDetailed(ctx context.Context, templateName str
 		}
 		buf := bufPool.Get().(*bytes.Buffer)
 		buf.Reset()
-		defer bufPool.Put(buf)
+		defer func() {
+			b := buf.Bytes()
+			clear(b[:cap(b)])
+			if buf.Cap() <= 64*1024 {
+				buf.Reset()
+				bufPool.Put(buf)
+			}
+		}()
 
 		tmplData := map[string]any{
 			"entries": entries,

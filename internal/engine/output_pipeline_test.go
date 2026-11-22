@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -267,13 +268,13 @@ func TestTemplatesRenderer_QueryErrorFailsRun(t *testing.T) {
 	fetcher := &stubVaultFetcher{
 		vaults: map[string][]SourceEntry{
 			"work": {
-				{Vault: "work", Path: "a", Title: "A", Raw: map[string]any{"title": "A"}},
+				{Vault: "work", Path: "a", Title: "A", Raw: map[string]any{"title": "A", "group": map[string]any{"name": "prod"}}},
 			},
 		},
 	}
 	cfg := &config.Config{
 		Envs: map[string][]config.VaultSourceConfig{
-			"bad": {{Vault: "work", Query: `{{ .nonexistent }}`}},
+			"bad": {{Vault: "work", Query: `{{ eq .group "prod" }}`}},
 		},
 	}
 	b := NewEnvsBuilderWithFetcher(cfg, fetcher, NewRuleEngine())
@@ -615,5 +616,134 @@ func TestEnvsBuilderDeterministicSortUUIDTieBreaker(t *testing.T) {
 	// uuid-a sorts before uuid-b, so last-entry-wins resolves to uuid-b regardless of input slice order.
 	if env["HOST"] != "second.example" {
 		t.Fatalf("expected HOST=second.example (uuid-b wins after uuid-a), got %q", env["HOST"])
+	}
+}
+
+func TestEvaluateQueryPredicate_SparseAndHeterogeneousEntries(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("groupless entry evaluates .group safely without mutating rawEntry", func(t *testing.T) {
+		raw := map[string]any{"title": "NoGroup", "service": "api"}
+		ok, err := EvaluateQueryPredicate(`{{ if .group }}true{{ else }}false{{ end }}`, raw)
+		if err != nil {
+			t.Fatalf("EvaluateQueryPredicate(.group) failed on groupless entry: %v", err)
+		}
+		if ok {
+			t.Fatalf("expected false for groupless entry")
+		}
+		if _, exists := raw["group"]; exists {
+			t.Fatalf("EvaluateQueryPredicate mutated caller rawEntry with group key")
+		}
+		ok, err = EvaluateQueryPredicate(`{{ if not .group }}true{{ end }}`, raw)
+		if err != nil || !ok {
+			t.Fatalf("expected not .group to match groupless entry, got ok=%v err=%v", ok, err)
+		}
+	})
+
+	t.Run("heterogeneous vault entries filter cleanly on optional attribute", func(t *testing.T) {
+		fetcher := &stubVaultFetcher{
+			vaults: map[string][]SourceEntry{
+				"work": {
+					{
+						Vault: "work",
+						Path:  "apps/generic",
+						Title: "Generic",
+						Raw:   map[string]any{"title": "Generic", "notes": "no service key"},
+					},
+					{
+						Vault: "work",
+						Path:  "apps/litellm",
+						Title: "LiteLLM",
+						Raw:   map[string]any{"title": "LiteLLM", "service": "litellm", "API_KEY": "sk-test"},
+					},
+				},
+			},
+		}
+		cfg := &config.Config{
+			Envs: map[string][]config.VaultSourceConfig{
+				"ai": {{
+					Vault: "work",
+					Query: `{{ eq .service "litellm" }}`,
+					Rules: []config.RuleConfig{{Type: "pass", Include: []string{"API_KEY"}, KeyFormat: "none"}},
+				}},
+			},
+		}
+		eb := NewEnvsBuilderWithFetcher(cfg, fetcher, NewRuleEngine())
+		env, err := eb.Build(ctx, "ai")
+		if err != nil {
+			t.Fatalf("EnvsBuilder.Build failed on heterogeneous entries: %v", err)
+		}
+		if env["API_KEY"] != "sk-test" || len(env) != 1 {
+			t.Fatalf("unexpected built env: %#v", env)
+		}
+	})
+
+	t.Run("genuine execution type error still fails", func(t *testing.T) {
+		raw := map[string]any{
+			"title": "Grouped",
+			"group": map[string]any{"name": "prod"},
+		}
+		_, err := EvaluateQueryPredicate(`{{ eq .group "prod" }}`, raw)
+		if err == nil || !strings.Contains(err.Error(), "query execution failed") {
+			t.Fatalf("expected query execution error for incomparable map type, got: %v", err)
+		}
+	})
+}
+
+func TestOutputPipeline_BufPoolScrubAndCap(t *testing.T) {
+	ctx := context.Background()
+	secret := "SUPER_SECRET_TEMPLATE_PAYLOAD"
+	bigVal := strings.Repeat("Z", 70*1024)
+
+	fetcher := &stubVaultFetcher{
+		vaults: map[string][]SourceEntry{
+			"work": {{
+				Vault: "work",
+				Path:  "app/secret",
+				Title: "App",
+				Raw:   map[string]any{"title": "App", "SECRET": secret, "BIG": bigVal},
+			}},
+		},
+	}
+	cfg := &config.Config{
+		Templates: map[string]config.TemplateConfig{
+			"small": {
+				Driver:   "template",
+				Template: `{{- range .entries }}{{ .SECRET }}{{- end }}`,
+				Vaults:   []config.VaultSourceConfig{{Vault: "work"}},
+			},
+			"large": {
+				Driver:   "template",
+				Template: `{{- range .entries }}{{ .BIG }}{{- end }}`,
+				Vaults:   []config.VaultSourceConfig{{Vault: "work"}},
+			},
+		},
+	}
+
+	re := NewRuleEngine()
+	eb := NewEnvsBuilderWithFetcher(cfg, fetcher, re)
+	tr := NewTemplatesRendererWithFetcher(cfg, fetcher, re, eb)
+
+	// Oversized template render (> 64 KiB) succeeds without pinning oversized buffer.
+	resBig, err := tr.RenderDetailed(ctx, "large")
+	if err != nil {
+		t.Fatalf("RenderDetailed(large) failed: %v", err)
+	}
+	if resBig.Content != bigVal {
+		t.Fatalf("unexpected large content length: got %d, want %d", len(resBig.Content), len(bigVal))
+	}
+
+	// Small template render scrubs buffer backing memory before returning to bufPool.
+	resSmall, err := tr.RenderDetailed(ctx, "small")
+	if err != nil {
+		t.Fatalf("RenderDetailed(small) failed: %v", err)
+	}
+	if resSmall.Content != secret {
+		t.Fatalf("unexpected small content: %q", resSmall.Content)
+	}
+	buf := bufPool.Get().(*bytes.Buffer)
+	defer bufPool.Put(buf)
+	if strings.Contains(string(buf.Bytes()[:cap(buf.Bytes())]), secret) {
+		t.Fatalf("pooled buffer still contains secret payload after RenderDetailed")
 	}
 }
