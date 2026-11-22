@@ -218,6 +218,8 @@ func DoctorCmd(args []string, cfg *config.Config, stdout, stderr io.Writer) int 
 				}
 			case "env":
 				fmt.Fprintln(stdout, "    [OK] Process environment provider (in-memory)")
+			case "keyring":
+				fmt.Fprintln(stdout, "    [OK] OS keyring provider")
 			case "search":
 				fmt.Fprintln(stdout, "    [OK] Search vault (dynamic)")
 			case "vault":

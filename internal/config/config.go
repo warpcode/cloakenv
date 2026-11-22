@@ -20,16 +20,88 @@ import (
 
 var userHomeDir = os.UserHomeDir
 
-// TemplateConfig defines a top-level reusable template entry.
-// It can be specified as either an inline template string or a structured object with path or template fields.
+// RuleConfig defines a single ordered entry transformation rule inside an env or template vault source.
+type RuleConfig struct {
+	// Type specifies the rule operation: "pass", "match", or "set".
+	Type string `yaml:"type"`
+
+	// Fields for type: "pass"
+	Include   []string `yaml:"include,omitempty"`
+	Exclude   []string `yaml:"exclude,omitempty"`
+	KeyFormat string   `yaml:"key_format,omitempty"` // "env", "snake", "kebab", "none"
+
+	// Fields for type: "match"
+	Match      string `yaml:"match,omitempty"`
+	ValueMatch string `yaml:"value_match,omitempty"`
+	Key        string `yaml:"key,omitempty"`
+	Value      string `yaml:"value,omitempty"`
+
+	// Fields for type: "set"
+	Values map[string]string `yaml:"values,omitempty"`
+
+	// Precompiled regex patterns populated by Compile.
+	CompiledMatch      *regexp.Regexp `yaml:"-"`
+	CompiledValueMatch *regexp.Regexp `yaml:"-"`
+}
+
+// Compile precompiles regex patterns configured on a match RuleConfig.
+func (r *RuleConfig) Compile() error {
+	if r == nil {
+		return nil
+	}
+	if r.Match != "" && r.CompiledMatch == nil {
+		re, err := regexp.Compile(r.Match)
+		if err != nil {
+			return err
+		}
+		r.CompiledMatch = re
+	}
+	if r.ValueMatch != "" && r.CompiledValueMatch == nil {
+		re, err := regexp.Compile(r.ValueMatch)
+		if err != nil {
+			return err
+		}
+		r.CompiledValueMatch = re
+	}
+	return nil
+}
+
+// VaultSourceConfig binds a vault reference, optional query predicate, and ordered transformation rules.
+type VaultSourceConfig struct {
+	Vault string       `yaml:"vault"`
+	Query string       `yaml:"query,omitempty"`
+	Rules []RuleConfig `yaml:"rules,omitempty"`
+}
+
+// TemplateConfig defines a top-level template/artifact generator entry.
+// It supports drivers "template" (default when template/path is set), "json", "yaml", and "dotenv",
+// as well as inline scalar template strings for shorthand declarations.
 type TemplateConfig struct {
-	Path     string `yaml:"path,omitempty"`
-	Template string `yaml:"template,omitempty"`
+	Driver   string              `yaml:"driver,omitempty"`
+	Path     string              `yaml:"path,omitempty"`
+	Template string              `yaml:"template,omitempty"`
+	FromEnv  string              `yaml:"from_env,omitempty"`
+	Vaults   []VaultSourceConfig `yaml:"vaults,omitempty"`
+}
+
+// EffectiveDriver returns the resolved template driver name, defaulting to "template" when omitted.
+func (t TemplateConfig) EffectiveDriver() string {
+	if t.Driver != "" {
+		return t.Driver
+	}
+	return "template"
 }
 
 // UnmarshalYAML implements custom unmarshaling for TemplateConfig to support scalar strings and structs.
 func (t *TemplateConfig) UnmarshalYAML(value *goyaml.Node) error {
+	for value.Kind == goyaml.AliasNode && value.Alias != nil {
+		value = value.Alias
+	}
 	if value.Kind == goyaml.ScalarNode {
+		if value.Tag == "!!null" {
+			return nil
+		}
+		t.Driver = "template"
 		t.Template = value.Value
 		return nil
 	}
@@ -45,14 +117,15 @@ func (t *TemplateConfig) UnmarshalYAML(value *goyaml.Node) error {
 // Config is the top-level configuration structure.
 type Config struct {
 	// ConfigPath is the absolute path to the configuration file.
-	ConfigPath        string                    `yaml:"-"`
-	Cache             CacheConfig               `yaml:"cache"`
-	Keyring           KeyringConfig             `yaml:"keyring"`
-	Audit             AuditConfig               `yaml:"audit,omitempty"`
-	Templates         map[string]TemplateConfig `yaml:"templates,omitempty"`
-	Vaults            map[string]VaultConfig    `yaml:"vaults"`
-	Autoload          []AutoloadRule            `yaml:"autoload"`
-	KeyFormatOverride string                    `yaml:"-"`
+	ConfigPath        string                         `yaml:"-"`
+	Cache             CacheConfig                    `yaml:"cache"`
+	Keyring           KeyringConfig                  `yaml:"keyring"`
+	Audit             AuditConfig                    `yaml:"audit,omitempty"`
+	Envs              map[string][]VaultSourceConfig `yaml:"envs,omitempty"`
+	Templates         map[string]TemplateConfig      `yaml:"templates,omitempty"`
+	Vaults            map[string]VaultConfig         `yaml:"vaults"`
+	Autoload          []AutoloadRule                 `yaml:"autoload"`
+	KeyFormatOverride string                         `yaml:"-"`
 }
 
 // AutoloadRule defines rules for matching, masking, and autoloading secret vaults/URIs/env vars
@@ -309,7 +382,12 @@ func DefaultConfigPath() (string, error) {
 // Load reads and parses a YAML configuration file.
 // Returns an empty Config with initialized maps if the file does not exist.
 func Load(path string) (*Config, error) {
+	return load(path, true)
+}
+
+func load(path string, resolveTemplates bool) (*Config, error) {
 	cfg := &Config{
+		Envs:   make(map[string][]VaultSourceConfig),
 		Vaults: make(map[string]VaultConfig),
 	}
 
@@ -332,6 +410,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", path, err)
 	}
 
+	if cfg.Envs == nil {
+		cfg.Envs = make(map[string][]VaultSourceConfig)
+	}
 	if cfg.Vaults == nil {
 		cfg.Vaults = make(map[string]VaultConfig)
 	}
@@ -398,26 +479,30 @@ func Load(path string) (*Config, error) {
 		cfg.Templates = make(map[string]TemplateConfig)
 	}
 
-	// Process templates: expand path, read file if path is specified, and validate
-	for tmplName, tmpl := range cfg.Templates {
-		if tmpl.Path != "" {
-			expandedPath := expandHome(tmpl.Path)
-			if !filepath.IsAbs(expandedPath) && cfg.ConfigPath != "" {
-				baseDir := filepath.Dir(cfg.ConfigPath)
-				expandedPath = filepath.Join(baseDir, expandedPath)
+	// Process templates: expand path and read file for template-driver entries
+	if resolveTemplates {
+		for tmplName, tmpl := range cfg.Templates {
+			if tmpl.EffectiveDriver() == "template" {
+				if tmpl.Path != "" {
+					expandedPath := expandHome(tmpl.Path)
+					if !filepath.IsAbs(expandedPath) && cfg.ConfigPath != "" {
+						baseDir := filepath.Dir(cfg.ConfigPath)
+						expandedPath = filepath.Join(baseDir, expandedPath)
+					}
+					expandedPath = filepath.Clean(expandedPath)
+					data, err := os.ReadFile(expandedPath)
+					if err != nil {
+						return nil, fmt.Errorf("template %q: failed to read path %q: %w", tmplName, tmpl.Path, err)
+					}
+					tmpl.Template = string(data)
+					tmpl.Path = expandedPath
+				}
+				if tmpl.Template == "" {
+					return nil, fmt.Errorf("template %q: template content is empty", tmplName)
+				}
 			}
-			expandedPath = filepath.Clean(expandedPath)
-			data, err := os.ReadFile(expandedPath)
-			if err != nil {
-				return nil, fmt.Errorf("template %q: failed to read path %q: %w", tmplName, tmpl.Path, err)
-			}
-			tmpl.Template = string(data)
-			tmpl.Path = expandedPath
+			cfg.Templates[tmplName] = tmpl
 		}
-		if tmpl.Template == "" {
-			return nil, fmt.Errorf("template %q: template content is empty", tmplName)
-		}
-		cfg.Templates[tmplName] = tmpl
 	}
 
 	validProviders := map[string]bool{
@@ -426,6 +511,7 @@ func Load(path string) (*Config, error) {
 		"pass":    true,
 		"search":  true,
 		"vault":   true,
+		"keyring": true,
 	}
 
 	// Validate providers, include_fields, exclude_fields, and mapping rules
@@ -434,7 +520,7 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("vault %q: missing required field 'provider'", vaultName)
 		}
 		if !validProviders[vault.Provider] {
-			return nil, fmt.Errorf("vault %q: unsupported provider %q (must be one of: keepass, env, pass, search, vault)", vaultName, vault.Provider)
+			return nil, fmt.Errorf("vault %q: unsupported provider %q (must be one of: keepass, env, pass, search, vault, keyring)", vaultName, vault.Provider)
 		}
 		for _, pattern := range vault.IncludeFields {
 			if _, err := pathpkg.Match(pattern, ""); err != nil {
@@ -481,6 +567,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg.CompileAutoloadRules()
+	cfg.CompileRules()
 
 	return cfg, nil
 }
@@ -527,4 +614,27 @@ func (c *Config) KeyringPrefix() string {
 	h := sha256.Sum256([]byte(c.ConfigPath))
 	hashStr := hex.EncodeToString(h[:])[:10]
 	return fmt.Sprintf("%s_%s", prefix, hashStr)
+}
+
+// CompileRules precompiles valid regex patterns for all rules in envs and templates.
+func (c *Config) CompileRules() {
+	if c == nil {
+		return
+	}
+	for envName, sources := range c.Envs {
+		for i := range sources {
+			for j := range sources[i].Rules {
+				_ = sources[i].Rules[j].Compile()
+			}
+		}
+		c.Envs[envName] = sources
+	}
+	for tmplName, tmpl := range c.Templates {
+		for i := range tmpl.Vaults {
+			for j := range tmpl.Vaults[i].Rules {
+				_ = tmpl.Vaults[i].Rules[j].Compile()
+			}
+		}
+		c.Templates[tmplName] = tmpl
+	}
 }

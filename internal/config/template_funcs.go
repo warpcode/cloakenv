@@ -11,6 +11,7 @@ import (
 func StandardTemplateFuncs() texttemplate.FuncMap {
 	return texttemplate.FuncMap{
 		"get":         func(uri string) (string, error) { return "", nil },
+		"hasTag":      func(tag string, tags any) bool { return false },
 		"tryGet":      func(uris ...string) string { return "" },
 		"default":     func(fallback any, given ...any) any { return fallback },
 		"coalesce":    func(vals ...any) string { return "" },
