@@ -316,37 +316,6 @@ func TestDoctorCmd_PassProviderTildeExpansion(t *testing.T) {
 	})
 }
 
-func TestDoctorCmd_UnsupportedProviders(t *testing.T) {
-	for _, prov := range []string{"yaml", "json", "custom_vault"} {
-		t.Run(prov, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			t.Setenv("XDG_CACHE_HOME", tmpDir)
-			t.Setenv("HOME", tmpDir)
-			t.Setenv("LocalAppData", tmpDir)
-
-			cfg := &config.Config{
-				ConfigPath: filepath.Join(tmpDir, "config.yaml"),
-				Vaults: map[string]config.VaultConfig{
-					"legacy": {
-						Provider:  prov,
-						VaultPath: filepath.Join(tmpDir, "legacy"),
-					},
-				},
-			}
-
-			var stdout, stderr bytes.Buffer
-			exitCode := DoctorCmd([]string{}, cfg, &stdout, &stderr)
-			if exitCode != 1 {
-				t.Fatalf("expected exit code 1 for unsupported provider %q, got %d\nstdout:\n%s\nstderr:\n%s",
-					prov, exitCode, stdout.String(), stderr.String())
-			}
-			if !strings.Contains(stdout.String(), "Unsupported provider") {
-				t.Errorf("expected Unsupported provider error in stdout for %q, got:\n%s", prov, stdout.String())
-			}
-		})
-	}
-}
-
 func TestDoctorCmd_StaleEphemeralFiles(t *testing.T) {
 	tempDir := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", tempDir)

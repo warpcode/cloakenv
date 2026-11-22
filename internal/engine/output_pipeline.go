@@ -73,14 +73,15 @@ func (f *providerManagerEntryFetcher) FetchEntries(ctx context.Context, vaultNam
 	if !ok {
 		return nil, fmt.Errorf("vault %q (provider %q) does not support entry listing", vaultName, p.Scheme())
 	}
-	results, err := sp.Search(ctx, provider.SearchQuery{})
+	entries, err := sp.Search(ctx, provider.SearchQuery{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to query vault %q: %w", vaultName, err)
 	}
-	out := make([]SourceEntry, 0, len(results))
-	for _, r := range results {
-		raw := EntryToRawMap(r.Entry, p.Scheme(), vaultName, r.Path)
-		title := r.Entry.Title
+	out := make([]SourceEntry, 0, len(entries))
+	for _, entry := range entries {
+		entryPath := entry.Path()
+		raw := EntryToRawMap(entry, p.Scheme(), vaultName, entryPath)
+		title := entry.Title()
 		if title == "" {
 			if t, ok := raw["title"].(string); ok {
 				title = t
@@ -88,9 +89,9 @@ func (f *providerManagerEntryFetcher) FetchEntries(ctx context.Context, vaultNam
 		}
 		out = append(out, SourceEntry{
 			Vault: vaultName,
-			Path:  r.Path,
+			Path:  entryPath,
 			Title: title,
-			Tags:  slices.Clone(r.Entry.Tags),
+			Tags:  entry.Tags(),
 			Raw:   raw,
 		})
 	}

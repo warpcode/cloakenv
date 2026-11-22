@@ -47,9 +47,12 @@ vaults:
   keepass:
     provider: keepass
     vault_path: ~/secrets.kdbx
-    entities_root_key: entries
-    searchable: false
-    single_entity: false
+    query: "prod"
+  local_env:
+    provider: env
+  os_kr:
+    provider: keyring
+    query: "API_TOKEN"
 envs:
   aws_env:
     - vault: env
@@ -163,14 +166,6 @@ vaults:
 	expectedPath := filepath.Join(mockHome, "secrets.kdbx")
 	if vault.VaultPath != expectedPath {
 		t.Errorf("expected expanded path %q, got %q", expectedPath, vault.VaultPath)
-	}
-
-	if vault.Searchable == nil || *vault.Searchable != false {
-		t.Error("expected searchable to be false")
-	}
-
-	if vault.SingleEntity == nil || *vault.SingleEntity != false {
-		t.Error("expected single_entity to be false")
 	}
 
 	// Verify autoload rules parsing
@@ -671,111 +666,6 @@ templates:
 	}
 }
 
-func TestLoad_UnsupportedProviders(t *testing.T) {
-	tempDir := t.TempDir()
-
-	tests := []struct {
-		name     string
-		provider string
-		wantSub  string
-	}{
-		{name: "yaml", provider: "yaml", wantSub: "unsupported provider"},
-		{name: "json", provider: "json", wantSub: "unsupported provider"},
-		{name: "custom_vault", provider: "custom_vault", wantSub: "unsupported provider"},
-		{name: "unknown", provider: "bogus", wantSub: "unsupported provider"},
-		{name: "missing", provider: "", wantSub: "missing required field 'provider'"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			content := fmt.Sprintf("vaults:\n  bad:\n    provider: %q\n", tt.provider)
-			cfgPath := filepath.Join(tempDir, tt.name+".yaml")
-			if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
-				t.Fatalf("failed to write config: %v", err)
-			}
-			_, err := Load(cfgPath)
-			if err == nil {
-				t.Fatalf("expected Load to reject provider %q", tt.provider)
-			}
-			if !strings.Contains(err.Error(), tt.wantSub) {
-				t.Errorf("expected error containing %q, got %v", tt.wantSub, err)
-			}
-		})
-	}
-}
-
-func TestLoad_Mapping(t *testing.T) {
-	tempDir := t.TempDir()
-	yamlContent := `
-vaults:
-  work:
-    provider: "keepass"
-    vault_path: "~/secrets.kdbx"
-    mapping:
-      - match: "env:(.*)"
-        key: "\\1"
-      - match: "secret_(.*)"
-        key: "$1"
-`
-	configPath := filepath.Join(tempDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
-		t.Fatalf("failed to write temp config file: %v", err)
-	}
-
-	cfg, err := Load(configPath)
-	if err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-
-	v, ok := cfg.Vaults["work"]
-	if !ok {
-		t.Fatal("expected 'work' vault in config")
-	}
-
-	if len(v.Mapping) != 2 {
-		t.Fatalf("expected 2 mapping rules, got %d", len(v.Mapping))
-	}
-
-	if v.Mapping[0].Match != "env:(.*)" || v.Mapping[0].Key != "\\1" {
-		t.Errorf("unexpected mapping[0]: %+v", v.Mapping[0])
-	}
-	if v.Mapping[0].CompiledRegex == nil {
-		t.Error("expected CompiledRegex to be populated for mapping[0]")
-	}
-
-	if v.Mapping[1].Match != "secret_(.*)" || v.Mapping[1].Key != "$1" {
-		t.Errorf("unexpected mapping[1]: %+v", v.Mapping[1])
-	}
-	if v.Mapping[1].CompiledRegex == nil {
-		t.Error("expected CompiledRegex to be populated for mapping[1]")
-	}
-}
-
-func TestLoad_InvalidMappingRegex(t *testing.T) {
-	tempDir := t.TempDir()
-	yamlContent := `
-vaults:
-  work:
-    provider: "keepass"
-    vault_path: "~/secrets.kdbx"
-    mapping:
-      - match: "[invalid(regex"
-        key: "\\1"
-`
-	configPath := filepath.Join(tempDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
-		t.Fatalf("failed to write temp config file: %v", err)
-	}
-
-	_, err := Load(configPath)
-	if err == nil {
-		t.Fatal("expected error for invalid mapping regex, got nil")
-	}
-	if !strings.Contains(err.Error(), "invalid mapping match regex") {
-		t.Errorf("expected error message to contain 'invalid mapping match regex', got: %v", err)
-	}
-}
-
 func TestLoad_ResolveReferences(t *testing.T) {
 	tempDir := t.TempDir()
 	yamlContent := `
@@ -813,44 +703,6 @@ vaults:
 	}
 	if v2.ResolveReferences {
 		t.Error("expected resolve_references to be false for 'without_refs'")
-	}
-}
-
-func TestLoad_FieldFiltering(t *testing.T) {
-	tempDir := t.TempDir()
-	yamlContent := `
-vaults:
-  work:
-    provider: "keepass"
-    vault_path: "~/secrets.kdbx"
-    include_fields:
-      - "env:*"
-      - "UserName"
-    exclude_fields:
-      - "*.notes"
-      - "secret:*"
-`
-	configPath := filepath.Join(tempDir, "config.yaml")
-	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
-		t.Fatalf("failed to write temp config file: %v", err)
-	}
-
-	cfg, err := Load(configPath)
-	if err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-
-	v, ok := cfg.Vaults["work"]
-	if !ok {
-		t.Fatal("expected 'work' vault in config")
-	}
-
-	if len(v.IncludeFields) != 2 || v.IncludeFields[0] != "env:*" || v.IncludeFields[1] != "UserName" {
-		t.Errorf("unexpected IncludeFields: %v", v.IncludeFields)
-	}
-
-	if len(v.ExcludeFields) != 2 || v.ExcludeFields[0] != "*.notes" || v.ExcludeFields[1] != "secret:*" {
-		t.Errorf("unexpected ExcludeFields: %v", v.ExcludeFields)
 	}
 }
 
@@ -895,21 +747,21 @@ vaults:
     provider: "keepass"
     vault_path: "./database.kdbx"
   rel_sub:
-    provider: "pass"
+    provider: "yaml"
     vault_path: "sub/dir/secrets.yaml"
   home_vault:
     provider: "keepass"
     vault_path: "~/secrets.kdbx"
   abs_vault:
-    provider: "keepass"
+    provider: "json"
     vault_path: %q
   empty_vault:
-    provider: "env"
+    provider: "custom_vault"
   rel_parent:
-    provider: "pass"
+    provider: "json"
     vault_path: "../shared/vault.kdbx"
   abs_vault_dirty:
-    provider: "keepass"
+    provider: "json"
     vault_path: %q
   home_vault_dirty:
     provider: "keepass"
@@ -984,90 +836,6 @@ vaults:
 			}
 			if v.VaultPath != tt.expected {
 				t.Errorf("vault %q: expected vault_path %q, got %q", tt.vault, tt.expected, v.VaultPath)
-			}
-		})
-	}
-}
-
-func TestLoad_InvalidGlobPattern(t *testing.T) {
-	tempDir := t.TempDir()
-
-	tests := []struct {
-		name    string
-		content string
-	}{
-		{
-			name: "invalid include_fields pattern",
-			content: `
-vaults:
-  work:
-    provider: "keepass"
-    vault_path: "~/secrets.kdbx"
-    include_fields:
-      - "secret:["
-`,
-		},
-		{
-			name: "invalid exclude_fields pattern",
-			content: `
-vaults:
-  work:
-    provider: "keepass"
-    vault_path: "~/secrets.kdbx"
-    exclude_fields:
-      - "bad[pattern"
-`,
-		},
-		{
-			name: "invalid key_format value",
-			content: `
-vaults:
-  work:
-    provider: "keepass"
-    vault_path: "~/secrets.kdbx"
-    key_format: "camel"
-`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			configPath := filepath.Join(tempDir, tt.name+".yaml")
-			if err := os.WriteFile(configPath, []byte(tt.content), 0644); err != nil {
-				t.Fatalf("failed to write config file: %v", err)
-			}
-
-			_, err := Load(configPath)
-			if err == nil {
-				t.Fatalf("expected error for %s, got nil", tt.name)
-			}
-			if !strings.Contains(err.Error(), "invalid") {
-				t.Errorf("expected error message to contain 'invalid', got: %v", err)
-			}
-		})
-	}
-
-	// Test valid key_format values
-	validFormats := []string{"", "none", "env", "snake", "kebab"}
-	for _, fmtVal := range validFormats {
-		t.Run("valid_key_format_"+fmtVal, func(t *testing.T) {
-			content := fmt.Sprintf(`
-vaults:
-  work:
-    provider: "keepass"
-    vault_path: "~/secrets.kdbx"
-    key_format: %q
-`, fmtVal)
-			configPath := filepath.Join(tempDir, "valid_"+fmtVal+".yaml")
-			if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
-				t.Fatalf("failed to write config file: %v", err)
-			}
-			cfg, err := Load(configPath)
-			if err != nil {
-				t.Fatalf("unexpected error for valid key_format %q: %v", fmtVal, err)
-			}
-			if cfg.Vaults["work"].KeyFormat != fmtVal {
-				t.Errorf("expected KeyFormat %q, got %q", fmtVal, cfg.Vaults["work"].KeyFormat)
 			}
 		})
 	}

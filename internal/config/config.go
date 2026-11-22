@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -119,15 +118,14 @@ func (t *TemplateConfig) UnmarshalYAML(value *goyaml.Node) error {
 // Config is the top-level configuration structure.
 type Config struct {
 	// ConfigPath is the absolute path to the configuration file.
-	ConfigPath        string                         `yaml:"-"`
-	Cache             CacheConfig                    `yaml:"cache"`
-	Keyring           KeyringConfig                  `yaml:"keyring"`
-	Audit             AuditConfig                    `yaml:"audit,omitempty"`
-	Envs              map[string][]VaultSourceConfig `yaml:"envs,omitempty"`
-	Templates         map[string]TemplateConfig      `yaml:"templates,omitempty"`
-	Vaults            map[string]VaultConfig         `yaml:"vaults"`
-	Autoload          []AutoloadRule                 `yaml:"autoload"`
-	KeyFormatOverride string                         `yaml:"-"`
+	ConfigPath string                         `yaml:"-"`
+	Cache      CacheConfig                    `yaml:"cache"`
+	Keyring    KeyringConfig                  `yaml:"keyring"`
+	Audit      AuditConfig                    `yaml:"audit,omitempty"`
+	Envs       map[string][]VaultSourceConfig `yaml:"envs,omitempty"`
+	Templates  map[string]TemplateConfig      `yaml:"templates,omitempty"`
+	Vaults     map[string]VaultConfig         `yaml:"vaults"`
+	Autoload   []AutoloadRule                 `yaml:"autoload"`
 }
 
 // AutoloadEnvItem represents an entry in `autoload[].envs[]`, which may be either
@@ -258,34 +256,6 @@ func (r *AutoloadRule) Compile() {
 	}
 }
 
-// MappingRule defines a regex-based field key renaming rule for entry attributes.
-type MappingRule struct {
-	// Match is a required regex pattern to match against field names.
-	Match string `yaml:"match"`
-
-	// Key is the target output field name template, supporting $1 or \1 capture group replacements.
-	Key string `yaml:"key"`
-
-	// CompiledRegex holds the precompiled regular expression for Match.
-	CompiledRegex *regexp.Regexp `yaml:"-"`
-}
-
-// Compile precompiles the regular expression pattern for the mapping rule if Match is non-empty.
-func (r *MappingRule) Compile() error {
-	if r == nil {
-		return nil
-	}
-	pattern := strings.TrimSpace(r.Match)
-	if pattern != "" && r.CompiledRegex == nil {
-		re, err := regexp.Compile(pattern)
-		if err != nil {
-			return err
-		}
-		r.CompiledRegex = re
-	}
-	return nil
-}
-
 // CacheConfig holds cache-related configuration settings.
 type CacheConfig struct {
 	DefaultTTL string `yaml:"default_ttl"`
@@ -358,13 +328,13 @@ func DefaultAuditLogPath() (string, error) {
 	return filepath.Join(home, ".config", "cloakenv", "audit.jsonl"), nil
 }
 
-// VaultConfig defines a named secret vault backend and its configuration options.
+// VaultConfig defines a named secret vault backend and its pure retrieval options.
 type VaultConfig struct {
-	// Provider identifies the provider backend type (e.g., "keepass", "pass", "env", "keyring", "vault").
+	// Provider identifies the provider backend type ("keepass", "pass", "vault", "env", "keyring").
 	Provider string `yaml:"provider"`
 
 	// VaultPath is the filesystem path to the backend's data store
-	// (e.g., the .kdbx file for keepass providers).
+	// (e.g., the .kdbx file for keepass or store directory for pass).
 	VaultPath string `yaml:"vault_path"`
 
 	// KeyFile specifies the path to a KeePass key file (.key / .keyx / raw key).
@@ -373,44 +343,12 @@ type VaultConfig struct {
 	// KeyFileEnv specifies an environment variable name containing the path to a KeePass key file.
 	KeyFileEnv string `yaml:"key_file_env"`
 
-	// EntitiesRootKey defines an optional root key prefix stripped during entry path resolution.
-	EntitiesRootKey string `yaml:"entities_root_key"`
-
-	// SingleEntity defines whether this vault holds a single entity/collection of attributes.
-	SingleEntity *bool `yaml:"single_entity"`
-
-	// EntityName represents the title of the single entity in search results.
-	EntityName string `yaml:"entity_name"`
-
-	// Searchable flags whether this vault is included in search results. Defaults to true.
-	Searchable *bool `yaml:"searchable"`
-
-	// Tags are labels applied to the single entity (if SingleEntity is true).
-	Tags []string `yaml:"tags"`
-
-	// Attributes holds vault-level computed attribute templates applied to entries returned by this vault.
-	Attributes map[string]any `yaml:"attributes"`
-
 	// ResolveReferences enables KeePass entry placeholder and cross-entry reference resolution.
 	// Defaults to false.
 	ResolveReferences bool `yaml:"resolve_references"`
 
 	// Cache configures transparent caching for this vault.
 	Cache VaultCacheConfig `yaml:"cache,omitempty"`
-
-	// IncludeFields limits returned entry attributes to field names matching these glob patterns.
-	IncludeFields []string `yaml:"include_fields,omitempty"`
-
-	// ExcludeFields removes entry attributes with field names matching these glob patterns.
-	ExcludeFields []string `yaml:"exclude_fields,omitempty"`
-
-	// Mapping defines regex-based field key renaming rules for entry attributes in this vault.
-	Mapping []MappingRule `yaml:"mapping,omitempty"`
-
-	// KeyFormat specifies the key transformation format for attributes returned by this vault.
-	// Options: "none" (default, passes original key name), "env" (UPPERCASE_WITH_UNDERSCORES),
-	// "snake" (lowercase_with_underscores), "kebab" (lowercase-with-hyphens).
-	KeyFormat string `yaml:"key_format,omitempty"`
 
 	// Query specifies an optional provider-native query/scope filter for remote vaults.
 	Query string `yaml:"query"`
@@ -574,54 +512,16 @@ func load(path string, resolveTemplates bool) (*Config, error) {
 		}
 	}
 
-	validProviders := map[string]bool{
-		"keepass": true,
-		"env":     true,
-		"pass":    true,
-		"vault":   true,
-		"keyring": true,
-	}
-
-	// Validate providers, include_fields, exclude_fields, and mapping rules
+	// Validate vault settings
 	for vaultName, vault := range cfg.Vaults {
-		if vault.Provider == "" {
-			return nil, fmt.Errorf("vault %q: missing required field 'provider'", vaultName)
-		}
-		if !validProviders[vault.Provider] {
-			return nil, fmt.Errorf("vault %q: unsupported provider %q (must be one of: keepass, env, pass, vault, keyring)", vaultName, vault.Provider)
-		}
-		for _, pattern := range vault.IncludeFields {
-			if _, err := pathpkg.Match(pattern, ""); err != nil {
-				return nil, fmt.Errorf("vault %q: invalid include_fields glob pattern %q: %w", vaultName, pattern, err)
-			}
-		}
-		for _, pattern := range vault.ExcludeFields {
-			if _, err := pathpkg.Match(pattern, ""); err != nil {
-				return nil, fmt.Errorf("vault %q: invalid exclude_fields glob pattern %q: %w", vaultName, pattern, err)
-			}
-		}
-		for i := range vault.Mapping {
-			if err := vault.Mapping[i].Compile(); err != nil {
-				return nil, fmt.Errorf("vault %q: invalid mapping match regex %q: %w", vaultName, vault.Mapping[i].Match, err)
-			}
-		}
-		switch vault.KeyFormat {
-		case "", "none", "env", "snake", "kebab":
-			// valid key format
-		default:
-			return nil, fmt.Errorf("vault %q: invalid key_format %q (must be one of: none, env, snake, kebab)", vaultName, vault.KeyFormat)
-		}
-
 		if vault.Provider == "vault" {
 			if vault.EngineVersion != 0 && vault.EngineVersion != 1 && vault.EngineVersion != 2 {
 				return nil, fmt.Errorf("vault %q: invalid engine_version %d (must be 1 or 2)", vaultName, vault.EngineVersion)
 			}
-			// If AppRole is partially configured, require both role_id and secret_id
 			if (vault.RoleID != "" && vault.SecretID == "") || (vault.RoleID == "" && vault.SecretID != "") {
 				return nil, fmt.Errorf("vault %q: both role_id and secret_id must be provided for approle auth", vaultName)
 			}
 		}
-
 		if vault.Cache.Enabled {
 			switch vault.Cache.Mode {
 			case "", "keyring", "encrypted_disk":
@@ -630,7 +530,6 @@ func load(path string, resolveTemplates bool) (*Config, error) {
 				return nil, fmt.Errorf("vault %q: invalid cache mode %q (must be one of: keyring, encrypted_disk)", vaultName, vault.Cache.Mode)
 			}
 		}
-
 		cfg.Vaults[vaultName] = vault
 	}
 

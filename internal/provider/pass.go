@@ -37,19 +37,18 @@ type DecryptFunc func(ctx context.Context, filePath string) ([]byte, error)
 // extracting the password from the first line and key-value attributes from subsequent lines.
 type PassProvider struct {
 	storeDir    string
-	searchable  bool
+	queryPrefix string
 	decryptFunc DecryptFunc
 
 	mu        sync.RWMutex
-	fileCache map[string]*Entry
+	fileCache map[string]Entry
 }
 
 // NewPassProvider returns a new PassProvider instance.
 func NewPassProvider() *PassProvider {
 	return &PassProvider{
-		searchable:  true,
 		decryptFunc: defaultGPGDecrypt,
-		fileCache:   make(map[string]*Entry),
+		fileCache:   make(map[string]Entry),
 	}
 }
 
@@ -87,9 +86,17 @@ func (p *PassProvider) Initialize(_ context.Context, cfg ProviderConfig) error {
 		dir = filepath.Join(home, ".password-store")
 	}
 
+	queryPrefix := strings.Trim(filepath.ToSlash(strings.TrimSpace(cfg.Query)), "/")
+	if queryPrefix != "" {
+		for _, seg := range strings.Split(queryPrefix, "/") {
+			if seg == ".." || seg == "." || seg == "" {
+				return fmt.Errorf("pass provider: invalid query scope %q", cfg.Query)
+			}
+		}
+	}
 	p.storeDir = expandHome(dir)
-	p.searchable = cfg.Searchable
-	p.fileCache = make(map[string]*Entry)
+	p.queryPrefix = queryPrefix
+	p.fileCache = make(map[string]Entry)
 
 	return nil
 }
@@ -127,76 +134,51 @@ func (p *PassProvider) Validate(settings map[string]string) error {
 	return nil
 }
 
-// GetSecret resolves a secret value from the password store.
+// GetSecret resolves a secret value from the pass store.
 // Location format: "path/to/entry" or "path/to/entry:attribute".
-// If attribute is omitted or "password" / "Password", the first line is returned.
 func (p *PassProvider) GetSecret(ctx context.Context, location string) (string, error) {
 	entryPath, attr := parsePassLocation(location)
-
 	entry, err := p.getParsedEntry(ctx, entryPath)
 	if err != nil {
 		return "", err
 	}
 
-	// Default to first line password
-	if attr == "" || strings.EqualFold(attr, "password") {
-		if pw, ok := entry.Attributes["Password"].(string); ok {
+	if attr == "" || strings.EqualFold(attr, "Password") {
+		if pw, ok := entry["Password"].(string); ok {
 			return pw, nil
 		}
-		if pw, ok := entry.Attributes["password"].(string); ok {
+		if pw, ok := entry["password"].(string); ok {
 			return pw, nil
 		}
 		return "", fmt.Errorf("pass provider: password not found in entry %q", entryPath)
 	}
 
-	// Check attributes (exact match first, then case-insensitive)
-	if val, ok := entry.Attributes[attr]; ok {
-		return fmt.Sprintf("%v", val), nil
+	if val, ok := entry[attr]; ok {
+		return fmt.Sprint(val), nil
 	}
-	for k, v := range entry.Attributes {
+	for k, v := range entry {
 		if strings.EqualFold(k, attr) {
-			return fmt.Sprintf("%v", v), nil
+			return fmt.Sprint(v), nil
 		}
 	}
 
 	return "", fmt.Errorf("pass provider: attribute %q not found in entry %q", attr, entryPath)
 }
 
-// GetEntry retrieves a complete structured entry by location.
+// GetEntry retrieves a complete flat raw Entry by location.
 func (p *PassProvider) GetEntry(ctx context.Context, location string) (Entry, error) {
-	entry, _, err := p.GetEntryWithPath(ctx, location)
-	return entry, err
-}
-
-// GetEntryWithPath retrieves a structured entry along with its authoritative path.
-func (p *PassProvider) GetEntryWithPath(ctx context.Context, location string) (Entry, string, error) {
 	entryPath, _ := parsePassLocation(location)
-	entry, err := p.getParsedEntry(ctx, entryPath)
-	if err != nil {
-		return Entry{}, "", err
-	}
-	return *entry, entryPath, nil
+	return p.getParsedEntry(ctx, entryPath)
 }
 
-// GetEntryTitle retrieves the entry title (the base name of the entry).
-func (p *PassProvider) GetEntryTitle(_ context.Context, location string) (string, error) {
-	entryPath, _ := parsePassLocation(location)
-	if entryPath == "" {
-		return "", errors.New("pass provider: empty location")
-	}
-	clean := filepath.Clean(filepath.FromSlash(entryPath))
-	return filepath.Base(clean), nil
-}
-
-// Search retrieves all entries matching the query criteria by scanning the password store.
-func (p *PassProvider) Search(ctx context.Context, query SearchQuery) ([]SearchResult, error) {
+// Search retrieves all raw entries matching the optional query criteria by scanning the password store.
+func (p *PassProvider) Search(ctx context.Context, query SearchQuery) ([]Entry, error) {
 	storeDir := p.StoreDir()
 	if storeDir == "" {
 		return nil, errors.New("pass provider: store directory is not configured")
 	}
 
-	var results []SearchResult
-
+	var results []Entry
 	queryTitleLower := strings.ToLower(query.Title)
 	queryPathLower := strings.ToLower(query.Path)
 	var queryTagsLower []string
@@ -204,7 +186,23 @@ func (p *PassProvider) Search(ctx context.Context, query SearchQuery) ([]SearchR
 		queryTagsLower = append(queryTagsLower, strings.ToLower(t))
 	}
 
-	err := filepath.WalkDir(storeDir, func(path string, d fs.DirEntry, err error) error {
+	p.mu.RLock()
+	queryPrefix := p.queryPrefix
+	p.mu.RUnlock()
+
+	walkRoot := storeDir
+	if queryPrefix != "" {
+		candidate := filepath.Join(storeDir, filepath.FromSlash(queryPrefix))
+		if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+			walkRoot = candidate
+		} else if _, fileErr := os.Stat(candidate + ".gpg"); fileErr == nil {
+			walkRoot = candidate + ".gpg"
+		} else {
+			return nil, nil
+		}
+	}
+
+	err := filepath.WalkDir(walkRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return nil
@@ -220,7 +218,6 @@ func (p *PassProvider) Search(ctx context.Context, query SearchQuery) ([]SearchR
 			}
 			return nil
 		}
-
 		if !strings.HasSuffix(d.Name(), ".gpg") {
 			return nil
 		}
@@ -229,9 +226,10 @@ func (p *PassProvider) Search(ctx context.Context, query SearchQuery) ([]SearchR
 		if relErr != nil {
 			return relErr
 		}
-
-		// Normalize to forward slashes for entry path
 		entryPath := filepath.ToSlash(strings.TrimSuffix(relPath, ".gpg"))
+		if queryPrefix != "" && entryPath != queryPrefix && !strings.HasPrefix(entryPath, queryPrefix+"/") {
+			return nil
+		}
 		title := filepath.Base(entryPath)
 
 		if queryTitleLower != "" && !strings.Contains(strings.ToLower(title), queryTitleLower) {
@@ -243,13 +241,12 @@ func (p *PassProvider) Search(ctx context.Context, query SearchQuery) ([]SearchR
 
 		entry, parseErr := p.getParsedEntry(ctx, entryPath)
 		if parseErr != nil {
-			// Skip entries that cannot be decrypted or parsed during global search
 			return nil
 		}
 
 		if len(queryTagsLower) > 0 {
 			entryTags := make(map[string]bool)
-			for _, tag := range entry.Tags {
+			for _, tag := range entry.Tags() {
 				entryTags[strings.ToLower(tag)] = true
 			}
 			matchedAll := true
@@ -264,33 +261,16 @@ func (p *PassProvider) Search(ctx context.Context, query SearchQuery) ([]SearchR
 			}
 		}
 
-		results = append(results, SearchResult{
-			Provider: "pass",
-			Path:     entryPath,
-			Entry:    *entry,
-		})
-
+		results = append(results, entry)
 		return nil
 	})
-
 	if err != nil {
 		return nil, fmt.Errorf("pass provider: failed to search directory %s: %w", storeDir, err)
 	}
-
 	return results, nil
 }
 
-// SetSecret returns an error because pass provider currently supports reading secrets.
-func (p *PassProvider) SetSecret(_ context.Context, _ string, _ string) error {
-	return fmt.Errorf("pass provider is read-only")
-}
-
-// DeleteSecret returns an error because pass provider currently supports reading secrets.
-func (p *PassProvider) DeleteSecret(_ context.Context, _ string) error {
-	return fmt.Errorf("pass provider is read-only")
-}
-
-func (p *PassProvider) getParsedEntry(ctx context.Context, entryPath string) (*Entry, error) {
+func (p *PassProvider) getParsedEntry(ctx context.Context, entryPath string) (Entry, error) {
 	if entryPath == "" {
 		return nil, errors.New("pass provider: empty entry path")
 	}
@@ -298,8 +278,7 @@ func (p *PassProvider) getParsedEntry(ctx context.Context, entryPath string) (*E
 	p.mu.RLock()
 	if cached, ok := p.fileCache[entryPath]; ok {
 		p.mu.RUnlock()
-		clone := cached.Clone()
-		return &clone, nil
+		return cached.Clone(), nil
 	}
 	p.mu.RUnlock()
 
@@ -339,10 +318,9 @@ func (p *PassProvider) getParsedEntry(ctx context.Context, entryPath string) (*E
 
 	p.mu.Lock()
 	if p.fileCache == nil {
-		p.fileCache = make(map[string]*Entry)
+		p.fileCache = make(map[string]Entry)
 	}
-	cloned := entry.Clone()
-	p.fileCache[entryPath] = &cloned
+	p.fileCache[entryPath] = entry.Clone()
 	p.mu.Unlock()
 
 	return entry, nil
@@ -365,7 +343,7 @@ func parsePassLocation(location string) (string, string) {
 
 // parsePassData parses decrypted pass text into an Entry.
 // First line is Password. Subsequent lines are Key: Value attributes.
-func parsePassData(data []byte, entryPath string) (*Entry, error) {
+func parsePassData(data []byte, entryPath string) (Entry, error) {
 	cleanPath := filepath.ToSlash(entryPath)
 	title := filepath.Base(cleanPath)
 
@@ -403,24 +381,22 @@ func parsePassData(data []byte, entryPath string) (*Entry, error) {
 		return nil, fmt.Errorf("pass provider: error parsing entry data: %w", err)
 	}
 
+	flat := make(Entry, len(attrs)+4)
+	for k, v := range attrs {
+		flat[k] = v
+	}
+	flat["title"] = title
+	flat["path"] = cleanPath
+	flat["tags"] = tags
+
 	dir := filepath.Dir(cleanPath)
-	var group *GroupInfo
 	if dir != "" && dir != "." {
-		group = &GroupInfo{
-			Name: filepath.Base(dir),
-			Path: dir,
+		flat["group"] = map[string]any{
+			"name": filepath.Base(dir),
+			"path": dir,
 		}
 	}
-
-	entry := &Entry{
-		Title:      title,
-		Tags:       tags,
-		Group:      group,
-		Attributes: attrs,
-	}
-	*entry = entry.EnsureOriginal()
-
-	return entry, nil
+	return flat, nil
 }
 
 // defaultGPGDecrypt decrypts a file using the host's gpg binary.

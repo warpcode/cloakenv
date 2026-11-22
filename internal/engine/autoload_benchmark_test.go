@@ -18,7 +18,7 @@ func (d *dummyResolver) ResolveWithKey(ctx context.Context, uri string, configKe
 	return uri, nil
 }
 func (d *dummyResolver) GetEntry(ctx context.Context, uri string) (provider.Entry, error) {
-	return provider.Entry{Attributes: map[string]any{}}, nil
+	return provider.Entry{}, nil
 }
 
 func (d *dummyResolver) GetEntries(ctx context.Context, uri string) ([]provider.Entry, error) {

@@ -202,11 +202,15 @@ func (m *execMemo) execute(
 			res = execResult{out: out, err: err}
 
 			if err == nil && cacheProv != nil && cacheTTL > 0 && len(out) <= maxPersistentExecBytes {
-				ttlCtx := execCtx
-				if _, ok := ttlCtx.Value(provider.ContextKeyTTL).(time.Duration); !ok {
-					ttlCtx = context.WithValue(ttlCtx, provider.ContextKeyTTL, cacheTTL)
+				if setter, ok := cacheProv.(interface {
+					SetSecret(ctx context.Context, location, value string) error
+				}); ok {
+					ttlCtx := execCtx
+					if _, ok := ttlCtx.Value(provider.ContextKeyTTL).(time.Duration); !ok {
+						ttlCtx = context.WithValue(ttlCtx, provider.ContextKeyTTL, cacheTTL)
+					}
+					_ = setter.SetSecret(ttlCtx, cacheKey, out)
 				}
-				_ = cacheProv.SetSecret(ttlCtx, cacheKey, out)
 			}
 		}
 

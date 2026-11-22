@@ -14,6 +14,14 @@ import (
 	"github.com/warpcode/cloakenv/internal/provider"
 )
 
+// SearchResult pairs a retrieved flat provider.Entry with its provider, vault, and path metadata.
+type SearchResult struct {
+	Provider string         `json:"provider" yaml:"provider"`
+	Vault    string         `json:"vault" yaml:"vault"`
+	Path     string         `json:"path" yaml:"path"`
+	Entry    provider.Entry `json:"entry" yaml:"entry"`
+}
+
 // AttributeResolver defines the method to resolve nested attributes.
 type AttributeResolver interface {
 	ResolveAttrRecursive(ctx context.Context, val any, depth int, configKey string) (any, error)
@@ -53,11 +61,6 @@ func (s *Searcher) getSearchableProviders(ctx context.Context, repoScopes []stri
 			if err != nil {
 				return nil, err
 			}
-			if vaultConfig, hasVault := cfg.Vaults[repoScope]; hasVault {
-				if vaultConfig.Searchable != nil && !*vaultConfig.Searchable {
-					return nil, fmt.Errorf("vault %q is not searchable", repoScope)
-				}
-			}
 			if searchable, ok := p.(provider.SearchableProvider); ok {
 				providersToSearch[repoScope] = searchable
 			} else {
@@ -65,13 +68,8 @@ func (s *Searcher) getSearchableProviders(ctx context.Context, repoScopes []stri
 			}
 		}
 	} else {
-		for vaultName, vaultConfig := range cfg.Vaults {
-			// When vaultName is "env", default searchable to false unless explicitly set to true.
+		for vaultName := range cfg.Vaults {
 			if vaultName == "env" {
-				if vaultConfig.Searchable == nil || !*vaultConfig.Searchable {
-					continue
-				}
-			} else if vaultConfig.Searchable != nil && !*vaultConfig.Searchable {
 				continue
 			}
 			p, _, err := s.providers.GetProvider(ctx, vaultName)
@@ -87,20 +85,24 @@ func (s *Searcher) getSearchableProviders(ctx context.Context, repoScopes []stri
 	return providersToSearch, nil
 }
 
-func (s *Searcher) resolveSearchResultAttributes(ctx context.Context, r provider.SearchResult, depth int) provider.SearchResult {
+func (s *Searcher) resolveSearchResultAttributes(ctx context.Context, r SearchResult, depth int) SearchResult {
 	if s.attrResolver == nil {
 		return r
 	}
-	resolvedAttrs := make(map[string]any, len(r.Entry.Attributes))
-	for k, v := range r.Entry.Attributes {
+	resolved := make(provider.Entry, len(r.Entry))
+	for k, v := range r.Entry {
+		if k == "title" || k == "path" || k == "uuid" || k == "tags" || k == "group" {
+			resolved[k] = v
+			continue
+		}
 		res, err := s.attrResolver.ResolveAttrRecursive(ctx, v, depth+1, k)
 		if err == nil {
-			resolvedAttrs[k] = res
+			resolved[k] = res
 		} else {
-			resolvedAttrs[k] = v
+			resolved[k] = v
 		}
 	}
-	r.Entry.Attributes = resolvedAttrs
+	r.Entry = resolved
 	return r
 }
 
@@ -201,53 +203,53 @@ func parseQueryParams(queryPart string) ([]queryCondition, error) {
 	return conds, nil
 }
 
-func buildSearchEntryEnv(r provider.SearchResult, fieldPolicy *provider.FieldPolicy, env, groupMap, metaMap map[string]any) {
+func buildSearchEntryEnv(r SearchResult, env, groupMap, metaMap map[string]any) {
 	clear(env)
-	env["title"] = r.Entry.Title
-	tags := r.Entry.Tags
-	if len(tags) == 0 {
-		if v, ok := r.Entry.Attributes["tags"]; ok {
-			if ts, ok := v.([]string); ok {
-				tags = ts
-			} else if ts, ok := v.([]any); ok {
-				for _, item := range ts {
-					if str, ok := item.(string); ok {
-						tags = append(tags, str)
-					}
-				}
-			}
-		}
-	}
+	env["title"] = r.Entry.Title()
+	tags := r.Entry.Tags()
 	env["tags"] = tags
 	env["path"] = r.Path
-	env["uuid"] = r.Entry.UUID
+	env["uuid"] = r.Entry.UUID()
 
 	clear(groupMap)
-	if r.Entry.Group != nil {
-		groupMap["name"] = r.Entry.Group.Name
-		groupMap["uuid"] = r.Entry.Group.UUID
-		groupMap["path"] = r.Entry.Group.Path
-	} else if gVal, ok := findAttrCaseFold(r.Entry.Attributes, "group"); ok && gVal != nil {
+	if grp := r.Entry.Group(); grp != nil {
+		if n, ok := grp["name"]; ok {
+			groupMap["name"] = fmt.Sprint(n)
+		} else {
+			groupMap["name"] = ""
+		}
+		if u, ok := grp["uuid"]; ok {
+			groupMap["uuid"] = fmt.Sprint(u)
+		} else {
+			groupMap["uuid"] = ""
+		}
+		if p, ok := grp["path"]; ok {
+			groupMap["path"] = fmt.Sprint(p)
+		} else {
+			groupMap["path"] = ""
+		}
+	} else if gVal, ok := findAttrCaseFold(r.Entry, "group"); ok && gVal != nil {
 		if gm, isMap := gVal.(map[string]any); isMap {
-			if n, ok := findAttrCaseFold(gm, "name"); ok && n != nil {
+			if n, ok := gm["name"]; ok {
 				groupMap["name"] = fmt.Sprint(n)
 			} else {
 				groupMap["name"] = ""
 			}
-			if p, ok := findAttrCaseFold(gm, "path"); ok && p != nil {
-				groupMap["path"] = fmt.Sprint(p)
-			} else {
-				groupMap["path"] = groupMap["name"]
-			}
-			if u, ok := findAttrCaseFold(gm, "uuid"); ok && u != nil {
+			if u, ok := gm["uuid"]; ok {
 				groupMap["uuid"] = fmt.Sprint(u)
 			} else {
 				groupMap["uuid"] = ""
 			}
+			if p, ok := gm["path"]; ok {
+				groupMap["path"] = fmt.Sprint(p)
+			} else {
+				groupMap["path"] = ""
+			}
 		} else {
-			groupMap["name"] = fmt.Sprint(gVal)
+			gs := fmt.Sprint(gVal)
+			groupMap["name"] = gs
 			groupMap["uuid"] = ""
-			groupMap["path"] = fmt.Sprint(gVal)
+			groupMap["path"] = gs
 		}
 	} else {
 		groupMap["name"] = ""
@@ -262,31 +264,12 @@ func buildSearchEntryEnv(r provider.SearchResult, fieldPolicy *provider.FieldPol
 	metaMap["tags"] = tags
 	env["_meta_"] = metaMap
 
-	for k, v := range r.Entry.Attributes {
-		if k != "title" && k != "tags" && k != "path" && k != "_meta_" && (k != "uuid" || r.Entry.UUID == "") && k != "group" {
+	for k, v := range r.Entry {
+		if k != "title" && k != "tags" && k != "path" && k != "_meta_" && (k != "uuid" || r.Entry.UUID() == "") && k != "group" {
 			env[k] = v
 			lowerK := strings.ToLower(k)
 			if lowerK != k && env[lowerK] == nil {
 				env[lowerK] = v
-			}
-		}
-	}
-
-	if fieldPolicy != nil && len(fieldPolicy.MappingRules) > 0 {
-		for _, rule := range fieldPolicy.MappingRules {
-			if rule.CompiledRegex == nil {
-				_ = rule.Compile()
-			}
-			if rule.CompiledRegex != nil {
-				for k, v := range r.Entry.Attributes {
-					if rule.CompiledRegex.MatchString(k) {
-						tmpl := provider.ConvertBackslashGroups(rule.Key)
-						newKey := rule.CompiledRegex.ReplaceAllString(k, tmpl)
-						if newKey != "" && env[newKey] == nil {
-							env[newKey] = v
-						}
-					}
-				}
 			}
 		}
 	}
@@ -363,14 +346,13 @@ func matchQueryConditions(conds []queryCondition, env, groupMap map[string]any) 
 	return true
 }
 
-func (s *Searcher) filterResultsByQuery(ctx context.Context, queryStr string, allResults []provider.SearchResult) ([]provider.SearchResult, error) {
+func (s *Searcher) filterResultsByQuery(queryStr string, allResults []SearchResult) ([]SearchResult, error) {
 	trimmed := strings.TrimSpace(queryStr)
 	if trimmed == "" {
 		return allResults, nil
 	}
 
-	fieldPolicy := provider.FieldPolicyFromContext(ctx)
-	matchedResults := make([]provider.SearchResult, 0, len(allResults))
+	matchedResults := make([]SearchResult, 0, len(allResults))
 	env := make(map[string]any)
 	groupMap := map[string]any{"name": "", "uuid": "", "path": ""}
 	metaMap := map[string]any{"provider": "", "vault": "", "tags": []string{}}
@@ -392,7 +374,7 @@ func (s *Searcher) filterResultsByQuery(ctx context.Context, queryStr string, al
 		}()
 
 		for _, r := range allResults {
-			buildSearchEntryEnv(r, fieldPolicy, env, groupMap, metaMap)
+			buildSearchEntryEnv(r, env, groupMap, metaMap)
 			buf.Reset()
 			if err := tmpl.Execute(buf, env); err != nil {
 				// Entries in heterogeneous vaults may lack optional/entry-specific
@@ -416,7 +398,7 @@ func (s *Searcher) filterResultsByQuery(ctx context.Context, queryStr string, al
 	}
 
 	for _, r := range allResults {
-		buildSearchEntryEnv(r, fieldPolicy, env, groupMap, metaMap)
+		buildSearchEntryEnv(r, env, groupMap, metaMap)
 		if matchQueryConditions(conds, env, groupMap) {
 			matchedResults = append(matchedResults, r)
 		}
@@ -426,12 +408,12 @@ func (s *Searcher) filterResultsByQuery(ctx context.Context, queryStr string, al
 
 // Search queries entries across searchable repositories using a Go template
 // predicate or URL query parameters.
-func (s *Searcher) Search(ctx context.Context, queryStr string, repoScopes []string) ([]provider.SearchResult, error) {
+func (s *Searcher) Search(ctx context.Context, queryStr string, repoScopes []string) ([]SearchResult, error) {
 	return s.SearchRecursive(ctx, queryStr, repoScopes, 0)
 }
 
 // SearchRecursive executes the search tracking depth to prevent infinite recursion.
-func (s *Searcher) SearchRecursive(ctx context.Context, queryStr string, repoScopes []string, depth int) ([]provider.SearchResult, error) {
+func (s *Searcher) SearchRecursive(ctx context.Context, queryStr string, repoScopes []string, depth int) ([]SearchResult, error) {
 	trimmed := strings.TrimSpace(queryStr)
 	if trimmed != "" {
 		if isTemplateQuery(trimmed) {
@@ -450,11 +432,10 @@ func (s *Searcher) SearchRecursive(ctx context.Context, queryStr string, repoSco
 		return nil, err
 	}
 
-	fieldPolicy := provider.FieldPolicyFromContext(ctx)
 	cfg := s.providers.Config()
 
 	var (
-		allResults []provider.SearchResult
+		allResults []SearchResult
 		resultsMu  sync.Mutex
 		errOnce    sync.Once
 		firstErr   error
@@ -482,7 +463,7 @@ func (s *Searcher) SearchRecursive(ctx context.Context, queryStr string, repoSco
 			}
 			defer func() { <-sem }()
 
-			results, err := searchable.Search(gctx, provider.SearchQuery{})
+			entries, err := searchable.Search(gctx, provider.SearchQuery{})
 			if err != nil {
 				errOnce.Do(func() {
 					firstErr = fmt.Errorf("failed to retrieve entries from repo %q: %w", name, err)
@@ -491,80 +472,25 @@ func (s *Searcher) SearchRecursive(ctx context.Context, queryStr string, repoSco
 				return
 			}
 
-			var rootPrefixes []string
-			if rpProvider, ok := searchable.(interface{ RootPrefixes() []string }); ok {
-				rootPrefixes = rpProvider.RootPrefixes()
-			}
-			if len(rootPrefixes) == 0 && cfg != nil {
+			provName := ""
+			if cfg != nil {
 				if vc, ok := cfg.Vaults[name]; ok {
-					if vc.EntitiesRootKey != "" && vc.EntitiesRootKey != "." {
-						rootPrefixes = []string{vc.EntitiesRootKey}
-					}
+					provName = vc.Provider
+				}
+			}
+			if provName == "" {
+				if sp, ok := searchable.(provider.SecretProvider); ok {
+					provName = sp.Scheme()
 				}
 			}
 
-			vaultResults := make([]provider.SearchResult, 0, len(results))
-			for _, r := range results {
-				origTitle := r.Entry.Title
-				origPath := r.Path
-				if cfg != nil {
-					if vc, ok := cfg.Vaults[name]; ok {
-						if r.Provider == "" {
-							r.Provider = vc.Provider
-						}
-						if r.Vault == "" {
-							r.Vault = name
-						}
-						if len(vc.Mapping) > 0 {
-							if !provider.IsDefaultFieldMappedOrIncluded("provider", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
-								r.Provider = ""
-							}
-							if !provider.IsDefaultFieldMappedOrIncluded("vault", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
-								r.Vault = ""
-							}
-							if !provider.IsDefaultFieldMappedOrIncluded("path", vc.Mapping, vc.IncludeFields, vc.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
-								r.Path = ""
-							}
-						} else if len(vc.IncludeFields) > 0 || len(vc.ExcludeFields) > 0 {
-							if !provider.IsDefaultFieldAllowed("provider", origPath, rootPrefixes, origTitle, vc.IncludeFields, vc.ExcludeFields) {
-								r.Provider = ""
-							}
-							if !provider.IsDefaultFieldAllowed("vault", origPath, rootPrefixes, origTitle, vc.IncludeFields, vc.ExcludeFields) {
-								r.Vault = ""
-							}
-							if !provider.IsDefaultFieldAllowed("path", origPath, rootPrefixes, origTitle, vc.IncludeFields, vc.ExcludeFields) {
-								r.Path = ""
-							}
-						}
-					}
-				}
-				if fieldPolicy != nil {
-					var fpIncludes []string
-					for _, layer := range fieldPolicy.IncludeLayers {
-						fpIncludes = append(fpIncludes, layer...)
-					}
-					if len(fieldPolicy.MappingRules) > 0 {
-						if !provider.IsDefaultFieldMappedOrIncluded("provider", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
-							r.Provider = ""
-						}
-						if !provider.IsDefaultFieldMappedOrIncluded("vault", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
-							r.Vault = ""
-						}
-						if !provider.IsDefaultFieldMappedOrIncluded("path", fieldPolicy.MappingRules, fpIncludes, fieldPolicy.ExcludeFields, origPath, rootPrefixes, r.Entry, r.Provider, r.Vault) {
-							r.Path = ""
-						}
-					} else if len(fpIncludes) > 0 || len(fieldPolicy.ExcludeFields) > 0 {
-						if !provider.IsDefaultFieldAllowed("provider", origPath, rootPrefixes, origTitle, fpIncludes, fieldPolicy.ExcludeFields) {
-							r.Provider = ""
-						}
-						if !provider.IsDefaultFieldAllowed("vault", origPath, rootPrefixes, origTitle, fpIncludes, fieldPolicy.ExcludeFields) {
-							r.Vault = ""
-						}
-						if !provider.IsDefaultFieldAllowed("path", origPath, rootPrefixes, origTitle, fpIncludes, fieldPolicy.ExcludeFields) {
-							r.Path = ""
-						}
-					}
-					r.Entry = fieldPolicy.ApplyToEntry(r.Entry, origPath, rootPrefixes)
+			vaultResults := make([]SearchResult, 0, len(entries))
+			for _, e := range entries {
+				r := SearchResult{
+					Provider: provName,
+					Vault:    name,
+					Path:     e.Path(),
+					Entry:    e,
 				}
 				vaultResults = append(vaultResults, s.resolveSearchResultAttributes(gctx, r, depth))
 			}
@@ -580,14 +506,14 @@ func (s *Searcher) SearchRecursive(ctx context.Context, queryStr string, repoSco
 		return nil, firstErr
 	}
 
-	slices.SortFunc(allResults, func(a, b provider.SearchResult) int {
+	slices.SortFunc(allResults, func(a, b SearchResult) int {
 		if c := cmp.Compare(a.Vault, b.Vault); c != 0 {
 			return c
 		}
 		return cmp.Compare(a.Path, b.Path)
 	})
 
-	return s.filterResultsByQuery(ctx, trimmed, allResults)
+	return s.filterResultsByQuery(trimmed, allResults)
 }
 
 func parseSearchURI(location string) (string, string, error) {
@@ -633,9 +559,6 @@ func parseSearchURI(location string) (string, string, error) {
 	return queryPart, attr, nil
 }
 
-// findAttrCaseFold performs a deterministic case-insensitive attribute lookup.
-// When several keys fold to the same name, the lexicographically smallest key
-// wins so results are stable across runs despite randomized map iteration.
 func findAttrCaseFold(attrs map[string]any, key string) (any, bool) {
 	best := ""
 	found := false

@@ -10,7 +10,7 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
-var benchmarkResult []SearchResult
+var benchmarkResult []Entry
 
 func BenchmarkKeePassProvider_Search_Binaries(b *testing.B) {
 	k := NewKeePassProvider()

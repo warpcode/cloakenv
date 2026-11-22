@@ -29,17 +29,6 @@ func (m *mockBackendProvider) GetSecret(_ context.Context, location string) (str
 	}
 	return "mock_secret_" + location, nil
 }
-func (m *mockBackendProvider) SetSecret(_ context.Context, location, value string) error {
-	if m.data == nil {
-		m.data = make(map[string]string)
-	}
-	m.data[location] = value
-	return nil
-}
-func (m *mockBackendProvider) DeleteSecret(_ context.Context, location string) error {
-	delete(m.data, location)
-	return nil
-}
 func (m *mockBackendProvider) Validate(_ map[string]string) error { return nil }
 
 type mockSearchableBackendProvider struct {
@@ -53,24 +42,20 @@ func (m *mockSearchableBackendProvider) GetEntry(_ context.Context, location str
 		return e, nil
 	}
 	return Entry{
-		Title: location,
-		Attributes: map[string]any{
-			"Password": "mock_entry_pass_" + location,
-		},
+		"title":    location,
+		"path":     location,
+		"Password": "mock_entry_pass_" + location,
 	}, nil
 }
 
-func (m *mockSearchableBackendProvider) Search(_ context.Context, query SearchQuery) ([]SearchResult, error) {
+func (m *mockSearchableBackendProvider) Search(_ context.Context, query SearchQuery) ([]Entry, error) {
 	m.calls.Add(1)
-	var res []SearchResult
+	var res []Entry
 	for k, e := range m.entries {
-		if query.Title == "" || strings.Contains(e.Title, query.Title) {
-			res = append(res, SearchResult{
-				Provider: "mock",
-				Vault:    "mock_vault",
-				Path:     k,
-				Entry:    e,
-			})
+		if query.Title == "" || strings.Contains(e.Title(), query.Title) {
+			cp := e.Clone()
+			cp["path"] = k
+			res = append(res, cp)
 		}
 	}
 	return res, nil
@@ -141,20 +126,7 @@ func TestCachingProvider_KeyringMode(t *testing.T) {
 		t.Errorf("expected cache miss after expiration (2 backend calls), got %d", backend.calls.Load())
 	}
 
-	// 4. Invalidation on SetSecret and DeleteSecret
-	backend.data["account_1"] = "new_secret"
-	if err := cp.SetSecret(ctx, "account_1", "new_secret"); err != nil {
-		t.Fatalf("SetSecret failed: %v", err)
-	}
-	val4, err := cp.GetSecret(ctx, "account_1")
-	if err != nil {
-		t.Fatalf("GetSecret after SetSecret failed: %v", err)
-	}
-	if val4 != "new_secret" {
-		t.Errorf("val4 = %q, want 'new_secret'", val4)
-	}
-
-	// 5. Clear()
+	// 4. Clear()
 	cachingConcrete, ok := cp.(*CachingProvider)
 	if !ok {
 		t.Fatalf("expected *CachingProvider")
@@ -163,7 +135,7 @@ func TestCachingProvider_KeyringMode(t *testing.T) {
 		t.Fatalf("Clear() failed: %v", err)
 	}
 	_, _ = cp.GetSecret(ctx, "account_1")
-	if backend.calls.Load() != 4 {
+	if backend.calls.Load() != 3 {
 		t.Errorf("expected backend call after Clear(), got %d", backend.calls.Load())
 	}
 }
@@ -279,10 +251,9 @@ func TestCachingProvider_SearchableInterface(t *testing.T) {
 		mockBackendProvider: mockBackendProvider{data: make(map[string]string)},
 		entries: map[string]Entry{
 			"site/app": {
-				Title: "Test App",
-				Attributes: map[string]any{
-					"HOST": "db.example.internal",
-				},
+				"title": "Test App",
+				"path":  "site/app",
+				"HOST":  "db.example.internal",
 			},
 		},
 	}
@@ -309,8 +280,8 @@ func TestCachingProvider_SearchableInterface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetEntry failed: %v", err)
 	}
-	if entry1.Attributes["HOST"] != "db.example.internal" {
-		t.Errorf("entry1 HOST = %v", entry1.Attributes["HOST"])
+	if entry1["HOST"] != "db.example.internal" {
+		t.Errorf("entry1 HOST = %v", entry1["HOST"])
 	}
 	if searchableBackend.calls.Load() != 1 {
 		t.Errorf("expected 1 call on miss, got %d", searchableBackend.calls.Load())
@@ -321,8 +292,8 @@ func TestCachingProvider_SearchableInterface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second GetEntry failed: %v", err)
 	}
-	if entry2.Attributes["HOST"] != "db.example.internal" {
-		t.Errorf("entry2 HOST = %v", entry2.Attributes["HOST"])
+	if entry2["HOST"] != "db.example.internal" {
+		t.Errorf("entry2 HOST = %v", entry2["HOST"])
 	}
 	if searchableBackend.calls.Load() != 1 {
 		t.Errorf("expected still 1 call on cache hit, got %d", searchableBackend.calls.Load())
@@ -335,5 +306,91 @@ func TestCachingProvider_SearchableInterface(t *testing.T) {
 	}
 	if len(results) != 1 {
 		t.Errorf("expected 1 search result, got %d", len(results))
+	}
+}
+
+type mockSearchableCacheBackend struct {
+	mockBackendProvider
+	searchCalls atomic.Int64
+	entries     []Entry
+}
+
+func (m *mockSearchableCacheBackend) GetEntry(_ context.Context, location string) (Entry, error) {
+	m.calls.Add(1)
+	return Entry{"title": location, "path": location, "tags": []string{"t1"}, "secret": "val"}, nil
+}
+
+func (m *mockSearchableCacheBackend) Search(_ context.Context, _ SearchQuery) ([]Entry, error) {
+	m.searchCalls.Add(1)
+	out := make([]Entry, len(m.entries))
+	for i, e := range m.entries {
+		out[i] = e.Clone()
+	}
+	return out, nil
+}
+
+func TestSearchableCachingProviderSearchCachesResults(t *testing.T) {
+	for _, mode := range []string{CacheModeKeyring, CacheModeEncryptedDisk} {
+		t.Run(mode, func(t *testing.T) {
+			keyring.MockInit()
+			tmpHome := t.TempDir()
+			t.Setenv("HOME", tmpHome)
+			t.Setenv("XDG_CACHE_HOME", filepath.Join(tmpHome, ".cache"))
+
+			backend := &mockSearchableCacheBackend{
+				entries: []Entry{
+					{"title": "db", "path": "prod/db", "tags": []string{"prod", "db"}, "password": "pw1"},
+				},
+			}
+			wrapped, err := NewCachingProvider(backend, CachingConfig{
+				VaultName:     "work_" + mode,
+				TTL:           time.Minute,
+				Mode:          mode,
+				KeyringPrefix: "cloakenv_test",
+			})
+			if err != nil {
+				t.Fatalf("NewCachingProvider failed: %v", err)
+			}
+			sp, ok := wrapped.(SearchableProvider)
+			if !ok {
+				t.Fatalf("expected wrapped provider to implement SearchableProvider")
+			}
+
+			ctx := context.Background()
+			got1, err := sp.Search(ctx, SearchQuery{Tags: []string{"db", "prod"}})
+			if err != nil {
+				t.Fatalf("first Search failed: %v", err)
+			}
+			if len(got1) != 1 || got1[0]["password"] != "pw1" {
+				t.Fatalf("unexpected first Search result: %v", got1)
+			}
+			if backend.searchCalls.Load() != 1 {
+				t.Fatalf("expected 1 backend search call, got %d", backend.searchCalls.Load())
+			}
+
+			// Canonicalized tag order must hit the same cache entry without invoking backend.
+			got2, err := sp.Search(ctx, SearchQuery{Tags: []string{"prod", "db"}})
+			if err != nil {
+				t.Fatalf("second Search failed: %v", err)
+			}
+			if len(got2) != 1 || got2[0]["password"] != "pw1" {
+				t.Fatalf("unexpected cached Search result: %v", got2)
+			}
+			if len(got2[0].Tags()) != 2 {
+				t.Fatalf("expected cached Entry tags preserved, got %v", got2[0].Tags())
+			}
+			if backend.searchCalls.Load() != 1 {
+				t.Fatalf("expected cached Search hit without calling backend again, got %d calls", backend.searchCalls.Load())
+			}
+
+			// Different query must miss cache.
+			_, err = sp.Search(ctx, SearchQuery{Path: "other"})
+			if err != nil {
+				t.Fatalf("third Search failed: %v", err)
+			}
+			if backend.searchCalls.Load() != 2 {
+				t.Fatalf("expected cache miss on distinct SearchQuery, got %d calls", backend.searchCalls.Load())
+			}
+		})
 	}
 }
