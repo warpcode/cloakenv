@@ -288,6 +288,10 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 						res.Errors = append(res.Errors, fmt.Sprintf("%s env #%d: inline env key %q cannot contain '='", ruleLabel, j+1, k))
 						continue
 					}
+					if strings.ContainsAny(k, " \t\r\n") {
+						res.Errors = append(res.Errors, fmt.Sprintf("%s env #%d: inline env key %q cannot contain whitespace", ruleLabel, j+1, k))
+						continue
+					}
 					v := item.Inline[k]
 					if strings.Contains(v, "{{") {
 						if err := validateTemplateSyntax(fmt.Sprintf("%s env #%d key %q", ruleLabel, j+1, k), v); err != nil {

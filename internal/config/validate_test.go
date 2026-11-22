@@ -1014,6 +1014,16 @@ func TestValidateAutoloadTemplateReviewFixes(t *testing.T) {
 			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        path: /tmp/out.json\n      - template: cfg\n        path: /tmp/./out.json\n",
 			wantErr: "duplicate literal path target",
 		},
+		{
+			name:    "padded inline env key rejected",
+			yaml:    base + "autoload:\n  - match: app\n    envs:\n      - \" FOO \": bar\n",
+			wantErr: "cannot contain whitespace",
+		},
+		{
+			name:    "inline env key with internal whitespace rejected",
+			yaml:    base + "autoload:\n  - match: app\n    envs:\n      - \"FOO BAR\": baz\n",
+			wantErr: "cannot contain whitespace",
+		},
 	}
 
 	for _, tc := range cases {
