@@ -58,21 +58,31 @@ vaults:
     tags: [tag1, tag2]
     attributes:
       secret_key: secret_val
+envs:
+  aws_env:
+    - vault: env
+      rules:
+        - type: pass
+          include: ["AWS_*"]
+templates:
+  litellm_cfg:
+    driver: yaml
+    vaults:
+      - vault: env
 autoload:
   - match: "aws"
-    vaults:
-      - "keepass"
-    merge:
-      - "search_view"
-    env:
-      AWS_REGION: "env://REGION"
-    whitelist:
-      - "AWS_ACCESS_KEY_ID"
+    envs:
+      - "aws_env"
+      - AWS_REGION: "us-east-1"
+    templates:
+      - template: "litellm_cfg"
+        env_path: "LITELLM_CONFIG_PATH"
+        path: "/tmp/{{ .AWS_REGION }}.yaml"
+        persist: true
   - match: "litellm (.*)$"
     command: "uvx --with 'litellm[proxy]' litellm \\1"
-    vaults:
-      - "keepass"
-`
+    envs:
+      - "aws_env"`
 	configPath := filepath.Join(tempDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
 		t.Fatalf("failed to write temp config file: %v", err)
@@ -197,25 +207,21 @@ vaults:
 	if rule.Match != "aws" {
 		t.Errorf("expected match 'aws', got %q", rule.Match)
 	}
-	if len(rule.Vaults) != 1 || rule.Vaults[0] != "keepass" {
-		t.Errorf("expected vaults ['keepass'], got %v", rule.Vaults)
+	if len(rule.Envs) != 2 || rule.Envs[0].Name != "aws_env" || rule.Envs[1].Inline["AWS_REGION"] != "us-east-1" {
+		t.Errorf("unexpected autoload Envs: %+v", rule.Envs)
 	}
-	if len(rule.Merge) != 1 || rule.Merge[0] != "search_view" {
-		t.Errorf("expected merge ['search_view'], got %v", rule.Merge)
+	if len(rule.Templates) != 1 || rule.Templates[0].Template != "litellm_cfg" || rule.Templates[0].EnvPath != "LITELLM_CONFIG_PATH" || !rule.Templates[0].Persist {
+		t.Errorf("unexpected autoload Templates: %+v", rule.Templates)
 	}
-	if rule.Env["AWS_REGION"] != "env://REGION" {
-		t.Errorf("expected env AWS_REGION='env://REGION', got %q", rule.Env["AWS_REGION"])
-	}
-	if len(rule.Whitelist) != 1 || rule.Whitelist[0] != "AWS_ACCESS_KEY_ID" {
-		t.Errorf("expected whitelist ['AWS_ACCESS_KEY_ID'], got %v", rule.Whitelist)
-	}
-
 	rule2 := cfg.Autoload[1]
 	if rule2.Match != "litellm (.*)$" {
 		t.Errorf("expected match 'litellm (.*)$', got %q", rule2.Match)
 	}
 	if rule2.Command != "uvx --with 'litellm[proxy]' litellm \\1" {
 		t.Errorf("expected command template, got %q", rule2.Command)
+	}
+	if len(rule2.Envs) != 1 || rule2.Envs[0].Name != "aws_env" {
+		t.Errorf("expected rule2 Envs [aws_env], got %+v", rule2.Envs)
 	}
 
 	// 3. Test invalid YAML file

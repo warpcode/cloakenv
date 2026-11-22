@@ -474,3 +474,38 @@ func matchWildcard(pattern, text string) bool {
 		}
 	}
 }
+
+// AutoloadEvaluation summarizes all matching autoload rules for a command invocation.
+type AutoloadEvaluation struct {
+	Command      []string
+	MatchedRules []string
+	Envs         []config.AutoloadEnvItem
+	Templates    []config.AutoloadTemplateConfig
+}
+
+// EvaluateAutoload evaluates all autoload rules against cmdArgs in order, applying command
+// substitutions and collecting ordered envs and template attachments.
+func EvaluateAutoload(cfg *config.Config, cmdArgs []string) (*AutoloadEvaluation, error) {
+	res := &AutoloadEvaluation{
+		Command: append([]string(nil), cmdArgs...),
+	}
+	if cfg == nil || len(cfg.Autoload) == 0 || len(cmdArgs) == 0 {
+		return res, nil
+	}
+	parsed := parseCommandArgs(res.Command)
+	for _, rule := range cfg.Autoload {
+		matched, newArgs, err := matchPreparedCommandRule(rule, res.Command, parsed)
+		if err != nil {
+			return nil, fmt.Errorf("autoload rule %q: %w", rule.Match, err)
+		}
+		if !matched {
+			continue
+		}
+		res.Command = newArgs
+		parsed = parseCommandArgs(res.Command)
+		res.MatchedRules = append(res.MatchedRules, rule.Match)
+		res.Envs = append(res.Envs, rule.Envs...)
+		res.Templates = append(res.Templates, rule.Templates...)
+	}
+	return res, nil
+}

@@ -17,14 +17,17 @@ func TestInternalMatchAlias(t *testing.T) {
 			{
 				Match:   "^litellm\\s+(.*)$",
 				Command: "uvx --with 'litellm[proxy]' litellm \\1",
-				Vaults:  []string{"litellm_vault"},
-				Env: map[string]string{
-					"LITELLM_KEY": "keyring://litellm/master_key",
+				Envs: []config.AutoloadEnvItem{
+					config.NamedEnvItem("litellm_env"),
+					config.InlineEnvItem(map[string]string{"LOG_LEVEL": "INFO"}),
+				},
+				Templates: []config.AutoloadTemplateConfig{
+					{Template: "litellm_cfg", EnvPath: "LITELLM_CONFIG_PATH"},
 				},
 			},
 			{
-				Match:  "aws",
-				Vaults: []string{"aws_vault"},
+				Match: "aws",
+				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("aws_env")},
 			},
 		},
 	}
@@ -87,11 +90,11 @@ func TestInternalMatchAlias(t *testing.T) {
 		if res.Command != "uvx --with 'litellm[proxy]' litellm \\1" {
 			t.Errorf("expected command replacement template, got %q", res.Command)
 		}
-		if len(res.Vaults) != 1 || res.Vaults[0] != "litellm_vault" {
-			t.Errorf("expected vaults [litellm_vault], got %v", res.Vaults)
+		if len(res.Envs) != 2 || res.Envs[0].Name != "litellm_env" || res.Envs[1].Inline["LOG_LEVEL"] != "INFO" {
+			t.Errorf("unexpected Envs in JSON result: %+v", res.Envs)
 		}
-		if res.Env["LITELLM_KEY"] != "keyring://litellm/master_key" {
-			t.Errorf("expected LITELLM_KEY in env map, got %v", res.Env)
+		if len(res.Templates) != 1 || res.Templates[0].Template != "litellm_cfg" {
+			t.Errorf("unexpected Templates in JSON result: %+v", res.Templates)
 		}
 	})
 

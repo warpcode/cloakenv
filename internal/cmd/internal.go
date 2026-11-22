@@ -12,13 +12,11 @@ import (
 
 // MatchAliasResult represents the structured JSON output for match-alias.
 type MatchAliasResult struct {
-	Matched   bool              `json:"matched"`
-	Match     string            `json:"match,omitempty"`
-	Command   string            `json:"command,omitempty"`
-	Vaults    []string          `json:"vaults,omitempty"`
-	Merge     []string          `json:"merge,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	Whitelist []string          `json:"whitelist,omitempty"`
+	Matched   bool                            `json:"matched"`
+	Match     string                          `json:"match,omitempty"`
+	Command   string                          `json:"command,omitempty"`
+	Envs      []config.AutoloadEnvItem        `json:"envs,omitempty"`
+	Templates []config.AutoloadTemplateConfig `json:"templates,omitempty"`
 }
 
 // Internal handles internal helper commands, specifically "cloakenv internal match-alias [--json] -- <command> [args]".
@@ -118,10 +116,8 @@ Description:
 		if matched {
 			res.Match = rule.Match
 			res.Command = rule.Command
-			res.Vaults = rule.Vaults
-			res.Merge = rule.Merge
-			res.Env = rule.Env
-			res.Whitelist = rule.Whitelist
+			res.Envs = rule.Envs
+			res.Templates = rule.Templates
 		}
 		data, err := json.MarshalIndent(res, "", "  ")
 		if err != nil {

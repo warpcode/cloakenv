@@ -261,10 +261,104 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 
 	// 5. Validate Autoload Rules
 	for i, rule := range cfg.Autoload {
+		ruleLabel := fmt.Sprintf("autoload rule #%d", i+1)
 		if strings.TrimSpace(rule.Match) == "" {
-			res.Errors = append(res.Errors, fmt.Sprintf("autoload rule #%d: missing 'match' pattern", i+1))
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: missing 'match' pattern", ruleLabel))
 		} else if _, err := regexp.Compile(rule.Match); err != nil && !isWildcardAutoloadPattern(rule.Match) {
-			res.Errors = append(res.Errors, fmt.Sprintf("autoload rule #%d: invalid regex pattern %q: %v", i+1, rule.Match, err))
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: invalid regex pattern %q: %v", ruleLabel, rule.Match, err))
+		}
+
+		for j, item := range rule.Envs {
+			if item.Name != "" {
+				if _, exists := cfg.Envs[item.Name]; !exists {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s env #%d: references unknown env %q", ruleLabel, j+1, item.Name))
+				}
+			} else if len(item.Inline) > 0 {
+				inlineKeys := make([]string, 0, len(item.Inline))
+				for k := range item.Inline {
+					inlineKeys = append(inlineKeys, k)
+				}
+				slices.Sort(inlineKeys)
+				for _, k := range inlineKeys {
+					if strings.TrimSpace(k) == "" {
+						res.Errors = append(res.Errors, fmt.Sprintf("%s env #%d: inline env key cannot be empty or whitespace", ruleLabel, j+1))
+						continue
+					}
+					if strings.ContainsRune(k, '=') {
+						res.Errors = append(res.Errors, fmt.Sprintf("%s env #%d: inline env key %q cannot contain '='", ruleLabel, j+1, k))
+						continue
+					}
+					if strings.ContainsAny(k, " \t\r\n") {
+						res.Errors = append(res.Errors, fmt.Sprintf("%s env #%d: inline env key %q cannot contain whitespace", ruleLabel, j+1, k))
+						continue
+					}
+					v := item.Inline[k]
+					if strings.Contains(v, "{{") {
+						if err := validateTemplateSyntax(fmt.Sprintf("%s env #%d key %q", ruleLabel, j+1, k), v); err != nil {
+							res.Errors = append(res.Errors, err.Error())
+						}
+					}
+				}
+			} else {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s env #%d: env item cannot be empty", ruleLabel, j+1))
+			}
+		}
+
+		seenEnvVars := make(map[string]bool)
+		seenLiteralPaths := make(map[string]bool)
+		for j, tmplAtt := range rule.Templates {
+			attLabel := fmt.Sprintf("%s template #%d", ruleLabel, j+1)
+			if strings.TrimSpace(tmplAtt.Template) == "" {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: missing required field 'template'", attLabel))
+			} else if tmplAtt.Template != strings.TrimSpace(tmplAtt.Template) {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: template name %q must not have leading or trailing whitespace", attLabel, tmplAtt.Template))
+			} else if _, exists := cfg.Templates[tmplAtt.Template]; !exists {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: references unknown template %q", attLabel, tmplAtt.Template))
+			}
+			if tmplAtt.Env != "" {
+				if strings.TrimSpace(tmplAtt.Env) == "" || strings.ContainsAny(tmplAtt.Env, " \t\r\n=") {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: invalid 'env' variable name %q (must not contain whitespace or '=')", attLabel, tmplAtt.Env))
+				} else if seenEnvVars[tmplAtt.Env] {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: duplicate environment variable target %q in autoload rule", attLabel, tmplAtt.Env))
+				} else {
+					seenEnvVars[tmplAtt.Env] = true
+				}
+			}
+			if tmplAtt.EnvPath != "" {
+				if strings.TrimSpace(tmplAtt.EnvPath) == "" || strings.ContainsAny(tmplAtt.EnvPath, " \t\r\n=") {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: invalid 'env_path' variable name %q (must not contain whitespace or '=')", attLabel, tmplAtt.EnvPath))
+				} else if seenEnvVars[tmplAtt.EnvPath] {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: duplicate environment variable target %q in autoload rule", attLabel, tmplAtt.EnvPath))
+				} else {
+					seenEnvVars[tmplAtt.EnvPath] = true
+				}
+			}
+			if tmplAtt.Path != "" {
+				if strings.TrimSpace(tmplAtt.Path) == "" || tmplAtt.Path != strings.TrimSpace(tmplAtt.Path) {
+					res.Errors = append(res.Errors, fmt.Sprintf("%s: invalid 'path' %q (must not be empty or have leading/trailing whitespace)", attLabel, tmplAtt.Path))
+				} else if strings.Contains(tmplAtt.Path, "{{") {
+					if err := validateTemplateSyntax(fmt.Sprintf("%s path", attLabel), tmplAtt.Path); err != nil {
+						res.Errors = append(res.Errors, err.Error())
+					}
+				} else {
+					normPath := filepath.Clean(expandHome(tmplAtt.Path))
+					if seenLiteralPaths[normPath] {
+						res.Errors = append(res.Errors, fmt.Sprintf("%s: duplicate literal path target %q in autoload rule", attLabel, tmplAtt.Path))
+					} else {
+						seenLiteralPaths[normPath] = true
+					}
+				}
+			}
+			hasTarget := strings.TrimSpace(tmplAtt.Env) != "" || strings.TrimSpace(tmplAtt.EnvPath) != "" || strings.TrimSpace(tmplAtt.Path) != ""
+			if !hasTarget {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: must set at least one of 'env', 'env_path', or 'path'", attLabel))
+			}
+			if tmplAtt.Env != "" && (tmplAtt.EnvPath != "" || tmplAtt.Path != "") {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: cannot combine 'env' with 'env_path' or 'path'", attLabel))
+			}
+			if tmplAtt.Persist && tmplAtt.Env != "" {
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: 'persist: true' cannot be combined with 'env' (no file is written)", attLabel))
+			}
 		}
 	}
 

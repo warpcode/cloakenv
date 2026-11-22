@@ -329,11 +329,11 @@ vaults:
 	t.Run("autoload wildcard glob pattern passes validation while broken regex fails", func(t *testing.T) {
 		validGlobYAML := `autoload:
   - match: "*.sh"
-    env:
-      FOO: "env://FOO"
+    envs:
+      - FOO: "bar"
   - match: "npm run *"
-    env:
-      BAR: "env://BAR"`
+    envs:
+      - BAR: "baz"`
 		cfgPath := filepath.Join(tempDir, "autoload_glob.yaml")
 		if err := os.WriteFile(cfgPath, []byte(validGlobYAML), 0600); err != nil {
 			t.Fatalf("failed to write autoload glob config: %v", err)
@@ -348,8 +348,8 @@ vaults:
 
 		invalidRegexYAML := `autoload:
   - match: "^(aws"
-    env:
-      FOO: "env://FOO"`
+    envs:
+      - FOO: "bar"`
 		badPath := filepath.Join(tempDir, "autoload_bad_regex.yaml")
 		if err := os.WriteFile(badPath, []byte(invalidRegexYAML), 0600); err != nil {
 			t.Fatalf("failed to write invalid regex config: %v", err)
@@ -780,4 +780,266 @@ envs:
 			t.Errorf("expected template syntax error, got:\n%s", joined)
 		}
 	})
+}
+
+func TestValidate_AutoloadEnvsAndTemplates(t *testing.T) {
+	tempDir := t.TempDir()
+
+	validYAML := `envs:
+  my_env:
+    - vault: env
+      rules:
+        - type: pass
+          include: ["FOO"]
+
+templates:
+  my_tmpl:
+    driver: json
+    vaults:
+      - vault: env
+        rules:
+          - type: pass
+            include: ["FOO"]
+
+autoload:
+  - match: "^app"
+    envs:
+      - "my_env"
+      - LOG_LEVEL: "INFO"
+        COMBINED: "{{ .FOO }}-ok"
+    templates:
+      - template: "my_tmpl"
+        env_path: "APP_CFG"
+        path: "/tmp/{{ .LOG_LEVEL }}.json"`
+	validPath := filepath.Join(tempDir, "valid_autoload.yaml")
+	_ = os.WriteFile(validPath, []byte(validYAML), 0600)
+	res, err := Validate(validPath, true)
+	if err != nil {
+		t.Fatalf("Validate error: %v", err)
+	}
+	if !res.IsValid() {
+		t.Fatalf("expected valid autoload config, got errors: %v", res.Errors)
+	}
+
+	invalidYAML := `envs:
+  my_env:
+    - vault: env
+      rules:
+        - type: pass
+          include: ["FOO"]
+templates:
+  my_tmpl:
+    driver: json
+    vaults:
+      - vault: env
+        rules:
+          - type: pass
+            include: ["FOO"]
+autoload:
+  - match: "^app"
+    envs:
+      - "missing_env"
+      - BAD: "{{ .bad | missingFunc }}"
+    templates:
+      - template: "missing_tmpl"
+        env: "RAW"
+        env_path: "CONFLICT"
+      - template: "my_tmpl"
+      - template: "my_tmpl"
+        path: "{{ .bad | missingFunc }}"`
+	badPath := filepath.Join(tempDir, "bad_autoload.yaml")
+	_ = os.WriteFile(badPath, []byte(invalidYAML), 0600)
+	badRes, err := Validate(badPath, true)
+	if err != nil {
+		t.Fatalf("Validate error: %v", err)
+	}
+	if badRes.IsValid() {
+		t.Fatal("expected autoload validation errors, got none")
+	}
+	joined := strings.Join(badRes.Errors, "\n")
+	for _, want := range []string{
+		`unknown env "missing_env"`,
+		`unknown template "missing_tmpl"`,
+		`cannot combine 'env' with 'env_path' or 'path'`,
+		`must set at least one of 'env', 'env_path', or 'path'`,
+		`template syntax error`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected errors to contain %q, got:\n%s", want, joined)
+		}
+	}
+}
+
+func TestAutoloadEnvItem_AliasesAndJSONNullAndWhitespaceValidation(t *testing.T) {
+	t.Run("YAML anchor and alias in autoload envs", func(t *testing.T) {
+		yamlData := `
+x_shared_inline: &shared_inline
+  APP_ENV: "prod"
+x_shared_name: &shared_name "base_env"
+envs:
+  base_env:
+    - vault: env
+      rules:
+        - type: pass
+          include: ["FOO"]
+autoload:
+  - match: "^deploy"
+    envs:
+      - *shared_name
+      - *shared_inline
+`
+		tmp := filepath.Join(t.TempDir(), "alias.yaml")
+		if err := os.WriteFile(tmp, []byte(yamlData), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(tmp)
+		if err != nil {
+			t.Fatalf("Load failed with YAML alias: %v", err)
+		}
+		if len(cfg.Autoload) != 1 || len(cfg.Autoload[0].Envs) != 2 {
+			t.Fatalf("unexpected autoload envs: %#v", cfg.Autoload)
+		}
+		if cfg.Autoload[0].Envs[0].Name != "base_env" {
+			t.Errorf("alias scalar Name = %q, want base_env", cfg.Autoload[0].Envs[0].Name)
+		}
+		if cfg.Autoload[0].Envs[1].Inline["APP_ENV"] != "prod" {
+			t.Errorf("alias map APP_ENV = %q, want prod", cfg.Autoload[0].Envs[1].Inline["APP_ENV"])
+		}
+	})
+
+	t.Run("JSON null rejected by AutoloadEnvItem.UnmarshalJSON", func(t *testing.T) {
+		var item AutoloadEnvItem
+		if err := item.UnmarshalJSON([]byte("null")); err == nil {
+			t.Fatal("expected error unmarshaling JSON null into AutoloadEnvItem")
+		}
+		if err := item.UnmarshalJSON([]byte("  null  ")); err == nil {
+			t.Fatal("expected error unmarshaling padded JSON null into AutoloadEnvItem")
+		}
+	})
+
+	t.Run("validation rejects blank/invalid inline env keys and whitespace-only template targets", func(t *testing.T) {
+		yamlData := `
+templates:
+  t1:
+    driver: json
+    vaults:
+      - vault: env
+        rules:
+          - type: pass
+            include: ["FOO"]
+autoload:
+  - match: "^run-app"
+    envs:
+      - "   ": "blank_key"
+        "BAD=KEY": "has_equals"
+    templates:
+      - template: "   "
+        env: "   "
+        env_path: "  "
+        path: "  "
+`
+		tmp := filepath.Join(t.TempDir(), "ws_bad.yaml")
+		if err := os.WriteFile(tmp, []byte(yamlData), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := Validate(tmp, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		joined := strings.Join(res.Errors, "\n")
+		for _, want := range []string{
+			"inline env key cannot be empty or whitespace",
+			`inline env key "BAD=KEY" cannot contain '='`,
+			"missing required field 'template'",
+			"must set at least one of 'env', 'env_path', or 'path'",
+		} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("expected error containing %q, got:\n%s", want, joined)
+			}
+		}
+	})
+}
+
+func TestValidateAutoloadTemplateReviewFixes(t *testing.T) {
+	tempDir := t.TempDir()
+	base := "templates:\n  cfg:\n    driver: json\n    vaults:\n      - vault: env\n        rules:\n          - type: pass\n            include: [\"A\"]\n"
+
+	cases := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name:    "padded template name rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: \" cfg \"\n        env: APP_CFG\n",
+			wantErr: "must not have leading or trailing whitespace",
+		},
+		{
+			name:    "whitespace-only env with path rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        env: \"   \"\n        path: /tmp/out.json\n",
+			wantErr: "invalid 'env' variable name",
+		},
+		{
+			name:    "env with equals sign rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        env: \"FOO=BAR\"\n",
+			wantErr: "invalid 'env' variable name",
+		},
+		{
+			name:    "env_path with whitespace rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        env_path: \" CFG_PATH \"\n",
+			wantErr: "invalid 'env_path' variable name",
+		},
+		{
+			name:    "path with leading trailing whitespace rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        path: \" /tmp/out.json \"\n",
+			wantErr: "invalid 'path'",
+		},
+		{
+			name:    "persist true with env rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        env: APP_CFG\n        persist: true\n",
+			wantErr: "'persist: true' cannot be combined with 'env'",
+		},
+		{
+			name:    "duplicate env target rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        env: APP_CFG\n      - template: cfg\n        env: APP_CFG\n",
+			wantErr: `duplicate environment variable target "APP_CFG"`,
+		},
+		{
+			name:    "duplicate env and env_path target rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        env: APP_CFG\n      - template: cfg\n        env_path: APP_CFG\n",
+			wantErr: `duplicate environment variable target "APP_CFG"`,
+		},
+		{
+			name:    "duplicate literal path target rejected",
+			yaml:    base + "autoload:\n  - match: app\n    templates:\n      - template: cfg\n        path: /tmp/out.json\n      - template: cfg\n        path: /tmp/./out.json\n",
+			wantErr: "duplicate literal path target",
+		},
+		{
+			name:    "padded inline env key rejected",
+			yaml:    base + "autoload:\n  - match: app\n    envs:\n      - \" FOO \": bar\n",
+			wantErr: "cannot contain whitespace",
+		},
+		{
+			name:    "inline env key with internal whitespace rejected",
+			yaml:    base + "autoload:\n  - match: app\n    envs:\n      - \"FOO BAR\": baz\n",
+			wantErr: "cannot contain whitespace",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(tempDir, strings.ReplaceAll(tc.name, " ", "_")+".yaml")
+			if err := os.WriteFile(p, []byte(tc.yaml), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			res, err := Validate(p, true)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			joined := strings.Join(res.Errors, "\n")
+			if !strings.Contains(joined, tc.wantErr) {
+				t.Errorf("expected error containing %q, got:\n%s", tc.wantErr, joined)
+			}
+		})
+	}
 }

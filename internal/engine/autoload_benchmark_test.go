@@ -30,7 +30,7 @@ func BenchmarkMatchRunAlias(b *testing.B) {
 	for i := range 50 {
 		rules[i] = config.AutoloadRule{
 			Match: fmt.Sprintf("tool-%d", i),
-			Env:   map[string]string{"FOO": "bar"},
+			Envs:  []config.AutoloadEnvItem{config.InlineEnvItem(map[string]string{"FOO": "bar"})},
 		}
 	}
 	// Target command that matches the last rule
@@ -56,7 +56,7 @@ func BenchmarkBuildEnvForCommand_Autoload(b *testing.B) {
 	for i := range 50 {
 		rules[i] = config.AutoloadRule{
 			Match: fmt.Sprintf("tool-%d", i),
-			Env:   map[string]string{"FOO": "bar"},
+			Envs:  []config.AutoloadEnvItem{config.InlineEnvItem(map[string]string{"FOO": "bar"})},
 		}
 	}
 	// Last rule matches
@@ -87,16 +87,16 @@ func BenchmarkMatchRunAlias_Regex(b *testing.B) {
 				Command: "uvx --with 'litellm[proxy]' litellm \\1",
 			},
 			{
-				Match:  "^aws\\s+(.*)$",
-				Vaults: []string{"aws_prod"},
+				Match: "^aws\\s+(.*)$",
+				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("aws_prod")},
 			},
 			{
-				Match:  "^kubectl-.*$",
-				Vaults: []string{"k8s_prod"},
+				Match: "^kubectl-.*$",
+				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("k8s_prod")},
 			},
 			{
-				Match:  "git push",
-				Vaults: []string{"git_prod"},
+				Match: "git push",
+				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("git_prod")},
 			},
 		},
 	}
@@ -129,20 +129,20 @@ func BenchmarkMatchRunAlias_PureMatch(b *testing.B) {
 	cfg := &config.Config{
 		Autoload: []config.AutoloadRule{
 			{
-				Match:  "^litellm\\s+(.*)$",
-				Vaults: []string{"work_vault"},
+				Match: "^litellm\\s+(.*)$",
+				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("work_vault")},
 			},
 			{
-				Match:  "^aws\\s+(.*)$",
-				Vaults: []string{"aws_prod"},
+				Match: "^aws\\s+(.*)$",
+				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("aws_prod")},
 			},
 			{
-				Match:  "^kubectl-.*$",
-				Vaults: []string{"k8s_prod"},
+				Match: "^kubectl-.*$",
+				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("k8s_prod")},
 			},
 			{
-				Match:  "git push",
-				Vaults: []string{"git_prod"},
+				Match: "git push",
+				Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("git_prod")},
 			},
 		},
 	}
@@ -158,8 +158,8 @@ func BenchmarkMatchRunAlias_PureMatch(b *testing.B) {
 
 func BenchmarkMatchCommandRule_PureMatch(b *testing.B) {
 	rule := config.AutoloadRule{
-		Match:  "^litellm\\s+(.*)$",
-		Vaults: []string{"work_vault"},
+		Match: "^litellm\\s+(.*)$",
+		Envs:  []config.AutoloadEnvItem{config.NamedEnvItem("work_vault")},
 	}
 	rule.Compile()
 
