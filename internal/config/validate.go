@@ -14,7 +14,7 @@ import (
 
 	goyaml "gopkg.in/yaml.v3"
 
-	"github.com/warpcode/cloakenv/internal/yaml"
+	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 // ValidationResult holds issues found during configuration validation.
@@ -51,7 +51,7 @@ func Validate(configPath string, strict bool) (*ValidationResult, error) {
 		}
 	} else {
 		var testCfg Config
-		if err := yaml.Unmarshal(data, &testCfg); err != nil {
+		if err := utils.UnmarshalYAML(data, &testCfg); err != nil {
 			res.Errors = append(res.Errors, fmt.Sprintf("yaml syntax error: %v", err))
 			return res, nil
 		}

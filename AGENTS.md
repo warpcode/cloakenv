@@ -17,7 +17,6 @@ It resolves typed secret URIs from multiple backends into temporary execution me
 | `internal/provider` | Implement `provider.SecretProvider` per backend | No shared mutable state between providers |
 | `internal/runner` | Process execution wrapping and environment injection | No secret leakage into persistent state or child processes |
 | `internal/utils` | Shared string, slice, and formatting utilities | No business logic, config loading, or URI resolution |
-| `internal/yaml` | Centralized YAML encode/decode and error wrapping | No business logic or URI resolution |
 
 ## Verification Gate
 

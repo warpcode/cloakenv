@@ -15,7 +15,7 @@ import (
 
 	goyaml "gopkg.in/yaml.v3"
 
-	"github.com/warpcode/cloakenv/internal/yaml"
+	"github.com/warpcode/cloakenv/internal/utils"
 )
 
 var userHomeDir = os.UserHomeDir
@@ -328,7 +328,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file %s: %w", path, err)
 	}
 
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+	if err := utils.UnmarshalYAML(data, cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config file %s: %w", path, err)
 	}
 

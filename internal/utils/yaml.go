@@ -1,4 +1,4 @@
-package yaml
+package utils
 
 import (
 	"bytes"
@@ -10,25 +10,25 @@ import (
 	goyaml "gopkg.in/yaml.v3"
 )
 
-var bufPool = sync.Pool{
+var yamlBufPool = sync.Pool{
 	New: func() any {
 		return new(bytes.Buffer)
 	},
 }
 
-// Unmarshal wraps yaml.Unmarshal with centralized error handling.
-func Unmarshal(in []byte, out any) error {
+// UnmarshalYAML wraps yaml.Unmarshal with centralized error handling.
+func UnmarshalYAML(in []byte, out any) error {
 	if err := goyaml.Unmarshal(in, out); err != nil {
 		return fmt.Errorf("yaml unmarshal failed: %w", err)
 	}
 	return nil
 }
 
-// Marshal wraps yaml.Marshal with centralized error handling and buffer pooling.
-func Marshal(in any) ([]byte, error) {
-	buf := bufPool.Get().(*bytes.Buffer)
+// MarshalYAML wraps yaml.Marshal with centralized error handling and buffer pooling.
+func MarshalYAML(in any) ([]byte, error) {
+	buf := yamlBufPool.Get().(*bytes.Buffer)
 	buf.Reset()
-	defer bufPool.Put(buf)
+	defer yamlBufPool.Put(buf)
 
 	enc := goyaml.NewEncoder(buf)
 	enc.SetIndent(2)
@@ -47,12 +47,12 @@ func Marshal(in any) ([]byte, error) {
 	return res, nil
 }
 
-// MarshalString encodes the value as YAML into a string, trimming any trailing
+// MarshalYAMLString encodes the value as YAML into a string, trimming any trailing
 // newlines, using a pooled buffer to reduce allocations.
-func MarshalString(in any) (string, error) {
-	buf := bufPool.Get().(*bytes.Buffer)
+func MarshalYAMLString(in any) (string, error) {
+	buf := yamlBufPool.Get().(*bytes.Buffer)
 	buf.Reset()
-	defer bufPool.Put(buf)
+	defer yamlBufPool.Put(buf)
 
 	enc := goyaml.NewEncoder(buf)
 	enc.SetIndent(2)
@@ -73,9 +73,9 @@ func MarshalString(in any) (string, error) {
 	return string(b), nil
 }
 
-// SerializeValue converts structured yaml/json data or scalar values to string format.
+// SerializeYAMLValue converts structured yaml/json data or scalar values to string format.
 // For scalar types, fast-path strconv conversions avoid reflection/formatting allocations.
-func SerializeValue(val any) (string, error) {
+func SerializeYAMLValue(val any) (string, error) {
 	switch v := val.(type) {
 	case string:
 		return v, nil
@@ -96,7 +96,7 @@ func SerializeValue(val any) (string, error) {
 	case bool:
 		return strconv.FormatBool(v), nil
 	case []any, map[string]any, map[any]any, []string:
-		return MarshalString(v)
+		return MarshalYAMLString(v)
 	case nil:
 		return "", nil
 	default:
@@ -104,10 +104,10 @@ func SerializeValue(val any) (string, error) {
 	}
 }
 
-// Encoder is a type alias to the underlying yaml Encoder.
-type Encoder = goyaml.Encoder
+// YAMLEncoder is a type alias to the underlying yaml Encoder.
+type YAMLEncoder = goyaml.Encoder
 
-// NewEncoder returns a new yaml Encoder.
-func NewEncoder(w io.Writer) *Encoder {
+// NewYAMLEncoder returns a new yaml Encoder.
+func NewYAMLEncoder(w io.Writer) *YAMLEncoder {
 	return goyaml.NewEncoder(w)
 }
