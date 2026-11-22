@@ -8,45 +8,53 @@ cache:
 # Keyring configurations
 keyring:
   prefix: "cloakenv"
-  isolate: false
+  isolate: false                               # Set true to isolate keyring entries per `-c` config path
 
 # Audit logging (records URI/vault access metadata, never secret values)
 audit:
   enabled: false
   log_path: "~/.config/cloakenv/audit.jsonl"
-  format: "jsonl"
+  format: "jsonl"                              # "jsonl" (default) or "json"
 
-# Configured read-only vaults (pure retrieval backends; env and keyring are built-in)
+# Configured read-only vaults (pure retrieval backends; env and keyring are also available implicitly)
 vaults:
   work:
     provider: "keepass"
     vault_path: "~/secrets/work.kdbx"
-    resolve_references: false
-    cache:
+    # key_file: "~/secrets/work.keyx"          # Optional: KeePass key file (.key / .keyx / raw key)
+    # key_file_env: "CLOAKENV_KEY_FILE"        # Optional: env var overriding key_file when set
+    resolve_references: false                  # Expand KeePass placeholders & {REF:...} references
+    # query: "Production/"                     # Optional: provider-native group/entry path prefix scope
+    cache:                                     # Also accepts `cache: true` or `cache: "15m"`
       enabled: true
       ttl: "15m"
-      mode: "keyring"
+      mode: "keyring"                          # "keyring" (default) or "encrypted_disk"
 
   unix_pass:
     provider: "pass"
-    vault_path: "~/.password-store"
-    query: "work/"
+    vault_path: "~/.password-store"            # Defaults to $PASSWORD_STORE_DIR or ~/.password-store
+    query: "work/"                             # Optional: scope lookups to a subdirectory prefix
+    cache: "10m"                               # Scalar TTL shorthand
 
   hcp_vault:
     provider: "vault"
     address: "https://vault.example.com:8200"
     mount_path: "secret"
-    engine_version: 2
-    query: "prod/"
+    engine_version: 2                          # 1 or 2 (default: 2)
+    namespace: "admin"                         # Optional: Vault Enterprise namespace
+    query: "prod/"                             # Optional: path prefix scope
+    # token: "hvs.EXAMPLE_TOKEN"               # Or set VAULT_TOKEN in environment
+    # role_id: "example-role-id"               # AppRole auth (requires both role_id and secret_id)
+    # secret_id: "example-secret-id"
 
   process_env:
     provider: "env"
 
   os_keyring:
     provider: "keyring"
-    query: "OPENAI_API_KEY,NVIDIA_NIM_API_KEY"
+    query: "OPENAI_API_KEY,ANTHROPIC_API_KEY"  # Comma-separated keyring attribute names
 
-# Declarative environment sets with RuleEngine transformations
+# Declarative environment sets with RuleEngine transformations (pass, match, set)
 envs:
   aws_env:
     - vault: "work"
@@ -55,22 +63,45 @@ envs:
         - type: pass
           include: ["AWS_*"]
           exclude: ["*_NOTES"]
-          key_format: "env"
+          key_format: "env"                    # "env" (UPPER_SNAKE), "snake", "kebab", or "none"
 
-  ai_env:
+  # Multi-vault composition (later sources and later rules override earlier keys)
+  app_env:
+    - vault: "work"
+      query: '{{ and (hasTag "backend" .tags) (eq .group.name "Production") }}'
+      rules:
+        - type: pass
+          include: ["DB_*", "REDIS_*"]
+          exclude: ["*_DEPRECATED"]
+          key_format: "env"
+        - type: match
+          match: "^env:(.*)$"
+          key: "$1"
+        - type: match
+          match: "^Password$"
+          value_match: "^(.+)$"
+          key: "{{ .title | env }}_SECRET"
+          value: "{{ .value }}"
+        - type: set
+          values:
+            DATABASE_URL: 'postgres://{{ .UserName }}:{{ .password }}@{{ default "localhost" .URL }}:5432/app'
+            APP_ENV: "production"
+
     - vault: "os_keyring"
       rules:
         - type: pass
-          include: ["OPENAI_*", "NVIDIA_*"]
-        - type: set
-          values:
-            LITELLM_LOG: "INFO"
+          include: ["OPENAI_*", "ANTHROPIC_*"]
 
-# Declarative template artifact generators
+    - vault: "process_env"
+      rules:
+        - type: pass
+          include: ["DEFAULT_REGION", "USER"]
+
+# Declarative template artifact generators (dotenv, json, yaml, template)
 templates:
   app_dotenv:
     driver: "dotenv"
-    from_env: "ai_env"
+    from_env: "app_env"
 
   service_json:
     driver: "json"
@@ -80,6 +111,33 @@ templates:
         rules:
           - type: pass
             exclude: ["Notes"]
+            key_format: "snake"
+
+  clusters_yaml:
+    driver: "yaml"
+    vaults:
+      - vault: "work"
+        query: '{{ hasTag "k8s" .tags }}'
+        rules:
+          - type: pass
+            exclude: ["Notes"]
+            key_format: "kebab"
+
+  inline_config:
+    driver: "template"
+    vaults:
+      - vault: "work"
+        query: '{{ hasTag "service" .tags }}'
+        rules:
+          - type: pass
+            include: ["title", "URL", "UserName"]
+            key_format: "none"
+    template: |
+      {{- range .entries }}
+      [{{ .title }}]
+      endpoint = {{ default "https://localhost" .URL }}
+      user = {{ .UserName }}
+      {{ end -}}
 
   custom_env_file:
     driver: "template"
@@ -92,17 +150,37 @@ templates:
             include: ["title", "path", "UserName", "password"]
             key_format: "none"
 
-# Command autoloading rules
+# Command autoloading rules (envs + all 4 template delivery modes: env, env_path, env_path+path, path+persist)
 autoload:
-  - match: '^litellm\s+(.*)$'
-    command: "uvx --with 'litellm[proxy]' litellm \\1"
+  - match: '^deploy\s+(.*)$'
+    command: "./scripts/deploy.sh \\1"
     envs:
-      - "ai_env"
+      - "app_env"
+      - DEPLOY_PORT: "8080"
+        HEALTHCHECK_URL: 'http://127.0.0.1:{{ default "8080" .DEPLOY_PORT }}/health'
     templates:
       - template: "app_dotenv"
-        env_path: "LITELLM_ENV_FILE"
+        env_path: "APP_ENV_FILE"
 
   - match: '^aws(\s|$)'
     envs:
       - "aws_env"
       - AWS_DEFAULT_REGION: "us-east-1"
+    templates:
+      - template: "service_json"
+        env: "SERVICE_ACCOUNT_JSON"
+
+  - match: '^kubectl(\s|$)'
+    envs:
+      - "app_env"
+    templates:
+      - template: "clusters_yaml"
+        env_path: "KUBECONFIG"
+        path: "/tmp/kubeconfig-{{ .USER }}.yaml"
+        persist: false
+
+  - match: '^render-config$'
+    templates:
+      - template: "inline_config"
+        path: "./build/generated.conf"
+        persist: true
