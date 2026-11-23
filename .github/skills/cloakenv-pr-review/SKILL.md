@@ -21,6 +21,7 @@ This review procedure layers on top of `github-pr-review` to enforce repo-specif
 2. **Never Proactively Refactor**: Strictly reject unrequested refactors (such as autoload cache changes) under the minimal change principle.
 3. **Inspect the True Base**: If a PR targets a `tidy/` or `fix/` branch instead of `main`, GitHub Actions CI did NOT run, and the PR diff shown on GitHub only covers changes relative to the branch base. Always review the full diff against `origin/main`.
 4. **Never Assert an Unverified Fact**: Every code claim must quote the exact predicate condition deciding it.
+5. **Documentation Synchronization on Every Commit & PR**: Every new commit and pull request must keep documentation up to date with code ground truth. Whenever behavior, features, providers, rules, template functions, configuration schemas/defaults, CLI commands/flags, or security invariants are added, changed, or removed, all affected docs (`docs/` via `docs/README.md`, `README.md`, `examples/config.yaml`, `AGENTS.md`, and `docs/adr/` / `docs/plans/`) must be updated in the same commit/PR—never deferred to a follow-up.
 
 ---
 
@@ -61,6 +62,10 @@ Review all changes modifying `internal/provider/`, `internal/engine/`, `internal
 4. **Keyring Internal Isolation**: Confirm the built-in `keyring` vault excludes internal keys (`cache_token`, `cache-master-key`, `cache/*`, `provider/*`).
 5. **Verbatim Child Command Pass-Through**: Verify `BuildEnvForCommand` passes child command arguments through verbatim without secret or template expansion.
 6. **Pure Go Templating**: Templates use Go `text/template` with `.Option("missingkey=error")` and pure helpers only—no URI/exec/include lookups.
+7. **Documentation Completeness & Accuracy**: On every new commit and pull request, verify that documentation stays synchronized with the implementation:
+   - Check whether any added, modified, or removed provider, rule, template function, config field/default, CLI flag/subcommand, or runtime behavior requires corresponding updates in `docs/` (`docs/README.md` and relevant sub-guides), `README.md`, `examples/config.yaml`, `AGENTS.md`, or `docs/adr/` / `docs/plans/`.
+   - Cross-check every modified or newly added documentation claim, YAML snippet, CLI example, and default value against the actual Go source code on `HEAD` so examples execute as documented and never drift from ground truth.
+   - Confirm `make agents-check` passes and internal Markdown links/anchors remain valid.
 
 ### Phase 4: Review Discipline & Fact Verification
 
@@ -78,6 +83,7 @@ Follow the 7 rules of review discipline documented in `@references/review-discip
 
 1. **Approval**:
    - Confirm all CI checks pass.
+   - Confirm documentation is up to date across every commit in the PR and `make agents-check` passes.
    - Confirm 1 approving review on GitHub satisfies the `Protect main` ruleset.
    - Execute silent approval:
      ```bash
@@ -86,6 +92,7 @@ Follow the 7 rules of review discipline documented in `@references/review-discip
 2. **Request Changes**:
    - Provide concrete, reproducible evidence.
    - Quote exact file paths and predicate line numbers.
+   - Treat missing, stale, or factually inaccurate documentation as a blocking finding and request the exact doc updates alongside the code change.
    - Propose minimal, targeted fixes without unnecessary refactoring.
 
 ---
