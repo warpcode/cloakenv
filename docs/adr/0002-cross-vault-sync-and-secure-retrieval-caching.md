@@ -8,6 +8,11 @@
 | **Depends On** | ADR-0001 |
 | **Reversibility** | One-way |
 
+> [!NOTE]
+> **Partially Superseded by [ADR-0003](0003-declarative-envs-templates-and-zero-leak-cli.md)**:
+> - **Still Active**: Section 4.2 — Transparent Per-Vault Dual-Mode Retrieval Caching (`keyring` and `encrypted_disk` AES-256-GCM modes, TTLs, and `cloakenv cache clear`/`prune`). See [Caching Docs](../providers/caching.md).
+> - **Superseded / Retired**: Section 4.1 — `cloakenv sync` and `WritableProvider` (all vaults are now strictly read-only).
+
 ---
 
 ## 1. Context and Problem Statement

@@ -87,20 +87,31 @@ All commit messages must follow the [Conventional Commits](https://www.conventio
 
 ### Examples:
 ```
-feat(provider): add JSON provider with entities_root_key support
-fix(engine): handle missing URI scheme gracefully
-test(engine): add benchmark for concurrent URI resolution
-docs: update README with JSON provider usage
+feat(provider): add 1Password read-only provider backend
+fix(engine): handle missing template key in rule evaluation
+test(engine): add benchmark for concurrent RuleEngine execution
+docs: update pipeline and config schema guides for new rule option
 ```
+
+---
+
+## 📚 Documentation & Consistency Audit
+
+Whenever a Pull Request **adds, modifies, or removes** any feature, provider, CLI flag/subcommand, configuration option, rule behavior, or template function, you MUST audit the documentation in the same PR to keep it accurate and synchronized with the code:
+
+1. **User & Operator Guides (`docs/`)**: Update affected pages across `docs/getting-started/`, `docs/providers/`, `docs/pipeline/`, `docs/execution/`, `docs/cli/`, `docs/security/`, `docs/guides/`, and `docs/reference/` (including [`docs/README.md`](docs/README.md) if new pages are added).
+2. **Overview & Examples**: Update [`README.md`](README.md) and [`examples/config.yaml`](examples/config.yaml) when user-facing features, CLI commands, `Makefile` targets, or configuration schemas change.
+3. **Architecture & Agent Contracts**: Update [`AGENTS.md`](AGENTS.md) and relevant records in `docs/adr/` or `docs/plans/` if package boundaries, security invariants, or architectural decisions change.
 
 ---
 
 ## 🚀 Pull Request Checklist
 
 Before opening or requesting review on a Pull Request:
-1. **Pass Verification**: Run `make verify` locally. All compilation, formatting, and race-detected tests must pass.
-2. **Clean Scope**: Keep pull requests focused and surgical. Avoid combining unrelated refactors or formatting churn with feature additions.
-3. **No Unapproved Dependencies**: Do not introduce new dependencies in `go.mod` without prior discussion and approval.
-4. **Cross-Platform Compatibility**: Ensure code compiles and passes tests on Linux, macOS, and Windows. OS-specific code must be gated with Go build tags.
-5. **No Secret Leakage**: Never commit live secrets or output sensitive data in logs, error strings, or tests.
-6. **PR Fields**: Include a clear title (Conventional Commits), a concise summary of changes, motivation/rationale, and verification steps.
+1. **Pass Verification**: Run `make verify` and `make agents-check` locally. All compilation, formatting, documentation contract checks, and race-detected tests must pass.
+2. **Documentation Audit**: Verify that `docs/`, `README.md`, `examples/config.yaml`, and `AGENTS.md` accurately reflect any added, modified, or removed features.
+3. **Clean Scope**: Keep pull requests focused and surgical. Avoid combining unrelated refactors or formatting churn with feature additions.
+4. **No Unapproved Dependencies**: Do not introduce new dependencies in `go.mod` without prior discussion and approval.
+5. **Cross-Platform Compatibility**: Ensure code compiles and passes tests on Linux, macOS, and Windows. OS-specific code must be gated with Go build tags.
+6. **No Secret Leakage**: Never commit live secrets or output sensitive data in logs, error strings, or tests.
+7. **PR Fields**: Include a clear title (Conventional Commits), a concise summary of changes, motivation/rationale, and verification steps.
