@@ -25,9 +25,9 @@ All template expressions in `query:`, `rules:`, `templates:`, and `autoload:` ex
 |---|---|---|
 | `toEnv` | `toKv` | Formats a `map[string]any` or `map[string]string` as sorted `KEY=VALUE` lines, skipping reserved metadata keys (`title`, `path`, `uuid`, `tags`, `group`, `vault`, `provider`, `meta`, `entries`, `attributes`, `original`, `output`).<br>`{{ . | toEnv }}` |
 | `toJSON` | `toJson`, `json` | Serializes any value to compact JSON.<br>`{{ .entries \| toJSON }}` |
-| `fromJSON` | `fromJson` | Parses a JSON string into Go values (`map[string]any`, `[]any`, etc.).<br>`{{ ($cfg := fromJSON .raw_json) }}{{ $cfg.host }}` |
+| `fromJSON` | `fromJson` | Parses a JSON string into Go values (`map[string]any`, `[]any`, etc.).<br>`{{ $cfg := fromJSON .raw_json }}{{ $cfg.host }}` |
 | `toYAML` | `toYaml`, `yaml` | Serializes any value to YAML.<br>`{{ .entries \| toYAML }}` |
-| `fromYAML` | `fromYaml` | Parses a YAML string into Go values.<br>`{{ ($y := fromYAML .raw_yaml) }}{{ $y.endpoint }}` |
+| `fromYAML` | `fromYaml` | Parses a YAML string into Go values.<br>`{{ $y := fromYAML .raw_yaml }}{{ $y.endpoint }}` |
 
 ---
 

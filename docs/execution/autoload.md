@@ -61,8 +61,11 @@ autoload:
     templates:
       - template: litellm_config
         env_path: LITELLM_CONFIG_PATH
-    command: 'litellm --config $LITELLM_CONFIG_PATH $args'
+    command: 'sh -c ''exec litellm --config "$LITELLM_CONFIG_PATH" "$@"'' -- $args'
 ```
+
+> [!NOTE]
+> `autoload` executes binaries directly without a shell and only expands regex capture groups from `match:`. Wrap the command in `sh -c` when referencing environment variables such as `$LITELLM_CONFIG_PATH`, or use an explicit `path:` delivery target when invoking the binary directly.
 
 ---
 

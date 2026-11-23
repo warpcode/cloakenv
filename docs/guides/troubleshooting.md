@@ -15,9 +15,9 @@ Secret resolution failed: ... map has no entry for key "URL"
 `cloakenv` compiles all Go `text/template` expressions with `.Option("missingkey=error")` so missing attributes fail loudly instead of rendering `<no value>`.
 
 **Resolution**:
-Use `default` for optional attributes:
+Use `index` with `default` for attributes that may be absent from the entry map (`default` alone only handles keys that exist with an empty/zero value):
 ```yaml
-DATABASE_URL: 'postgres://{{ .UserName }}:{{ .password }}@{{ default "localhost" .URL }}:5432/app'
+DATABASE_URL: 'postgres://{{ .UserName }}:{{ .password }}@{{ default "localhost" (index . "URL") }}:5432/app'
 ```
 Or check `.output` if you are referencing a key produced by an earlier rule in the same entry.
 

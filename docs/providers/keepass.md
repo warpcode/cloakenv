@@ -65,7 +65,7 @@ Each non-deleted KeePass entry (recycle-bin entries are excluded) is returned as
 - **Canonical metadata**:
   - `title` (`string`): Entry `Title`
   - `path` (`string`): Full group + title path (e.g., `"Production/Database"`)
-  - `uuid` (`string`): Base64/hex entry UUID
+  - `uuid` (`string`): Lowercase hex-encoded entry UUID
   - `tags` (`[]string`): KeePass entry tags (case-preserved)
   - `group` (`map[string]any`): `{ name, path, uuid }`
 - **Standard & custom fields**:

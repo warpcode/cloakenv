@@ -77,7 +77,7 @@ autoload:
     templates:
       - template: litellm_config
         env_path: LITELLM_CONFIG_PATH
-    command: "litellm --config $LITELLM_CONFIG_PATH $2"
+    command: 'sh -c ''exec litellm --config "$LITELLM_CONFIG_PATH" "$@"'' -- $2'
 
   - match: '^(aider|claude|codex)(\s|$)'
     envs:

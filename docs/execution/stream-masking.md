@@ -19,7 +19,7 @@ flowchart LR
    - Full rendered content of every `autoload[].templates[]`
    - Every individual post-rule field value inside each rendered template's `.entries`
 2. **Minimum Length Filter (`minMaskSecretLen = 4`)**:
-   Values shorter than 4 bytes or consisting solely of whitespace are excluded from the trie so common values like `"0"`, `"1"`, `"true"`, or `"no"` do not corrupt ordinary command output.
+   Values shorter than 4 bytes or consisting solely of whitespace are excluded from the trie so common values like `"0"`, `"1"`, `"yes"`, or `"no"` do not corrupt ordinary command output.
 3. **Aho-Corasick Multi-Pattern Automaton**:
    `NewMaskTrie` compiles all qualifying secrets into a deterministic prefix trie with failure links (`internal/runner/masker.go`), enabling linear-time $O(N)$ scanning regardless of how many secrets are loaded.
 4. **Chunk-Boundary Lookahead**:

@@ -15,7 +15,7 @@ By default, `cloakenv` loads `~/.config/cloakenv/config.yaml`. Override this pat
 
 | Key | Type | Description |
 |---|---|---|
-| `cache` | `CacheConfig` | Global cache defaults (`default_ttl`). |
+| `cache` | `CacheConfig` | Top-level cache settings (`default_ttl`; parsed in config, while per-vault `cache: true` currently defaults to `1h`). |
 | `keyring` | `KeyringConfig` | OS keyring namespace (`prefix`, `isolate`). |
 | `audit` | `AuditConfig` | Non-secret structured access logging (`enabled`, `log_path`, `format`). |
 | `vaults` | `map[string]VaultConfig` | Named read-only secret backends (`keepass`, `pass`, `vault`, `env`, `keyring`). |
@@ -29,7 +29,7 @@ By default, `cloakenv` loads `~/.config/cloakenv/config.yaml`. Override this pat
 
 ```yaml
 cache:
-  default_ttl: "10m"     # Go duration string (e.g., "30s", "15m", "1h")
+  default_ttl: "10m"     # Go duration string (e.g., "30s", "15m", "1h"); per-vault cache: true defaults to "1h"
 
 keyring:
   prefix: "cloakenv"     # Default: "cloakenv"
@@ -53,9 +53,9 @@ audit:
 | `key_file_env` | `string` | `keepass` | Env var holding a key file path (overrides `key_file` when non-empty). |
 | `resolve_references` | `bool` | `keepass` | Expand KeePass `{REF:...}` and `{TITLE}`/`{PASSWORD}` placeholders (`false` default). |
 | `address` | `string` | `vault` | Vault server URL (or `VAULT_ADDR`). |
-| `mount_path` | `string` | `vault` | KV secrets engine mount path (default `"secret"`). |
+| `mount_path` | `string` | `vault` | KV secrets engine mount path (optional; defaults to empty, using the first path segment as mount in KV v2). |
 | `engine_version` | `int` | `vault` | `1` or `2` (default `2`). |
-| `namespace` | `string` | `vault` | Vault Enterprise namespace. |
+| `namespace` | `string` | `vault` | Vault Enterprise namespace (or `VAULT_NAMESPACE`). |
 | `token` | `string` | `vault` | Vault token (or `VAULT_TOKEN`). |
 | `role_id` | `string` | `vault` | AppRole `role_id` (must pair with `secret_id`). |
 | `secret_id` | `string` | `vault` | AppRole `secret_id` (must pair with `role_id`). |

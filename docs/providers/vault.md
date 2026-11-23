@@ -25,9 +25,9 @@ vaults:
 |---|---|---|---|
 | `provider` | Yes | — | Must be `vault`. |
 | `address` | Yes* | `$VAULT_ADDR` | Vault server URL (`http://` or `https://`). |
-| `mount_path` | No | `secret` | KV secrets engine mount point. |
+| `mount_path` | No | `""` | KV secrets engine mount point (when omitted in KV v2, the first path segment is used as the mount). |
 | `engine_version` | No | `2` | KV engine version (`1` or `2`). |
-| `namespace` | No | `""` | Vault Enterprise namespace header (`X-Vault-Namespace`). |
+| `namespace` | No | `$VAULT_NAMESPACE` | Vault Enterprise namespace header (`X-Vault-Namespace`). |
 | `query` | No | `""` | Path prefix to scope recursive secret listing (e.g., `prod/`). |
 | `token` | No* | `$VAULT_TOKEN` | Static/session Vault token. |
 | `role_id` | No* | `$VAULT_ROLE_ID` | AppRole Role ID (must be paired with `secret_id`). |
@@ -58,7 +58,7 @@ vaults:
   - `path`: Relative secret path under the mount
   - `title`: Leaf secret name
   - `group`: Parent folder metadata (`name`, `path`)
-  - `tags`: Extracted from `custom_metadata.tags` or secret `tags` field when present
+  - `tags`: Extracted from the secret's `tags` field in `data` (list of strings or comma-separated string) when present
   - All secret K/V pairs from `data` sit at the top level of the `Entry`.
 
 ---

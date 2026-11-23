@@ -10,7 +10,7 @@ Every secret backend in `cloakenv` implements the read-only `provider.SecretProv
 |---|---|---|---|---|---|---|
 | **KeePass** | `keepass` | Multi-entry (1 `Entry` per record) | No (declare in `vaults:`) | OS keyring (`auth login`) and/or `key_file` | Group/entry path prefix (e.g., `Production/`) | Yes (`keyring` / `encrypted_disk`) |
 | **Password Store** | `pass` | Multi-entry (1 `Entry` per `.gpg` file) | No (declare in `vaults:`) | GPG keyring / `gpg-agent` | Subdirectory path prefix (e.g., `work/`) | Yes (`keyring` / `encrypted_disk`) |
-| **HashiCorp Vault** | `vault` | Multi-entry (1 `Entry` per KV secret) | No (declare in `vaults:`) | Token (`VAULT_TOKEN` / `auth login`) or AppRole | KV path prefix (e.g., `prod/`) | Yes (`keyring` / `encrypted_disk`) |
+| **HashiCorp Vault** | `vault` | Multi-entry (1 `Entry` per KV secret) | No (declare in `vaults:`) | Token (`VAULT_TOKEN` / `token`) or AppRole | KV path prefix (e.g., `prod/`) | Yes (`keyring` / `encrypted_disk`) |
 | **Process Env** | `env` | Single-entry (all env vars in 1 `Entry`) | **Yes** (`vault: env`) | Process environment (in-memory) | Ignored | Yes |
 | **OS Keyring** | `keyring` | Single-entry (requested keys in 1 `Entry`) | **Yes** (`vault: keyring`) | Native OS credential store | Comma-separated key names (e.g., `KEY1,KEY2`) | Yes |
 
