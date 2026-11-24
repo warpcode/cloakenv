@@ -264,6 +264,39 @@ func TestGetParentEnv(t *testing.T) {
 	}
 }
 
+func TestParseParentEnv_SkipsInvalidEntries(t *testing.T) {
+	environ := []string{
+		"VALID_KEY=val",
+		"EMPTY=",
+		"A=b=c d",
+		"export MISE_SHELL=zsh",
+		"BAD\tKEY=1",
+		"BAD\nKEY=1",
+		"BAD\rKEY=1",
+		"BAD\x00KEY=1",
+		"GOOD=bad\x00val",
+		"=empty_key",
+		"MISSING_EQUALS",
+	}
+
+	got := parseParentEnv(environ)
+	want := map[string]string{
+		"VALID_KEY": "val",
+		"EMPTY":     "",
+		"A":         "b=c d",
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("parseParentEnv() returned %d entries (%v), want %d (%v)", len(got), got, len(want), want)
+	}
+	for k, wantV := range want {
+		gotV, ok := got[k]
+		if !ok || gotV != wantV {
+			t.Errorf("parseParentEnv()[%q] = (%q, %v), want (%q, true)", k, gotV, ok, wantV)
+		}
+	}
+}
+
 func TestBuildEnvForCommandDetails(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("SRC_AUTO", "resolved_auto_val")

@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/warpcode/cloakenv/internal/config"
 )
@@ -30,15 +31,26 @@ func NewEnvBuilder(cfg *config.Config, eb *EnvsBuilder, tr *TemplatesRenderer, r
 	}
 }
 
-func getParentEnv() map[string]string {
+func parseParentEnv(environ []string) map[string]string {
 	parentEnvMap := make(map[string]string)
-	for _, envStr := range os.Environ() {
-		k, v, ok := strings.Cut(envStr, "=")
-		if ok && k != "" {
-			parentEnvMap[k] = v
+	for _, envStr := range environ {
+		if strings.IndexByte(envStr, 0) != -1 {
+			continue
 		}
+		k, v, ok := strings.Cut(envStr, "=")
+		if !ok || k == "" {
+			continue
+		}
+		if strings.IndexFunc(k, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) != -1 {
+			continue
+		}
+		parentEnvMap[k] = v
 	}
 	return parentEnvMap
+}
+
+func getParentEnv() map[string]string {
+	return parseParentEnv(os.Environ())
 }
 
 // EnvConfig holds configuration parameters for building a command environment block.
